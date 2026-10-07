@@ -273,13 +273,18 @@ pub fn account_from_status(said: &str) -> Result<String, Problem> {
         if let Some(who) = word_after(line, "Logged in to github.com account ").or_else(|| word_after(line, "Logged in to github.com as ")) {
             return Ok(who);
         }
+        // gh says this when GitHub refuses its token, and also when it can't reach GitHub
         if line.contains("Failed to log in to github.com") {
             let who = word_after(line, "Failed to log in to github.com account ").map(|w| format!(" as {w}")).unwrap_or_default();
-            return Err(Problem::new(format!("GitHub refused gh's login{who}"), "Log in again with Log in with GitHub, or run gh auth login in a terminal."));
+            return Err(Problem::new(format!("gh's login{who} doesn't work: GitHub refused it, or couldn't be reached"),
+                                    "Check your internet connection. If that's fine, use Log in with GitHub again, or run gh auth login in a terminal."));
         }
         if line.contains("Timeout trying to log in to github.com") {
             return Err(Problem::new("GitHub didn't answer gh in time", "Check your internet connection, then try again."));
         }
+    }
+    if said.contains("error connecting to") {
+        return Err(Problem::new("gh can't reach GitHub", "Check your internet connection, then try again."));
     }
     if said.contains("not logged in") || said.contains("gh auth login") {
         return Err(not_logged_in());
@@ -422,6 +427,9 @@ fn login_problem(gh: &Path, said: &str) -> Problem {
     }
     if said.contains("expired") {
         return Problem::new("The code expired before it was entered", "Log in again.");
+    }
+    if said.contains("error connecting to") {
+        return Problem::new("gh can't reach GitHub", "Check your internet connection, then try again.");
     }
     let words = said.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.contains("one-time code") && !l.starts_with("Open this URL"));
     match words {

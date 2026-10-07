@@ -157,10 +157,14 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
     let seed = gizai_core::seed::ensure_seed(&db, &display_name()).map_err(|e| e.to_string())?;
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
-    // ours), then mark them interrupted and release their cards.
+    // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
+    // and release their cards.
     for r in gizai_core::runs::active(&db).unwrap_or_default() {
         if let (Some(pid), Some(wt)) = (r.pid, r.worktree_path.as_deref()) {
             gizai_agents::process::end_orphan_group(pid as u32, std::path::Path::new(wt));
+        }
+        if let (Some(_), Some(wt)) = (&r.task_id, r.worktree_path.as_deref()) {
+            runs::record_head(&db, &r.id, std::path::Path::new(wt));
         }
     }
     let _ = gizai_core::runs::recover_interrupted(&db);
@@ -314,7 +318,7 @@ pub fn run() {
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status,
             commands::add_rule, commands::delete_rule, commands::rename_state, commands::role_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
-            commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
+            commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,

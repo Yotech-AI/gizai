@@ -558,6 +558,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Ok(h) => h,
         Err(e) => {
             let msg = e.to_string();
+            record_head(&st.db, &run_id, &wt.path);
             let _ = core_runs::finish(&st.db, &run_id, "failed", None, 0, 0, 0, Some(&msg));
             (st.notify)(Note::RowsChanged("runs"));
             return Err(StartError::Other(msg));
@@ -573,6 +574,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let st2 = st.clone();
     let rid = run_id.clone();
     let tid = task_id.to_string();
+    let dir = wt.path.clone();
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
@@ -600,13 +602,43 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
-        finish_run(&st2, &rid, &tid, result, capped, &exit).await
+        finish_run(&st2, &rid, &tid, &dir, result, capped, &exit).await
     });
     Ok((run_id, done))
 }
 
-/// `capped`: why Gizai stopped the run at a limit, if it did.
-async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<RunEvent>, capped: Option<String>, exit: &str) -> RunSummary {
+/// Saves the commit the run's worktree `dir` ended at (`runs.head_sha`). With the one it started at, it gives the
+/// commits the run made (`commits`). Only a worktree counts: never the commit of a repository around it.
+pub(crate) fn record_head(db: &gizai_core::db::Db, run_id: &str, dir: &Path) {
+    if !dir.join(".git").exists() {
+        return;
+    }
+    if let Ok(sha) = worktree::rev_parse(dir, "HEAD") {
+        let _ = core_runs::set_head_sha(db, run_id, &sha);
+    }
+}
+
+/// The commits a finished run made, oldest first: from the commit it started at to the one it ended at, along its
+/// branch's own line (`worktree::commits`). Read in its worktree, or in the project's repository once the worktree
+/// is gone (they share their commits).
+pub fn commits(st: &AppState, run_id: &str) -> Result<Vec<worktree::Commit>, String> {
+    let run = core_runs::get(&st.db, run_id).map_err(|e| e.to_string())?;
+    let (Some(base), Some(head)) = (run.base_sha.as_deref(), run.head_sha.as_deref()) else {
+        return Err("Gizai didn't save where this run started and ended".into());
+    };
+    let dir = match run.worktree_path.as_deref().map(PathBuf::from).filter(|p| p.join(".git").exists()) {
+        Some(wt) => wt,
+        None => {
+            let task = tasks::get(&st.db, run.task_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
+            let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
+            PathBuf::from(project.repo_path.filter(|p| !p.trim().is_empty()).ok_or("its worktree is gone and its project has no git repository")?)
+        }
+    };
+    worktree::commits(&dir, base, head).map_err(|e| format!("Couldn't read its commits: {e}"))
+}
+
+/// `dir`: the run's worktree. `capped`: why Gizai stopped the run at a limit, if it did.
+async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, result: Option<RunEvent>, capped: Option<String>, exit: &str) -> RunSummary {
     let cancelled = st.runs.stopped.lock().unwrap().remove(run_id);
     let (cost, input, output, text, ok) = match &result {
         Some(RunEvent::Result { cost_usd, input_tokens, output_tokens, text, is_error, .. }) =>
@@ -629,6 +661,7 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<R
         }),
         _ => None,
     };
+    record_head(&st.db, run_id, dir);
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
     if !cancelled {

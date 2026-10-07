@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use serde::Serialize;
+
 use crate::connection::{self, Problem, PushOver};
 use crate::{AgentError, github};
 
@@ -248,6 +250,27 @@ pub fn behind(dir: &Path, start: &str) -> Result<u32, AgentError> {
 
 pub fn rev_parse(dir: &Path, rev: &str) -> Result<String, AgentError> {
     git(dir, &["rev-parse", "--verify", "--quiet", rev])
+}
+
+/// A commit: its id and the first line of its message.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Commit {
+    pub sha: String,
+    pub subject: String,
+}
+
+/// The commits after `base` up to `head` (two commit ids), oldest first, as a pull request lists them. Only the
+/// branch's own line counts (first parents): merging main in is one commit, not all of main's.
+pub fn commits(dir: &Path, base: &str, head: &str) -> Result<Vec<Commit>, AgentError> {
+    for id in [base, head] {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(AgentError::Git(format!("{id:?} is not a commit id")));
+        }
+    }
+    let out = git(dir, &["log", "--first-parent", "--reverse", "--format=%H%x1f%s", &format!("{base}..{head}")])?;
+    Ok(out.lines().filter_map(|l| l.split_once('\x1f'))
+        .map(|(sha, subject)| Commit { sha: sha.to_string(), subject: subject.to_string() }).collect())
 }
 
 /// How long a push may take.

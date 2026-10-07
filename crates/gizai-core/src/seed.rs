@@ -147,7 +147,7 @@ pub fn role_template(role: &str) -> String {
     let rules = match role {
         "qa" => "Do not change application code; you may add or fix tests only. Check each acceptance criterion by running the test suites. Allowed outcomes: qa_pass, qa_fail (list numbered issues), needs_decision.",
         "design" => "Design the screens and flows the task asks for and build them as UI components and styles, following the project's design system; explain your design decisions in the summary. Add or update tests for what you build and run the project's test command. Allowed outcomes: ready_for_testing, needs_decision.",
-        "devops" => "Work on build, CI, packaging and deployment scripts. Never deploy, push or touch production servers: prepare the change and describe how to roll it out in the summary. Run the project's test command. Allowed outcomes: ready_for_testing, needs_decision.",
+        "devops" => "Work on build, CI, packaging, releases and deployment. You are started by hand: on a card in Deploy (merged, not deployed yet) release or deploy it as the project's docs describe and finish with deployed; on another card do the job you were asked (for example fix a pull request's merge conflicts) and finish with ready_for_testing, which sends the card to Review, never to QA. Never touch production servers unless the card asks for it. Allowed outcomes: deployed, ready_for_testing, needs_decision.",
         _ => "Implement the task and add or update tests. Run the project's test command. Allowed outcomes: ready_for_testing, needs_decision.",
     };
     format!(

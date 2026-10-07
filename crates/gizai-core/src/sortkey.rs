@@ -54,3 +54,22 @@ pub fn key_after(prev: Option<&str>) -> String {
         }
     }
 }
+
+/// A key that sorts between `prev` and `next` (plain string order, as columns are sorted), never ending in "0".
+pub fn key_between(prev: Option<&str>, next: Option<&str>) -> String {
+    let Some(next) = next else { return key_after(prev) };
+    let prev = prev.unwrap_or("");
+    match next.strip_prefix(prev) {
+        // `next` continues `prev`: a digit below where it goes on.
+        Some(rest) if !rest.is_empty() => {
+            let at = DIGITS.iter().position(|&c| c == rest.as_bytes()[0]).unwrap_or(0);
+            match at {
+                0 => key_between(Some(&format!("{prev}0")), Some(next)),
+                1 => format!("{prev}0V"),
+                _ => format!("{prev}{}", DIGITS[at / 2] as char),
+            }
+        }
+        // They differ before `prev` ends: anything that continues `prev` sorts before `next`.
+        _ => format!("{prev}V"),
+    }
+}

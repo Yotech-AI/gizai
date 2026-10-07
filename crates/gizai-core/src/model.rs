@@ -330,6 +330,8 @@ pub struct Run {
     pub base_sha: Option<String>,
     /// The id of the coding CLI it ran on (Settings → Coding CLIs).
     pub adapter: Option<String>,
+    /// The commit its worktree was at when it ended (None while it runs, and for runs from before Gizai saved it).
+    pub head_sha: Option<String>,
 }
 
 /// An agent's runs on one UTC day.

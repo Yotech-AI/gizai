@@ -325,3 +325,52 @@ fn the_still_to_prepare_note_lives_out_of_git_status_sight() {
     assert_eq!(worktree::unprepared(&a.path), None);
     worktree::mark_prepared(&a.path).unwrap();
 }
+
+// GA-14: the commits a run made, from the commit it started at to the one it ended at.
+
+fn commit(dir: &std::path::Path, subject: &str) {
+    git(dir, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", subject]);
+}
+
+#[test]
+fn the_commits_between_two_ids_are_listed_oldest_first_with_their_subjects() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let wt = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-14", "Record where a run ended", "main").unwrap();
+    let base = rev(&wt.path, "HEAD");
+    commit(&wt.path, "First change");
+    commit(&wt.path, "Second change\n\nWith a body that is not its subject.");
+    let head = rev(&wt.path, "HEAD");
+    let list = worktree::commits(&wt.path, &base, &head).unwrap();
+    assert_eq!(list.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), ["First change", "Second change"]);
+    assert_eq!(list[1].sha, head, "full commit ids");
+    assert_eq!(list[0].sha, rev(&wt.path, "HEAD~1"));
+    assert_eq!(worktree::commits(&repo, &base, &head).unwrap(), list, "the main checkout shares the worktree's commits");
+    assert!(worktree::commits(&wt.path, &head, &head).unwrap().is_empty(), "a run that didn't commit");
+}
+
+#[test]
+fn merging_main_in_counts_as_one_commit_not_all_of_mains() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let wt = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-15", "Merge main", "main").unwrap();
+    let base = rev(&wt.path, "HEAD");
+    commit(&wt.path, "Own change");
+    commit(&repo, "On main 1");
+    commit(&repo, "On main 2");
+    git(&wt.path, &["-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "Merge main", "main"]);
+    let list = worktree::commits(&wt.path, &base, &rev(&wt.path, "HEAD")).unwrap();
+    assert_eq!(list.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), ["Own change", "Merge main"]);
+}
+
+#[test]
+fn only_commit_ids_are_read_never_options_or_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let head = rev(&repo, "HEAD");
+    for bad in ["", "HEAD", "main", "--all", "-p", "abc def", "../x"] {
+        assert!(matches!(worktree::commits(&repo, bad, &head), Err(gizai_agents::AgentError::Git(_))), "base {bad:?}");
+        assert!(matches!(worktree::commits(&repo, &head, bad), Err(gizai_agents::AgentError::Git(_))), "head {bad:?}");
+    }
+    assert!(worktree::commits(&repo, &head, "0123456789abcdef0123456789abcdef01234567").is_err(), "an unknown commit is an error");
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeOf, dayRate, canContinue, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, resumeCommand, runReason, toolCalls } from "./runs";
+import { badgeOf, dayRate, canContinue, commitCount, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, resumeCommand, runReason, toolCalls } from "./runs";
 import type { Run, SeqEvent } from "../types";
 
 const ev = (seq: number, text = `t${seq}`) => ({ seq, event: { kind: "text" as const, text } });
@@ -103,5 +103,14 @@ describe("dayRate", () => {
   it("has no rate for a day without finished runs", () => {
     expect(dayRate({ dayStart: 0, succeeded: 0, failed: 0, other: 1 })).toBeNull();
     expect(dayRate({ dayStart: 0, succeeded: 3, failed: 1, other: 1 })).toBe(0.75);
+  });
+});
+
+describe("commitCount", () => {
+  it("says how many commits a run made, in words", () => {
+    expect(commitCount(0)).toBe("No commits");
+    expect(commitCount(1)).toBe("1 commit");
+    expect(commitCount(2)).toBe("2 commits");
+    expect(commitCount(12)).toBe("12 commits");
   });
 });

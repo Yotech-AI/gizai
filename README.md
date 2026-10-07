@@ -54,7 +54,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Review on GitHub: Open pull request pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh; a merge on GitHub moves the card to Done and removes its worktree
 - Settings → GitHub: whether gh is found and logged in, how pushes go, Check connection for every linked project, and Log in with GitHub; Gizai never stores a token or password
 - Agents that start when you press Run, when a card is assigned, or on a heartbeat, on several cards at once
-- Live run output, run history with the reason each run ended, and Continue
+- Live run output, run history with the reason each run ended and the commits it made, and Continue
 - The Team Lead chat, which manages clients, projects, tasks and agents with Gizai's own tools
 - An org chart of your team
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent

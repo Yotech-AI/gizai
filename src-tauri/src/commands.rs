@@ -294,6 +294,12 @@ pub fn stop_run(st: State<AppState>, run_id: String) { runs::stop(&st, &run_id) 
 pub fn list_runs(st: State<AppState>, task_id: String) -> R<Vec<Run>> { gizai_core::runs::list_for_task(&st.db, &task_id).map_err(e) }
 #[tauri::command]
 pub fn run_events(st: State<AppState>, run_id: String) -> Vec<runs::SeqEvent> { runs::events_for(&st, &run_id) }
+/// The commits a finished run made, oldest first (the Runs tab).
+#[tauri::command]
+pub async fn run_commits(st: State<'_, AppState>, run_id: String) -> R<Vec<gizai_agents::worktree::Commit>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || runs::commits(&st, &run_id)).await.map_err(|err| err.to_string())?
+}
 #[tauri::command]
 pub fn live_runs(st: State<AppState>) -> Vec<runs::LiveRun> { runs::live(&st) }
 /// Who a Run without a chosen agent would start now (assigned agent first, then routing).

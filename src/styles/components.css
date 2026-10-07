@@ -333,6 +333,9 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .run-facts { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 6px 14px; margin: 6px 0 0; align-self: stretch; font-size: var(--fs-sm); }
 .run-facts dt { color: var(--text-3); }
 .run-facts dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.run-commits { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; align-self: stretch; }
+.run-commits li { display: flex; align-items: baseline; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.run-commits .mono { flex: none; font-size: var(--fs-sm); color: var(--text-3); }
 @media (prefers-reduced-motion: reduce) { .run-row > .panel-row .chev { transition: none; } }
 
 /* ---------- empty states ---------- */

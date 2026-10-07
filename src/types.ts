@@ -118,7 +118,11 @@ export type Run = {
   baseSha?: string | null;
   /** The id of the coding CLI it ran on. */
   adapter?: string | null;
+  /** The commit its worktree was at when it ended; null while it runs and for runs from before Gizai saved it. */
+  headSha?: string | null;
 };
+/** A commit a run made: its id and the first line of its message. */
+export type Commit = { sha: string; subject: string };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
   /** The GitHub CLI; null = found when needed. */

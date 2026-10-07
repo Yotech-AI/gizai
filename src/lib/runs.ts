@@ -82,3 +82,8 @@ export function canContinue(r: Run): boolean {
 export function toolCalls(events: SeqEvent[]): number {
   return events.filter((e) => e.event.kind === "tool_use").length;
 }
+
+/** How many commits a run made, in words: "No commits", "1 commit", "2 commits". */
+export function commitCount(n: number): string {
+  return n === 0 ? "No commits" : n === 1 ? "1 commit" : `${n} commits`;
+}

@@ -260,7 +260,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, exit_app,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
-            commands::list_contacts, commands::save_contact, commands::list_users, commands::add_user,
+            commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,
             commands::list_tasks, commands::get_task, commands::create_task, commands::update_task, commands::move_task,
             commands::set_task_labels, commands::task_activity, commands::list_comments, commands::add_comment,

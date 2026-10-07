@@ -13,6 +13,7 @@ export const saveClient = (id: string | null, input: T.ClientInput) => invoke<st
 export const archiveClient = (id: string) => invoke<void>("archive_client", { id });
 export const listContacts = (clientId: string) => invoke<T.Contact[]>("list_contacts", { clientId });
 export const saveContact = (contact: T.Contact) => invoke<string>("save_contact", { contact });
+export const removeContact = (id: string) => invoke<void>("remove_contact", { id });
 export const listUsers = () => invoke<T.Person[]>("list_users");
 export const addUser = (name: string, email: string | null) => invoke<string>("add_user", { name, email });
 

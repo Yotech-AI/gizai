@@ -393,10 +393,8 @@ impl From<String> for StartError {
 pub async fn start(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
     let (run_id, done) = start_inner(st, task_id, agent_id, bin_override, trigger, None).await.map_err(StartError::message)?;
-    if trigger == "manual" {
-        if let Some(a) = core_runs::get(&st.db, &run_id).ok().map(|r| r.agent_id) {
-            resume_pull(st, &a);
-        }
+    if trigger == "manual" && let Ok(r) = core_runs::get(&st.db, &run_id) {
+        resume_pull(st, &r.agent_id);
     }
     Ok((run_id, done))
 }

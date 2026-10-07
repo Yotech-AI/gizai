@@ -619,22 +619,23 @@ pub(crate) fn record_head(db: &gizai_core::db::Db, run_id: &str, dir: &Path) {
 }
 
 /// The commits a finished run made, oldest first: from the commit it started at to the one it ended at, along its
-/// branch's own line (`worktree::commits`). Read in its worktree, or in the project's repository once the worktree
-/// is gone (they share their commits).
+/// branch's own line (`worktree::commits`). Read in its worktree, else in the project's repository (once the worktree
+/// is gone: they share their commits).
 pub fn commits(st: &AppState, run_id: &str) -> Result<Vec<worktree::Commit>, String> {
     let run = core_runs::get(&st.db, run_id).map_err(|e| e.to_string())?;
     let (Some(base), Some(head)) = (run.base_sha.as_deref(), run.head_sha.as_deref()) else {
         return Err("Gizai didn't save where this run started and ended".into());
     };
-    let dir = match run.worktree_path.as_deref().map(PathBuf::from).filter(|p| p.join(".git").exists()) {
-        Some(wt) => wt,
-        None => {
-            let task = tasks::get(&st.db, run.task_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
-            let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
-            PathBuf::from(project.repo_path.filter(|p| !p.trim().is_empty()).ok_or("its worktree is gone and its project has no git repository")?)
-        }
-    };
-    worktree::commits(&dir, base, head).map_err(|e| format!("Couldn't read its commits: {e}"))
+    if let Some(wt) = run.worktree_path.as_deref().map(Path::new).filter(|p| p.join(".git").exists())
+        && let Ok(list) = worktree::commits(wt, base, head)
+    {
+        return Ok(list);
+    }
+    let repo = tasks::get(&st.db, run.task_id.as_deref().unwrap_or_default()).ok()
+        .and_then(|t| projects::get(&st.db, t.project_id.as_deref().unwrap_or_default()).ok())
+        .and_then(|p| p.repo_path).filter(|p| !p.trim().is_empty())
+        .ok_or("Couldn't read its commits: its worktree is gone and its project has no git repository")?;
+    worktree::commits(Path::new(&repo), base, head).map_err(|e| format!("Couldn't read its commits: {e}"))
 }
 
 /// `dir`: the run's worktree. `capped`: why Gizai stopped the run at a limit, if it did.

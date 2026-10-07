@@ -83,8 +83,10 @@ export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull
 export const checkPullRequest = (taskId: string) => invoke<T.PullInfo | null>("check_pull_request", { taskId });
 export const detectGh = () => invoke<string | null>("detect_gh");
 
-export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null };
+export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null; suggestCopy?: string[] };
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
+export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
+export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
 
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>

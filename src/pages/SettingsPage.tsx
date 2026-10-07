@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { detectClaude, detectGh, getSettings, saveSettings } from "../api";
 import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
+import { OldWorktrees } from "../components/OldWorktrees";
 
 export function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
@@ -61,6 +62,8 @@ export function SettingsPage() {
             <Field label="Data folder" wide><span className="mono">{s.dataDir}</span></Field>
             <Field label="Worktrees" wide><span className="mono">{s.dataDir}/worktrees</span></Field>
             <Field label="Run logs" wide><span className="mono">{s.dataDir}/runs</span></Field>
+            <Field label="Worktrees of finished cards" wide hint="Done and Cancelled cards keep their worktree, so a new card of the same project can take it over with a warm build. Remove the ones you no longer need.">
+              <OldWorktrees /></Field>
           </FormSection>
         </div>
       </div></div>

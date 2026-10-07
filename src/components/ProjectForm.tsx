@@ -16,7 +16,13 @@ export function toProjectInput(p?: Project | null): ProjectInput {
     name: p?.name ?? "", key: p?.key ?? "", clientId: p?.clientId ?? null, status: p?.status ?? "active", goalMd: p?.goalMd ?? "",
     repoPath: p?.repoPath ?? "", repoUrl: p?.repoUrl ?? "", defaultBranch: p?.defaultBranch ?? "main", color: p?.color ?? PROJECT_COLORS[0],
     budgetAmountMinor: p?.budgetAmountMinor ?? null, budgetHours: p?.budgetHours ?? null,
+    worktreeCopy: p?.worktreeCopy ?? [], worktreeInstall: p?.worktreeInstall ?? true, worktreeSetup: p?.worktreeSetup ?? "",
   };
+}
+
+/** The copy list as typed: one path per line. */
+export function copyPaths(text: string): string[] {
+  return text.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
 /** New project (no id) or edit one, in a drawer. */
@@ -28,6 +34,7 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
   const [repo, setRepo] = useState<RepoCheck | null>(null);
   const [keyTouched, setKeyTouched] = useState(!isNew);
   const [urlTouched, setUrlTouched] = useState(false);
+  const [copyText, setCopyText] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => { listClients().then((c) => setClients(c.map((x) => ({ id: x.id, name: x.name })))).catch(() => {}); }, []);
@@ -54,6 +61,9 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
     catch (e) { setErr(String(e)); setBusy(false); }
   };
   const euros = v.budgetAmountMinor == null ? "" : String(v.budgetAmountMinor / 100);
+  const copy = v.worktreeCopy ?? [];
+  const setCopy = (text: string) => { setCopyText(text); setV({ ...v, worktreeCopy: copyPaths(text) }); };
+  const suggested = (repo?.suggestCopy ?? []).filter((p) => !copy.some((c) => c.replace(/\/$/, "") === p.replace(/\/$/, "")));
   const repoNote = repo && !repo.isGit ? { warn: "This folder isn't a git repository" } : repo?.dirty ? { warn: `On branch ${repo.branch ?? "?"}, with uncommitted changes` }
     : repo?.isGit ? { hint: `Git repository · on branch ${repo.branch ?? "?"}` } : { hint: "Agents work in their own git worktree of it." };
   return (
@@ -84,6 +94,21 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
             <input id="p-url" className="input mono" placeholder="https://github.com/owner/name" value={v.repoUrl ?? ""}
               onChange={(e) => { setUrlTouched(true); set("repoUrl", e.target.value); }} /></Field>
           <Field label="Main branch" htmlFor="p-branch" hint="New task branches start here"><input id="p-branch" className="input mono" value={v.defaultBranch ?? "main"} onChange={(e) => set("defaultBranch", e.target.value)} /></Field>
+        </FormSection>
+        <FormSection title="New worktrees" text="Each card gets its own git worktree. Before the agent starts in a new one, Gizai copies these paths, installs what is still missing, then runs the setup command.">
+          <Field label="Copy from the main checkout" htmlFor="p-copy" wide
+            hint="One file or folder per line, relative to the repository. Copied with cp --reflink=auto (instant on btrfs), so agents start with a warm build. A path the main checkout doesn't have is skipped.">
+            <textarea id="p-copy" className="textarea mono" rows={4} value={copyText ?? copy.join("\n")} onChange={(e) => setCopy(e.target.value)}
+              placeholder={".env\nnode_modules/\nvendor/\ntarget/"} />
+            {suggested.length > 0 && <div><button type="button" className="btn sm" onClick={() => setCopy([...copy, ...suggested].join("\n"))}>
+              Add {suggested.join(", ")}</button> <span className="faint">found in the repository</span></div>}
+          </Field>
+          <Field label="Install" wide hint="composer install when there is a composer.json but no vendor/; npm ci (npm install without a package-lock.json) when there is a package.json but no node_modules/. A folder that is already there is left alone.">
+            <label className="check"><input type="checkbox" checked={v.worktreeInstall ?? true} onChange={(e) => set("worktreeInstall", e.target.checked)} />Install missing dependencies</label>
+          </Field>
+          <Field label="Setup command" htmlFor="p-setup" wide hint="Optional. Runs in each new worktree after the install, before the agent starts: a migration, a build. If it fails, the card goes on hold with its output.">
+            <input id="p-setup" className="input mono" value={v.worktreeSetup ?? ""} onChange={(e) => set("worktreeSetup", e.target.value)} placeholder="php artisan migrate --seed" />
+          </Field>
         </FormSection>
         <FormSection title="Budget" text="Optional. Shown on the project page.">
           <Field label="Budget (€)" htmlFor="p-eur"><input id="p-eur" className="input" type="number" min={0} value={euros} onChange={(e) => set("budgetAmountMinor", e.target.value === "" ? null : Math.round(Number(e.target.value) * 100))} /></Field>

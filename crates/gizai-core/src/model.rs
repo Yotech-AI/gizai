@@ -94,6 +94,13 @@ pub struct Project {
     pub open_tasks: i64,
     pub done_tasks: i64,
     pub updated_at: i64,
+    /// How a new worktree is prepared before an agent starts in it: these paths (files or folders) are copied from the
+    /// main checkout with `cp --reflink=auto`…
+    pub worktree_copy: Vec<String>,
+    /// …then what is still missing is installed (composer install without vendor/, npm ci without node_modules/)…
+    pub worktree_install: bool,
+    /// …and this command runs in it.
+    pub worktree_setup: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -111,6 +118,12 @@ pub struct ProjectInput {
     pub color: Option<String>,
     pub budget_amount_minor: Option<i64>,
     pub budget_hours: Option<f64>,
+    /// Paths to copy from the main checkout into a new worktree, relative to it (".env", "node_modules/"); None keeps them.
+    pub worktree_copy: Option<Vec<String>>,
+    /// Whether a new worktree gets what is still missing installed; None keeps it (on for a new project).
+    pub worktree_install: Option<bool>,
+    /// The command a new worktree runs after the install ("" removes it); None keeps it.
+    pub worktree_setup: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

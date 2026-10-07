@@ -9,7 +9,19 @@ use crate::AgentError;
 pub struct Worktree {
     pub path: PathBuf,
     pub branch: String,
+    /// Made (or taken over) just now, for this card.
     pub created: bool,
+    /// Set when it is a finished card's worktree taken over (`reuse`).
+    pub reused: Option<Reused>,
+}
+
+/// Where a taken-over worktree comes from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reused {
+    /// Its folder before it moved.
+    pub from: PathBuf,
+    /// The commit it had checked out (the finished card's): its dependency folders were installed for that one.
+    pub head: String,
 }
 
 /// Lowercase ASCII letters, digits and single dashes, at most `max` characters. Common accents are
@@ -67,6 +79,12 @@ fn same(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// The branch a card works on: `gizai/<identifier>-<slug of its title>`.
+pub fn branch_name(identifier: &str, title: &str) -> String {
+    let s = slug(title, 40);
+    if s.is_empty() { format!("gizai/{}", identifier.to_lowercase()) } else { format!("gizai/{}-{s}", identifier.to_lowercase()) }
+}
+
 /// The task's worktree at `base_dir/<identifier>` on branch `gizai/<identifier>-<slug>`: reused when it
 /// already exists, else created (on the existing branch if there is one, or a new branch off `default_branch`).
 pub fn ensure(repo: &Path, base_dir: &Path, identifier: &str, title: &str, default_branch: &str) -> Result<Worktree, AgentError> {
@@ -75,13 +93,12 @@ pub fn ensure(repo: &Path, base_dir: &Path, identifier: &str, title: &str, defau
         _ => return Err(AgentError::NotGitRepo(repo.to_path_buf())),
     }
     let path = base_dir.join(identifier);
-    let s = slug(title, 40);
-    let branch = if s.is_empty() { format!("gizai/{}", identifier.to_lowercase()) } else { format!("gizai/{}-{s}", identifier.to_lowercase()) };
+    let branch = branch_name(identifier, title);
     let list = worktrees(repo)?;
 
     if path.exists() {
         return match list.iter().find(|(p, _)| same(p, &path)) {
-            Some((_, b)) => Ok(Worktree { path, branch: b.clone().unwrap_or(branch), created: false }),
+            Some((_, b)) => Ok(Worktree { path, branch: b.clone().unwrap_or(branch), created: false, reused: None }),
             None => Err(AgentError::Git(format!("{} exists but is not a worktree of this repository", path.display()))),
         };
     }
@@ -97,7 +114,97 @@ pub fn ensure(repo: &Path, base_dir: &Path, identifier: &str, title: &str, defau
         // --no-track: a branch started from a remote's main must not push to it
         git(repo, &["worktree", "add", "--no-track", "-b", &branch, &path_s, default_branch])?;
     }
-    Ok(Worktree { path, branch, created: true })
+    Ok(Worktree { path, branch, created: true, reused: None })
+}
+
+/// A card without a worktree takes over `from`, the worktree of a finished card, so its build stays warm. The folder
+/// moves to `base_dir/<identifier>` and switches to the card's branch (made from `start` when the card has none yet).
+/// Then nothing of the finished card is left (`git clean -dx`: untracked and ignored files go) except the paths in
+/// `keep`, relative to the worktree: the copied folders and the installed dependencies, such as node_modules/ and
+/// target/. Refuses a worktree with uncommitted changes or untracked files, and puts it back when switching fails.
+pub fn reuse(repo: &Path, from: &Path, base_dir: &Path, identifier: &str, title: &str, start: &str, keep: &[String]) -> Result<Worktree, AgentError> {
+    let path = base_dir.join(identifier);
+    let branch = branch_name(identifier, title);
+    if path.exists() {
+        return Err(AgentError::Git(format!("{} already exists", path.display())));
+    }
+    let list = worktrees(repo)?;
+    if let Some((p, _)) = list.iter().find(|(_, b)| b.as_deref() == Some(branch.as_str())) {
+        return Err(AgentError::Git(format!("branch {branch} is already checked out at {}", p.display())));
+    }
+    if !list.iter().any(|(p, _)| same(p, from)) {
+        return Err(AgentError::Git(format!("{} is not a worktree of this repository", from.display())));
+    }
+    if uncommitted(from)? > 0 {
+        return Err(AgentError::Git(format!("{} has uncommitted changes", from.display())));
+    }
+    let head = git(from, &["rev-parse", "HEAD"])?;
+    std::fs::create_dir_all(base_dir)?;
+    git(repo, &["worktree", "move", &from.to_string_lossy(), &path.to_string_lossy()])?;
+    let switched = if git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
+        git(&path, &["checkout", "--quiet", &branch])
+    } else {
+        // --no-track: a branch started from a remote's main must not push to it
+        git(&path, &["checkout", "--quiet", "--no-track", "-b", &branch, start])
+    };
+    if let Err(e) = switched {
+        let _ = git(repo, &["worktree", "move", &path.to_string_lossy(), &from.to_string_lossy()]);
+        return Err(e);
+    }
+    let mut args: Vec<String> = ["clean", "-d", "-x", "--force", "--quiet"].map(String::from).to_vec();
+    for k in keep {
+        let k = k.trim().trim_start_matches("./").trim_matches('/');
+        if !k.is_empty() {
+            args.extend(["-e".to_string(), format!("/{k}")]);
+        }
+    }
+    git(&path, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    Ok(Worktree { path, branch, created: true, reused: Some(Reused { from: from.to_path_buf(), head }) })
+}
+
+/// Gizai's note that a worktree still has to be prepared, in the worktree's own git folder (.git/worktrees/<name>):
+/// out of git status's sight, and gone with the worktree.
+const UNPREPARED: &str = "gizai-unprepared";
+
+/// A worktree that still has to be prepared (see `mark_unprepared`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unprepared {
+    /// The commit its dependency folders were installed for, when it was taken over (`Reused::head`).
+    pub since: Option<String>,
+}
+
+/// Notes that the worktree at `wt` still has to be prepared: it was just made or taken over. The note stays until
+/// `mark_prepared`, so a preparation that failed runs again at the next start.
+pub fn mark_unprepared(wt: &Path, since: Option<&str>) -> Result<(), AgentError> {
+    let dir = PathBuf::from(git(wt, &["rev-parse", "--absolute-git-dir"])?);
+    std::fs::write(dir.join(UNPREPARED), since.unwrap_or_default())?;
+    Ok(())
+}
+
+/// Whether the worktree at `wt` still has to be prepared.
+pub fn unprepared(wt: &Path) -> Option<Unprepared> {
+    let dir = PathBuf::from(git(wt, &["rev-parse", "--absolute-git-dir"]).ok()?);
+    let since = std::fs::read_to_string(dir.join(UNPREPARED)).ok()?;
+    let since = since.trim();
+    Some(Unprepared { since: (!since.is_empty()).then(|| since.to_string()) })
+}
+
+pub fn mark_prepared(wt: &Path) -> Result<(), AgentError> {
+    let dir = PathBuf::from(git(wt, &["rev-parse", "--absolute-git-dir"])?);
+    match std::fs::remove_file(dir.join(UNPREPARED)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Whether `path` is inside `dir` (Gizai's worktree folder, or one project's part of it), as they are on disk.
+pub fn is_inside(path: &Path, dir: &Path) -> bool {
+    inside(path, dir)
+}
+
+/// Whether every commit of `branch` is in `into` (a branch or ref), so deleting the branch loses nothing.
+pub fn merged(repo: &Path, branch: &str, into: &str) -> bool {
+    git(repo, &["merge-base", "--is-ancestor", &format!("refs/heads/{branch}"), into]).is_ok()
 }
 
 /// The repository's remotes: (name, fetch URL).
@@ -149,6 +256,11 @@ pub fn push_branch(repo: &Path, to: &str, branch: &str) -> Result<(), AgentError
     git_quiet(repo, &["push", "--quiet", to, &spec], Duration::from_secs(120))
         .map(|_| ())
         .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {e}")))
+}
+
+/// Every branch that is checked out in a worktree of the repository, with that worktree.
+pub fn checked_out(repo: &Path) -> Result<std::collections::HashMap<String, PathBuf>, AgentError> {
+    Ok(worktrees(repo)?.into_iter().filter_map(|(p, b)| Some((b?, p))).collect())
 }
 
 /// The worktree that has `branch` checked out, if one does.

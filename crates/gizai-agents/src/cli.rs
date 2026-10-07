@@ -56,7 +56,8 @@ pub struct CliSpec {
     /// Set on top of Gizai's own environment, e.g. CLAUDE_CONFIG_DIR for a second Claude Code account.
     pub env: Vec<(String, String)>,
     /// Other only: its arguments. `{prompt}` is replaced by the prompt (else the prompt goes in on stdin) and
-    /// `{model}` by the agent's model (without a model, that argument and the option before it are left out).
+    /// `{model}` by the agent's model (without a model, that argument is left out, with the option before it in
+    /// `-m {model}`, alone in `--model={model}`).
     pub args: String,
 }
 
@@ -204,8 +205,9 @@ pub fn other_args(template: &str, prompt: &str, model: Option<&str>) -> (Vec<Str
         if t.contains("{model}") {
             match model {
                 Some(m) => out.push(t.replace("{model}", m)),
-                // No model: leave out this argument and the option that takes it (`-m {model}`).
-                None => if out.last().is_some_and(|p| p.starts_with('-') && !p.contains('=')) { out.pop(); },
+                // No model: leave out this argument, and the option before it when that takes it as its value
+                // (`-m {model}`). An option that holds it itself (`--model={model}`) goes alone.
+                None => if !t.starts_with('-') && out.last().is_some_and(|p| p.starts_with('-') && !p.contains('=')) { out.pop(); },
             }
             continue;
         }

@@ -167,7 +167,8 @@ fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str) -> Result<Pu
     if worktree::rev_parse(repo, &format!("refs/heads/{}", card.branch)).is_err() {
         return Err(format!("{}'s branch {} isn't in {} any more", card.identifier, card.branch, card.repo_path));
     }
-    let to = crate::git::remote_for(repo, &card.repo_url).unwrap_or_else(|| format!("{}.git", card.repo_url));
+    // the same place a run fetches main from
+    let to = crate::git::remote_for(repo, &card.repo_url).unwrap_or_else(|| card.repo_url.clone());
     worktree::push_branch(repo, &to, &card.branch).map_err(plain)?;
     let open = github::pulls_for_branch(gh, repo, &card.repo, &card.branch)?.into_iter().find(|p| p.state == "OPEN");
     let (url, state) = match open {

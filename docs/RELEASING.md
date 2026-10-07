@@ -1,27 +1,152 @@
 # Releasing Gizai
 
-Gizai's repository has two branches:
+This is how a new version of Gizai reaches the people who use it. It is for people and for agents (the DevOps Agent releases when a card asks for it and names the version).
+
+In short: a release is a GitHub Release with a version tag, `vX.Y.Z`, on the `production` branch. Every installed Gizai asks GitHub for the latest release. When it finds a newer one, the sidebar shows **Update to X.Y.Z** above Company. Gizai updates from Releases only, never from `main`: a merge into `main` reaches people with the next release.
+
+## Branches
 
 | Branch | What it holds | How it changes |
 |---|---|---|
 | `main` | Development. Cards' branches start here, and their pull requests merge here. | Pull requests, merged on GitHub |
-| `production` | The released version: what `install.sh` installs and what Gizai updates to. | Only a pull request from `main`. It is protected: no direct pushes, no force pushes, no deleting. |
+| `production` | The released version: what `install.sh` installs, and where release tags point. | Only a pull request from `main`. It is protected: no direct pushes, no force pushes, no deleting. |
 
-A release is a GitHub Release with a version tag (`v0.2.0`) on `production`. Gizai's update check, planned in the "Update from the sidebar" card, looks only at Releases, never at `main`.
+## When to release
+
+- When `main` has something worth giving to the people who use Gizai: a finished card or a fix.
+- Only when `main` passes everything in CLAUDE.md (`cargo test --workspace`, `npm test`, `npm run build`, `scripts/ui-test.sh`) and builds with `npm run tauri build -- --no-bundle`. A release that doesn't build fails for everyone who presses Update. Their installed Gizai keeps working, but they're stuck on it.
+- Jeffrey decides when to release. An agent releases only when a card asks for it and names the version.
+
+## Choosing the version
+
+Versions are `MAJOR.MINOR.PATCH` and the tag is `v` plus the version: `v0.1.6`. Gizai offers nothing else: no `v0.2.0-beta.1`, no drafts, no pre-releases.
+
+- **PATCH** (0.1.5 → 0.1.6): fixes and small changes.
+- **MINOR** (0.1.6 → 0.2.0): new features, and always a change to the database schema (`SCHEMA_VERSION` in `crates/gizai-core/src/db.rs`). The new version upgrades the data, and an older build refuses it afterwards.
+- **MAJOR**: when Jeffrey says so.
+
+The new version must be higher than the last release (`gh release list`). Gizai only offers a release that is newer than itself.
 
 ## Making a release
 
-1. **Bump the version** on `main`, in all three places: `Cargo.toml` (the workspace version), `package.json` and `src-tauri/tauri.conf.json`.
-2. **Open a pull request** from `main` into `production` on GitHub, check it, and merge it:
+Replace `X.Y.Z` with the new version.
+
+1. **Bump the version** on a branch from `main`, in all three places:
+   - `Cargo.toml`: `version` under `[workspace.package]`;
+   - `package.json`: `version`;
+   - `src-tauri/tauri.conf.json`: `version`.
+
+   Then update the lock files, which carry it too:
 
    ```sh
-   gh pr create --base production --head main --title "Release v0.2.0"
+   source scripts/env.sh
+   cargo update --workspace --offline                        # Cargo.lock: gizai, gizai-agents, gizai-core, gizai-mcp
+   npm install --package-lock-only --ignore-scripts --offline # package-lock.json, in two places
+   git grep -n 'X.Y.Z' -- Cargo.toml package.json src-tauri/tauri.conf.json Cargo.lock package-lock.json
    ```
 
-3. **Create the release** from `production`, with notes made from the merged pull requests:
+   Commit it as `Bump version to X.Y.Z`, push the branch, and merge its pull request into `main`.
+
+   Gizai checks the bump. An update installs nothing when the release's `Cargo.toml` says another version, and it checks `gizai --version` after installing. A forgotten bump would otherwise offer the same update forever.
+
+2. **Merge `main` into `production`** with a pull request and a merge commit (never squash or rebase):
 
    ```sh
-   gh release create v0.2.0 --target production --generate-notes
+   gh pr create --base production --head main --title "Release vX.Y.Z" --body "What's in it, in a few lines."
+   gh pr merge <number> --merge
    ```
 
-People who installed from `production` update with `./install.sh`, and later with the Update item in Gizai's sidebar.
+3. **Create the release** on `production`, with notes made from the merged pull requests:
+
+   ```sh
+   gh release create vX.Y.Z --target production --title "vX.Y.Z" --generate-notes
+   ```
+
+   Don't add `--draft` or `--prerelease`. Gizai reads GitHub's "latest release", which skips both. Its notes show in Settings → Updates under "What's new".
+
+4. **Check it:**
+
+   ```sh
+   gh release view vX.Y.Z                                     # not a draft, not a pre-release
+   git ls-remote origin refs/tags/vX.Y.Z refs/heads/production # the tag is production's latest commit
+   curl -s https://api.github.com/repos/Yotech-AI/gizai/releases/latest | grep '"tag_name"'   # what Gizai reads: vX.Y.Z
+   ```
+
+   Every installed Gizai sees the release within six hours, or at once with Settings → Updates → Check now.
+
+If `git push` asks for a username (the remote is an https address and git has no login for it), push over SSH with your keys:
+
+```sh
+git -c url.git@github.com:.insteadOf=https://github.com/ push -u origin HEAD
+```
+
+## Never
+
+- **Never move or delete a released tag, and never reuse a version.** Gizais may have fetched it already. A mistake gets fixed with the next patch version.
+- **Never push to `production` directly or force a push.** Only the pull request from `main` changes it.
+- **Never tag `main` or a card's branch.** Release tags point at `production`.
+- **No binaries attached yet.** Gizai builds every release from source; prebuilt binaries come later.
+
+## How Gizai updates itself
+
+Every release must keep this working, because the Gizai that updates runs the **new** release's `install.sh`.
+
+- **The check.**
+  - It runs 20 seconds after Gizai starts (when it is due), then every six hours while Settings → Updates → "Check for new releases automatically" is on. A check that didn't work tries again after an hour. Check now asks at any time.
+  - It reads `https://api.github.com/repos/Yotech-AI/gizai/releases/latest` with curl, without a login. GitHub allows 60 such requests an hour per network, which is plenty.
+  - Nothing about the person or their work is sent.
+- **The notice.** When the latest release is newer than the Gizai that runs, the sidebar shows "Update to X.Y.Z" above Company. Settings → Updates shows the same, with the release notes.
+- **The update.** Pressing it runs these steps:
+  1. **Get the source:** a shallow fetch of the tag `vX.Y.Z` only, into `<data folder>/update/source`. The folder is kept with its `target/` and `node_modules/`, so later updates build faster.
+  2. **Check the version:** the source's `Cargo.toml` must say `X.Y.Z`.
+  3. **Build:** the release's own `./install.sh --build-only`, at low CPU priority. Gizai stays usable meanwhile. Every command's output goes to `<data folder>/update/update.log`.
+  4. **Back up the data:** `<data folder>/backups/gizai-before-update-<time>.db`.
+  5. **Install:** the release's own `./install.sh --skip-build`, with `GIZAI_PREFIX` set to where the running Gizai was installed (usually `~/.local`) and `GIZAI_DATA_DIR` set to its data folder. The installer backs up again with the new build, then replaces the programs with a rename.
+  6. **Check:** `gizai --version` of the installed program must say `X.Y.Z`. Then the notice offers **Restart to use X.Y.Z**. Restart quits Gizai the usual way (agents at work are stopped first) and starts the installed one.
+- **When a step fails,** nothing installed changes. The notice says the update failed, and Settings → Updates says why, with the end of the output, the log and Try again.
+- **Stop** ends the update while it gets the source or builds. Quitting Gizai does that too.
+- **So `install.sh` must keep these working:** `--build-only`, `--skip-build`, `GIZAI_PREFIX` and `GIZAI_DATA_DIR`.
+- **Only an installed Gizai updates itself.** That is a Gizai that runs as `<prefix>/lib/gizai/gizai`. A dev build (`scripts/run.sh`) or a test build says why it doesn't, and never installs anything.
+- **From a terminal** it works as before: `git pull` in a checkout of `production`, then `./install.sh`.
+- **Settings for tests and forks:**
+  - `GIZAI_REPO`: the repository the tag is fetched from. Default `https://github.com/Yotech-AI/gizai.git`.
+  - `GIZAI_RELEASES_URL`: what the check reads. Default: GitHub's latest release of `GIZAI_REPO`. It also takes `http://` and `file://` addresses.
+
+## Testing an update without touching a real Gizai
+
+Never test against the Gizai Jeffrey uses: not `./install.sh`, not `~/.local/lib/gizai`, not `~/.local/share/gizai`. Everything goes in one scratch folder, `$T` below.
+
+1. **A fake release.**
+   - A git repository with a tag, for example `v9.9.9`. Its `Cargo.toml` must say `version = "9.9.9"` under `[workspace.package]`.
+   - It needs an `install.sh` that takes `--build-only` and `--skip-build`. For a quick test, use a stub:
+     - `--build-only` writes `target/release/gizai` (a script that prints `gizai 9.9.9` for `--version` and a path for `--backup`) and `target/release/gizai-mcp`;
+     - `--skip-build` copies them to `$GIZAI_PREFIX/lib/gizai/`.
+
+     For a real test, use a copy of this repository with the version bumped; its build takes minutes.
+   - A file shaped like GitHub's answer:
+
+     ```json
+     {"tag_name": "v9.9.9", "name": "v9.9.9", "html_url": "https://github.com/Yotech-AI/gizai/releases/tag/v9.9.9", "draft": false, "prerelease": false, "body": "- What changed"}
+     ```
+
+2. **A scratch install of this branch's build:**
+
+   ```sh
+   env -i HOME="$T/home" PATH="$PATH" ./install.sh --skip-build
+   ```
+
+   This is what `scripts/test-install.sh` does. It puts the programs in `$T/home/.local/lib/gizai/`.
+
+3. **Start that Gizai headless,** in `cage` the way `scripts/shot-cage.sh` starts one, but with these settings:
+
+   ```sh
+   HOME="$T/home" XDG_DATA_HOME="$T/home/.local/share" GIZAI_DATA_DIR="$T/data" \
+     GIZAI_REPO="$T/fake-repo" GIZAI_RELEASES_URL="file://$T/latest.json" \
+     "$T/home/.local/lib/gizai/gizai"
+   ```
+
+   - `HOME` and `XDG_DATA_HOME` must be in the scratch folder too. The installer writes a desktop entry and icons under `$XDG_DATA_HOME` (else `$HOME/.local/share`), and the real ones must stay as they are.
+   - Gizai installs an update into the prefix it runs from: here `$T/home/.local`.
+   - A Gizai that runs from `target/release` never installs; it says why in Settings → Updates.
+
+   Make the stub's `install.sh` fail to see the failure path: the old programs must stay in place, and Settings → Updates must say why.

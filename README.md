@@ -27,6 +27,19 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 | `./install.sh` | Installs, or updates (your data is backed up first) |
 | `./install.sh --uninstall` | Removes Gizai and keeps your data in `~/.local/share/gizai` |
 
+### Updates
+
+Gizai asks GitHub for the latest release 20 seconds after it starts, then every six hours. When a newer one is out, **Update to <version>** shows above Company in the sidebar.
+
+Click it and Gizai:
+
+1. builds the new version from source in the background, while you keep working;
+2. backs up your data;
+3. installs the new version;
+4. offers a restart.
+
+If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull` and `./install.sh`.
+
 ![Gizai: the board, a live agent run, the Team Lead chat, the team and an agent](docs/gizai.gif)
 
 ## Features
@@ -44,7 +57,8 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 - The Team Lead chat, which manages clients, projects, tasks and agents with Gizai's own tools
 - An org chart of your team
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
-- A backup before every update, one Gizai per data folder, no telemetry
+- Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
+- A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)
 
 ## Development
 

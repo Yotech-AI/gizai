@@ -661,7 +661,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             record_head(&st.db, &run_id, &wt.path);
             let _ = core_runs::finish(&st.db, &run_id, "failed", None, 0, 0, 0, Some(&msg));
             (st.notify)(Note::RowsChanged("runs"));
-            return Err(StartError::Other(msg));
+            // The CLI couldn't be started: a start that can't work, not a failed run.
+            return Err(StartError::Card(msg));
         }
     };
     let _ = core_runs::set_running(&st.db, &run_id, handle.pid);

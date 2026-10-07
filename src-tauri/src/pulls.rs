@@ -128,6 +128,12 @@ pub(crate) fn gh_bin(st: &AppState) -> Result<PathBuf, String> {
     }
 }
 
+/// `gh_bin` off the async threads: finding gh can start a login shell.
+async fn gh(st: &AppState) -> Result<PathBuf, String> {
+    let st = st.clone();
+    tokio::task::spawn_blocking(move || gh_bin(&st)).await.map_err(|e| e.to_string())?
+}
+
 /// The card's pull request as Gizai last saw it.
 fn known(card: &PrCard) -> Option<PullInfo> {
     card.pr_url.clone().map(|url| PullInfo {
@@ -151,7 +157,7 @@ pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
     if is_live(st, task_id) {
         return Err(format!("An agent is working on {}: open the pull request when its run has ended", card.identifier));
     }
-    let gh = gh_bin(st)?;
+    let gh = gh(st).await?;
     let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
     let _busy = Busy::take(st, task_id).ok_or_else(|| format!("Gizai is already busy with {}'s pull request", card.identifier))?;
     let (title, body) = (format!("{}: {}", task.identifier, task.title), body(&task));
@@ -212,7 +218,7 @@ pub async fn check(st: &AppState, task_id: &str) -> Result<Option<PullInfo>, Str
     if !card.followed() || is_live(st, task_id) {
         return Ok(known(&card));
     }
-    let gh = gh_bin(st)?;
+    let gh = gh(st).await?;
     let Some(_busy) = Busy::take(st, task_id) else { return Ok(known(&card)) };
     let (st2, c) = (st.clone(), card.clone());
     let checked = tokio::task::spawn_blocking(move || check_blocking(&st2, &gh, &c)).await.map_err(|e| e.to_string())??;
@@ -244,7 +250,7 @@ pub async fn check_all(st: &AppState) -> Vec<Checked> {
     if cards.is_empty() {
         return vec![];
     }
-    let gh = match gh_bin(st) {
+    let gh = match gh(st).await {
         Ok(g) => { forget_error(st, ""); g }
         Err(e) => { log_once(st, "", &format!("the pull request check can't run: {e}")); return vec![]; }
     };

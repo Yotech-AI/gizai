@@ -103,6 +103,9 @@ pub struct Settings {
     /// …or after this many tool calls.
     #[serde(default = "default_tool_calls")]
     pub max_run_tool_calls: u32,
+    /// The GitHub CLI (gh) that opens and follows pull requests with your GitHub login; None = found when needed.
+    #[serde(default)]
+    pub gh_bin: Option<String>,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
@@ -117,6 +120,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         max_run_usd: settings::get(&st.db, "max_run_usd").ok().flatten(),
         max_run_minutes: settings::get(&st.db, "max_run_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_MINUTES),
         max_run_tool_calls: settings::get(&st.db, "max_run_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_TOOL_CALLS),
+        gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
     }
 }
 
@@ -135,6 +139,8 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     }
     let bin = s.claude_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
     settings::set(&st.db, "claude_bin", &bin).map_err(|e| e.to_string())?;
+    let gh = s.gh_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
+    settings::set(&st.db, "gh_bin", &gh).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_concurrent_runs", &s.max_concurrent_runs).map_err(|e| e.to_string())?;
     settings::set(&st.db, "agents_paused", &s.agents_paused).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_usd", &s.max_run_usd).map_err(|e| e.to_string())?;
@@ -143,7 +149,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     Ok(())
 }
 
-fn executable(p: &Path) -> bool {
+pub(crate) fn executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
@@ -376,9 +382,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Some(url) => {
             let (dir, branch) = (PathBuf::from(&repo), project.default_branch.clone());
             tokio::task::spawn_blocking(move || {
-                let remote = worktree::remotes(&dir).unwrap_or_default().into_iter()
-                    .filter(|(_, u)| gizai_core::repo_url::same_repo(u, &url))
-                    .min_by_key(|(name, _)| name != "origin").map(|(name, _)| name);
+                let remote = crate::git::remote_for(&dir, &url);
                 worktree::fetch_start(&dir, remote.as_deref(), &url, &branch)
             }).await.map_err(|e| StartError::Other(e.to_string()))?.map_err(|e| StartError::Card(e.to_string()))?
         }
@@ -523,6 +527,10 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<R
         let st2 = st.clone();
         let tid = task_id.to_string();
         tokio::spawn(async move { dispatch(&st2, &tid).await; });
+        // In Review: a pull request the agent opened shows on the card at once, not at the next PR check.
+        if tasks::get(&st.db, task_id).is_ok_and(|t| t.state_category == "review") {
+            crate::pulls::check_soon(st, task_id);
+        }
     }
     RunSummary { run_id: run_id.to_string(), status: status.into(), outcome: verdict.map(|v| v.outcome), cost_usd_micros: cost, error }
 }

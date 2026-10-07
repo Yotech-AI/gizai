@@ -336,3 +336,16 @@ pub fn chat_live(st: State<AppState>) -> Vec<chat::ChatStatus> { chat::live(&st)
 /// The agent that answers on the Chat page, if any.
 #[tauri::command]
 pub fn chat_agent(st: State<AppState>) -> R<Option<team::Member>> { team::chat_agent(&st.db).map_err(e) }
+
+// ---- pull requests on GitHub ----
+/// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.
+#[tauri::command]
+pub async fn open_pull_request(st: State<'_, AppState>, task_id: String) -> R<crate::pulls::PullInfo> { crate::pulls::open(&st, &task_id).await }
+/// What GitHub says about the card's pull request now (a merge moves the card to Done).
+#[tauri::command]
+pub async fn check_pull_request(st: State<'_, AppState>, task_id: String) -> R<Option<crate::pulls::PullInfo>> { crate::pulls::check(&st, &task_id).await }
+#[tauri::command]
+pub async fn detect_gh(st: State<'_, AppState>) -> R<Option<String>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::pulls::detect_gh(&st)).await.map_err(|err| err.to_string())
+}

@@ -81,7 +81,7 @@ pub fn pull_url(text: &str) -> Option<String> {
             (parts.len() == 4 && !parts[0].is_empty() && !parts[1].is_empty() && parts[2] == "pull" && parts[3].parse::<u64>().is_ok())
                 .then(|| w.to_string())
         })
-        .last()
+        .next_back()
 }
 
 /// The number at the end of a pull request link.

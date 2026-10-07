@@ -82,11 +82,12 @@ fn check_state(state: &str) -> Result<()> {
     if STATES.contains(&state) { Ok(()) } else { Err(Error::Invalid(format!("unknown pull request state {state}"))) }
 }
 
-/// Records the card's pull request. The activity gets an entry only when the link or the state changed; `opened`
-/// marks the one opened from Gizai. Returns whether anything changed.
-pub fn record(db: &Db, actor: &str, task_id: &str, url: &str, state: &str, opened: bool) -> Result<bool> {
+/// Records the card's pull request: by `actor` (you, opening it), or by Gizai itself (None: the PR check). The
+/// activity gets an entry only when the link or the state changed; `opened` marks the one opened from Gizai. Returns
+/// whether anything changed.
+pub fn record(db: &Db, actor: Option<&str>, task_id: &str, url: &str, state: &str, opened: bool) -> Result<bool> {
     check_state(state)?;
-    db.write(Some(actor), |w| {
+    db.write(actor, |w| {
         let c = w.conn();
         let (old_url, old_state): (Option<String>, Option<String>) = c
             .query_row("SELECT pr_url, pr_state FROM tasks WHERE id=?1 AND deleted_at IS NULL", [task_id], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -95,7 +96,7 @@ pub fn record(db: &Db, actor: &str, task_id: &str, url: &str, state: &str, opene
         if old_url.as_deref() == Some(url) && old_state.as_deref() == Some(state) {
             return Ok(false);
         }
-        c.execute("UPDATE tasks SET pr_url=?2, pr_state=?3, updated_at=?4, updated_by=?5, version=version+1 WHERE id=?1",
+        c.execute("UPDATE tasks SET pr_url=?2, pr_state=?3, updated_at=?4, updated_by=coalesce(?5, updated_by), version=version+1 WHERE id=?1",
                   rusqlite::params![task_id, url, state, ids::now_ms(), actor])?;
         let mut diff = json!({"pullRequest": url, "prState": state});
         if opened {
@@ -107,9 +108,10 @@ pub fn record(db: &Db, actor: &str, task_id: &str, url: &str, state: &str, opene
 }
 
 /// GitHub merged the card's pull request: records it and moves the card to its team's Done column (a card that is
-/// already Done or Cancelled stays). Returns the column it moved to.
-pub fn merged(db: &Db, actor: &str, task_id: &str, url: &str) -> Result<Option<String>> {
-    db.write(Some(actor), |w| {
+/// already Done or Cancelled stays). The activity says Gizai did it; `by` is the person it did it for (the card's
+/// `updated_by`). Returns the column it moved to.
+pub fn merged(db: &Db, by: &str, task_id: &str, url: &str) -> Result<Option<String>> {
+    db.write(None, |w| {
         let c = w.conn();
         let (category, team): (String, String) = c
             .query_row("SELECT s.category, s.team_id FROM tasks t JOIN workflow_states s ON s.id = t.state_id WHERE t.id=?1 AND t.deleted_at IS NULL",
@@ -117,7 +119,7 @@ pub fn merged(db: &Db, actor: &str, task_id: &str, url: &str) -> Result<Option<S
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("task {task_id}")))?;
         c.execute("UPDATE tasks SET pr_url=?2, pr_state='merged', updated_at=?3, updated_by=?4, version=version+1 WHERE id=?1",
-                  rusqlite::params![task_id, url, ids::now_ms(), actor])?;
+                  rusqlite::params![task_id, url, ids::now_ms(), by])?;
         w.update("tasks", task_id, json!({"pullRequest": url, "prState": "merged"}))?;
         if matches!(category.as_str(), "done" | "cancelled") {
             return Ok(None);
@@ -127,12 +129,13 @@ pub fn merged(db: &Db, actor: &str, task_id: &str, url: &str) -> Result<Option<S
                        [&team], |r| Ok((r.get(0)?, r.get(1)?)))
             .optional()?;
         let Some((done_id, name)) = done else { return Ok(None) };
-        tasks::move_in(w, actor, task_id, &done_id, None)?;
+        tasks::move_in(w, by, task_id, &done_id, None)?;
         Ok(Some(name))
     })
 }
 
-/// Notes in the card's activity what happened to its worktree and branch after the merge (one plain sentence).
-pub fn note_cleanup(db: &Db, actor: &str, task_id: &str, sentence: &str) -> Result<()> {
-    db.write(Some(actor), |w| w.update("tasks", task_id, json!({"cleanup": sentence})))
+/// Notes in the card's activity, as Gizai, what happened to its worktree and branch after the merge (one plain
+/// sentence).
+pub fn note_cleanup(db: &Db, task_id: &str, sentence: &str) -> Result<()> {
+    db.write(None, |w| w.update("tasks", task_id, json!({"cleanup": sentence})))
 }

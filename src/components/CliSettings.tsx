@@ -5,11 +5,12 @@ import type { Cli, CliKind, CliStatus } from "../types";
 
 /** The program each kind usually has, filled in when you pick the kind of a new CLI. */
 const PROGRAM: Record<CliKind, string> = { claude_code: "claude", codex: "codex", gemini: "gemini", other: "" };
+const KEEP_NOTE = " Gizai keeps these lines as plain text: point to a folder, don't paste a key.";
 const ENV_HINT: Record<CliKind, string> = {
-  claude_code: "For a second account: CLAUDE_CONFIG_DIR=~/.claude-2 (the folder that account logged in with).",
-  codex: "For a second account: CODEX_HOME=~/.codex-2 (the folder that account logged in with).",
-  gemini: "Optional, one NAME=value per line, e.g. GEMINI_API_KEY=… for another key.",
-  other: "Optional, one NAME=value per line.",
+  claude_code: "For a second account: CLAUDE_CONFIG_DIR=~/.claude-2 (the folder that account logged in with)." + KEEP_NOTE,
+  codex: "For a second account: CODEX_HOME=~/.codex-2 (the folder that account logged in with)." + KEEP_NOTE,
+  gemini: "Optional, one NAME=value per line." + KEEP_NOTE,
+  other: "Optional, one NAME=value per line." + KEEP_NOTE,
 };
 
 type Draft = { id: string; name: string; kind: CliKind; command: string; env: string; args: string };

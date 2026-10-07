@@ -72,12 +72,12 @@ pub fn list(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
     })
 }
 
-/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting in Review for `you`.
-/// Same rule as the UI's `needsYou`.
+/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting for `you` in Review or Deploy
+/// (merged, not deployed yet). Same rule as the UI's `needsYou`.
 pub fn needs_you(db: &Db, you_id: &str) -> Result<Vec<Task>> {
     Ok(list(db, &TaskFilter { open_only: true, ..Default::default() })?
         .into_iter()
-        .filter(|t| t.hold.is_some() || (t.state_category == "review" && t.assignee_id.as_deref() == Some(you_id)))
+        .filter(|t| t.hold.is_some() || (matches!(t.state_category.as_str(), "review" | "deploy") && t.assignee_id.as_deref() == Some(you_id)))
         .collect())
 }
 

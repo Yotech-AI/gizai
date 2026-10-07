@@ -114,7 +114,7 @@ pub fn parse_release(json: &str) -> Result<Release, Problem> {
     });
     Ok(Release {
         version: version.to_string(),
-        tag: r.tag_name,
+        tag: r.tag_name.trim().to_string(),
         name: r.name.filter(|n| !n.trim().is_empty()),
         url: r.html_url,
         published_at: r.published_at,

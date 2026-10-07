@@ -27,7 +27,7 @@ export function UpdateSettings() {
     <FormSection title="Updates" text="Gizai updates from its releases on GitHub. An update builds the new version from source in the background, backs up your data, installs it and offers a restart. If a step fails, the installed version keeps working.">
       <Field label="Version" wide>
         <div className={`gh-line ${line.mark === "new" ? "ok" : line.mark}`}><Mark className="icon" /><span>Gizai {s.current}. {line.text}</span></div>
-        {release?.url && (
+        {release?.url?.startsWith("https://") && (
           <div><button className="btn ghost sm" onClick={() => openUrl(release.url!).catch(() => {})}><ExternalLink className="icon" />Release {release.version} on GitHub</button></div>
         )}
         {release?.notes && (

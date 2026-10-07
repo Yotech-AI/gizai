@@ -1,6 +1,7 @@
 // A card's pull request on GitHub: its link and state, and Open pull request for a card in Review (pushes the branch
 // over SSH or HTTPS, as Settings → GitHub says, and opens the pull request with gh). Opening the page of a card Gizai follows asks GitHub at
-// once, so a pull request an agent opened shows straight away, and a merge moves the card to Done.
+// once, so a pull request an agent opened shows straight away, and a merge moves the card to Deploy (or Done when the team has
+// no Deploy column).
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Upload } from "lucide-react";
@@ -11,7 +12,8 @@ import type { Task } from "../types";
 
 const ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
 
-export function PullPanel({ task, live }: { task: Task; live: boolean }) {
+/** `mergeTo`: the column a merge moves the card to (the team's Deploy column; Done when left out). */
+export function PullPanel({ task, live, mergeTo }: { task: Task; live: boolean; mergeTo?: string }) {
   const { data: project } = useData(() => (task.projectId ? getProject(task.projectId) : Promise.resolve(null)), [task.projectId]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export function PullPanel({ task, live }: { task: Task; live: boolean }) {
         </span>
       </div>
       <div className="run-summary">
-        <span className="muted">{action?.why ?? pullHint(task, project?.defaultBranch ?? "main")}</span>
+        <span className="muted">{action?.why ?? pullHint(task, project?.defaultBranch ?? "main", mergeTo)}</span>
         {pushed && <div style={{ color: "var(--success)", fontSize: "var(--fs-sm)", marginTop: 6 }}>{pushed}</div>}
         {note && <div style={{ color: "var(--warning)", fontSize: "var(--fs-sm)", marginTop: 6 }}>{note}</div>}
         {err && <div role="alert" style={{ color: "var(--danger)", marginTop: 6 }}>{err}</div>}

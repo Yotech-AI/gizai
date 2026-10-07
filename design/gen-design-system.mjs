@@ -33,6 +33,7 @@ const GLYPH = {
   in_progress: '<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.6"/><path d="M8 4.25a3.75 3.75 0 0 1 0 7.5z" fill="currentColor"/>',
   testing: '<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.6"/><path d="M8 8V4.25a3.75 3.75 0 1 1-3.75 3.75z" fill="currentColor"/>',
   review: '<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.6"/><circle cx="8" cy="8" r="2.4" fill="currentColor"/>',
+  deploy: '<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.6"/><path d="M8 10.8V5.2M5.6 7.6 8 5.2l2.4 2.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
   done: '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="m5.1 8.2 2 1.9 3.8-3.9" stroke="var(--bg)" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   hold: '<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.6"/><path d="M5.2 8h5.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
   cancelled: '<circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.6"/><path d="m4 12 8-8" stroke="currentColor" stroke-width="1.6"/>',
@@ -140,10 +141,10 @@ C.StatusIcon = {
   group: "Data display", height: 120,
   readme: `One glyph per column category, so status reads by shape as well as colour (colour-blind safe).
 
-Backlog dashed circle, To do open circle, In progress half circle, Testing three-quarter circle, Review circle with a dot (needs you), Done filled check, On hold circle with a minus, Cancelled struck circle. Columns can be renamed; the glyph follows the column's category, never its name. Always 16px, with the column name as its accessible label. A card's hold overrides its category glyph.`,
-  preview: doc(`<div style="display:grid;grid-template-columns:repeat(4,max-content);gap:14px 32px">${[
-    ["backlog", "Backlog"], ["ready", "To do"], ["in_progress", "In progress"], ["testing", "Testing"],
-    ["review", "Review"], ["done", "Done"], ["hold", "On hold"], ["cancelled", "Cancelled"]].map(([c, t]) => `<span class="who" style="color:var(--text)">${st(c, t)}${t}</span>`).join("")}</div>`),
+Backlog dashed circle, To do open circle, In progress half circle, Testing three-quarter circle, Review circle with a dot (needs you), Deploy circle with an up arrow (merged, waits for you to deploy it), Done filled check, On hold circle with a minus, Cancelled struck circle. Columns can be renamed; the glyph follows the column's category, never its name. Always 16px, with the column name as its accessible label. A card's hold overrides its category glyph.`,
+  preview: doc(`<div style="display:grid;grid-template-columns:repeat(5,max-content);gap:14px 32px">${[
+    ["backlog", "Backlog"], ["ready", "To do"], ["in_progress", "In progress"], ["testing", "Testing"], ["review", "Review"],
+    ["deploy", "Deploy"], ["done", "Done"], ["hold", "On hold"], ["cancelled", "Cancelled"]].map(([c, t]) => `<span class="who" style="color:var(--text)">${st(c, t)}${t}</span>`).join("")}</div>`),
 };
 
 C.Badge = {
@@ -216,7 +217,7 @@ C.PropertiesPanel = {
   group: "Data display", height: 430,
   readme: `The properties panel sits on the right of a task page (\`size-props\`), closable, with one row per property: a 96px label column in \`text-3\` and a value that is a picker on click.
 
-Rows, in order: Status, Priority, Labels, Assignee, Project, Branch; a separator; Started, Created, Updated. Empty values read "No labels", "Unassigned". Holds show as their own row with the reason and a "Clear hold" button.`,
+Rows, in order: Status, Priority, Testing (a checkbox that saves at once), Labels, Assignee, Project, Branch; a separator; Started, Created, Updated. Empty values read "No labels", "Unassigned". Holds show as their own row with the reason and a "Clear hold" button.`,
   preview: `<div style="display:flex;justify-content:flex-end;background:var(--bg)"><aside class="props" style="height:400px">
 <div class="props-head">Properties<button class="btn ghost sm icon-only" aria-label="Close properties">${ic("x")}</button></div>
 <div class="props-body">
@@ -334,7 +335,7 @@ C.EmptyState = {
 
 Never "No data". Use the noun the user knows ("No agents yet", "Nothing needs you").`,
   preview: doc(`<div class="empty">${ic("bot")}<span><b>No agents yet.</b> Add one per job: a Frontend, a Backend and a QA agent is a good start. Each runs Claude Code in its own git worktree.</span><button class="btn primary">${ic("plus")}Add agent</button></div>
-<div style="height:12px"></div><div class="empty">${ic("inbox")}<span><b>Nothing needs you.</b> Cards on hold and cards waiting for your review show up here.</span></div>`),
+<div style="height:12px"></div><div class="empty">${ic("inbox")}<span><b>Nothing needs you.</b> Cards on hold and cards waiting for your review or deploy show up here.</span></div>`),
 };
 
 C.Toast = {
@@ -474,10 +475,10 @@ for (const name of Object.keys(nodes)) {
   write(`assets/Icons/${name}.svg`, `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${INK}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${inner(name)}</svg>\n`);
 }
 for (const [cat, g] of Object.entries(GLYPH)) {
-  const colors = { backlog: "#8a8e98", ready: "#60a5fa", in_progress: "#f0b429", testing: "#a98bfa", review: "#f472b6", done: "#4cc38a", hold: "#f2706b", cancelled: "#6c707a" };
+  const colors = { backlog: "#8a8e98", ready: "#60a5fa", in_progress: "#f0b429", testing: "#a98bfa", review: "#f472b6", deploy: "#f472b6", done: "#4cc38a", hold: "#f2706b", cancelled: "#6c707a" };
   write(`assets/Icons/status-${cat.replace("_", "-")}.svg`, `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" style="color:${colors[cat]}">${g.replaceAll("currentColor", colors[cat]).replace("var(--bg)", "#0f1013")}</svg>\n`);
 }
-write("assets/Icons/README.md", `Lucide icons (lucide-react 0.577, ISC licence), copied from Lucide's own icon data, plus Gizai's eight status glyphs (\`status-*.svg\`).
+write("assets/Icons/README.md", `Lucide icons (lucide-react 0.577, ISC licence), copied from Lucide's own icon data, plus Gizai's nine status glyphs (\`status-*.svg\`).
 
 These files are drawn in one ink, \`#8a8e98\` (\`c-grey\`), so they show on both themes here. In the app every icon uses \`currentColor\` at a 1.75 stroke, 16px, and takes its colour from the text it sits in; status glyphs take their \`st-*\` colour. See the Iconography section of the README for which icon means what.
 `);
@@ -492,4 +493,4 @@ fs.copyFileSync(path.join(HERE, "tokens.json"), path.join(OUT, "tokens.json"));
 
 // Export the glyphs and icon list for the app.
 fs.writeFileSync(path.join(HERE, "glyphs.json"), JSON.stringify(GLYPH, null, 2));
-console.log("components:", Object.keys(C).length, "icons:", Object.keys(nodes).length, "+ 8 status glyphs");
+console.log("components:", Object.keys(C).length, "icons:", Object.keys(nodes).length, `+ ${Object.keys(GLYPH).length} status glyphs`);

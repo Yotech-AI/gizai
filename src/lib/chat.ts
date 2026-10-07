@@ -16,7 +16,7 @@ const VERBS: Record<string, string> = {
   get_workflow: "Read the workflow", create_client: "Added client", update_client: "Changed client", save_contact: "Saved contact for",
   create_project: "Created project", update_project: "Changed project", create_task: "Created task", update_task: "Changed task",
   move_task: "Moved task", comment_on_task: "Commented on", create_agent: "Added agent", update_agent: "Changed agent",
-  set_agent_status: "Changed agent status", add_routing_rule: "Added a routing rule", start_agent_run: "Started an agent on",
+  set_agent_status: "Changed agent status", add_routing_rule: "Added a routing rule", add_column: "Added a column", start_agent_run: "Started an agent on",
   stop_agent_run: "Stopped the agent on", create_doc: "Created doc", write_doc: "Wrote doc", attach_file: "Attached a file to",
   add_person: "Added person",
 };

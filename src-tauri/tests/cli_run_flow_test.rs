@@ -107,6 +107,8 @@ async fn continue_after_moving_the_agent_to_another_cli_does_not_resume_on_the_w
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    // a long card, so a prompt that holds it is told apart from the short 'continue' prompt
+    describe(&st, &task, &"card text ".repeat(600));
     let codex = add_cli(&st, "Codex", "codex", FAKE_CLI, &["FAKE_KIND=codex"], "");
     let other = add_cli(&st, "Plain", "other", FAKE_CLI, &["FAKE_KIND=other"], "");
     put_agent_on(&st, &codex, AgentInput::default());
@@ -115,18 +117,57 @@ async fn continue_after_moving_the_agent_to_another_cli_does_not_resume_on_the_w
     let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
     assert_eq!(first.status, "timed_out");
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &200u32).unwrap();
-    // the agent now runs on a CLI without sessions; the stopped run's session is Codex's
+    // a person put the card on hold meanwhile, and the agent now runs on a CLI without sessions
+    gizai_core::tasks::update(&st.db, &st.you_id, &task, TaskPatch { hold: Some("stalled".into()), ..Default::default() }).unwrap();
     put_agent_on(&st, &other, AgentInput::default());
-    match gizai_lib::runs::continue_run(&st, &first.id, None).await {
-        Err(e) => assert!(!e.is_empty()),
-        Ok((id, done)) => {
-            done.await.unwrap();
-            let next = gizai_core::runs::get(&st.db, &id).unwrap();
-            assert_eq!(next.adapter.as_deref(), Some(codex.as_str()),
-                       "Continue resumed a Codex thread on {:?}; that CLI got only the 'continue' prompt, without the card: {}",
-                       next.adapter, stderr_of(&next));
-        }
-    }
+    let state = gizai_core::tasks::get(&st.db, &task).unwrap().state_name;
+
+    // the stopped run's session is Codex's: Continue refuses, and writes nothing
+    let e = gizai_lib::runs::continue_run(&st, &first.id, None).await.map(|_| ()).unwrap_err();
+    assert!(e.contains("now runs on Plain, and this run was on Codex") && e.contains("Run starts the card fresh on Plain"), "{e}");
+    let runs = gizai_core::runs::list_for_task(&st.db, &task).unwrap();
+    assert_eq!(runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), [first.id.as_str()], "no new run");
+    let t = gizai_core::tasks::get(&st.db, &task).unwrap();
+    assert_eq!((t.hold.as_deref(), t.state_name), (Some("stalled"), state), "the hold stays, the card doesn't move");
+
+    // Run starts the card fresh on Plain, with the card in its prompt
+    gizai_core::tasks::update(&st.db, &st.you_id, &task, TaskPatch { hold: Some(String::new()), ..Default::default() }).unwrap();
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    assert_eq!((s.status.as_str(), s.outcome.as_deref()), ("succeeded", Some("ready_for_testing")), "{:?}", s.error);
+    let fresh = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    assert_eq!((fresh.adapter.as_deref(), fresh.trigger.as_str()), (Some(other.as_str()), "manual"));
+    let chars: usize = stderr_of(&fresh).lines().find_map(|l| l.strip_prefix("prompt chars: ")).unwrap().parse().unwrap();
+    assert!(chars > 6000, "the whole card went in, not the 'continue' prompt: {chars} chars");
+}
+
+#[tokio::test]
+async fn continue_stays_on_the_account_that_ran_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    gizai_core::settings::set(&st.db, "claude_bin", &FAKE_CLAUDE.to_string()).unwrap();
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let claude2 = add_cli(&st, "Claude Code (2nd account)", "claude_code", FAKE_CLAUDE, &["CLAUDE_CONFIG_DIR=~/.claude-2"], "");
+    gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
+    gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
+    assert_eq!((first.status.as_str(), first.adapter.as_deref()), ("timed_out", Some("claude_code")), "{:?}", first.error);
+    gizai_core::settings::set(&st.db, "max_run_tool_calls", &200u32).unwrap();
+
+    // the same kind on another account: its session is in the first account's config folder
+    put_agent_on(&st, &claude2, AgentInput::default());
+    let e = gizai_lib::runs::continue_run(&st, &first.id, None).await.map(|_| ()).unwrap_err();
+    assert!(e.contains("now runs on Claude Code (2nd account), and this run was on Claude Code:"), "{e}");
+    assert_eq!(gizai_core::runs::list_for_task(&st.db, &task).unwrap().len(), 1, "no new run");
+
+    // back on the first account, Continue resumes that session
+    put_agent_on(&st, "claude_code", AgentInput::default());
+    let (id, done) = gizai_lib::runs::continue_run(&st, &first.id, None).await.unwrap();
+    done.await.unwrap();
+    let next = gizai_core::runs::get(&st.db, &id).unwrap();
+    assert_eq!((next.trigger.as_str(), next.status.as_str(), next.adapter.as_deref()), ("nudge", "succeeded", Some("claude_code")), "{:?}", next.error);
+    assert_eq!(next.worktree_path, first.worktree_path);
+    assert!(stderr_of(&next).contains(&format!("--resume {}", first.session_id.clone().unwrap())), "{}", stderr_of(&next));
 }
 
 #[tokio::test]

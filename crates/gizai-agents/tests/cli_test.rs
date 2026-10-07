@@ -151,6 +151,33 @@ fn other_cli_arguments_follow_the_template() {
 }
 
 #[test]
+fn other_cli_without_a_model_loses_only_the_model_argument_and_its_own_option() {
+    let args = |t: &str, m: Option<&str>| cli::other_args(t, "P", m).0;
+    // --model={model}: with a model it is one argument; without, the -p before it stays
+    assert_eq!(args("-p --model={model} {prompt}", Some("x")), ["-p", "--model=x", "P"]);
+    assert_eq!(args("-p --model={model} {prompt}", None), ["-p", "P"]);
+    // Cursor Agent: only --model goes, the options before it and their values stay
+    assert_eq!(args("-p --force --output-format text --model {model} {prompt}", None), ["-p", "--force", "--output-format", "text", "P"]);
+    assert_eq!(args("-p --force --output-format text --model {model} {prompt}", Some("gpt-5")),
+               ["-p", "--force", "--output-format", "text", "--model", "gpt-5", "P"]);
+    // -m{model} holds it itself: it goes alone
+    assert_eq!(args("run -m{model} {prompt}", None), ["run", "P"]);
+    assert_eq!(args("-q -m{model} {prompt}", None), ["-q", "P"]);
+    assert_eq!(args("run -m{model} {prompt}", Some("x")), ["run", "-mx", "P"]);
+    // a value around {model} still belongs to the option before it
+    assert_eq!(args("run --model openai/{model} {prompt}", None), ["run", "P"]);
+    assert_eq!(args("run --model openai/{model} {prompt}", Some("x")), ["run", "--model", "openai/x", "P"]);
+    // {model} first, or after a value: only itself
+    assert_eq!(args("{model} {prompt}", None), ["P"]);
+    assert_eq!(args("--format text {model} {prompt}", None), ["--format", "text", "P"]);
+    // an option with its own value (--x=y) is never taken along
+    assert_eq!(args("--quiet=yes {model} {prompt}", None), ["--quiet=yes", "P"]);
+    // a prompt with spaces or quotes stays one argument, and no stdin
+    let (a, stdin) = cli::other_args("-p --model={model} {prompt}", "fix 'a' and \"b\" now", None);
+    assert_eq!((a, stdin), (vec!["-p".to_string(), "fix 'a' and \"b\" now".to_string()], false));
+}
+
+#[test]
 fn arguments_split_like_a_shell_for_words_and_quotes() {
     assert_eq!(cli::split_args(r#"a  'b c' "d \"e\"" f\ g ''"#), ["a", "b c", "d \"e\"", "f g", ""]);
     assert!(cli::split_args("   ").is_empty());

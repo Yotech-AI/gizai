@@ -161,6 +161,110 @@ async fn quitting_stops_every_live_run_first() {
     assert_eq!(gizai_core::runs::list_for_task(&st.db, &task).unwrap()[0].status, "cancelled");
 }
 
+/// A card whose run starts on `description` (FAKE_HANG, FAKE_STUBBORN or nothing special) and the run's process group.
+async fn live_run(st: &gizai_lib::AppState, repo: &std::path::Path, description: &str) -> (String, tokio::task::JoinHandle<gizai_lib::runs::RunSummary>, i32) {
+    let task = gizai_lib::test_task(st, repo.to_str().unwrap(), "backend");
+    gizai_core::tasks::update(&st.db, &st.you_id, &task, gizai_core::model::TaskPatch { description_md: Some(description.into()), ..Default::default() }).unwrap();
+    let (_run, done) = gizai_lib::runs::start(st, &task, None, Some(FAKE.into()), "manual").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let pid = gizai_core::runs::list_for_task(&st.db, &task).unwrap()[0].pid.expect("the run's pid") as i32;
+    (task, done, pid)
+}
+
+/// Whether a process group is gone within `within` (a process that ended counts until it has been reaped).
+async fn group_gone(pgid: i32, within: Duration) -> bool {
+    let t0 = std::time::Instant::now();
+    // SAFETY: signal 0 only checks that the group exists; nothing is sent.
+    while unsafe { libc::kill(-pgid, 0) } == 0 {
+        if t0.elapsed() > within { return false; }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    true
+}
+
+/// The card's run row (status, error) and the card (state, fail count).
+fn recorded(st: &gizai_lib::AppState, task: &str) -> ((String, Option<String>), (String, i64)) {
+    let r = gizai_core::runs::list_for_task(&st.db, task).unwrap().remove(0);
+    let t = gizai_core::tasks::get(&st.db, task).unwrap();
+    ((r.status, r.error), (t.state_name, t.fail_count))
+}
+
+const QUIT: (&str, Option<&str>) = ("cancelled", Some("Stopped because Gizai quit."));
+
+#[tokio::test]
+async fn a_run_stopped_by_quitting_says_gizai_quit_and_leaves_no_process() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let (task, done, pid) = live_run(&st, &git_repo(tmp.path()), "FAKE_HANG").await;
+    assert_eq!(gizai_lib::runs::stop_all(&st, Duration::from_secs(12)).await, 1);
+    let s = done.await.unwrap();
+    assert_eq!((s.status.as_str(), s.error.as_deref()), QUIT);
+    let ((status, error), card) = recorded(&st, &task);
+    assert_eq!((status.as_str(), error.as_deref()), QUIT);
+    assert_eq!(card, ("To do".to_string(), 0), "not a failure");
+    assert_eq!(gizai_lib::runs::STOPPED_BY_QUIT, "Stopped because Gizai quit.");
+    assert!(group_gone(pid, Duration::from_secs(1)).await, "no agent process left");
+}
+
+#[tokio::test]
+async fn as_gizai_exits_kill_all_ends_a_stubborn_run_at_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let (task, done, pid) = live_run(&st, &git_repo(tmp.path()), "FAKE_STUBBORN").await;
+    let t0 = std::time::Instant::now();
+    assert_eq!(gizai_lib::runs::kill_all(&st), 1);
+    assert!(gizai_lib::runs::is_closing(&st), "no new runs start");
+    let s = tokio::time::timeout(Duration::from_secs(3), done).await.expect("ended without Stop's 5 s grace").unwrap();
+    assert!(t0.elapsed() < Duration::from_secs(3), "took {:?}", t0.elapsed());
+    assert_eq!((s.status.as_str(), s.error.as_deref()), QUIT);
+    let ((status, error), card) = recorded(&st, &task);
+    assert_eq!((status.as_str(), error.as_deref()), QUIT);
+    assert_eq!(card, ("To do".to_string(), 0));
+    assert!(gizai_lib::runs::live(&st).is_empty());
+    assert!(group_gone(pid, Duration::from_secs(1)).await, "no agent process left");
+}
+
+#[tokio::test]
+async fn a_run_whose_agent_ends_while_gizai_quits_was_stopped_by_the_quit_not_failed() {
+    // Logging out: systemd sends SIGTERM to the agents as well as to Gizai.
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let (task, done, pid) = live_run(&st, &git_repo(tmp.path()), "FAKE_HANG").await;
+    gizai_lib::runs::mark_closing(&st);
+    unsafe { libc::kill(-pid, libc::SIGTERM) };
+    let s = tokio::time::timeout(Duration::from_secs(8), done).await.expect("run ended").unwrap();
+    assert_eq!((s.status.as_str(), s.error.as_deref(), s.outcome.as_deref()), ("cancelled", Some("Stopped because Gizai quit."), None));
+    let ((status, error), card) = recorded(&st, &task);
+    assert_eq!((status.as_str(), error.as_deref()), QUIT);
+    assert_eq!(card, ("To do".to_string(), 0), "not a failure");
+    assert!(group_gone(pid, Duration::from_secs(1)).await);
+}
+
+#[tokio::test]
+async fn an_agent_ended_while_gizai_keeps_running_is_still_a_failed_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let (task, done, pid) = live_run(&st, &git_repo(tmp.path()), "FAKE_HANG").await;
+    unsafe { libc::kill(-pid, libc::SIGTERM) };
+    let s = tokio::time::timeout(Duration::from_secs(8), done).await.expect("run ended").unwrap();
+    assert_eq!(s.status, "failed");
+    assert_ne!(recorded(&st, &task).0.1.as_deref(), Some("Stopped because Gizai quit."));
+}
+
+#[tokio::test]
+async fn a_run_that_finishes_while_gizai_quits_still_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let (_run, done) = gizai_lib::runs::start(&st, &task, None, Some(FAKE.into()), "manual").await.unwrap();
+    gizai_lib::runs::mark_closing(&st);
+    let s = tokio::time::timeout(Duration::from_secs(10), done).await.expect("run ended").unwrap();
+    assert_eq!((s.status.as_str(), s.outcome.as_deref()), ("succeeded", Some("ready_for_testing")));
+    let err = gizai_lib::runs::run_once(&st, &task, None, Some(FAKE.into())).await.unwrap_err();
+    assert!(err.contains("quitting"), "no new run starts while Gizai quits: {err}");
+}
+
 #[tokio::test]
 async fn a_card_that_cannot_start_in_the_background_goes_on_hold_with_the_reason() {
     let tmp = tempfile::tempdir().unwrap();

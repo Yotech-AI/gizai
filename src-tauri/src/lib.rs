@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod clis;
 mod commands;
 pub mod git;
 pub mod github;
@@ -7,6 +8,7 @@ pub mod pulls;
 mod quit;
 pub mod runs;
 pub mod tools;
+pub mod update;
 pub mod worktrees;
 
 use gizai_core::db::Db;
@@ -30,6 +32,8 @@ pub struct AppState {
     pub pulls: Arc<pulls::PullChecks>,
     /// Log in with GitHub, while gh waits for its code (see `github`).
     pub github: Arc<github::Logins>,
+    /// The release check and the update (see `update`).
+    pub updates: Arc<update::Updates>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
@@ -154,10 +158,14 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
     let seed = gizai_core::seed::ensure_seed(&db, &display_name()).map_err(|e| e.to_string())?;
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
-    // ours), then mark them interrupted and release their cards.
+    // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
+    // and release their cards.
     for r in gizai_core::runs::active(&db).unwrap_or_default() {
         if let (Some(pid), Some(wt)) = (r.pid, r.worktree_path.as_deref()) {
             gizai_agents::process::end_orphan_group(pid as u32, std::path::Path::new(wt));
+        }
+        if let (Some(_), Some(wt)) = (&r.task_id, r.worktree_path.as_deref()) {
+            runs::record_head(&db, &r.id, std::path::Path::new(wt));
         }
     }
     let _ = gizai_core::runs::recover_interrupted(&db);
@@ -165,7 +173,7 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     let mcp_socket = mcp::socket_path(&dir);
     Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), pulls: Arc::new(pulls::PullChecks::default()),
-                  github: Arc::new(github::Logins::default()), _lock: Arc::new(lock), notify })
+                  github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify })
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -180,6 +188,7 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
                 app.emit("chat-event", v)
             }
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
+            runs::Note::UpdateChanged => app.emit("update-changed", ()),
         };
     })
 }
@@ -271,6 +280,21 @@ pub fn run() {
                     }
                 });
             }
+            // The release check: 20 seconds after start, then every ten minutes, Gizai asks GitHub for the latest
+            // release when a check is due (Check for new releases is on, and the last check is six hours old).
+            // Headless test and screenshot runs don't ask GitHub, unless they point the check at a fake release.
+            let test_run = ["GIZAI_SELFTEST", "GIZAI_ROUTE"].iter().any(|v| std::env::var_os(v).is_some());
+            if !test_run || std::env::var_os("GIZAI_RELEASES_URL").is_some() {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(update::FIRST_CHECK_AFTER).await;
+                    let mut tick = tokio::time::interval(update::TICK);
+                    loop {
+                        tick.tick().await;
+                        update::tick(&st, gizai_core::ids::now_ms()).await;
+                    }
+                });
+            }
             // Heartbeats: once a minute, agents whose interval has passed look for their next card.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -295,28 +319,23 @@ pub fn run() {
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status,
             commands::add_rule, commands::delete_rule, commands::rename_state, commands::role_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
-            commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
+            commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::list_old_worktrees, commands::remove_old_worktrees,
+            commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
+            commands::stop_update, commands::restart_gizai,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")
         .run(|app, event| {
             // Quitting with agents at work (runs or a chat answer): stop them first, then quit (a second request
             // quits at once).
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                let st = app.state::<AppState>().inner().clone();
-                if !runs::is_closing(&st) && (!runs::live(&st).is_empty() || !chat::live(&st).is_empty()) {
-                    api.prevent_exit();
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let (a, b) = tokio::join!(runs::stop_all(&st, std::time::Duration::from_secs(12)), chat::stop_all(&st, std::time::Duration::from_secs(12)));
-                        let _ = (a, b);
-                        app.exit(0);
-                    });
-                }
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event
+                && quit::stop_agents_first(app)
+            {
+                api.prevent_exit();
             }
             // Nothing keeps the window open, so a close request means it closes now and Gizai quits. WebKit's
             // page process ends before the window goes (see `quit`); Exit does the same for every other way out.
@@ -327,7 +346,11 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);
+                // agents still at work end now, so none outlives Gizai
+                quit::end_agents(app.state::<AppState>().inner());
                 mcp::remove_socket(app.state::<AppState>().inner());
+                // an update that is building stops (its source and build so far are kept for the next one)
+                update::on_exit(app.state::<AppState>().inner());
             }
         });
 }

@@ -289,6 +289,57 @@ async fn quitting_stops_a_chat_answer_and_says_why() {
     assert!(app_chat::send(&t.st, Some(thread), "more".into(), None).await.is_err(), "no new turns while quitting");
 }
 
+/// A hanging answer that has begun to write, and the process group of its Claude Code.
+async fn hanging_answer(t: &T) -> (String, tokio::task::JoinHandle<app_chat::TurnSummary>, i32) {
+    let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_HANG".into(), None).await.unwrap();
+    let mut run_id = String::new();
+    for _ in 0..100 {
+        if let Some(l) = app_chat::live(&t.st).into_iter().find(|l| l.thread_id == thread && !l.draft.is_empty()) { run_id = l.run_id; break; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let pid = core_runs::get(&t.st.db, &run_id).unwrap().pid.expect("the answer's pid") as i32;
+    (thread, done, pid)
+}
+
+/// Whether a process group is gone within a second (a process that ended counts until it has been reaped).
+async fn group_gone(pgid: i32) -> bool {
+    for _ in 0..50 {
+        // SAFETY: signal 0 only checks that the group exists; nothing is sent.
+        if unsafe { libc::kill(-pgid, 0) } != 0 { return true; }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    false
+}
+
+#[tokio::test]
+async fn as_gizai_exits_kill_all_ends_a_chat_answer_at_once_and_says_why() {
+    let t = setup().await;
+    let (thread, done, pid) = hanging_answer(&t).await;
+    assert_eq!(app_chat::kill_all(&t.st), 1);
+    let s = tokio::time::timeout(std::time::Duration::from_secs(3), done).await.expect("ended at once").unwrap();
+    assert_eq!((s.status.as_str(), s.error.as_deref()), ("cancelled", Some("Stopped because Gizai quit.")));
+    assert_eq!(core_runs::get(&t.st.db, &s.run_id).unwrap().error.as_deref(), Some("Stopped because Gizai quit."));
+    let last = chat::messages(&t.st.db, &thread).unwrap().pop().unwrap();
+    assert_eq!((last.role.as_str(), last.body_md.as_deref()), ("system", Some("Stopped because Gizai quit.")));
+    assert!(app_chat::live(&t.st).is_empty());
+    assert!(group_gone(pid).await, "no Claude Code left");
+}
+
+#[tokio::test]
+async fn an_answer_whose_claude_code_ends_while_gizai_quits_was_stopped_by_the_quit() {
+    // Logging out: systemd sends SIGTERM to Claude Code as well as to Gizai.
+    let t = setup().await;
+    let (thread, done, pid) = hanging_answer(&t).await;
+    gizai_lib::runs::mark_closing(&t.st);
+    unsafe { libc::kill(-pid, libc::SIGTERM) };
+    let s = tokio::time::timeout(std::time::Duration::from_secs(8), done).await.expect("answer ended").unwrap();
+    assert_eq!((s.status.as_str(), s.error.as_deref()), ("cancelled", Some("Stopped because Gizai quit.")));
+    let last = chat::messages(&t.st.db, &thread).unwrap().pop().unwrap();
+    assert_eq!((last.role.as_str(), last.body_md.as_deref()), ("system", Some("Stopped because Gizai quit.")));
+    assert_eq!(core_runs::list_for_agent(&t.st.db, &t.lead, 10).unwrap().len(), 1, "not retried in a new session while quitting");
+    assert!(group_gone(pid).await);
+}
+
 #[tokio::test]
 async fn a_lost_session_whose_retry_also_fails_keeps_the_old_session() {
     let t = setup().await;

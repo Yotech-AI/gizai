@@ -56,8 +56,14 @@ export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("a
 export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
-/** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). */
-export const claudeModels = (refresh = false) => invoke<T.ModelOption[]>("claude_models", { refresh });
+/** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
+ * CLI (a second account); other kinds of CLI have no list. */
+export const claudeModels = (refresh = false, cli: string | null = null) => invoke<T.ModelOption[]>("claude_models", { refresh, cli });
+/** Settings → Coding CLIs. */
+export const listClis = () => invoke<T.CliStatus[]>("list_clis");
+export const saveClis = (clis: T.Cli[]) => invoke<T.CliStatus[]>("save_clis", { clis });
+/** Known coding CLIs installed here that aren't listed yet. */
+export const findClis = () => invoke<T.Cli[]>("find_clis");
 export const agentStats = (id: string, days = 14) => invoke<T.DayStat[]>("agent_stats", { id, days });
 export const agentRuns = (id: string, limit = 20) => invoke<T.Run[]>("agent_runs", { id, limit });
 export const agentNextTask = (id: string) => invoke<string | null>("agent_next_task", { id });
@@ -70,6 +76,8 @@ export const startRun = (taskId: string, agentId: string | null) => invoke<strin
 export const stopRun = (runId: string) => invoke<void>("stop_run", { runId });
 export const continueRun = (runId: string) => invoke<string>("continue_run", { runId });
 export const listRuns = (taskId: string) => invoke<T.Run[]>("list_runs", { taskId });
+/** The commits a finished run made, oldest first. */
+export const runCommits = (runId: string) => invoke<T.Commit[]>("run_commits", { runId });
 export const runEvents = (runId: string) => invoke<T.SeqEvent[]>("run_events", { runId });
 export const liveRuns = () => invoke<T.LiveRun[]>("live_runs");
 export const suggestAgent = (taskId: string) => invoke<string | null>("suggest_agent", { taskId });
@@ -96,6 +104,21 @@ export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
+
+// ---- updates: the release check and Update to <version> ----
+/** This version, what the release check found, and the update that runs (or ran). */
+export const updateStatus = () => invoke<T.UpdateStatus>("update_status");
+/** Asks GitHub for the latest release now. */
+export const checkForUpdates = () => invoke<T.UpdateStatus>("check_for_updates");
+/** Check for new releases (at start and every six hours): on or off. */
+export const setUpdateAutoCheck = (on: boolean) => invoke<T.UpdateStatus>("set_update_auto_check", { on });
+/** Builds `version` in the background, backs up your data and installs it; resolves at once. */
+export const startUpdate = (version: string) => invoke<T.UpdateStatus>("start_update", { version });
+/** Stops an update while it gets the source or builds. */
+export const stopUpdate = () => invoke<T.UpdateStatus>("stop_update");
+/** Quits and starts the Gizai an update installed (agents at work are stopped first, as when you quit). */
+export const restartGizai = () => invoke<void>("restart_gizai");
+export const onUpdateChanged = (cb: () => void): Promise<UnlistenFn> => listen("update-changed", () => cb());
 
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>

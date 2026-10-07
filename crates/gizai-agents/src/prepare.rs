@@ -264,7 +264,7 @@ fn run<S: AsRef<OsStr>>(shown: &str, program: &str, args: &[S], dir: &Path, path
 }
 
 /// The end of a command's output, without terminal colours: at most `TAIL_CHARS` characters, from a line's start.
-fn tail(text: &str) -> String {
+pub(crate) fn tail(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {

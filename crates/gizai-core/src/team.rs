@@ -169,7 +169,7 @@ pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Team> {
 /// The roles the agent form offers (any other key is allowed too).
 pub const ROLES: [&str; 6] = ["lead", "frontend", "backend", "design", "qa", "devops"];
 
-/// Claude Code 2.1 permission modes.
+/// Claude Code 2.1 permission modes (Codex and Gemini have their own, see `clis::permission_modes`).
 pub const PERMISSION_MODES: [&str; 6] = ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"];
 pub const WAKEUPS: [&str; 3] = ["manual", "on_assign", "heartbeat"];
 /// Claude Code `--effort` levels, lowest first.
@@ -183,9 +183,11 @@ pub fn role_key(raw: &str) -> String {
 struct CleanAgent {
     name: String, role: String, title: Option<String>, adapter: String, model: Option<String>, permission_mode: String,
     tools_json: String, wakeup: String, heartbeat_minutes: Option<i64>, budget: Option<i64>, effort: Option<String>,
+    /// The kind of its CLI: claude_code, codex, gemini or other.
+    kind: String,
 }
 
-fn clean_agent(i: &AgentInput) -> Result<CleanAgent> {
+fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
     let name = i.name.trim().to_string();
     if name.is_empty() {
         return Err(Error::Invalid("give the agent a name".into()));
@@ -194,13 +196,20 @@ fn clean_agent(i: &AgentInput) -> Result<CleanAgent> {
     if role.is_empty() || role.len() > 32 {
         return Err(Error::Invalid("give the agent a role, like frontend, backend or qa".into()));
     }
-    let adapter = if i.adapter.trim().is_empty() { "claude_code".to_string() } else { i.adapter.trim().to_string() };
-    if adapter != "claude_code" {
-        return Err(Error::Invalid("only Claude Code agents are supported for now".into()));
+    // The CLI it runs on (Settings → Coding CLIs); its kind decides the permission modes and effort levels.
+    let cli = crate::clis::get(db, &i.adapter)?;
+    let (adapter, kind) = (cli.id, cli.kind);
+    let modes = crate::clis::permission_modes(&kind);
+    let permission_mode = match (i.permission_mode.trim(), modes.first()) {
+        (_, None) => String::new(),
+        ("", Some(first)) => first.to_string(),
+        (m, Some(_)) => m.to_string(),
+    };
+    if !modes.is_empty() && !modes.contains(&permission_mode.as_str()) {
+        return Err(Error::Invalid(format!("unknown permission mode {permission_mode} for {}: use {}", cli.name, modes.join(", "))));
     }
-    let permission_mode = if i.permission_mode.trim().is_empty() { "acceptEdits".to_string() } else { i.permission_mode.trim().to_string() };
-    if !PERMISSION_MODES.contains(&permission_mode.as_str()) {
-        return Err(Error::Invalid(format!("unknown permission mode {permission_mode}")));
+    if i.chat_enabled == Some(true) && kind != "claude_code" {
+        return Err(Error::Invalid(format!("Chat runs on Claude Code: give the agent a Claude Code CLI to turn Chat on, not {}", cli.name)));
     }
     let wakeup = if i.wakeup.trim().is_empty() { "manual".to_string() } else { i.wakeup.trim().to_string() };
     if !WAKEUPS.contains(&wakeup.as_str()) {
@@ -214,8 +223,12 @@ fn clean_agent(i: &AgentInput) -> Result<CleanAgent> {
     }
     let effort = util::clean(&i.effort).map(|e| e.to_lowercase());
     if let Some(e) = &effort {
-        if !EFFORTS.contains(&e.as_str()) {
-            return Err(Error::Invalid(format!("effort is low, medium, high, xhigh or max, not {e}")));
+        let levels = crate::clis::efforts(&kind);
+        if levels.is_empty() {
+            return Err(Error::Invalid(format!("{} takes no effort level: leave effort empty", cli.name)));
+        }
+        if !levels.contains(&e.as_str()) {
+            return Err(Error::Invalid(format!("effort is {}, not {e}", levels.join(", "))));
         }
     }
     if matches!(i.max_runs, Some(n) if !(1..=10).contains(&n)) {
@@ -226,13 +239,13 @@ fn clean_agent(i: &AgentInput) -> Result<CleanAgent> {
         name, role, title: util::clean(&i.title), adapter, model: util::clean(&i.model), permission_mode,
         tools_json: serde_json::to_string(&tools)?, wakeup,
         heartbeat_minutes: if i.wakeup.trim() == "heartbeat" { i.heartbeat_minutes } else { i.heartbeat_minutes.filter(|m| *m > 0) },
-        budget: i.budget_usd_micros, effort,
+        budget: i.budget_usd_micros, effort, kind,
     })
 }
 
 /// Creates the agent (an actor reporting to `actor`), its settings and its team membership.
 pub fn add_agent(db: &Db, actor: &str, team_id: &str, input: AgentInput) -> Result<String> {
-    let a = clean_agent(&input)?;
+    let a = clean_agent(db, &input)?;
     let instructions = input.instructions_md.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| crate::seed::role_template(&a.role));
     db.write(Some(actor), |w| {
         let c = w.conn();
@@ -270,11 +283,18 @@ pub fn add_agent(db: &Db, actor: &str, team_id: &str, input: AgentInput) -> Resu
 
 /// Saves an agent's settings. `instructions_md: None` keeps the current instructions.
 pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> Result<()> {
-    let a = clean_agent(&input)?;
+    let a = clean_agent(db, &input)?;
     let instructions = input.instructions_md.clone();
     db.write(Some(actor), |w| {
         let c = w.conn();
         let now = ids::now_ms();
+        if a.kind != "claude_code" && input.chat_enabled.is_none() {
+            let chat: i64 = c.query_row("SELECT COALESCE(chat_enabled, 0) FROM agent_configs WHERE actor_id=?1", [actor_id], |r| r.get(0))
+                .optional()?.unwrap_or(0);
+            if chat != 0 {
+                return Err(Error::Invalid("Chat runs on Claude Code: turn Chat off for this agent, or keep it on a Claude Code CLI".into()));
+            }
+        }
         let n = c.execute(
             "UPDATE actors SET name=?2, title=?3, updated_at=?4, updated_by=?5, version=version+1 WHERE id=?1 AND kind='agent' AND deleted_at IS NULL",
             rusqlite::params![actor_id, a.name, a.title, now, actor],
@@ -296,7 +316,7 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
             Some(false) => { c.execute("UPDATE agent_configs SET chat_enabled=0 WHERE actor_id=?1", [actor_id])?; }
             None => {}
         }
-        w.update("agent_configs", actor_id, serde_json::json!({"name": a.name, "role": a.role, "permission_mode": a.permission_mode,
+        w.update("agent_configs", actor_id, serde_json::json!({"name": a.name, "role": a.role, "adapter": a.adapter, "permission_mode": a.permission_mode,
             "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes, "model": a.model, "effort": a.effort, "max_runs": input.max_runs, "instructions_changed": instructions.is_some()}))
     })
 }

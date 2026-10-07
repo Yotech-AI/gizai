@@ -294,6 +294,12 @@ pub fn stop_run(st: State<AppState>, run_id: String) { runs::stop(&st, &run_id) 
 pub fn list_runs(st: State<AppState>, task_id: String) -> R<Vec<Run>> { gizai_core::runs::list_for_task(&st.db, &task_id).map_err(e) }
 #[tauri::command]
 pub fn run_events(st: State<AppState>, run_id: String) -> Vec<runs::SeqEvent> { runs::events_for(&st, &run_id) }
+/// The commits a finished run made, oldest first (the Runs tab).
+#[tauri::command]
+pub async fn run_commits(st: State<'_, AppState>, run_id: String) -> R<Vec<gizai_agents::worktree::Commit>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || runs::commits(&st, &run_id)).await.map_err(|err| err.to_string())?
+}
 #[tauri::command]
 pub fn live_runs(st: State<AppState>) -> Vec<runs::LiveRun> { runs::live(&st) }
 /// Who a Run without a chosen agent would start now (assigned agent first, then routing).
@@ -302,8 +308,30 @@ pub fn suggest_agent(st: State<AppState>, task_id: String) -> Option<String> { r
 
 /// The models this user's Claude Code offers (as its /model picker lists them), with their effort levels.
 #[tauri::command]
-pub async fn claude_models(st: State<'_, AppState>, refresh: bool) -> R<Vec<gizai_agents::models::ModelOption>> {
-    runs::models(&st, refresh).await
+pub async fn claude_models(st: State<'_, AppState>, refresh: bool, cli: Option<String>) -> R<Vec<gizai_agents::models::ModelOption>> {
+    runs::models_for(&st, cli.as_deref(), refresh).await
+}
+
+/// Settings → Coding CLIs: every CLI agents can run on, with the program each would start.
+#[tauri::command]
+pub async fn list_clis(st: State<'_, AppState>) -> R<Vec<crate::clis::CliStatus>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::clis::list(&st)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn save_clis(app: AppHandle, st: State<'_, AppState>, clis: Vec<gizai_core::clis::Cli>) -> R<Vec<crate::clis::CliStatus>> {
+    let st = st.inner().clone();
+    let out = tauri::async_runtime::spawn_blocking(move || crate::clis::save(&st, clis)).await.map_err(|e| e.to_string())??;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// The known coding CLIs installed here that aren't listed yet.
+#[tauri::command]
+pub async fn find_clis(st: State<'_, AppState>) -> R<Vec<gizai_core::clis::Cli>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::clis::find(&st)).await.map_err(|e| e.to_string())?
 }
 
 /// One agent's settings and membership.
@@ -390,4 +418,26 @@ pub async fn list_old_worktrees(st: State<'_, AppState>) -> R<Vec<crate::worktre
 pub async fn remove_old_worktrees(st: State<'_, AppState>, task_ids: Vec<String>) -> R<Vec<crate::worktrees::RemovedWorktree>> {
     let st = st.inner().clone();
     tauri::async_runtime::spawn_blocking(move || crate::worktrees::remove(&st, &task_ids)).await.map_err(|err| err.to_string())?
+}
+
+// ---- updates (Settings → Updates, the notice above Company) ----
+#[tauri::command]
+pub fn update_status(st: State<AppState>) -> crate::update::UpdateStatus { crate::update::status(&st) }
+/// Asks GitHub for the latest release now.
+#[tauri::command]
+pub async fn check_for_updates(st: State<'_, AppState>) -> R<crate::update::UpdateStatus> { Ok(crate::update::check(&st).await) }
+#[tauri::command]
+pub fn set_update_auto_check(st: State<AppState>, on: bool) -> R<crate::update::UpdateStatus> { crate::update::set_auto_check(&st, on) }
+/// Builds and installs `version` in the background; returns at once.
+#[tauri::command]
+pub fn start_update(st: State<AppState>, version: String) -> R<crate::update::UpdateStatus> { crate::update::start(&st, &version) }
+#[tauri::command]
+pub fn stop_update(st: State<AppState>) -> crate::update::UpdateStatus { crate::update::stop(&st) }
+/// Quits and starts the Gizai an update installed: agents at work are stopped first, as when you quit.
+#[tauri::command]
+pub fn restart_gizai(app: AppHandle, st: State<AppState>) -> R<()> {
+    let mut cmd = crate::update::restart_command(&st)?;
+    cmd.spawn().map_err(|e| format!("Couldn't restart Gizai: {e}"))?;
+    app.exit(0);
+    Ok(())
 }

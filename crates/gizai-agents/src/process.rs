@@ -1,7 +1,8 @@
-//! Runs `claude` as a child in its own process group, streams its events, enforces the caps and stops it.
+//! Runs an agent's CLI (`claude`, `codex`, `gemini`, …) as a child in its own process group, streams its events,
+//! enforces the caps and stops it.
 //! Signals only ever go to that process group (never pid 0 or 1), so nothing else on the machine is touched.
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,20 @@ use tokio::sync::{Notify, mpsc};
 use crate::AgentError;
 use crate::chat_stream::ChatEvent;
 use crate::claude::ClaudeArgs;
+use crate::cli;
 use crate::stream::RunEvent;
+
+/// A program to start for one run or chat turn.
+#[derive(Debug, Clone, Default)]
+pub struct Exec {
+    pub bin: PathBuf,
+    pub args: Vec<String>,
+    /// Set on top of Gizai's own environment (another account's config folder, a PATH).
+    pub env: Vec<(String, String)>,
+    /// Written to stdin, which is then closed. Linux caps one argument at 128 KiB, so prompts go here when the CLI
+    /// reads them there.
+    pub stdin: String,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Caps {
@@ -22,12 +36,21 @@ pub struct Caps {
 }
 
 #[derive(Clone)]
-pub struct StopHandle(Arc<Notify>);
+pub struct StopHandle {
+    notify: Arc<Notify>,
+    /// The run's process group (its leader is the `claude` Gizai started).
+    group: u32,
+}
 
 impl StopHandle {
     /// SIGINT to the run's process group, SIGTERM after 5 s, SIGKILL after 10 s.
     pub fn stop(&self) {
-        self.0.notify_one();
+        self.notify.notify_one();
+    }
+
+    /// SIGKILL to the run's process group at once: Gizai is exiting and can't wait for a stop.
+    pub fn kill(&self) {
+        signal_group(self.group, libc::SIGKILL);
     }
 }
 
@@ -52,6 +75,26 @@ impl StreamEvent for ChatEvent {
     fn other(raw: String) -> Self { ChatEvent::Other { raw_type: raw } }
 }
 
+/// Reads a run's output line by line; `finish` gives the events still due when the output ends.
+pub trait LineParser<E>: Send + 'static {
+    fn line(&mut self, line: &str) -> Vec<E>;
+    fn finish(&mut self) -> Vec<E> {
+        vec![]
+    }
+}
+
+/// Claude Code's stream-json, one line at a time (task runs and chat turns).
+pub struct ClaudeLines;
+
+impl<E: StreamEvent> LineParser<E> for ClaudeLines {
+    fn line(&mut self, line: &str) -> Vec<E> { E::parse(line) }
+}
+
+impl LineParser<RunEvent> for cli::Parser {
+    fn line(&mut self, line: &str) -> Vec<RunEvent> { cli::Parser::line(self, line) }
+    fn finish(&mut self) -> Vec<RunEvent> { cli::Parser::finish(self) }
+}
+
 pub struct RunHandle<E = RunEvent> {
     pub pid: u32,
     /// Closed after the final `other("exit:<code>")` event.
@@ -64,6 +107,12 @@ fn signal_group(pgid: u32, sig: i32) {
         // SAFETY: plain syscall; a negative pid addresses the process group we created for this run.
         unsafe { libc::kill(-(pgid as i32), sig); }
     }
+}
+
+/// Whether a process is still in the run's process group (one that ended counts until it has been reaped).
+fn group_alive(pgid: u32) -> bool {
+    // SAFETY: signal 0 only checks that the group exists; nothing is sent.
+    pgid > 1 && unsafe { libc::kill(-(pgid as i32), 0) } == 0
 }
 
 /// For a run a previous Gizai left behind: ends (SIGTERM) the process group led by `pid`, but only when
@@ -89,12 +138,19 @@ pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
     true
 }
 
-/// Must be called inside a Tokio runtime.
+/// Claude Code. Must be called inside a Tokio runtime.
 pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, caps: Caps) -> Result<RunHandle<E>, AgentError> {
+    spawn_exec(&args.exec(), cwd, log_path, caps, ClaudeLines)
+}
+
+/// Any CLI, its output read by `parser`. Must be called inside a Tokio runtime.
+pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log_path: &Path, caps: Caps, mut parser: P)
+    -> Result<RunHandle<E>, AgentError> {
     let stderr = std::fs::File::create(log_path.with_extension("stderr.log"))?;
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(log_path)?;
-    let mut child = Command::new(&args.bin)
-        .args(args.argv())
+    let mut child = Command::new(&exec.bin)
+        .args(&exec.args)
+        .envs(exec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -102,12 +158,12 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
         .process_group(0)
         .kill_on_drop(false)
         .spawn()
-        .map_err(|e| AgentError::Spawn(format!("{}: {e}", args.bin.display())))?;
+        .map_err(|e| AgentError::Spawn(format!("{}: {e}", exec.bin.display())))?;
     let pid = child.id().ok_or_else(|| AgentError::Spawn("the process exited at once".into()))?;
     let stdout = child.stdout.take().expect("stdout is piped");
-    // The prompt goes in on stdin, then stdin closes so claude starts.
+    // The prompt goes in on stdin, then stdin closes so the CLI starts.
     let mut stdin = child.stdin.take().expect("stdin is piped");
-    let prompt = args.prompt.clone().into_bytes();
+    let prompt = exec.stdin.clone().into_bytes();
     tokio::spawn(async move {
         let _ = stdin.write_all(&prompt).await;
         let _ = stdin.shutdown().await;
@@ -117,7 +173,7 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
     let stop = Arc::new(Notify::new());
 
     // Reader: log every line, forward its events, count tool-calling turns.
-    let reader = {
+    let mut reader = {
         let tx = tx.clone();
         let stop = stop.clone();
         tokio::spawn(async move {
@@ -126,7 +182,7 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
             let mut capped = false;
             while let Ok(Some(line)) = lines.next_line().await {
                 let _ = writeln!(log, "{line}");
-                let evs = E::parse(&line);
+                let evs = parser.line(&line);
                 calls += evs.iter().filter(|e| E::is_tool_call(e)).count() as u32;
                 for e in evs {
                     let _ = tx.send(e).await;
@@ -136,6 +192,9 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
                     let _ = tx.send(E::other("cap_exceeded:tools".into())).await;
                     stop.notify_one();
                 }
+            }
+            for e in parser.finish() {
+                let _ = tx.send(e).await;
             }
         })
     };
@@ -176,9 +235,15 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
             };
             timer.abort();
             // Background processes the agent started (a dev server, a watcher) would outlive the run
-            // and keep stdout open; end them with the run.
+            // and keep stdout open; end them with the run. One that ignores SIGTERM gets SIGKILL after 3 s.
             signal_group(pid, libc::SIGTERM);
-            if tokio::time::timeout(Duration::from_secs(3), reader).await.is_err() {
+            let ended = tokio::time::timeout(Duration::from_secs(3), async {
+                let _ = (&mut reader).await;
+                while group_alive(pid) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await;
+            if ended.is_err() {
                 signal_group(pid, libc::SIGKILL);
                 reader_abort.abort(); // a dropped JoinHandle doesn't stop the task; it would keep the channel open
             }
@@ -196,5 +261,5 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
         });
     }
 
-    Ok(RunHandle { pid, events: rx, stop: StopHandle(stop) })
+    Ok(RunHandle { pid, events: rx, stop: StopHandle { notify: stop, group: pid } })
 }

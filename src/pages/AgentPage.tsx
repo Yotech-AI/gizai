@@ -7,6 +7,8 @@ import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { relTime } from "../lib/format";
 import { roleLabel, wakeupLabel } from "../lib/agents";
+import { cliName } from "../lib/clis";
+import { useClis } from "../lib/useClis";
 import { formatCost, dayRate } from "../lib/runs";
 import { useDrawer } from "../lib/drawers";
 import type { DayStat, Run } from "../types";
@@ -48,6 +50,7 @@ export function AgentPage({ id }: { id: string }) {
   const { data: agent, error } = useData(() => getAgent(id), [id]);
   const { data: days } = useData(() => agentStats(id, 14), [id]);
   const { data: runs } = useData(() => agentRuns(id, 20), [id]);
+  const clis = useClis();
   const { data: tasks } = useData(() => listTasks({}));
   const live = useLiveRuns().filter((r) => r.agentId === id);
   const open = useDrawer();
@@ -77,7 +80,7 @@ export function AgentPage({ id }: { id: string }) {
           <div className="entity-head">
             <Avatar name={agent.name} kind="agent" size="xl" role={agent.roleKey} />
             <div className="names"><h1>{agent.name}</h1>
-              <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""} · Claude Code{agent.model ? ` (${agent.model})` : ""} · {wakeupLabel(agent.wakeup, agent.heartbeatMinutes)}</p></div>
+              <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""} · {wakeupLabel(agent.wakeup, agent.heartbeatMinutes)}</p></div>
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>

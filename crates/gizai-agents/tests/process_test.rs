@@ -86,6 +86,42 @@ async fn a_background_child_holding_stdout_does_not_hang_the_run() {
     assert!(t0.elapsed() < Duration::from_secs(8), "took {:?}", t0.elapsed());
 }
 
+/// Whether a process group is gone within `within` (a process that ended counts until it has been reaped).
+async fn group_gone(pgid: u32, within: Duration) -> bool {
+    let t0 = Instant::now();
+    // SAFETY: signal 0 only checks that the group exists; nothing is sent.
+    while unsafe { libc::kill(-(pgid as i32), 0) } == 0 {
+        if t0.elapsed() > within { return false; }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    true
+}
+
+#[tokio::test]
+async fn kill_ends_the_run_group_at_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = spawn(&args("stubborn"), tmp.path(), &tmp.path().join("r.jsonl"), Caps { max_time: Duration::from_secs(60), max_tool_calls: 80 }).unwrap();
+    let _init = h.events.recv().await;
+    let t0 = Instant::now();
+    h.stop.kill();
+    let evs = drain(&mut h).await;
+    assert!(matches!(evs.last(), Some(RunEvent::Other { raw_type }) if raw_type == "exit:signal-9"), "{evs:?}");
+    assert!(t0.elapsed() < Duration::from_secs(2), "SIGKILL doesn't wait for Stop's grace; took {:?}", t0.elapsed());
+    assert!(group_gone(h.pid, Duration::from_secs(1)).await, "the stubborn agent and its sleep are gone");
+}
+
+#[tokio::test]
+async fn a_leftover_that_ignores_sigterm_gets_sigkill_after_3s() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t0 = Instant::now();
+    let mut h = spawn(&args("leftover"), tmp.path(), &tmp.path().join("r.jsonl"), Caps { max_time: Duration::from_secs(60), max_tool_calls: 80 }).unwrap();
+    let evs = drain(&mut h).await;
+    assert!(matches!(evs.last(), Some(RunEvent::Other { raw_type }) if raw_type == "exit:0"), "{evs:?}");
+    let took = t0.elapsed();
+    assert!(took >= Duration::from_millis(2900) && took < Duration::from_secs(6), "SIGTERM, then SIGKILL 3 s later; took {took:?}");
+    assert!(group_gone(h.pid, Duration::from_secs(1)).await, "the leftover that ignored SIGTERM doesn't run on");
+}
+
 #[test]
 fn a_missing_binary_is_a_spawn_error() {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();

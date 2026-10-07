@@ -63,6 +63,20 @@ export type Member = {
   /** Cards it works on at once (1 when absent). */
   maxRuns?: number;
 };
+/** A coding CLI agents run on (Settings → Coding CLIs); "claude_code" is the built-in Claude Code. */
+export type CliKind = "claude_code" | "codex" | "gemini" | "other";
+export type Cli = {
+  /** Empty for a new one: saving gives it an id. */
+  id: string; name: string; kind: CliKind;
+  /** The program: a path or a name on your login shell's PATH. */
+  command: string;
+  /** NAME=value lines, e.g. CLAUDE_CONFIG_DIR=~/.claude-2. */
+  env: string[];
+  /** Other only: the arguments, with {prompt} and {model}. */
+  args: string;
+};
+/** A CLI and the program that would run; `problem` when it isn't found. */
+export type CliStatus = Cli & { path?: string | null; problem?: string | null };
 /** A model Claude Code offers (its /model list). */
 export type ModelOption = { value: string; resolvedModel?: string | null; displayName: string; description: string; supportsEffort: boolean; effortLevels: string[] };
 export type Wakeup = "manual" | "on_assign" | "heartbeat";
@@ -102,7 +116,13 @@ export type Run = {
   sessionId?: string | null; error?: string | null; logPath: string;
   /** The commit its worktree was at when it started. */
   baseSha?: string | null;
+  /** The id of the coding CLI it ran on. */
+  adapter?: string | null;
+  /** The commit its worktree was at when it ended; null while it runs and for runs from before Gizai saved it. */
+  headSha?: string | null;
 };
+/** A commit a run made: its id and the first line of its message. */
+export type Commit = { sha: string; subject: string };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
   /** The GitHub CLI; null = found when needed. */
@@ -138,6 +158,43 @@ export type ConnectionCheckItem = {
   name: string; result: "ok" | "failed" | "skipped"; text: string; fix?: string | null; projectId?: string | null; repo?: string | null;
 };
 export type ConnectionCheck = { ok: boolean; pushOver: PushOver; checks: ConnectionCheckItem[] };
+
+// ---- updates: Settings → Updates and the notice above Company ----
+/** A release on GitHub: `version` "0.1.6" from the tag "v0.1.6"; `url` is its page, `notes` its Markdown notes. */
+export type Release = { version: string; tag: string; name?: string | null; url?: string | null; publishedAt?: string | null; notes?: string | null };
+/** While an update runs: source (getting it), build, backup, install. When it has ended: installed, failed, stopped. */
+export type UpdateStep = "source" | "build" | "backup" | "install" | "installed" | "failed" | "stopped";
+export type UpdateJob = {
+  version: string; step: UpdateStep; startedAt: number; endedAt?: number | null;
+  /** Its log: every command and what it said. */
+  log: string;
+  /** The backup of your data made before installing. */
+  backup?: string | null;
+  /** Why it failed, and the end of what the failed command said. For an installed update: what the installer said
+   * went wrong after the new version was in place. */
+  problem?: string | null; output?: string | null;
+  /** When it failed: whether the Gizai installed before is still in place, as it was (unless the install failed partway). */
+  unchanged: boolean;
+};
+export type UpdateStatus = {
+  /** This Gizai's version. */
+  current: string;
+  /** Check for new releases (at start and every six hours). */
+  autoCheck: boolean;
+  checking: boolean;
+  /** The last check: when, the latest release it found, and why it didn't work. */
+  checkedAt?: number | null; latest?: Release | null; problem?: GithubProblem | null;
+  /** The latest release when it is newer than this Gizai. */
+  available?: Release | null;
+  /** A newer version that is installed already: a restart starts it. */
+  installed?: string | null;
+  /** Where an update installs, or why this Gizai can't update itself (a dev build). */
+  installTo?: string | null; cannotInstall?: string | null;
+  /** The update that runs now, or the last one since Gizai started. */
+  job?: UpdateJob | null;
+  /** Where releases come from. */
+  repo: string;
+};
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- chat with the Team Lead ----

@@ -169,3 +169,54 @@ async fn a_run_without_a_saved_end_says_so_instead_of_listing_commits() {
     let err = gizai_lib::runs::commits(&st, &run.id).unwrap_err();
     assert!(err.contains("didn't save where this run started and ended"), "{err}");
 }
+
+// GA-40: GA-14 merged with GA-15 (stopping on quit) and GA-3 (coding CLIs). Where they meet: a run stopped because
+// Gizai quit and a run on another coding CLI save where they ended too.
+
+#[tokio::test]
+async fn a_run_stopped_because_gizai_quit_saves_where_it_ended() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    describe(&st, &task, "FAKE_HANG");
+    let (run_id, done) = gizai_lib::runs::start(&st, &task, None, Some(FAKE.into()), "manual").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let wt = PathBuf::from(gizai_core::runs::get(&st.db, &run_id).unwrap().worktree_path.unwrap());
+    git(&wt, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "Work before quitting"]);
+
+    assert_eq!(gizai_lib::runs::stop_all(&st, Duration::from_secs(12)).await, 1);
+    let s = done.await.unwrap();
+    assert_eq!((s.status.as_str(), s.error.as_deref()), ("cancelled", Some(gizai_lib::runs::STOPPED_BY_QUIT)));
+    let run = gizai_core::runs::get(&st.db, &run_id).unwrap();
+    assert_eq!(run.error.as_deref(), Some(gizai_lib::runs::STOPPED_BY_QUIT));
+    assert_eq!(run.head_sha.as_deref(), Some(rev(&wt, "HEAD").as_str()));
+    assert_eq!(subjects(&gizai_lib::runs::commits(&st, &run_id).unwrap()), ["Work before quitting"]);
+}
+
+#[tokio::test]
+async fn a_run_on_another_coding_cli_saves_its_cli_and_where_it_ended() {
+    const FAKE_CLI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/gizai-agents/tests/fake-cli.sh");
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let mut clis = gizai_core::clis::list(&st.db).unwrap();
+    clis.push(gizai_core::clis::Cli { name: "Codex".into(), kind: "codex".into(), command: FAKE_CLI.into(), env: vec!["FAKE_KIND=codex".into()],
+                                      ..Default::default() });
+    let codex = gizai_lib::clis::save(&st, clis).unwrap().into_iter().find(|c| c.cli.name == "Codex").unwrap().cli.id;
+    let (_, agent) = gizai_core::team::all_agents(&st.db).unwrap().into_iter().find(|(_, m)| m.role_key == "backend").unwrap();
+    gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, gizai_core::model::AgentInput { name: agent.name.clone(),
+        role_key: "backend".into(), adapter: codex.clone(), ..Default::default() }).unwrap();
+
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    assert_eq!(s.status, "succeeded");
+    let run = only_run(&st, &task);
+    let wt = PathBuf::from(run.worktree_path.clone().unwrap());
+    assert_eq!(run.adapter.as_deref(), Some(codex.as_str()), "the CLI it ran on");
+    assert_eq!(run.head_sha.as_deref(), Some(rev(&wt, "HEAD").as_str()), "where it ended");
+    assert_eq!(run.head_sha, run.base_sha, "the fake Codex made no commits");
+    assert!(gizai_lib::runs::commits(&st, &run.id).unwrap().is_empty());
+    let json = serde_json::to_value(&run).unwrap();
+    assert_eq!((json["adapter"].clone(), json["headSha"].clone()), (serde_json::json!(codex), serde_json::json!(run.head_sha)));
+}

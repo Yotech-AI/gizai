@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Archive, Pencil, Plus } from "lucide-react";
-import { archiveClient, getClient, listContacts, listProjects, saveContact } from "../api";
+import { Archive, Pencil, Plus, Trash2 } from "lucide-react";
+import { archiveClient, getClient, listContacts, listProjects, removeContact, saveContact } from "../api";
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { companyInitials } from "../lib/format";
@@ -11,16 +11,28 @@ import { Drawer } from "../components/Drawer";
 import { Field, FormSection } from "../components/Form";
 import { MarkdownView } from "../components/MarkdownView";
 
-/** Add a contact (no `initial`) or edit one. */
-function ContactDrawer({ clientId, first, initial, onClose }: { clientId: string; first: boolean; initial?: Contact; onClose: () => void }) {
+/** Add a contact (no `initial`) or edit one. `next` is who becomes primary when this primary contact is removed. */
+function ContactDrawer({ clientId, first, initial, next, onClose }: { clientId: string; first: boolean; initial?: Contact; next?: string; onClose: () => void }) {
   const start = initial ?? { id: "", clientId, name: "", isPrimary: first };
   const [c, setC] = useState<Contact>(start);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const save = async () => { try { await saveContact(c); onClose(); } catch (e) { setErr(String(e)); } };
+  const remove = async () => {
+    if (!initial) return;
+    setRemoving(true);
+    try { await removeContact(initial.id); onClose(); } catch (e) { setErr(String(e)); setConfirmRemove(false); setRemoving(false); }
+  };
+  const editActions = <><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!c.name.trim()} onClick={save}>{initial ? "Save changes" : "Add contact"}</button></>;
+  const removeActions = <><button className="btn ghost" disabled={removing} onClick={() => setConfirmRemove(false)}>Keep</button><button className="btn danger" disabled={removing} onClick={remove}>Remove contact</button></>;
+  const hint = !initial ? undefined
+    : confirmRemove ? <span style={{ color: "var(--text)" }}>Remove {initial.name} from this client?{initial.isPrimary && next && ` ${next} becomes the primary contact.`}</span>
+    : <button className="btn ghost" onClick={() => setConfirmRemove(true)}><Trash2 className="icon" />Remove contact</button>;
   return (
     <Drawer title={initial ? `Edit ${initial.name}` : "Add contact"} subtitle="A person at this client. One contact is the primary one." onClose={onClose}
-      dirty={JSON.stringify(c) !== JSON.stringify(start)} error={err}
-      actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!c.name.trim()} onClick={save}>{initial ? "Save changes" : "Add contact"}</button></>}>
+      dirty={JSON.stringify(c) !== JSON.stringify(start)} error={err} hint={hint}
+      actions={confirmRemove ? removeActions : editActions}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }}>
         <FormSection title="Contact">
           <Field label="Name" htmlFor="k-name"><input id="k-name" className="input" autoFocus value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} /></Field>
@@ -96,7 +108,8 @@ export function ClientPage({ id }: { id: string }) {
         </div>
       </div>
       {adding && <ContactDrawer clientId={id} first={(contacts.data ?? []).length === 0} onClose={() => setAdding(false)} />}
-      {editing && <ContactDrawer key={editing.id} clientId={id} first={false} initial={editing} onClose={() => setEditing(null)} />}
+      {editing && <ContactDrawer key={editing.id} clientId={id} first={false} initial={editing}
+        next={(contacts.data ?? []).find((k) => k.id !== editing.id)?.name} onClose={() => setEditing(null)} />}
     </>
   );
 }

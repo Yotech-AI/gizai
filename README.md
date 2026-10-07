@@ -29,7 +29,7 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 
 ### Updates
 
-Gizai asks GitHub for the latest release 20 seconds after it starts, then every six hours. When a newer one is out, **Update to <version>** shows above Company in the sidebar.
+Gizai asks GitHub for the latest release 20 seconds after it starts, then every six hours. When a newer one is out, **Update to X.Y.Z** shows above Company in the sidebar.
 
 Click it and Gizai:
 

@@ -377,3 +377,17 @@ pub async fn github_login_wait(st: State<'_, AppState>) -> R<Option<String>> {
 }
 #[tauri::command]
 pub fn github_login_cancel(st: State<AppState>) { crate::github::login_cancel(&st) }
+
+// ---- worktrees of finished cards (Settings → Data) ----
+/// The worktrees of Done and Cancelled cards, with their disk use.
+#[tauri::command]
+pub async fn list_old_worktrees(st: State<'_, AppState>) -> R<Vec<crate::worktrees::OldWorktree>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::worktrees::list(&st)).await.map_err(|err| err.to_string())?
+}
+/// Removes the worktrees of these finished cards (after you confirmed); says per card what happened.
+#[tauri::command]
+pub async fn remove_old_worktrees(st: State<'_, AppState>, task_ids: Vec<String>) -> R<Vec<crate::worktrees::RemovedWorktree>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::worktrees::remove(&st, &task_ids)).await.map_err(|err| err.to_string())?
+}

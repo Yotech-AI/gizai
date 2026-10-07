@@ -7,6 +7,7 @@ pub mod pulls;
 mod quit;
 pub mod runs;
 pub mod tools;
+pub mod worktrees;
 
 use gizai_core::db::Db;
 use serde::Serialize;
@@ -298,6 +299,7 @@ pub fn run() {
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
+            commands::list_old_worktrees, commands::remove_old_worktrees,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")

@@ -7,9 +7,14 @@
 #  5. agent run: Run on a task with the fake Claude Code, watch it live, Stop, Run again → card in Testing.
 #  6. chat: set up the Team Lead from the Chat page, send a message; the fake Claude Code calls Gizai's tools
 #     through the real gizai-mcp shim and socket, and the answer links the task it created.
+# Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# A brand-new worktree has no demo data and no app yet; an app older than its sources is built again.
+source scripts/app-ready.sh
+gz_demo || { echo "could not make the demo data"; exit 1; }
+gz_app || { echo "could not build the app"; exit 1; }
 # The chat test needs gizai-mcp next to the app (a fresh checkout doesn't have it yet).
 (source scripts/env.sh && cargo build --release -q -p gizai-mcp) || { echo "could not build gizai-mcp"; exit 1; }
 # Every test copy points Claude Code at the fake, so the agent form's model list never starts the real claude.

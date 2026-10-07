@@ -17,10 +17,14 @@ export type Project = {
   id: string; clientId?: string | null; clientName?: string | null; number: string; key: string; name: string; status: string;
   color?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null; defaultBranch: string; teamId?: string | null;
   budgetAmountMinor?: number | null; budgetHours?: number | null; openTasks: number; doneTasks: number; updatedAt: number;
+  /** How a new worktree is prepared: paths copied from the main checkout, the install of what is missing, a setup command. */
+  worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
 };
 export type ProjectInput = {
   clientId?: string | null; name: string; key: string; status?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null;
   defaultBranch?: string | null; color?: string | null; budgetAmountMinor?: number | null; budgetHours?: number | null;
+  /** Left out (null): kept as they are. */
+  worktreeCopy?: string[] | null; worktreeInstall?: boolean | null; worktreeSetup?: string | null;
 };
 export type Label = { id: string; name: string; color?: string | null };
 export type Task = {
@@ -105,6 +109,12 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   ghBin?: string | null;
   /** How Open pull request and Push branch reach GitHub. */
   pushOver: PushOver };
+/** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
+export type OldWorktree = {
+  taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;
+  bytes: number; uncommitted: number; live: boolean;
+};
+export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
 
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */

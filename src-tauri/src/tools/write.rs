@@ -192,7 +192,7 @@ pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         status: a.opt("status").or(Some(cur.status.clone())), goal_md: keep(a, "goal_md", &cur.goal_md),
         repo_path, default_branch: a.opt("default_branch").or(Some(cur.default_branch.clone())),
         color: keep(a, "color", &cur.color), budget_amount_minor: cur.budget_amount_minor, budget_hours: cur.budget_hours,
-        repo_url: keep(a, "github", &cur.repo_url),
+        repo_url: keep(a, "github", &cur.repo_url), ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &cur.id).map_err(err)?;

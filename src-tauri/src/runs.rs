@@ -8,11 +8,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use gizai_agents::claude::ClaudeArgs;
+use gizai_agents::prepare::{self as prep, Prepare};
 use gizai_agents::process::{self, Caps, StopHandle};
 use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
 use gizai_agents::stream::RunEvent;
 use gizai_agents::{outcome, worktree};
-use gizai_core::model::Outcome;
+use gizai_core::model::{Outcome, Project, Task, TaskPatch};
 use gizai_core::{comments, ids, projects, runs as core_runs, settings, tasks, team, workflow};
 use serde::{Deserialize, Serialize};
 
@@ -64,6 +65,28 @@ pub struct RunManager {
     stopped: Mutex<HashSet<String>>,
     /// Set while Gizai quits: no new runs start.
     closing: AtomicBool,
+    /// Cards whose run is starting (their worktree being made and prepared): one start at a time per card.
+    starting: std::sync::Arc<Mutex<HashSet<String>>>,
+}
+
+/// Held while a card's run starts.
+struct Starting {
+    cards: std::sync::Arc<Mutex<HashSet<String>>>,
+    task_id: String,
+}
+
+impl Starting {
+    fn take(st: &AppState, task_id: &str) -> Option<Starting> {
+        let cards = st.runs.starting.clone();
+        let taken = cards.lock().unwrap().insert(task_id.to_string());
+        taken.then(|| Starting { cards, task_id: task_id.to_string() })
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        self.cards.lock().unwrap().remove(&self.task_id);
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -284,10 +307,11 @@ pub fn suggest(st: &AppState, task_id: &str) -> Option<String> {
     choose_agent(st, task_id).ok().map(|(a, _)| a)
 }
 
-/// Why a run didn't start: a problem with this card (its project or repository), or anything else (Claude
-/// Code missing, the run limit, a paused agent, …).
+/// Why a run didn't start: a problem with this card (its project or repository), a card already put on hold for it
+/// (preparing its worktree failed), or anything else (Claude Code missing, the run limit, a paused agent, …).
 enum StartError {
     Card(String),
+    Held(String),
     Other(String),
 }
 
@@ -298,7 +322,8 @@ impl From<String> for StartError {
 /// Starts a run and returns its id plus a handle that resolves when it has finished and its verdict is applied.
 pub async fn start(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
-    start_inner(st, task_id, agent_id, bin_override, trigger, None).await.map_err(|e| match e { StartError::Card(m) | StartError::Other(m) => m })
+    start_inner(st, task_id, agent_id, bin_override, trigger, None).await
+        .map_err(|e| match e { StartError::Card(m) | StartError::Held(m) | StartError::Other(m) => m })
 }
 
 /// A session to resume instead of starting one: Continue.
@@ -330,7 +355,7 @@ pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<Stri
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
     let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, reason })).await
-        .map_err(|e| match e { StartError::Card(m) | StartError::Other(m) => m })?;
+        .map_err(|e| match e { StartError::Card(m) | StartError::Held(m) | StartError::Other(m) => m })?;
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
         let patch = gizai_core::model::TaskPatch { hold: Some(String::new()), ..Default::default() };
         if tasks::update(&st.db, &st.you_id, &task_id, patch).is_ok() {
@@ -346,14 +371,94 @@ async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger:
     match start_inner(st, task_id, Some(agent_id.to_string()), None, trigger, None).await {
         Ok((_, done)) => Some(done),
         Err(StartError::Card(reason)) => {
-            let patch = gizai_core::model::TaskPatch { hold: Some("blocked".into()), hold_reason: Some(reason), ..Default::default() };
-            if tasks::update(&st.db, agent_id, task_id, patch).is_ok() {
-                (st.notify)(Note::RowsChanged("tasks"));
-            }
+            hold_card(st, agent_id, task_id, &reason);
             None
         }
+        Err(StartError::Held(_)) => None,
         Err(StartError::Other(reason)) => { eprintln!("gizai: {trigger} start of an agent failed: {reason}"); None }
     }
+}
+
+/// Puts the card on hold "blocked" with the reason, as `actor` (the agent that couldn't start), so Jeffrey sees why.
+fn hold_card(st: &AppState, actor: &str, task_id: &str, reason: &str) {
+    let patch = TaskPatch { hold: Some("blocked".into()), hold_reason: Some(reason.to_string()), ..Default::default() };
+    if tasks::update(&st.db, actor, task_id, patch).is_ok() {
+        (st.notify)(Note::RowsChanged("tasks"));
+    }
+}
+
+/// The card's worktree: its own when it has one; else a finished card's worktree of the same project, taken over so
+/// its build stays warm (`worktree::reuse`, see `worktrees::reusable`); else a new one. A new or taken-over worktree is
+/// noted as still to prepare.
+fn open_worktree(st: &AppState, project: &Project, task: &Task, repo: &Path, start: &str) -> Result<worktree::Worktree, StartError> {
+    let base_dir = st.data_dir.join("worktrees").join(&project.key);
+    let has_own = base_dir.join(&task.identifier).exists()
+        || worktree::worktree_of(repo, &worktree::branch_name(&task.identifier, &task.title)).ok().flatten().is_some();
+    let mut wt = None;
+    if !has_own {
+        for from in crate::worktrees::reusable(st, &project.id, &base_dir) {
+            match worktree::reuse(repo, &from, &base_dir, &task.identifier, &task.title, start, &crate::worktrees::keep_on_reuse(project)) {
+                Ok(w) => {
+                    wt = Some(w);
+                    break;
+                }
+                Err(e) => eprintln!("gizai: {} couldn't take over the worktree {}: {e}", task.identifier, from.display()),
+            }
+        }
+    }
+    let wt = match wt {
+        Some(w) => w,
+        None => worktree::ensure(repo, &base_dir, &task.identifier, &task.title, start).map_err(|e| StartError::Card(e.to_string()))?,
+    };
+    if wt.created {
+        worktree::mark_unprepared(&wt.path, wt.reused.as_ref().map(|r| r.head.as_str())).map_err(|e| StartError::Card(e.to_string()))?;
+    }
+    Ok(wt)
+}
+
+/// Prepares a new or taken-over worktree before the agent starts: the project's copies, the install of what is still
+/// missing, then its setup command (`gizai_agents::prepare`). A command that fails puts the card on hold "blocked"
+/// with its output; no run starts, so it doesn't count as a failed run, and the next start prepares again.
+async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
+                          todo: worktree::Unprepared) -> Result<(), StartError> {
+    let plan = Prepare { copy: project.worktree_copy.clone(), install: project.worktree_install, setup: project.worktree_setup.clone() };
+    let (main, dir) = (repo.to_path_buf(), wt.path.clone());
+    let done = tokio::task::spawn_blocking(move || {
+        let path = command_path();
+        prep::prepare(&main, &dir, &plan, todo.since.as_deref(), Some(path.as_os_str()))
+    }).await.map_err(|e| StartError::Other(e.to_string()))?;
+    match done {
+        Ok(did) => {
+            worktree::mark_prepared(&wt.path).map_err(|e| StartError::Card(e.to_string()))?;
+            let what = did.summary();
+            if !what.is_empty() {
+                eprintln!("gizai: prepared {}'s worktree: {what}", task.identifier);
+            }
+            Ok(())
+        }
+        Err(failed) => {
+            let reason = format!("Preparing its worktree failed: {failed}");
+            hold_card(st, agent_id, &task.id, &reason);
+            Err(StartError::Held(reason))
+        }
+    }
+}
+
+/// The PATH for the commands that prepare a worktree: Gizai's own, then the folders your login shell adds (started
+/// from the app launcher, Gizai often lacks ~/.local/bin, mise or nvm).
+pub(crate) fn command_path() -> std::ffi::OsString {
+    let own = std::env::var_os("PATH").unwrap_or_default();
+    let login = std::process::Command::new("bash").args(["-lc", "printf '\\n%s' \"$PATH\""]).stdin(std::process::Stdio::null()).output().ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().last().map(str::to_string))
+        .unwrap_or_default();
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&own).collect();
+    for d in std::env::split_paths(&login) {
+        if !d.as_os_str().is_empty() && !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or(own)
 }
 
 async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str, resume: Option<Resume>)
@@ -361,6 +466,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if st.runs.closing.load(Ordering::SeqCst) {
         return Err(StartError::Other("Gizai is quitting".into()));
     }
+    let _starting = Starting::take(st, task_id)
+        .ok_or_else(|| StartError::Other("This card's run is already starting: Gizai is getting its worktree ready".into()))?;
     let max = get_settings(st).max_concurrent_runs;
     if st.runs.live.lock().unwrap().len() as u32 >= max {
         return Err(format!("{max} runs are already active; wait for one to finish or raise the limit in Settings").into());
@@ -397,8 +504,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         }
         None => project.default_branch.clone(),
     };
-    let wt = worktree::ensure(Path::new(&repo), &st.data_dir.join("worktrees").join(&project.key), &task.identifier, &task.title, &start)
-        .map_err(|e| StartError::Card(e.to_string()))?;
+    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start)?;
+    if let Some(todo) = worktree::unprepared(&wt.path) {
+        prepare_worktree(st, &agent_id, &task, &project, Path::new(&repo), &wt, todo).await?;
+    }
     let base = project.repo_url.as_ref().map(|_| BaseInfo {
         from: start.strip_prefix("refs/remotes/").or_else(|| start.strip_prefix("refs/")).unwrap_or(&start).to_string(),
         behind: if wt.created { 0 } else { worktree::behind(&wt.path, &start).unwrap_or(0) },

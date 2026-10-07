@@ -11,6 +11,8 @@ pub struct RepoCheck {
     pub dirty: bool,
     /// The repository's GitHub remote as a link (origin first), offered for the project's GitHub field.
     pub github: Option<String>,
+    /// Paths a new worktree could copy from it, offered for the project's copy list (.env, vendor/, node_modules/, target/).
+    pub suggest_copy: Vec<String>,
 }
 
 fn git(path: &Path, args: &[&str]) -> Option<String> {
@@ -25,7 +27,7 @@ pub fn is_repo(path: &Path) -> bool {
 
 pub fn repo_check(path: &Path) -> RepoCheck {
     if !is_repo(path) {
-        return RepoCheck { is_git: false, branch: None, dirty: false, github: None };
+        return RepoCheck { is_git: false, branch: None, dirty: false, github: None, suggest_copy: vec![] };
     }
     let branch = git(path, &["branch", "--show-current"]).filter(|b| !b.is_empty());
     let dirty = git(path, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false);
@@ -34,7 +36,7 @@ pub fn repo_check(path: &Path) -> RepoCheck {
         .collect();
     remotes.sort_by_key(|(name, _)| name != "origin");
     let github = remotes.iter().find_map(|(_, url)| gizai_core::repo_url::normalize(url).ok().flatten().filter(|r| r.provider == "github").map(|r| r.url));
-    RepoCheck { is_git: true, branch, dirty, github }
+    RepoCheck { is_git: true, branch, dirty, github, suggest_copy: gizai_agents::prepare::suggest_copy(path) }
 }
 
 /// The repository's remote for the project link `url` (your own name for it, e.g. `upstream`; origin first), if it has one.

@@ -93,6 +93,13 @@ select.chip { appearance: none; padding-right: 26px; background-image: url("data
 .filedrop-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 4px; color: var(--text-3); }
 .files { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
 .files li { display: flex; align-items: center; gap: 4px; }
+.old-worktrees { display: grid; gap: 8px; }
+.old-worktrees ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.old-worktrees li { display: flex; align-items: center; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.old-worktrees .ow-card { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.old-worktrees .ow-size { color: var(--text-2); }
+.old-worktrees .ow-confirm { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--text); }
+.old-worktrees .ow-actions { display: inline-flex; gap: 6px; }
 .file { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); color: var(--text); font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer; }
 .file:hover { border-color: var(--line-2); }
 .file .ext { display: grid; place-items: center; width: 32px; height: 34px; flex: none; border-radius: var(--radius-s); background: var(--selected); font-size: 9.5px; font-weight: 700; color: var(--text-2); }

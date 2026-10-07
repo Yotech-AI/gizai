@@ -92,8 +92,10 @@ export const githubLogin = () => invoke<T.GithubLoginCode>("github_login");
 export const githubLoginWait = () => invoke<string | null>("github_login_wait");
 export const githubLoginCancel = () => invoke<void>("github_login_cancel");
 
-export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null };
+export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null; suggestCopy?: string[] };
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
+export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
+export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
 
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>

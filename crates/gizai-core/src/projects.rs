@@ -8,7 +8,7 @@ const SELECT: &str = "SELECT p.id, p.client_id, c.name, p.number, p.key, p.name,
     r.local_path, coalesce(r.default_branch, 'main'), p.team_id, p.budget_amount_minor, p.budget_hours,
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category NOT IN ('done','cancelled')),
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category = 'done'),
-    p.updated_at, NULLIF(r.remote_url, '')
+    p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL";
@@ -19,6 +19,8 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         status: r.get(6)?, color: r.get(7)?, goal_md: r.get(8)?, repo_path: r.get(9)?, default_branch: r.get(10)?,
         team_id: r.get(11)?, budget_amount_minor: r.get(12)?, budget_hours: r.get(13)?, open_tasks: r.get(14)?,
         done_tasks: r.get(15)?, updated_at: r.get(16)?, repo_url: r.get(17)?,
+        worktree_copy: serde_json::from_str(&r.get::<_, String>(18)?).unwrap_or_default(),
+        worktree_install: r.get(19)?, worktree_setup: r.get(20)?,
     })
 }
 
@@ -77,6 +79,40 @@ fn normalise_key(key: &str) -> Result<String> {
     Ok(k)
 }
 
+/// The paths a new worktree copies from the main checkout, tidied: one per entry, relative to the repository ("./" and
+/// spaces dropped, a folder's "/" kept), each once. A path outside the repository, or its .git, is refused.
+pub fn clean_copy_paths(paths: &[String]) -> Result<Vec<String>> {
+    let mut out: Vec<String> = vec![];
+    for raw in paths {
+        let mut p = raw.trim();
+        while let Some(rest) = p.strip_prefix("./") {
+            p = rest.trim_start_matches('/');
+        }
+        if p.is_empty() || p == "." {
+            continue;
+        }
+        let parts: Vec<&str> = p.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+        if p.starts_with('/') || p.starts_with('~') || parts.is_empty() || parts.contains(&"..") || parts[0] == ".git" {
+            return Err(Error::Invalid(format!("copy paths are relative to the repository, like .env or node_modules/: {p} isn't one")));
+        }
+        let tidy = parts.join("/") + if p.ends_with('/') { "/" } else { "" };
+        if !out.iter().any(|o| o.trim_end_matches('/') == tidy.trim_end_matches('/')) {
+            out.push(tidy);
+        }
+    }
+    Ok(out)
+}
+
+/// The worktree settings of `input` to save: None keeps what the project has.
+fn worktree_fields(input: &ProjectInput) -> Result<(Option<String>, Option<bool>, Option<String>)> {
+    let copy = match &input.worktree_copy {
+        Some(list) => Some(serde_json::to_string(&clean_copy_paths(list)?)?),
+        None => None,
+    };
+    let setup = input.worktree_setup.as_ref().map(|c| c.trim().to_string());
+    Ok((copy, input.worktree_install, setup))
+}
+
 fn validate_status(s: &Option<String>) -> Result<()> {
     if let Some(s) = clean(s) {
         if !["planned", "active", "paused", "done", "archived"].contains(&s.as_str()) {
@@ -93,6 +129,7 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
     }
     let key = normalise_key(&input.key)?;
     validate_status(&input.status)?;
+    let (copy, install, setup) = worktree_fields(&input)?;
     db.write(Some(actor), |w| {
         let c = w.conn();
         let org = org_id(c)?;
@@ -113,10 +150,12 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
         let id = ids::new_id();
         c.execute(
             "INSERT INTO projects(id, created_at, updated_at, created_by, updated_by, org_id, client_id, number, key, name, status,
-               color, goal_md, team_id, budget_amount_minor, budget_hours)
-             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'active'), ?10, ?11, ?12, ?13, ?14)",
+               color, goal_md, team_id, budget_amount_minor, budget_hours, worktree_copy_json, worktree_install, worktree_setup)
+             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'active'), ?10, ?11, ?12, ?13, ?14,
+               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''))",
             rusqlite::params![id, now, actor, org, clean(&input.client_id), number, key, name, clean(&input.status),
-                              clean(&input.color), clean(&input.goal_md), team, input.budget_amount_minor, input.budget_hours],
+                              clean(&input.color), clean(&input.goal_md), team, input.budget_amount_minor, input.budget_hours,
+                              copy, install, setup],
         )?;
         w.insert("projects", &id, serde_json::to_value(&input)?)?;
         upsert_repo(w, actor, &id, &input, now)?;
@@ -131,14 +170,18 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
         return Err(Error::Invalid("project name is required".into()));
     }
     validate_status(&input.status)?;
+    let (copy, install, setup) = worktree_fields(&input)?;
     db.write(Some(actor), |w| {
         let now = ids::now_ms();
         let n = w.conn().execute(
             "UPDATE projects SET client_id=?2, name=?3, status=coalesce(?4, status), color=?5, goal_md=?6,
-               budget_amount_minor=?7, budget_hours=?8, updated_at=?9, updated_by=?10, version=version+1
+               budget_amount_minor=?7, budget_hours=?8, updated_at=?9, updated_by=?10, version=version+1,
+               worktree_copy_json=coalesce(?11, worktree_copy_json), worktree_install=coalesce(?12, worktree_install),
+               worktree_setup=CASE WHEN ?13 IS NULL THEN worktree_setup ELSE NULLIF(?13, '') END
              WHERE id=?1 AND deleted_at IS NULL",
             rusqlite::params![id, clean(&input.client_id), name, clean(&input.status), clean(&input.color),
-                              clean(&input.goal_md), input.budget_amount_minor, input.budget_hours, now, actor],
+                              clean(&input.goal_md), input.budget_amount_minor, input.budget_hours, now, actor,
+                              copy, install, setup],
         )?;
         if n == 0 {
             return Err(Error::NotFound(format!("project {id}")));

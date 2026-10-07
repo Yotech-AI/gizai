@@ -223,7 +223,7 @@ fn with<const N: usize>(head: &[(&'static str, &'static str, &'static str)], res
 pub fn catalog() -> Vec<ToolDef> {
     vec![
         tool("get_overview", "A summary of the organisation: clients, active projects, tasks per column, how many items wait in the inbox, the agents and who is working now. Start here.", &[], &[]),
-        tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person) and tasks waiting in Review for them.", &[], &[]),
+        tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person) and tasks waiting for them in Review or Deploy.", &[], &[]),
         tool("list_clients", "All clients with city, main contact and counts of projects and open tasks.", &[("status", "enum:lead|active|inactive", "Only clients with this status")], &[]),
         tool("get_client", "One client with every field, its contacts, projects and files.", &[CLIENT], &["client"]),
         tool("list_projects", "Projects with key, client, status, linked repository and task counts.", &[("client", "string", "Only this client's projects"), ("status", "enum:planned|active|paused|done|archived", "Only projects with this status")], &[]),

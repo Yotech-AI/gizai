@@ -40,6 +40,8 @@ pub enum Note {
     Chat { thread_id: String, event: crate::chat::ChatUiEvent },
     /// A chat turn started or ended.
     ChatChanged,
+    /// The release check or an update moved on (see `update`).
+    UpdateChanged,
 }
 
 #[derive(Debug, Clone, Serialize)]

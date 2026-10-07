@@ -391,3 +391,25 @@ pub async fn remove_old_worktrees(st: State<'_, AppState>, task_ids: Vec<String>
     let st = st.inner().clone();
     tauri::async_runtime::spawn_blocking(move || crate::worktrees::remove(&st, &task_ids)).await.map_err(|err| err.to_string())?
 }
+
+// ---- updates (Settings → Updates, the notice above Company) ----
+#[tauri::command]
+pub fn update_status(st: State<AppState>) -> crate::update::UpdateStatus { crate::update::status(&st) }
+/// Asks GitHub for the latest release now.
+#[tauri::command]
+pub async fn check_for_updates(st: State<'_, AppState>) -> R<crate::update::UpdateStatus> { Ok(crate::update::check(&st).await) }
+#[tauri::command]
+pub fn set_update_auto_check(st: State<AppState>, on: bool) -> R<crate::update::UpdateStatus> { crate::update::set_auto_check(&st, on) }
+/// Builds and installs `version` in the background; returns at once.
+#[tauri::command]
+pub fn start_update(st: State<AppState>, version: String) -> R<crate::update::UpdateStatus> { crate::update::start(&st, &version) }
+#[tauri::command]
+pub fn stop_update(st: State<AppState>) -> crate::update::UpdateStatus { crate::update::stop(&st) }
+/// Quits and starts the Gizai an update installed: agents at work are stopped first, as when you quit.
+#[tauri::command]
+pub fn restart_gizai(app: AppHandle, st: State<AppState>) -> R<()> {
+    let mut cmd = crate::update::restart_command(&st)?;
+    cmd.spawn().map_err(|e| format!("Couldn't restart Gizai: {e}"))?;
+    app.exit(0);
+    Ok(())
+}

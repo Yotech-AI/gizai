@@ -27,6 +27,22 @@ if command -v desktop-file-validate >/dev/null; then desktop-file-validate "$H/.
 v="$(env -i HOME="$H" PATH="$PATH" "$H/.local/bin/gizai" --version)"
 [ "$v" = "gizai $(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" ] || fail "gizai --version said: $v"
 grep -q "Done: gizai" "$T/install.txt" || fail "no Done line"
+[ -z "$(find "$H/.local/lib/gizai" -name '.*.new.*')" ] || fail "the install left its temporary copies behind"
+# --build-only (Gizai's own update builds with it, then installs with --skip-build); not together with --skip-build
+run --help | grep -q -- "--build-only" || fail "--help doesn't list --build-only"
+if run --build-only --skip-build > "$T/both.txt" 2>&1; then fail "--build-only --skip-build was accepted"; fi
+grep -q "don't go together" "$T/both.txt" || { cat "$T/both.txt"; fail "no reason given for --build-only --skip-build"; }
+# the install as Gizai's own update runs it: into another prefix, with the desktop entry and icons under it, after
+# backing up the data there; nothing goes into HOME's ~/.local
+U="$T/update-prefix"; mkdir -p "$U/share/gizai"
+python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('create table t(x)'); c.commit()" "$U/share/gizai/gizai.db"
+H2="$T/home2"; mkdir -p "$H2"
+env -i HOME="$H2" PATH="$PATH" USER="${USER:-gizai}" GIZAI_PREFIX="$U" XDG_DATA_HOME="$U/share" CARGO_TARGET_DIR="$PWD/target" \
+  bash ./install.sh --skip-build > "$T/update.txt" 2>&1 || { cat "$T/update.txt"; fail "the update's install failed"; }
+[ -x "$U/lib/gizai/gizai" ] && [ -x "$U/lib/gizai/gizai-mcp" ] && [ -x "$U/lib/gizai/gizai-launch" ] || fail "the update's install is incomplete"
+grep -q "^Exec=$U/lib/gizai/gizai-launch$" "$U/share/applications/gizai.desktop" || fail "the update's desktop entry isn't under its prefix"
+ls "$U"/share/gizai/backups/gizai-before-install-*.db > /dev/null 2>&1 || fail "the update's install didn't back up the data in its prefix"
+[ ! -e "$H2/.local" ] || fail "the update's install wrote into HOME: $(find "$H2/.local" | head -5)"
 # data that can't be backed up stops the install before anything is replaced
 before="$(stat -c %Y.%s "$H/.local/lib/gizai/gizai")"; sleep 1.1
 echo "not a database" > "$D/gizai.db"

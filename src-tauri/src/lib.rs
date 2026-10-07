@@ -27,6 +27,8 @@ pub struct AppState {
     pub chat: Arc<chat::ChatManager>,
     /// Pull requests being opened or checked on GitHub (see `pulls`).
     pub pulls: Arc<pulls::PullChecks>,
+    /// Log in with GitHub, while gh waits for its code (see `github`).
+    pub github: Arc<github::Logins>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
@@ -162,7 +164,7 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     let mcp_socket = mcp::socket_path(&dir);
     Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), pulls: Arc::new(pulls::PullChecks::default()),
-                  _lock: Arc::new(lock), notify })
+                  github: Arc::new(github::Logins::default()), _lock: Arc::new(lock), notify })
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -295,6 +297,7 @@ pub fn run() {
             commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
+            commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")

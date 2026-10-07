@@ -18,8 +18,13 @@ fn git(path: &Path, args: &[&str]) -> Option<String> {
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Whether `path` is a folder inside a git checkout.
+pub fn is_repo(path: &Path) -> bool {
+    path.is_dir() && git(path, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true")
+}
+
 pub fn repo_check(path: &Path) -> RepoCheck {
-    if !path.is_dir() || git(path, &["rev-parse", "--is-inside-work-tree"]).as_deref() != Some("true") {
+    if !is_repo(path) {
         return RepoCheck { is_git: false, branch: None, dirty: false, github: None };
     }
     let branch = git(path, &["branch", "--show-current"]).filter(|b| !b.is_empty());

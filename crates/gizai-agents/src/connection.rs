@@ -423,7 +423,7 @@ fn login_problem(gh: &Path, said: &str) -> Problem {
     if said.contains("expired") {
         return Problem::new("The code expired before it was entered", "Log in again.");
     }
-    let words = said.lines().map(str::trim).filter(|l| !l.is_empty() && !l.contains("one-time code") && !l.starts_with("Open this URL")).next_back();
+    let words = said.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.contains("one-time code") && !l.starts_with("Open this URL"));
     match words {
         Some(w) => Problem::new(format!("gh's login didn't work: {}", w.trim_start_matches(['!', 'X', '✓', ' '])), format!("Run {command} in a terminal instead.")),
         None => Problem::new("gh's login ended without saying why", format!("Run {command} in a terminal instead.")),

@@ -16,4 +16,14 @@ describe("describeChange", () => {
   it("describes comments", () => {
     expect(describeChange(e("comments", "insert", { task_id: "t", chars: 12 }))).toBe("commented");
   });
+  it("describes a card's pull request on GitHub and the clean-up after its merge", () => {
+    const pr = "https://github.com/acme/shop/pull/7";
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "open", opened: true }))).toBe("opened pull request #7 on GitHub");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "open" }))).toBe("saw pull request #7 open on GitHub");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "draft" }))).toBe("saw pull request #7 as a draft on GitHub");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "merged" }))).toBe("saw pull request #7 merged on GitHub");
+    expect(describeChange(e("tasks", "update", { pullRequest: "https://github.com/acme/shop/pulls", prState: "closed" }))).toBe("saw a pull request closed on GitHub");
+    expect(describeChange(e("tasks", "update", { cleanup: "removed its worktree and deleted branch gizai/kade-1-x after the merge" })))
+      .toBe("removed its worktree and deleted branch gizai/kade-1-x after the merge");
+  });
 });

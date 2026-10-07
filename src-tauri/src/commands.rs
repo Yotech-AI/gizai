@@ -50,6 +50,12 @@ pub fn save_contact(app: AppHandle, st: State<AppState>, contact: Contact) -> R<
     Ok(id)
 }
 #[tauri::command]
+pub fn remove_contact(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    clients::remove_contact(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "contacts");
+    Ok(())
+}
+#[tauri::command]
 pub fn list_users(st: State<AppState>) -> R<Vec<Person>> { users::list(&st.db).map_err(e) }
 #[tauri::command]
 pub fn add_user(app: AppHandle, st: State<AppState>, name: String, email: Option<String>) -> R<String> {
@@ -336,3 +342,52 @@ pub fn chat_live(st: State<AppState>) -> Vec<chat::ChatStatus> { chat::live(&st)
 /// The agent that answers on the Chat page, if any.
 #[tauri::command]
 pub fn chat_agent(st: State<AppState>) -> R<Option<team::Member>> { team::chat_agent(&st.db).map_err(e) }
+
+// ---- pull requests on GitHub ----
+/// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.
+#[tauri::command]
+pub async fn open_pull_request(st: State<'_, AppState>, task_id: String) -> R<crate::pulls::PullInfo> { crate::pulls::open(&st, &task_id).await }
+/// What GitHub says about the card's pull request now (a merge moves the card to Done).
+#[tauri::command]
+pub async fn check_pull_request(st: State<'_, AppState>, task_id: String) -> R<Option<crate::pulls::PullInfo>> { crate::pulls::check(&st, &task_id).await }
+#[tauri::command]
+pub async fn detect_gh(st: State<'_, AppState>) -> R<Option<String>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::pulls::detect_gh(&st)).await.map_err(|err| err.to_string())
+}
+
+// ---- Settings → GitHub ----
+/// Whether Gizai can use GitHub: the GitHub CLI, the account it is logged in as, and how pushes go.
+#[tauri::command]
+pub async fn github_status(st: State<'_, AppState>) -> R<crate::github::Status> { Ok(crate::github::status(&st).await) }
+/// Check connection: gh, its login, ssh to GitHub, and whether you can push to each project with a GitHub link.
+#[tauri::command]
+pub async fn github_check(st: State<'_, AppState>) -> R<crate::github::ConnectionCheck> { Ok(crate::github::check(&st).await) }
+/// Log in with GitHub: starts gh's login in the browser and returns its one-time code and link.
+#[tauri::command]
+pub async fn github_login(st: State<'_, AppState>) -> R<crate::github::LoginCode> { crate::github::login(&st).await }
+/// Waits until the login in the browser has ended: the account gh logged in as, or why it didn't.
+#[tauri::command]
+pub async fn github_login_wait(st: State<'_, AppState>) -> R<Option<String>> {
+    match crate::github::login_wait(&st).await {
+        Some(Err(p)) => Err(p.to_string()),
+        Some(Ok(who)) => Ok(who),
+        None => Ok(None),
+    }
+}
+#[tauri::command]
+pub fn github_login_cancel(st: State<AppState>) { crate::github::login_cancel(&st) }
+
+// ---- worktrees of finished cards (Settings → Data) ----
+/// The worktrees of Done and Cancelled cards, with their disk use.
+#[tauri::command]
+pub async fn list_old_worktrees(st: State<'_, AppState>) -> R<Vec<crate::worktrees::OldWorktree>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::worktrees::list(&st)).await.map_err(|err| err.to_string())?
+}
+/// Removes the worktrees of these finished cards (after you confirmed); says per card what happened.
+#[tauri::command]
+pub async fn remove_old_worktrees(st: State<'_, AppState>, task_ids: Vec<String>) -> R<Vec<crate::worktrees::RemovedWorktree>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::worktrees::remove(&st, &task_ids)).await.map_err(|err| err.to_string())?
+}

@@ -125,7 +125,7 @@ export default function App() {
         <main className="main">
           {error && <div className="error-banner">{error}</div>}
           {route.page === "chat" ? <ChatPage id={route.id} />
-            : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} initialView="list" onNewTask={newTask} />
+            : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
             : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
             : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} />
             : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />

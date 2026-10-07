@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "gizai"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "gizai-agents",
  "gizai-core",
@@ -1308,11 +1308,12 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "tokio",
+ "webkit2gtk",
 ]
 
 [[package]]
 name = "gizai-agents"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "libc",
  "serde",
@@ -1324,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-core"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "rusqlite",
  "rusqlite_migration",
@@ -1338,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-mcp"
-version = "0.1.0"
+version = "0.1.5"
 dependencies = [
  "serde_json",
  "tempfile",

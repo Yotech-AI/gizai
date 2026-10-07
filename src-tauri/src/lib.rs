@@ -1,9 +1,13 @@
 pub mod chat;
 mod commands;
 pub mod git;
+pub mod github;
 pub mod mcp;
+pub mod pulls;
+mod quit;
 pub mod runs;
 pub mod tools;
+pub mod worktrees;
 
 use gizai_core::db::Db;
 use serde::Serialize;
@@ -22,6 +26,10 @@ pub struct AppState {
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
     pub mcp_shim: Option<PathBuf>,
     pub chat: Arc<chat::ChatManager>,
+    /// Pull requests being opened or checked on GitHub (see `pulls`).
+    pub pulls: Arc<pulls::PullChecks>,
+    /// Log in with GitHub, while gh waits for its code (see `github`).
+    pub github: Arc<github::Logins>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
@@ -156,7 +164,8 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     chat::remove_stray_configs(&dir);
     let mcp_socket = mcp::socket_path(&dir);
     Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
-                  mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), _lock: Arc::new(lock), notify })
+                  mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), pulls: Arc::new(pulls::PullChecks::default()),
+                  github: Arc::new(github::Logins::default()), _lock: Arc::new(lock), notify })
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -234,16 +243,31 @@ pub fn run() {
                 Err(e) => {
                     // e.g. another Gizai holds this data folder (from another login session)
                     eprintln!("gizai: {e}");
+                    quit::end_web_content(app.handle());
                     std::process::exit(1);
                 }
             };
             app.manage(state.clone());
+            // After manage: quitting reads the state.
+            quit::on_signals(app.handle());
             // The MCP server chat turns reach Gizai's tools through.
             {
                 let st = state.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = mcp::start(&st) {
                         eprintln!("gizai: the chat tools socket {} could not start: {e}", st.mcp_socket.display());
+                    }
+                });
+            }
+            // The pull request check: at start and every two minutes, cards in Review (and open pull requests) hear
+            // what happened on GitHub; a merge moves its card to Done.
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut tick = tokio::time::interval(pulls::CHECK_EVERY);
+                    loop {
+                        tick.tick().await;
+                        let _ = pulls::check_all(&st).await;
                     }
                 });
             }
@@ -260,7 +284,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, exit_app,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
-            commands::list_contacts, commands::save_contact, commands::list_users, commands::add_user,
+            commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,
             commands::list_tasks, commands::get_task, commands::create_task, commands::update_task, commands::move_task,
             commands::set_task_labels, commands::task_activity, commands::list_comments, commands::add_comment,
@@ -273,6 +297,9 @@ pub fn run() {
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
+            commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
+            commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
+            commands::list_old_worktrees, commands::remove_old_worktrees,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")
@@ -291,7 +318,15 @@ pub fn run() {
                     });
                 }
             }
+            // Nothing keeps the window open, so a close request means it closes now and Gizai quits. WebKit's
+            // page process ends before the window goes (see `quit`); Exit does the same for every other way out.
+            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { .. }, .. } = &event
+                && label == "main"
+            {
+                quit::end_web_content(app);
+            }
             if let tauri::RunEvent::Exit = event {
+                quit::end_web_content(app);
                 mcp::remove_socket(app.state::<AppState>().inner());
             }
         });

@@ -13,6 +13,7 @@ export const saveClient = (id: string | null, input: T.ClientInput) => invoke<st
 export const archiveClient = (id: string) => invoke<void>("archive_client", { id });
 export const listContacts = (clientId: string) => invoke<T.Contact[]>("list_contacts", { clientId });
 export const saveContact = (contact: T.Contact) => invoke<string>("save_contact", { contact });
+export const removeContact = (id: string) => invoke<void>("remove_contact", { id });
 export const listUsers = () => invoke<T.Person[]>("list_users");
 export const addUser = (name: string, email: string | null) => invoke<string>("add_user", { name, email });
 
@@ -76,8 +77,25 @@ export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEve
   listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
-export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null };
+/** Pushes a Review card's branch with your git login and opens its pull request with gh (keeps an open one). */
+export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
+/** Asks GitHub about the card's pull request now; a merge moves the card to Done. */
+export const checkPullRequest = (taskId: string) => invoke<T.PullInfo | null>("check_pull_request", { taskId });
+export const detectGh = () => invoke<string | null>("detect_gh");
+/** Settings → GitHub: whether gh is found, the account it is logged in as, and how pushes go (gh asks GitHub). */
+export const githubStatus = () => invoke<T.GithubStatus>("github_status");
+/** Check connection: gh, its login, ssh to GitHub, and whether you can push to each project with a GitHub link. */
+export const githubCheck = () => invoke<T.ConnectionCheck>("github_check");
+/** Log in with GitHub: starts gh's login in the browser; resolves with its one-time code and link. */
+export const githubLogin = () => invoke<T.GithubLoginCode>("github_login");
+/** Resolves when that login has ended, with the account gh logged in as (null if it didn't say); rejects with why not. */
+export const githubLoginWait = () => invoke<string | null>("github_login_wait");
+export const githubLoginCancel = () => invoke<void>("github_login_cancel");
+
+export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null; suggestCopy?: string[] };
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
+export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
+export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
 
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>

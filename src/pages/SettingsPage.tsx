@@ -1,13 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { detectClaude, getSettings, saveSettings } from "../api";
 import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
+import { GithubSettings } from "../components/GithubSettings";
+import { OldWorktrees } from "../components/OldWorktrees";
 
 export function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [budget, setBudget] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+  const say = useCallback((ok: boolean, text: string) => setMsg({ ok, text }), []);
   useEffect(() => { getSettings().then((x) => { setS(x); setBudget(x.maxRunUsd != null ? String(x.maxRunUsd) : ""); }).catch((e) => setMsg({ ok: false, text: String(e) })); }, []);
   if (!s) return msg ? <div className="error-banner">{msg.text}</div> : null;
   const detect = async () => {
@@ -21,7 +25,7 @@ export function SettingsPage() {
   const save = async (next: Settings = s) => {
     const usd = budget.trim() === "" ? null : Number(budget.replace(",", "."));
     if (usd !== null && !(usd > 0)) { setMsg({ ok: false, text: "The spending limit must be a positive amount, or empty for no limit." }); return; }
-    try { await saveSettings({ ...next, maxRunUsd: usd }); setMsg({ ok: true, text: "Settings saved." }); } catch (e) { setMsg({ ok: false, text: String(e) }); }
+    try { await saveSettings({ ...next, maxRunUsd: usd }); setMsg({ ok: true, text: "Settings saved." }); setSavedAt(Date.now()); } catch (e) { setMsg({ ok: false, text: String(e) }); }
   };
   return (
     <>
@@ -35,6 +39,7 @@ export function SettingsPage() {
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />
                 <button className="btn" onClick={detect} disabled={detecting}>{detecting ? "Looking…" : "Detect"}</button></div></Field>
           </FormSection>
+          <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
           <FormSection title="Runs" text="Each run is a Claude Code process in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
             <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
             <Field label="Spend per run ($)" htmlFor="s-usd" hint="Claude Code stops a run that reaches this amount"><input id="s-usd" className="input" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="No limit" /></Field>
@@ -47,6 +52,8 @@ export function SettingsPage() {
             <Field label="Data folder" wide><span className="mono">{s.dataDir}</span></Field>
             <Field label="Worktrees" wide><span className="mono">{s.dataDir}/worktrees</span></Field>
             <Field label="Run logs" wide><span className="mono">{s.dataDir}/runs</span></Field>
+            <Field label="Worktrees of finished cards" wide hint="Done and Cancelled cards keep their worktree, so a new card of the same project can take it over with a warm build. Remove the ones you no longer need.">
+              <OldWorktrees /></Field>
           </FormSection>
         </div>
       </div></div>

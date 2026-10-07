@@ -17,10 +17,14 @@ export type Project = {
   id: string; clientId?: string | null; clientName?: string | null; number: string; key: string; name: string; status: string;
   color?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null; defaultBranch: string; teamId?: string | null;
   budgetAmountMinor?: number | null; budgetHours?: number | null; openTasks: number; doneTasks: number; updatedAt: number;
+  /** How a new worktree is prepared: paths copied from the main checkout, the install of what is missing, a setup command. */
+  worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
 };
 export type ProjectInput = {
   clientId?: string | null; name: string; key: string; status?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null;
   defaultBranch?: string | null; color?: string | null; budgetAmountMinor?: number | null; budgetHours?: number | null;
+  /** Left out (null): kept as they are. */
+  worktreeCopy?: string[] | null; worktreeInstall?: boolean | null; worktreeSetup?: string | null;
 };
 export type Label = { id: string; name: string; color?: string | null };
 export type Task = {
@@ -28,8 +32,14 @@ export type Task = {
   title: string; descriptionMd: string; acceptanceMd?: string | null; stateId: string; stateName: string; stateCategory: string;
   priority: number; assigneeId?: string | null; assigneeName?: string | null; assigneeKind?: string | null; labels: Label[];
   hold?: string | null; holdReason?: string | null; bounceCount: number; failCount: number; sortKey: string;
-  branch?: string | null; createdAt: number; updatedAt: number;
+  branch?: string | null;
+  /** The card's pull request on GitHub, and its state as Gizai last saw it. */
+  prUrl?: string | null; prState?: PullState | null;
+  createdAt: number; updatedAt: number;
 };
+export type PullState = "open" | "draft" | "merged" | "closed";
+/** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
+export type PullInfo = { url: string; number?: number | null; state: PullState; note?: string | null };
 export type TaskInput = {
   projectId: string; title: string; descriptionMd?: string; acceptanceMd?: string | null; stateId?: string | null;
   priority?: number; assigneeId?: string | null; labelIds?: string[];
@@ -94,7 +104,40 @@ export type Run = {
   baseSha?: string | null;
 };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
-export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number };
+export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
+  /** The GitHub CLI; null = found when needed. */
+  ghBin?: string | null;
+  /** How Open pull request and Push branch reach GitHub. */
+  pushOver: PushOver };
+/** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
+export type OldWorktree = {
+  taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;
+  bytes: number; uncommitted: number; live: boolean;
+};
+export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
+
+// ---- Settings → GitHub ----
+/** ssh: your SSH keys (the default); https: the GitHub CLI's login. */
+export type PushOver = "ssh" | "https";
+/** What went wrong talking to GitHub, and what to do about it. */
+export type GithubProblem = { what: string; fix?: string | null };
+/** Log in with GitHub: the one-time code to enter on GitHub, and where. */
+export type GithubLoginCode = { code: string; url: string };
+/** Whether Gizai can use GitHub: the GitHub CLI, the account it is logged in as, and how pushes go. */
+export type GithubStatus = {
+  ghPath?: string | null; ghVersion?: string | null; ghProblem?: GithubProblem | null;
+  account?: string | null; accountProblem?: GithubProblem | null;
+  pushOver: PushOver;
+  /** A login in the browser that waits for its code to be entered. */
+  login?: GithubLoginCode | null;
+  /** The command that logs gh in from a terminal. */
+  loginCommand?: string | null;
+};
+/** One line of Check connection. Skipped: not needed now, or it needs something that failed. */
+export type ConnectionCheckItem = {
+  name: string; result: "ok" | "failed" | "skipped"; text: string; fix?: string | null; projectId?: string | null; repo?: string | null;
+};
+export type ConnectionCheck = { ok: boolean; pushOver: PushOver; checks: ConnectionCheckItem[] };
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- chat with the Team Lead ----

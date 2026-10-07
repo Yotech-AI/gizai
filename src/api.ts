@@ -56,8 +56,14 @@ export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("a
 export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
-/** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). */
-export const claudeModels = (refresh = false) => invoke<T.ModelOption[]>("claude_models", { refresh });
+/** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
+ * CLI (a second account); other kinds of CLI have no list. */
+export const claudeModels = (refresh = false, cli: string | null = null) => invoke<T.ModelOption[]>("claude_models", { refresh, cli });
+/** Settings → Coding CLIs. */
+export const listClis = () => invoke<T.CliStatus[]>("list_clis");
+export const saveClis = (clis: T.Cli[]) => invoke<T.CliStatus[]>("save_clis", { clis });
+/** Known coding CLIs installed here that aren't listed yet. */
+export const findClis = () => invoke<T.Cli[]>("find_clis");
 export const agentStats = (id: string, days = 14) => invoke<T.DayStat[]>("agent_stats", { id, days });
 export const agentRuns = (id: string, limit = 20) => invoke<T.Run[]>("agent_runs", { id, limit });
 export const agentNextTask = (id: string) => invoke<string | null>("agent_next_task", { id });

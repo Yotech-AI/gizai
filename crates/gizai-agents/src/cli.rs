@@ -217,16 +217,6 @@ pub fn other_args(template: &str, prompt: &str, model: Option<&str>) -> (Vec<Str
     (out, on_stdin)
 }
 
-/// The command to continue a run's session by hand, in its worktree.
-pub fn resume_hint(kind: Kind, bin: &str, session: &str) -> Option<String> {
-    match kind {
-        Kind::ClaudeCode => Some(format!("{bin} --resume {session}")),
-        Kind::Codex => Some(format!("{bin} resume {session}")),
-        Kind::Gemini => Some(format!("{bin} --resume {session}")),
-        Kind::Other => None,
-    }
-}
-
 // ---- reading the output ----
 
 /// The first line of a run log that isn't Claude Code's: which parser reads the rest.

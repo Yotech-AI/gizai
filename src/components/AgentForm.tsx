@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { addAgent, chatAgent, claudeModels, getAgent, getTeam, roleTemplate, updateAgent } from "../api";
+import { addAgent, chatAgent, claudeModels, getAgent, getTeam, listClis, roleTemplate, updateAgent } from "../api";
 import { go } from "../router";
 import { draftFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
+import { CLAUDE_CODE, EFFORTS_BY_KIND, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
 import { effortChoices, findModel, modelHint } from "../lib/models";
-import type { Member, ModelOption } from "../types";
+import type { CliStatus, Member, ModelOption } from "../types";
 export type { AgentPreset } from "../lib/agents";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
 import { MarkdownEditor } from "./MarkdownEditor";
 
-const EFFORT_LABEL: Record<string, string> = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+const EFFORT_LABEL: Record<string, string> = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+const MODEL_EXAMPLE: Record<string, string> = { codex: "gpt-5-codex", gemini: "gemini-2.5-pro", other: "provider/model" };
 
 /** The model picker: Claude Code's own list, an "Other model id…" escape, and a refresh. */
 function ModelField({ value, onChange, models, error, onRefresh }: {
@@ -47,14 +49,7 @@ function ModelField({ value, onChange, models, error, onRefresh }: {
 }
 
 const TOOL_SUGGESTIONS = ["Bash(pnpm:*)", "Bash(yarn:*)", "Bash(go test:*)", "Bash(make test:*)", "Bash(python -m pytest:*)"];
-export const PERMISSION_HELP: Record<string, string> = {
-  acceptEdits: "Edits files freely; runs only the commands allowed below. Recommended.",
-  dontAsk: "Never asks; anything not allowed below is refused.",
-  auto: "Claude decides what is safe to run on its own.",
-  plan: "Plans only; changes nothing.",
-  manual: "Asks for every action; a background agent can't answer, so most actions are refused.",
-  bypassPermissions: "Runs anything without asking. Only for a sandboxed machine.",
-};
+export const PERMISSION_HELP: Record<string, string> = PERMISSIONS.claude_code;
 
 /** Add an agent to a team (no `agent`) or edit one, in a wide drawer. */
 export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: string | null; agentId?: string; preset?: AgentPreset; onClose: () => void }) {
@@ -63,14 +58,22 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   const [chatOwner, setChatOwner] = useState<Member | null>(null);
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [modelsErr, setModelsErr] = useState<string | null>(null);
+  const [clis, setClis] = useState<CliStatus[] | null>(null);
+  useEffect(() => { listClis().then(setClis).catch(() => setClis([])); }, []);
+  const [d, setD] = useState<AgentDraft | null>(initial);
+  const cliId = d?.cli ?? CLAUDE_CODE;
+  const kind = kindOf(cliId, clis);
+  // Claude Code's model list, asked from the CLI the agent runs on (another account can offer other models).
+  const asked = useRef("");
   const loadModels = (refresh = false) => {
     setModelsErr(null);
-    if (refresh) setModels(null);
-    claudeModels(refresh).then(setModels).catch((e) => setModelsErr(String(e)));
+    setModels(null);
+    asked.current = cliId;
+    const mine = (f: () => void) => { if (asked.current === cliId) f(); }; // a slower answer for another CLI is dropped
+    claudeModels(refresh, cliId === CLAUDE_CODE ? null : cliId).then((m) => mine(() => setModels(m))).catch((e) => mine(() => setModelsErr(String(e))));
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => loadModels(), []);
-  const [d, setD] = useState<AgentDraft | null>(initial);
+  useEffect(() => { if (kind === "claude_code") loadModels(); }, [cliId, kind]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const edited = useRef(!isNew); // once the instructions are edited, a role change no longer replaces them
@@ -91,6 +94,15 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
     setD((x) => (x ? { ...x, [k]: v } : x));
   };
   const custom = !ROLES.includes(d.role);
+  const cli = clis?.find((c) => c.id === d.cli);
+  const cliName = cli?.name ?? KIND_LABEL[kind];
+  /** Moving to another CLI keeps what still fits it: the permission mode and effort of its kind, the model of the same kind. */
+  const pickCli = (id: string) => setD((x) => {
+    if (!x) return x;
+    const k = kindOf(id, clis);
+    return { ...x, cli: id, permissionMode: modeFor(k, x.permissionMode), effort: EFFORTS_BY_KIND[k].includes(x.effort) ? x.effort : "",
+      model: k === kind ? x.model : "", chat: k === "claude_code" ? x.chat : false };
+  });
   const addTool = (t: string) => { const list = parseTools(d.tools); if (!list.includes(t)) set("tools", [...list, t].join("\n")); };
   const save = async () => {
     setBusy(true);
@@ -101,7 +113,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
     } catch (e) { setErr(String(e)); setBusy(false); }
   };
   return (
-    <Drawer wide title={isNew ? "Add agent" : `${initial.name} settings`} subtitle="Each agent runs Claude Code headless in its own git worktree, with the instructions and permissions below."
+    <Drawer wide title={isNew ? "Add agent" : `${initial.name} settings`} subtitle="Each agent runs its coding CLI headless in its own git worktree, with the instructions and permissions below."
       onClose={onClose} dirty={JSON.stringify(d) !== JSON.stringify(initial)} error={err} hint="Ctrl+Enter saves"
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !d.name.trim()} onClick={save}>{isNew ? "Add agent" : "Save changes"}</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }}>
@@ -115,10 +127,28 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
               </select>
               {custom && <input className="input" aria-label="Custom role" value={d.role} onChange={(e) => set("role", e.target.value)} placeholder="docs" />}
             </div></Field>
-          <Field label="Runs on" htmlFor="a-cli" hint="Codex and Gemini come later"><select id="a-cli" className="select" value="claude_code" onChange={() => {}}><option value="claude_code">Claude Code</option></select></Field>
-          <ModelField value={d.model} models={models} error={modelsErr} onRefresh={() => loadModels(true)}
-            onChange={(v) => { set("model", v); if (d.effort && models && !effortChoices(v, models).includes(d.effort)) set("effort", ""); }} />
-          {(() => {
+          <Field label="Runs on" htmlFor="a-cli" hint={cli?.problem ? null : "Settings → Coding CLIs adds Codex, Gemini, other CLIs and more accounts"}
+            warn={clis && !cli ? "This CLI is no longer in Settings: pick another" : cli?.problem ?? null}>
+            <select id="a-cli" className="select" value={d.cli} disabled={!clis} onChange={(e) => pickCli(e.target.value)}>
+              {!clis && <option value={d.cli}>Loading…</option>}
+              {clis?.map((c) => <option key={c.id} value={c.id}>{c.name}{c.id !== CLAUDE_CODE && c.name !== KIND_LABEL[c.kind] ? ` (${KIND_LABEL[c.kind]})` : ""}</option>)}
+              {clis && !cli && <option value={d.cli}>{d.cli} (missing)</option>}
+            </select></Field>
+          {kind === "claude_code" ? (
+            <ModelField value={d.model} models={models} error={modelsErr} onRefresh={() => loadModels(true)}
+              onChange={(v) => { set("model", v); if (d.effort && models && !effortChoices(v, models).includes(d.effort)) set("effort", ""); }} />
+          ) : (
+            <Field label="Model" htmlFor="a-model" hint={kind === "other" ? `Empty: ${cliName}'s default. Used where its arguments say {model}.` : `Empty: ${cliName}'s default model`}>
+              <input id="a-model" className="input" value={d.model} onChange={(e) => set("model", e.target.value)} placeholder={MODEL_EXAMPLE[kind]} /></Field>
+          )}
+          {kind === "codex" && (
+            <Field label="Effort" htmlFor="a-effort" hint="How hard it reasons: higher is slower and uses more of your plan">
+              <select id="a-effort" className="select" value={d.effort} onChange={(e) => set("effort", e.target.value)}>
+                <option value="">Default (Codex decides)</option>
+                {EFFORTS_BY_KIND.codex.map((l) => <option key={l} value={l}>{EFFORT_LABEL[l] ?? l}</option>)}
+              </select></Field>
+          )}
+          {kind === "claude_code" && (() => {
             const levels = effortChoices(d.model, models);
             const bad = !!d.effort && !levels.includes(d.effort);
             return (
@@ -135,9 +165,9 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
         </FormSection>
         <FormSection title="Chat" text="The agent you talk to on the Chat page: your Team Lead. Only one agent has Chat.">
           <Field label="Chat" wide htmlFor="a-chat"
-            warn={d.chat && chatOwner && chatOwner.actorId !== agentId ? `Chat moves from ${chatOwner.name} to this agent.` : null}
+            warn={kind !== "claude_code" ? "Chat runs on Claude Code: pick a Claude Code CLI under Runs on to turn it on." : d.chat && chatOwner && chatOwner.actorId !== agentId ? `Chat moves from ${chatOwner.name} to this agent.` : null}
             hint="In chat it uses Gizai's tools: clients, projects, tasks, agents, docs, files and your inbox. It can read your linked repositories but doesn't edit files or run commands there. The settings below are for its work on tasks.">
-            <label className="check"><input id="a-chat" type="checkbox" checked={d.chat} onChange={(e) => set("chat", e.target.checked)} /> Talk to this agent on the Chat page</label>
+            <label className="check"><input id="a-chat" type="checkbox" checked={d.chat} disabled={kind !== "claude_code"} onChange={(e) => set("chat", e.target.checked)} /> Talk to this agent on the Chat page</label>
           </Field>
         </FormSection>
         <FormSection title="Wakes up" text="When the agent starts work without you pressing Run, and on how many cards at once.">
@@ -154,14 +184,22 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
             warn={d.maxRuns.trim() !== "" && !(Number(d.maxRuns) >= 1 && Number(d.maxRuns) <= 10) ? "Pick a number from 1 to 10" : null}>
             <input id="a-runs" className="input" type="number" min={1} max={10} style={{ width: 90 }} value={d.maxRuns} onChange={(e) => set("maxRuns", e.target.value)} /></Field>
         </FormSection>
-        <FormSection title="Permissions" text="What Claude Code may do without asking. A background agent can't answer questions.">
-          <Field label="Permission mode" htmlFor="a-perm" wide warn={d.permissionMode === "bypassPermissions" ? PERMISSION_HELP.bypassPermissions : null} hint={PERMISSION_HELP[d.permissionMode]}>
-            <select id="a-perm" className="select" value={d.permissionMode} onChange={(e) => set("permissionMode", e.target.value)}>
-              {Object.keys(PERMISSION_HELP).map((m) => <option key={m} value={m}>{m}</option>)}</select></Field>
-          <Field label="Allowed commands" htmlFor="a-tools" wide hint="One per line. Everything else is refused in acceptEdits mode.">
-            <textarea id="a-tools" className="textarea mono" rows={6} value={d.tools} onChange={(e) => set("tools", e.target.value)} />
-            <div className="tool-sugg">{TOOL_SUGGESTIONS.filter((t) => !parseTools(d.tools).includes(t)).map((t) => <button key={t} type="button" className="label-pill" onClick={() => addTool(t)}>+ {t}</button>)}</div></Field>
-          <Field label="Monthly budget ($)" htmlFor="a-budget" hint="Once its runs this calendar month (UTC) cost this much, it starts no new runs"><input id="a-budget" className="input" inputMode="decimal" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="No limit" /></Field>
+        <FormSection title="Permissions" text={`What ${cliName} may do without asking. A background agent can't answer questions.`}>
+          {kind === "other" ? (
+            <Field label="Permission mode" wide><span>{cliName} runs with its own settings: Gizai passes it no permissions. Put the options it needs in its arguments (Settings → Coding CLIs).</span></Field>
+          ) : (
+            <Field label="Permission mode" htmlFor="a-perm" wide warn={RISKY.has(d.permissionMode) ? PERMISSIONS[kind][d.permissionMode] : null} hint={RISKY.has(d.permissionMode) ? null : PERMISSIONS[kind][d.permissionMode]}>
+              <select id="a-perm" className="select" value={d.permissionMode} onChange={(e) => set("permissionMode", e.target.value)}>
+                {Object.keys(PERMISSIONS[kind]).map((m) => <option key={m} value={m}>{m}</option>)}
+                {!(d.permissionMode in PERMISSIONS[kind]) && <option value={d.permissionMode}>{d.permissionMode || "(none)"} (not offered)</option>}
+              </select></Field>
+          )}
+          {usesAllowedTools(kind) && (
+            <Field label="Allowed commands" htmlFor="a-tools" wide hint={kind === "gemini" ? "One per line, like Bash(npm test:*). Gemini gets each Bash(…) line as a shell command it may run; everything else is refused in auto_edit mode." : "One per line. Everything else is refused in acceptEdits mode."}>
+              <textarea id="a-tools" className="textarea mono" rows={6} value={d.tools} onChange={(e) => set("tools", e.target.value)} />
+              <div className="tool-sugg">{TOOL_SUGGESTIONS.filter((t) => !parseTools(d.tools).includes(t)).map((t) => <button key={t} type="button" className="label-pill" onClick={() => addTool(t)}>+ {t}</button>)}</div></Field>
+          )}
+          <Field label="Monthly budget ($)" htmlFor="a-budget" hint={kind === "claude_code" ? "Once its runs this calendar month (UTC) cost this much, it starts no new runs" : `${cliName} doesn't report what a run costs, so its runs count as $0 here`}><input id="a-budget" className="input" inputMode="decimal" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="No limit" /></Field>
         </FormSection>
         <FormSection title="Instructions" text="Sent with every run, before the task. Must end by asking for the GIZAI_RESULT line.">
           <Field label="Instructions" wide><MarkdownEditor value={d.instructions} onChange={(md) => set("instructions", md)} ariaLabel="Instructions" minHeight={260} /></Field>

@@ -63,6 +63,20 @@ export type Member = {
   /** Cards it works on at once (1 when absent). */
   maxRuns?: number;
 };
+/** A coding CLI agents run on (Settings → Coding CLIs); "claude_code" is the built-in Claude Code. */
+export type CliKind = "claude_code" | "codex" | "gemini" | "other";
+export type Cli = {
+  /** Empty for a new one: saving gives it an id. */
+  id: string; name: string; kind: CliKind;
+  /** The program: a path or a name on your login shell's PATH. */
+  command: string;
+  /** NAME=value lines, e.g. CLAUDE_CONFIG_DIR=~/.claude-2. */
+  env: string[];
+  /** Other only: the arguments, with {prompt} and {model}. */
+  args: string;
+};
+/** A CLI and the program that would run; `problem` when it isn't found. */
+export type CliStatus = Cli & { path?: string | null; problem?: string | null };
 /** A model Claude Code offers (its /model list). */
 export type ModelOption = { value: string; resolvedModel?: string | null; displayName: string; description: string; supportsEffort: boolean; effortLevels: string[] };
 export type Wakeup = "manual" | "on_assign" | "heartbeat";
@@ -102,6 +116,8 @@ export type Run = {
   sessionId?: string | null; error?: string | null; logPath: string;
   /** The commit its worktree was at when it started. */
   baseSha?: string | null;
+  /** The id of the coding CLI it ran on. */
+  adapter?: string | null;
 };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;

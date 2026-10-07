@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { detectClaude, getSettings, saveSettings } from "../api";
 import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
+import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
 import { OldWorktrees } from "../components/OldWorktrees";
 
@@ -34,10 +35,11 @@ export function SettingsPage() {
       <div className="content"><div className="page" style={{ maxWidth: 1100 }}>
         {msg && <div className={msg.ok ? "ok-banner" : "error-banner"} role="status" style={{ margin: 0 }}>{msg.text}</div>}
         <div className="form">
-          <FormSection title="Claude Code" text="Agents run this program headless (claude -p) with your Claude login.">
-            <Field label="Program" htmlFor="s-bin" wide hint="Detect looks in your login shell and the usual install folders.">
+          <FormSection title="Coding CLIs" text="Agents run one of these programs headless in their worktree, with its own login. Claude Code is the default; add Codex, Gemini, any other coding CLI, or a second account of one. Each agent picks its CLI under Runs on.">
+            <Field label="Claude Code" htmlFor="s-bin" wide hint="Its program (claude -p). Detect looks in your login shell and the usual install folders.">
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />
                 <button className="btn" onClick={detect} disabled={detecting}>{detecting ? "Looking…" : "Detect"}</button></div></Field>
+            <Field label="More CLIs" wide hint="Saved as soon as you add, change or remove one."><CliSettings /></Field>
           </FormSection>
           <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
           <FormSection title="Runs" text="Each run is a Claude Code process in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">

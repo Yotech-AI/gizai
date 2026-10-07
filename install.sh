@@ -190,8 +190,8 @@ mkdir -p "$LIB" "$BIN" "$APPS" "$ICONS/scalable/apps"
 # Each program goes in under a temporary name first, then replaces the old one in one step (a rename): a copy that
 # fails (a full disk) leaves the installed Gizai as it was.
 staged=("$LIB/.gizai.new" "$LIB/.gizai-mcp.new" "$LIB/.gizai-launch.new")
+trap 'rm -f "${staged[@]}"' EXIT
 if ! install -m 755 "$SRC/target/release/gizai" "$LIB/.gizai.new" || ! install -m 755 "$SRC/target/release/gizai-mcp" "$LIB/.gizai-mcp.new"; then
-  rm -f "${staged[@]}"
   say "Could not copy Gizai into $LIB, so nothing was installed."
   exit 1
 fi

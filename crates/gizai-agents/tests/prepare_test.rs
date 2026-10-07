@@ -243,6 +243,12 @@ fn a_reused_worktree_installs_again_only_when_its_lock_file_changed() {
     let did = prepare::prepare(&repo, &wt, &plan, Some(&since), Some(&path)).unwrap();
     assert_eq!(did.installed, ["npm ci"]);
     assert_eq!(calls(tmp.path()), ["npm ci --no-audit --no-fund"]);
+
+    // a dependency folder the reused worktree lacks is installed the same way, lock file changed or not
+    std::fs::remove_dir_all(wt.join("vendor")).unwrap();
+    let did = prepare::prepare(&repo, &wt, &plan, Some(&rev(&wt, "HEAD")), Some(&path)).unwrap();
+    assert_eq!(did.installed, ["composer install"]);
+    assert!(wt.join("vendor/autoload.php").is_file());
 }
 
 #[test]

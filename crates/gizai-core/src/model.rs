@@ -162,6 +162,8 @@ pub struct Task {
     /// The card's pull request on GitHub, and its state as Gizai last saw it: open, draft, merged or closed.
     pub pr_url: Option<String>,
     pub pr_state: Option<String>,
+    /// On: a finished run sends the card to Testing for the QA Agent. Off: straight to Review (a small fix).
+    pub testing: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -177,6 +179,8 @@ pub struct TaskInput {
     pub priority: i64,
     pub assignee_id: Option<String>,
     pub label_ids: Vec<String>,
+    /// The Testing switch; None = on.
+    pub testing: Option<bool>,
 }
 
 /// Every field is optional; for optional columns an empty string clears the value.
@@ -192,6 +196,9 @@ pub struct TaskPatch {
     pub due_on: Option<String>,
     pub hold: Option<String>,
     pub hold_reason: Option<String>,
+    /// The Testing switch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testing: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

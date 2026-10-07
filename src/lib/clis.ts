@@ -73,3 +73,9 @@ export function cliSummary(c: Cli & { path?: string | null }): string {
   const args = c.kind === "other" && c.args ? ` ${c.args}` : "";
   return `${env}${prog}${args}`;
 }
+
+/** The name of the CLI an agent runs on; "Coding CLI" while the list loads. */
+export function cliName(adapter: string | null | undefined, clis: Cli[] | null | undefined): string {
+  const id = adapter || CLAUDE_CODE;
+  return clis?.find((c) => c.id === id)?.name ?? (id === CLAUDE_CODE ? "Claude Code" : clis ? "Unknown CLI" : "Coding CLI");
+}

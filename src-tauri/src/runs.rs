@@ -24,6 +24,8 @@ pub const DEFAULT_MAX_RUN_MINUTES: u64 = 90;
 pub const DEFAULT_MAX_RUN_TOOL_CALLS: u32 = 200;
 pub const DEFAULT_MAX_CONCURRENT: u32 = 3;
 const BUFFER: usize = 500;
+/// Why a run or chat answer ended when Gizai quit (logging out and SIGTERM included), and the note a chat shows.
+pub const STOPPED_BY_QUIT: &str = "Stopped because Gizai quit.";
 
 /// Used when an agent has no allowed commands of its own.
 pub const DEFAULT_TOOLS: [&str; 16] = [
@@ -295,7 +297,20 @@ pub async fn stop_all(st: &AppState, wait: Duration) -> usize {
     ids.len()
 }
 
-/// Gizai is quitting: no new runs or chat answers start.
+/// Gizai exits with runs still live (asked to quit again while they were being stopped, or they didn't end in time):
+/// ends their process groups at once (SIGKILL). Each is recorded as stopped because Gizai quit as soon as it has
+/// ended. Returns how many were live.
+pub fn kill_all(st: &AppState) -> usize {
+    mark_closing(st);
+    let live: Vec<StopHandle> = st.runs.live.lock().unwrap().values().map(|l| l.stop.clone()).collect();
+    for s in &live {
+        s.kill();
+    }
+    live.len()
+}
+
+/// Gizai is quitting: no new runs or chat answers start, and those that end from now on were stopped because Gizai
+/// quit.
 pub fn mark_closing(st: &AppState) {
     st.runs.closing.store(true, Ordering::SeqCst);
 }
@@ -515,6 +530,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         behind: if wt.created { 0 } else { worktree::behind(&wt.path, &start).unwrap_or(0) },
     });
 
+    // Gizai may have begun to quit while the worktree was made ready.
+    if is_closing(st) {
+        return Err(StartError::Other("Gizai is quitting".into()));
+    }
     let session = resume.as_ref().map(|r| r.session.clone()).unwrap_or_else(ids::new_id);
     let log_dir = st.data_dir.join("runs");
     std::fs::create_dir_all(&log_dir).map_err(|e| StartError::Other(e.to_string()))?;
@@ -567,6 +586,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     st.runs.live.lock().unwrap().insert(run_id.clone(), Live {
         task_id: task_id.to_string(), agent_id: agent_id.clone(), stop: handle.stop.clone(), events: vec![], next_seq: 0,
     });
+    // Quitting began just now and may have missed this run: it stops with the others.
+    if is_closing(st) {
+        stop(st, &run_id);
+    }
     (st.notify)(Note::RunsChanged);
     (st.notify)(Note::RowsChanged("runs"));
 
@@ -607,16 +630,21 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
 
 /// `capped`: why Gizai stopped the run at a limit, if it did.
 async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<RunEvent>, capped: Option<String>, exit: &str) -> RunSummary {
-    let cancelled = st.runs.stopped.lock().unwrap().remove(run_id);
+    let stopped = st.runs.stopped.lock().unwrap().remove(run_id);
     let (cost, input, output, text, ok) = match &result {
         Some(RunEvent::Result { cost_usd, input_tokens, output_tokens, text, is_error, .. }) =>
             ((cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, *input_tokens, *output_tokens, text.clone(), !is_error),
         _ => (0, 0, 0, String::new(), false),
     };
     let verdict: Option<Outcome> = outcome::parse(&text).map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
-    let status = if cancelled { "cancelled" } else if capped.is_some() { "timed_out" } else if ok && exit == "exit:0" { "succeeded" } else { "failed" };
+    let finished = ok && exit == "exit:0";
+    // While Gizai quits, a run that didn't finish was stopped by the quit, also when its agent ended first: logging
+    // out sends SIGTERM to the agents as well as to Gizai. It doesn't count as a failure.
+    let quit = is_closing(st) && (stopped || !finished);
+    let cancelled = stopped || quit;
+    let status = if cancelled { "cancelled" } else if capped.is_some() { "timed_out" } else if finished { "succeeded" } else { "failed" };
     let error = match status {
-        "cancelled" => Some("stopped".to_string()),
+        "cancelled" => Some(if quit { STOPPED_BY_QUIT } else { "stopped" }.to_string()),
         "timed_out" => capped.clone(),
         "failed" => Some(match &result {
             Some(RunEvent::Result { text, .. }) if !text.trim().is_empty() => format!("Claude Code: {}", text.trim().chars().take(300).collect::<String>()),

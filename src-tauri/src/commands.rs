@@ -15,7 +15,14 @@ fn changed(app: &AppHandle, table: &str) {
     let _ = app.emit("rows-changed", serde_json::json!({ "table": table }));
 }
 
-/// After a card changes, an agent that wakes up on assignment may start on it.
+/// A person edited or reactivated the agent: it takes cards from the queue again (`runs::pull_paused`).
+fn resume(st: &State<AppState>, agent_id: &str) {
+    crate::runs::resume_pull(st, agent_id);
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn(async move { crate::runs::pull(&st).await; });
+}
+
+/// After a card changes, agents that wake up when a card is routed or assigned to them take their next cards.
 fn wake(st: &State<AppState>, task_id: &str) {
     let (st, id) = (st.inner().clone(), task_id.to_string());
     tauri::async_runtime::spawn(async move { crate::runs::dispatch(&st, &id).await; });
@@ -230,12 +237,14 @@ pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: Ag
 pub fn update_agent(app: AppHandle, st: State<AppState>, actor_id: String, input: AgentInput) -> R<()> {
     team::update_agent(&st.db, &st.you_id, &actor_id, input).map_err(e)?;
     changed(&app, "actors");
+    resume(&st, &actor_id);
     Ok(())
 }
 #[tauri::command]
 pub fn set_agent_status(app: AppHandle, st: State<AppState>, actor_id: String, status: String) -> R<()> {
     team::set_agent_status(&st.db, &st.you_id, &actor_id, &status).map_err(e)?;
     changed(&app, "actors");
+    resume(&st, &actor_id);
     Ok(())
 }
 #[tauri::command]
@@ -249,6 +258,14 @@ pub fn delete_rule(app: AppHandle, st: State<AppState>, rule_id: String) -> R<()
     team::delete_rule(&st.db, &st.you_id, &rule_id).map_err(e)?;
     changed(&app, "routing_rules");
     Ok(())
+}
+/// Adds a column after `after_id` (`team::add_state`).
+#[tauri::command]
+pub fn add_state(app: AppHandle, st: State<AppState>, team_id: String, name: String, after_id: String, category: String,
+                 owner_role: Option<String>) -> R<String> {
+    let id = team::add_state(&st.db, &st.you_id, &team_id, &name, &after_id, &category, owner_role.as_deref()).map_err(e)?;
+    changed(&app, "workflow_states");
+    Ok(id)
 }
 #[tauri::command]
 pub fn rename_state(app: AppHandle, st: State<AppState>, state_id: String, name: String) -> R<()> {

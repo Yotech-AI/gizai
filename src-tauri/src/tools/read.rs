@@ -11,6 +11,7 @@ fn task_line(t: &Task) -> Value {
     json!({
         "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
+        "testing": t.testing,
     })
 }
 
@@ -147,7 +148,7 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     Ok(json!({"task": {
         "id": t.id, "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
-        "hold_reason": t.hold_reason, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
+        "hold_reason": t.hold_reason, "testing": t.testing, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
     }, "comments": comments, "runs": runs, "files": file_lines(files::list(cx.db(), "task", &t.id).map_err(err)?)}))
 }
@@ -216,15 +217,16 @@ pub(crate) fn rule_sentence(r: &team::RoutingRule, t: &team::Team) -> String {
 
 pub(crate) fn workflow(cx: &Cx) -> Result<Value, String> {
     let t = resolve::team_of(cx, None)?;
-    let worked_by = |o: &Option<String>| match o.as_deref() {
-        Some("implementer") => "the agent whose role matches the card's label",
-        Some("qa") => "the QA agent",
-        Some("human") => "the user (review and merge)",
+    let worked_by = |s: &gizai_core::team::WorkflowState| match (s.category.as_str(), s.owner_role.as_deref()) {
+        ("deploy", _) => "you (deploy, or press Run for the DevOps Agent)",
+        (_, Some("implementer")) => "the agent whose role matches the card's label",
+        (_, Some("qa")) => "the QA agent",
+        (_, Some("human")) => "the user (review and merge)",
         _ => "nobody (waiting)",
     };
     Ok(json!({
         "team": t.name,
-        "columns": t.states.iter().map(|s| json!({"name": s.name, "category": s.category, "worked_by": worked_by(&s.owner_role)})).collect::<Vec<_>>(),
+        "columns": t.states.iter().map(|s| json!({"name": s.name, "category": s.category, "worked_by": worked_by(s)})).collect::<Vec<_>>(),
         "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
         "rules": t.rules.iter().map(|r| rule_sentence(r, &t)).collect::<Vec<_>>(),
     }))

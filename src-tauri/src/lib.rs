@@ -240,6 +240,8 @@ pub fn run() {
                 }
             };
             app.manage(state.clone());
+            // After manage: quitting reads the state.
+            quit::on_signals(app.handle());
             // The MCP server chat turns reach Gizai's tools through.
             {
                 let st = state.clone();

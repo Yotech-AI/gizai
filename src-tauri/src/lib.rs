@@ -7,6 +7,7 @@ pub mod pulls;
 mod quit;
 pub mod runs;
 pub mod tools;
+pub mod update;
 pub mod worktrees;
 
 use gizai_core::db::Db;
@@ -30,6 +31,8 @@ pub struct AppState {
     pub pulls: Arc<pulls::PullChecks>,
     /// Log in with GitHub, while gh waits for its code (see `github`).
     pub github: Arc<github::Logins>,
+    /// The release check and the update (see `update`).
+    pub updates: Arc<update::Updates>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
@@ -165,7 +168,7 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     let mcp_socket = mcp::socket_path(&dir);
     Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), pulls: Arc::new(pulls::PullChecks::default()),
-                  github: Arc::new(github::Logins::default()), _lock: Arc::new(lock), notify })
+                  github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify })
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -180,6 +183,7 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
                 app.emit("chat-event", v)
             }
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
+            runs::Note::UpdateChanged => app.emit("update-changed", ()),
         };
     })
 }
@@ -271,6 +275,19 @@ pub fn run() {
                     }
                 });
             }
+            // The release check: 20 seconds after start, then every ten minutes, Gizai asks GitHub for the latest
+            // release when a check is due (Check for new releases is on, and the last check is six hours old).
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(update::FIRST_CHECK_AFTER).await;
+                    let mut tick = tokio::time::interval(update::TICK);
+                    loop {
+                        tick.tick().await;
+                        update::tick(&st, gizai_core::ids::now_ms()).await;
+                    }
+                });
+            }
             // Heartbeats: once a minute, agents whose interval has passed look for their next card.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -300,6 +317,8 @@ pub fn run() {
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::list_old_worktrees, commands::remove_old_worktrees,
+            commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
+            commands::stop_update, commands::restart_gizai,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")
@@ -328,6 +347,8 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);
                 mcp::remove_socket(app.state::<AppState>().inner());
+                // an update that is building stops (its source and build so far are kept for the next one)
+                update::on_exit(app.state::<AppState>().inner());
             }
         });
 }

@@ -18,7 +18,7 @@ fn s(v: &Value) -> String {
 }
 
 /// At most `n` characters, never splitting one.
-fn cut(text: &str, n: usize) -> String {
+pub(crate) fn cut(text: &str, n: usize) -> String {
     match text.char_indices().nth(n) {
         Some((i, _)) => format!("{}…", &text[..i]),
         None => text.to_string(),
@@ -26,7 +26,7 @@ fn cut(text: &str, n: usize) -> String {
 }
 
 /// What a tool call is about: its file, command, pattern or URL, else the start of its input.
-fn summarize(input: &Value) -> String {
+pub(crate) fn summarize(input: &Value) -> String {
     for k in ["file_path", "path", "command", "pattern", "url", "notebook_path", "description"] {
         if let Some(v) = input.get(k).and_then(Value::as_str) {
             return cut(v, 120);

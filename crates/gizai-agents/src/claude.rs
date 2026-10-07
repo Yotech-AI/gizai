@@ -35,9 +35,16 @@ pub struct ClaudeArgs {
     pub disable_skills: bool,
     /// How hard the model thinks (`--effort`: low, medium, high, xhigh, max); None = Claude Code's default.
     pub effort: Option<String>,
+    /// Set on top of Gizai's environment: CLAUDE_CONFIG_DIR for a second Claude Code account.
+    pub env: Vec<(String, String)>,
 }
 
 impl ClaudeArgs {
+    /// The program to start: the arguments below, the environment, and the prompt on stdin.
+    pub fn exec(&self) -> crate::process::Exec {
+        crate::process::Exec { bin: self.bin.clone(), args: self.argv(), env: self.env.clone(), stdin: self.prompt.clone() }
+    }
+
     /// Arguments after the binary. The prompt is not among them: it goes in on stdin (`claude -p` reads it
     /// there), because Linux caps one argument at 128 KiB and a task with a long description would not start.
     /// Task runs load only user settings (no project hooks or MCP servers from the repo the agent works in);

@@ -264,8 +264,8 @@ pub struct Outcome {
     pub issues: Vec<String>,
 }
 
-/// New or changed agent. Empty strings take the defaults: adapter "claude_code", permission mode
-/// "acceptEdits", wake-up "manual"; instructions None = the role's template (on create) or unchanged (on update).
+/// New or changed agent. Empty strings take the defaults: adapter (the id of its coding CLI) "claude_code", the CLI's
+/// first permission mode ("acceptEdits" for Claude Code), wake-up "manual"; instructions None = the role's template (on create) or unchanged (on update).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentInput {
@@ -283,7 +283,8 @@ pub struct AgentInput {
     pub budget_usd_micros: Option<i64>,
     /// Answers on the Chat page (at most one agent does). None: off for a new agent, unchanged on update.
     pub chat_enabled: Option<bool>,
-    /// Claude Code `--effort` (low, medium, high, xhigh, max); None or empty = Claude Code's default.
+    /// How hard it thinks: Claude Code `--effort` (low, medium, high, xhigh, max) or Codex's reasoning effort (minimal to
+    /// xhigh); None or empty = the CLI's default.
     pub effort: Option<String>,
     /// Cards it works on at once (1–10), each in its own worktree. None: 1 for a new agent, unchanged on update.
     pub max_runs: Option<i64>,
@@ -323,10 +324,12 @@ pub struct Run {
     pub session_id: Option<String>,
     pub error: Option<String>,
     pub log_path: String,
-    /// The claude process (its process group leader) while the run is running.
+    /// The CLI's process (its process group leader) while the run is running.
     pub pid: Option<i64>,
     /// The commit its worktree was at when it started.
     pub base_sha: Option<String>,
+    /// The id of the coding CLI it ran on (Settings → Coding CLIs).
+    pub adapter: Option<String>,
 }
 
 /// An agent's runs on one UTC day.

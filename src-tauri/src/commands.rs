@@ -302,8 +302,30 @@ pub fn suggest_agent(st: State<AppState>, task_id: String) -> Option<String> { r
 
 /// The models this user's Claude Code offers (as its /model picker lists them), with their effort levels.
 #[tauri::command]
-pub async fn claude_models(st: State<'_, AppState>, refresh: bool) -> R<Vec<gizai_agents::models::ModelOption>> {
-    runs::models(&st, refresh).await
+pub async fn claude_models(st: State<'_, AppState>, refresh: bool, cli: Option<String>) -> R<Vec<gizai_agents::models::ModelOption>> {
+    runs::models_for(&st, cli.as_deref(), refresh).await
+}
+
+/// Settings → Coding CLIs: every CLI agents can run on, with the program each would start.
+#[tauri::command]
+pub async fn list_clis(st: State<'_, AppState>) -> R<Vec<crate::clis::CliStatus>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::clis::list(&st)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn save_clis(app: AppHandle, st: State<'_, AppState>, clis: Vec<gizai_core::clis::Cli>) -> R<Vec<crate::clis::CliStatus>> {
+    let st = st.inner().clone();
+    let out = tauri::async_runtime::spawn_blocking(move || crate::clis::save(&st, clis)).await.map_err(|e| e.to_string())??;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// The known coding CLIs installed here that aren't listed yet.
+#[tauri::command]
+pub async fn find_clis(st: State<'_, AppState>) -> R<Vec<gizai_core::clis::Cli>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::clis::find(&st)).await.map_err(|e| e.to_string())?
 }
 
 /// One agent's settings and membership.

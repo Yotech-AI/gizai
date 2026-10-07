@@ -45,7 +45,7 @@ function RunRow({ r }: { r: Run }) {
             {r.branch && <><dt>Branch</dt><dd className="mono">{r.branch}</dd></>}
             {r.baseSha && <><dt>Started at commit</dt><dd className="mono">{r.baseSha.slice(0, 9)}</dd></>}
             {r.worktreePath && <><dt>Worktree</dt><dd className="mono">{r.worktreePath}</dd></>}
-            {r.worktreePath && r.sessionId && <><dt>Continue by hand</dt><dd className="mono">{resumeCommand(r.worktreePath, r.sessionId)}</dd></>}
+            {r.worktreePath && r.sessionId && (!r.adapter || r.adapter === "claude_code") && <><dt>Continue by hand</dt><dd className="mono">{resumeCommand(r.worktreePath, r.sessionId)}</dd></>}
           </dl>
           {events && events.length > 0 && (
             <button className="link" onClick={() => setAll((a) => !a)}>{all ? "Hide output" : `Show the whole output (${events.length} steps)`}</button>

@@ -377,3 +377,83 @@ async fn agents_get_only_models_and_efforts_claude_code_offers() {
     assert_eq!(a["agent"]["model"], "claude-sonnet-5-5");
     assert_eq!(a["agent"]["effort"], "xhigh", "an update keeps the effort it didn't name");
 }
+
+/// Adds coding CLIs in Settings and returns their ids by name (GA-3).
+fn add_clis(t: &T, list: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    let clis: Vec<gizai_core::clis::Cli> = list.iter().map(|(name, kind)| gizai_core::clis::Cli { name: name.to_string(), kind: kind.to_string(),
+        command: format!("/usr/bin/{kind}"), ..Default::default() }).collect();
+    gizai_core::clis::save(&t.st.db, clis).unwrap().into_iter().map(|c| (c.name, c.id)).collect()
+}
+
+#[tokio::test]
+async fn the_team_lead_can_put_agents_on_codex_or_gemini_by_name() {
+    let t = setup();
+    let ids = add_clis(&t, &[("Codex", "codex"), ("Gemini", "gemini"), ("Crush", "other")]);
+    // Codex takes its own model names and efforts; Claude Code's list isn't asked
+    t.ok("create_agent", json!({"name": "Codex Agent", "role": "backend", "runs_on": "codex", "model": "gpt-5-codex", "effort": "minimal"})).await;
+    let m = team::agent(&t.st.db, &resolve_agent(&t, "Codex Agent")).unwrap();
+    assert_eq!((m.adapter.as_deref(), m.model.as_deref(), m.effort.as_deref(), m.permission_mode.as_deref()),
+               (Some(ids["Codex"].as_str()), Some("gpt-5-codex"), Some("minimal"), Some("workspace-write")));
+    // by id works too
+    t.ok("create_agent", json!({"name": "Gemini Agent", "role": "qa", "runs_on": ids["Gemini"], "permission_mode": "plan"})).await;
+    assert_eq!(team::agent(&t.st.db, &resolve_agent(&t, "Gemini Agent")).unwrap().permission_mode.as_deref(), Some("plan"));
+    let e = t.call("create_agent", json!({"name": "X", "role": "qa", "runs_on": "Cursor"})).await.unwrap_err();
+    assert!(e.contains("no coding CLI called \"Cursor\"") && e.contains("Claude Code, Codex, Gemini, Crush"), "{e}");
+    let e = t.call("create_agent", json!({"name": "X", "role": "qa", "runs_on": "Crush"})).await.unwrap_err();
+    assert!(e.contains("Crush runs with its own permissions"), "{e}");
+    let e = t.call("create_agent", json!({"name": "X", "role": "qa", "runs_on": "Gemini", "effort": "high"})).await.unwrap_err();
+    assert!(e.contains("Gemini takes no effort level"), "{e}");
+    let e = t.call("create_agent", json!({"name": "X", "role": "qa", "runs_on": "Codex", "permission_mode": "acceptEdits"})).await.unwrap_err();
+    assert!(e.contains("unknown permission mode acceptEdits for Codex"), "{e}");
+}
+
+#[tokio::test]
+async fn the_chat_cannot_unlock_codex_or_gemini_either() {
+    let t = setup();
+    add_clis(&t, &[("Codex", "codex"), ("Gemini", "gemini")]);
+    for (cli, mode) in [("Codex", "danger-full-access"), ("Gemini", "yolo")] {
+        let e = t.call("create_agent", json!({"name": "Root Agent", "role": "backend", "runs_on": cli, "permission_mode": mode})).await.unwrap_err();
+        assert!(e.contains(mode) && e.contains("agent form"), "{e}");
+    }
+    t.ok("create_agent", json!({"name": "Codex Agent", "role": "backend", "runs_on": "Codex"})).await;
+    let e = t.call("update_agent", json!({"agent": "Codex Agent", "permission_mode": "danger-full-access"})).await.unwrap_err();
+    assert!(e.contains("danger-full-access"), "{e}");
+    assert_eq!(team::agent(&t.st.db, &resolve_agent(&t, "Codex Agent")).unwrap().permission_mode.as_deref(), Some("workspace-write"));
+}
+
+#[tokio::test]
+async fn moving_an_agent_to_another_kind_of_cli_starts_from_that_clis_defaults() {
+    let t = setup();
+    let ids = add_clis(&t, &[("Codex", "codex"), ("Claude 2", "claude_code")]);
+    t.ok("create_agent", json!({"name": "Backend Agent", "role": "backend", "model": "opus", "effort": "max", "permission_mode": "dontAsk"})).await;
+    let id = resolve_agent(&t, "Backend Agent");
+    // another Claude Code account keeps model, effort and mode
+    t.ok("update_agent", json!({"agent": "Backend Agent", "runs_on": "Claude 2"})).await;
+    let m = team::agent(&t.st.db, &id).unwrap();
+    assert_eq!((m.adapter.as_deref(), m.model.as_deref(), m.effort.as_deref(), m.permission_mode.as_deref()),
+               (Some(ids["Claude 2"].as_str()), Some("opus"), Some("max"), Some("dontAsk")));
+    // Codex: Claude Code's model, effort and mode don't carry over
+    t.ok("update_agent", json!({"agent": "Backend Agent", "runs_on": "Codex"})).await;
+    let m = team::agent(&t.st.db, &id).unwrap();
+    assert_eq!((m.adapter.as_deref(), m.model.as_deref(), m.effort.as_deref(), m.permission_mode.as_deref()),
+               (Some(ids["Codex"].as_str()), None, None, Some("workspace-write")));
+    // other changes keep it on Codex
+    t.ok("update_agent", json!({"agent": "Backend Agent", "effort": "high", "title": "Backend"})).await;
+    let m = team::agent(&t.st.db, &id).unwrap();
+    assert_eq!((m.adapter.as_deref(), m.effort.as_deref()), (Some(ids["Codex"].as_str()), Some("high")));
+    // and back to Claude Code: its model list is checked again
+    let e = t.call("update_agent", json!({"agent": "Backend Agent", "runs_on": "Claude Code", "model": "opus 5.5"})).await.unwrap_err();
+    assert!(e.contains("opus 5.5"), "{e}");
+    t.ok("update_agent", json!({"agent": "Backend Agent", "runs_on": "Claude Code"})).await;
+    let m = team::agent(&t.st.db, &id).unwrap();
+    assert_eq!((m.adapter.as_deref(), m.permission_mode.as_deref(), m.effort.as_deref()), (Some("claude_code"), Some("acceptEdits"), None));
+}
+
+#[test]
+fn the_agent_tools_offer_runs_on() {
+    let cat = tools::catalog();
+    for name in ["create_agent", "update_agent"] {
+        let t = cat.iter().find(|t| t.name == name).unwrap();
+        assert!(t.input_schema["properties"]["runs_on"].is_object(), "{name}");
+    }
+}

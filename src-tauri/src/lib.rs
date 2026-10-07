@@ -2,6 +2,7 @@ pub mod chat;
 mod commands;
 pub mod git;
 pub mod mcp;
+mod quit;
 pub mod runs;
 pub mod tools;
 
@@ -234,10 +235,13 @@ pub fn run() {
                 Err(e) => {
                     // e.g. another Gizai holds this data folder (from another login session)
                     eprintln!("gizai: {e}");
+                    quit::end_web_content(app.handle());
                     std::process::exit(1);
                 }
             };
             app.manage(state.clone());
+            // After manage: quitting reads the state.
+            quit::on_signals(app.handle());
             // The MCP server chat turns reach Gizai's tools through.
             {
                 let st = state.clone();
@@ -291,7 +295,15 @@ pub fn run() {
                     });
                 }
             }
+            // Nothing keeps the window open, so a close request means it closes now and Gizai quits. WebKit's
+            // page process ends before the window goes (see `quit`); Exit does the same for every other way out.
+            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { .. }, .. } = &event
+                && label == "main"
+            {
+                quit::end_web_content(app);
+            }
             if let tauri::RunEvent::Exit = event {
+                quit::end_web_content(app);
                 mcp::remove_socket(app.state::<AppState>().inner());
             }
         });

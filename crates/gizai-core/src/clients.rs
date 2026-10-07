@@ -166,3 +166,35 @@ pub fn upsert_contact(db: &Db, actor: &str, contact: Contact) -> Result<String> 
         Ok(id)
     })
 }
+
+/// Soft delete a contact. When it was the primary one, the first contact left (by name, as
+/// `contacts` lists them) becomes primary, so a client with contacts always has one.
+pub fn remove_contact(db: &Db, actor: &str, id: &str) -> Result<()> {
+    db.write(Some(actor), |w| {
+        let now = ids::now_ms();
+        let (client_id, was_primary): (String, bool) = w.conn()
+            .query_row("SELECT client_id, is_primary FROM contacts WHERE id=?1 AND deleted_at IS NULL", [id],
+                       |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0)))
+            .optional()?
+            .ok_or_else(|| Error::NotFound(format!("contact {id}")))?;
+        w.conn().execute(
+            "UPDATE contacts SET deleted_at=?2, is_primary=0, updated_at=?2, updated_by=?3, version=version+1 WHERE id=?1",
+            rusqlite::params![id, now, actor],
+        )?;
+        w.delete("contacts", id)?;
+        if was_primary {
+            let next: Option<String> = w.conn()
+                .query_row("SELECT id FROM contacts WHERE client_id=?1 AND deleted_at IS NULL ORDER BY name COLLATE NOCASE, created_at, id LIMIT 1",
+                           [&client_id], |r| r.get(0))
+                .optional()?;
+            if let Some(next) = next {
+                w.conn().execute(
+                    "UPDATE contacts SET is_primary=1, updated_at=?2, updated_by=?3, version=version+1 WHERE id=?1",
+                    rusqlite::params![next, now, actor],
+                )?;
+                w.update("contacts", &next, serde_json::json!({ "isPrimary": true }))?;
+            }
+        }
+        Ok(())
+    })
+}

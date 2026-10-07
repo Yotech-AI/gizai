@@ -82,6 +82,15 @@ export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull
 /** Asks GitHub about the card's pull request now; a merge moves the card to Done. */
 export const checkPullRequest = (taskId: string) => invoke<T.PullInfo | null>("check_pull_request", { taskId });
 export const detectGh = () => invoke<string | null>("detect_gh");
+/** Settings → GitHub: whether gh is found, the account it is logged in as, and how pushes go (gh asks GitHub). */
+export const githubStatus = () => invoke<T.GithubStatus>("github_status");
+/** Check connection: gh, its login, ssh to GitHub, and whether you can push to each project with a GitHub link. */
+export const githubCheck = () => invoke<T.ConnectionCheck>("github_check");
+/** Log in with GitHub: starts gh's login in the browser; resolves with its one-time code and link. */
+export const githubLogin = () => invoke<T.GithubLoginCode>("github_login");
+/** Resolves when that login has ended, with the account gh logged in as (null if it didn't say); rejects with why not. */
+export const githubLoginWait = () => invoke<string | null>("github_login_wait");
+export const githubLoginCancel = () => invoke<void>("github_login_cancel");
 
 export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null };
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });

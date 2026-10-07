@@ -89,13 +89,19 @@ pub fn pull_number(url: &str) -> Option<u64> {
     url.trim_end_matches('/').rsplit('/').next()?.parse().ok()
 }
 
+/// gh without prompts, colours or update checks.
+pub(crate) fn gh_command(gh: &Path) -> Command {
+    let mut cmd = Command::new(gh);
+    cmd.env("GH_PROMPT_DISABLED", "1").env("GH_NO_UPDATE_NOTIFIER", "1").env("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1")
+        .env("GH_SPINNER_DISABLED", "1").env("NO_COLOR", "1").env("CLICOLOR", "0").env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
 /// Runs gh without prompts, colours or update checks, and ends it after a minute. The error is gh's own message,
 /// with a plain one for a missing gh or login.
 fn run_gh(gh: &Path, dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(gh);
-    cmd.args(args).current_dir(dir)
-        .env("GH_PROMPT_DISABLED", "1").env("GH_NO_UPDATE_NOTIFIER", "1").env("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1")
-        .env("GH_SPINNER_DISABLED", "1").env("NO_COLOR", "1").env("CLICOLOR", "0").env("GIT_TERMINAL_PROMPT", "0");
+    let mut cmd = gh_command(gh);
+    cmd.args(args).current_dir(dir);
     let (ok, out, err) = run(cmd, stdin, LIMIT).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => format!("GitHub CLI not found at {}: install gh, or set its path in Settings", gh.display()),
         std::io::ErrorKind::TimedOut => format!("gh gave no answer within {} s", LIMIT.as_secs()),
@@ -113,8 +119,8 @@ fn run_gh(gh: &Path, dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<S
 }
 
 /// Runs `cmd` with `stdin` and returns (succeeded, stdout, stderr). Both outputs are read while it runs (a long
-/// answer can't fill a pipe and hang it); after `limit` it is killed.
-fn run(mut cmd: Command, stdin: Option<&str>, limit: Duration) -> std::io::Result<(bool, String, String)> {
+/// answer can't fill a pipe and hang it); after `limit` it is killed (an error of kind `TimedOut`).
+pub(crate) fn run(mut cmd: Command, stdin: Option<&str>, limit: Duration) -> std::io::Result<(bool, String, String)> {
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {

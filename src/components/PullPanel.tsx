@@ -1,5 +1,5 @@
 // A card's pull request on GitHub: its link and state, and Open pull request for a card in Review (pushes the branch
-// with your git login and opens the pull request with gh). Opening the page of a card Gizai follows asks GitHub at
+// over SSH or HTTPS, as Settings → GitHub says, and opens the pull request with gh). Opening the page of a card Gizai follows asks GitHub at
 // once, so a pull request an agent opened shows straight away, and a merge moves the card to Done.
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";

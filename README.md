@@ -13,12 +13,12 @@ You need:
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer.
 
 ```sh
-git clone https://github.com/Yotech-AI/gizai.git
+git clone --branch production https://github.com/Yotech-AI/gizai.git
 cd gizai
 ./install.sh
 ```
 
-The installer builds Gizai and installs it for your user in `~/.local`, with no sudo. It also adds Gizai to your app launcher.
+The installer builds Gizai and installs it for your user in `~/.local`, with no sudo. It also adds Gizai to your app launcher. The `production` branch holds the released version; `main` is development.
 
 | Command | What it does |
 |---|---|
@@ -51,7 +51,7 @@ scripts/ui-test.sh        # UI tests in a headless compositor, never on your des
 scripts/readme-gif.sh     # remakes the GIF above
 ```
 
-`CLAUDE.md` has the rules for working in this repository, and `docs/HANDOFF-2026-10-07.md` explains how it is built.
+`CLAUDE.md` has the rules for working in this repository, `docs/HANDOFF-2026-10-07.md` explains how it is built, and `docs/RELEASING.md` how a release is made.
 
 ## Licence
 

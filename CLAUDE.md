@@ -45,7 +45,7 @@ Background, only when the card needs it:
 
   The tests use fake Claude Code scripts (`crates/gizai-agents/tests/fake-claude*.{sh,py}`), never the real one.
 - **Release build:** always use `npm run tauri build -- --no-bundle`. A plain `cargo build --release -p gizai` can produce a binary that loads the dev URL.
-- **Git:** work on your card's branch. Commit as you go: Gizai stops a run at its limits. Write commit messages in plain English that say what changed for the person using Gizai.
+- **Git:** `main` is development (cards start from it); `production` is the released code, protected, changed only by a pull request from `main` (see `docs/RELEASING.md`). Work on your card's branch. Commit as you go: Gizai stops a run at its limits. Write commit messages in plain English that say what changed for the person using Gizai.
 - **Writing:** UI text and docs are plain and short, in sentence case, and say what happens.
 - **Design rules:**
   - teal `--live` only for an agent working now;

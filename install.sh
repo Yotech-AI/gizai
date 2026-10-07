@@ -12,10 +12,11 @@
 #   ./install.sh --check         only report what is missing
 #   ./install.sh --skip-build    install the binaries already built in target/release
 #   ./install.sh --uninstall     remove Gizai (add --purge to delete your data too)
-# Environment: GIZAI_REPO (the git URL to clone), GIZAI_PREFIX (default ~/.local).
+# Environment: GIZAI_REPO (the git URL to clone), GIZAI_BRANCH (default production: the released code; main is
+# development), GIZAI_PREFIX (default ~/.local).
 set -euo pipefail
 
-DEFAULT_REPO="" # set when the repository is public, e.g. https://github.com/<owner>/gizai.git
+DEFAULT_REPO="https://github.com/Yotech-AI/gizai.git"
 REPO="${GIZAI_REPO:-$DEFAULT_REPO}"
 PREFIX="${GIZAI_PREFIX:-$HOME/.local}"
 SHARE="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -134,7 +135,7 @@ else
   if [ -d "$SRC_CLONE/.git" ]; then
     git -C "$SRC_CLONE" pull --ff-only
   else
-    git clone --depth 1 "$REPO" "$SRC_CLONE"
+    git clone --depth 1 --branch "${GIZAI_BRANCH:-production}" "$REPO" "$SRC_CLONE"
   fi
   SRC="$SRC_CLONE"
 fi

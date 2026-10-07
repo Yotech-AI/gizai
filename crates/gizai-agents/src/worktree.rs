@@ -1,9 +1,10 @@
 //! One git worktree per task, on its own branch, so agents never touch the main checkout.
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
-use crate::AgentError;
+use crate::connection::{self, Problem, PushOver};
+use crate::{AgentError, github};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Worktree {
@@ -142,13 +143,31 @@ pub fn rev_parse(dir: &Path, rev: &str) -> Result<String, AgentError> {
     git(dir, &["rev-parse", "--verify", "--quiet", rev])
 }
 
-/// Pushes the local `branch` to the branch of the same name at `to` (a remote's name, or a URL) with the user's own
-/// git login (ssh keys, credential helpers). Never forces and never asks for a password; gives up after two minutes.
+/// How long a push may take.
+const PUSH_LIMIT: Duration = Duration::from_secs(120);
+
+/// Pushes the local `branch` to the branch of the same name at `to` (a remote's name, or a URL) over SSH with your
+/// keys, the default (see `push_branch_over`).
 pub fn push_branch(repo: &Path, to: &str, branch: &str) -> Result<(), AgentError> {
+    push_branch_over(repo, to, branch, &PushOver::Ssh)
+}
+
+/// Pushes the local `branch` to the branch of the same name at `to` (a remote's name, or a URL): over SSH with your
+/// keys, or over HTTPS with gh's login (`over`, set for this one command: no git config or remote changes). Never
+/// forces and never asks for anything; gives up after two minutes. A failure says what to check, in plain words.
+pub fn push_branch_over(repo: &Path, to: &str, branch: &str, over: &PushOver) -> Result<(), AgentError> {
     let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    git_quiet(repo, &["push", "--quiet", to, &spec], Duration::from_secs(120))
+    quiet(repo, &over.git_config(), &["push", "--quiet", to, &spec], PUSH_LIMIT)
         .map(|_| ())
-        .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {e}")))
+        .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {}", e.problem(over))))
+}
+
+/// Whether you can push to `to` the way `push_branch_over` would, without pushing anything: a dry run of the
+/// repository's latest commit to a new branch. It reaches GitHub and needs write access, but sends nothing and runs
+/// no hooks.
+pub fn can_push(repo: &Path, to: &str, over: &PushOver, limit: Duration) -> Result<(), Problem> {
+    let args = ["push", "--dry-run", "--quiet", "--no-verify", to, "HEAD:refs/heads/gizai-connection-check"];
+    quiet(repo, &over.git_config(), &args, limit).map(|_| ()).map_err(|e| e.problem(over))
 }
 
 /// The worktree that has `branch` checked out, if one does.
@@ -280,27 +299,56 @@ pub fn uncommitted(dir: &Path) -> Result<usize, AgentError> {
     Ok(git(dir, &["status", "--porcelain"])?.lines().filter(|l| !l.trim().is_empty()).count())
 }
 
-/// git without prompts (no terminal, ssh in batch mode unless you set your own ssh command), ended after `limit`.
-fn git_quiet(repo: &Path, args: &[&str], limit: Duration) -> Result<String, String> {
+/// Why a git command that talks to a remote failed.
+enum Failure {
+    /// Everything git said.
+    Said(String),
+    NoAnswer(Duration),
+    CantRun(String),
+}
+
+impl Failure {
+    /// git's own last line.
+    fn last_line(self) -> String {
+        match self {
+            Failure::Said(said) => said.trim().lines().last().unwrap_or("git failed").to_string(),
+            Failure::NoAnswer(limit) => format!("no answer within {} s", limit.as_secs()),
+            Failure::CantRun(e) => e,
+        }
+    }
+
+    /// What it means for a push, in plain words.
+    fn problem(self, over: &PushOver) -> Problem {
+        match self {
+            Failure::Said(said) => connection::push_problem(&said, over),
+            Failure::NoAnswer(limit) => connection::no_answer(limit),
+            Failure::CantRun(e) => Problem::plain(e),
+        }
+    }
+}
+
+/// git without prompts, ended after `limit`: no terminal and no askpass program, ssh in batch mode (unless you set your
+/// own ssh command), and `config` as `-c` settings for this one command.
+fn quiet(repo: &Path, config: &[String], args: &[&str], limit: Duration) -> Result<String, Failure> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(repo).args(args).env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.arg("-C").arg(repo);
+    for c in config {
+        cmd.arg("-c").arg(c);
+    }
+    // an empty GIT_ASKPASS turns off every askpass program for git (GIT_ASKPASS, core.askPass, SSH_ASKPASS)
+    cmd.args(args).env("GIT_TERMINAL_PROMPT", "0").env("GIT_ASKPASS", "").env("SSH_ASKPASS_REQUIRE", "never");
     if std::env::var_os("GIT_SSH_COMMAND").is_none() {
         cmd.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
     }
-    let mut child = cmd.spawn().map_err(|e| format!("can't run git: {e}"))?;
-    let until = Instant::now() + limit;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
-            _ => { let _ = child.kill(); let _ = child.wait(); return Err(format!("no answer within {} s", limit.as_secs())); }
-        }
+    match github::run(cmd, None, limit) {
+        Ok((true, out, _)) => Ok(out.trim_end().to_string()),
+        Ok((false, _, err)) => Err(Failure::Said(err)),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => Err(Failure::NoAnswer(limit)),
+        Err(e) => Err(Failure::CantRun(format!("can't run git: {e}"))),
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().lines().last().unwrap_or("git failed").to_string())
-    }
+}
+
+/// git without prompts (see `quiet`); an error is git's last line.
+fn git_quiet(repo: &Path, args: &[&str], limit: Duration) -> Result<String, String> {
+    quiet(repo, &[], args, limit).map_err(Failure::last_line)
 }

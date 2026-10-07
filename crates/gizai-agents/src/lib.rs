@@ -1,7 +1,8 @@
-//! Agent runtime pieces: Claude Code command line, stream parsing, outcomes, git worktrees, pull requests (gh), prompts
-//! and process control. Never imports Tauri.
+//! Agent runtime pieces: Claude Code command line, stream parsing, outcomes, git worktrees, pull requests (gh), the
+//! connection to GitHub (pushes over SSH or HTTPS, gh's login), prompts and process control. Never imports Tauri.
 pub mod chat_stream;
 pub mod claude;
+pub mod connection;
 pub mod github;
 pub mod models;
 pub mod outcome;

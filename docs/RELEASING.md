@@ -97,17 +97,20 @@ Every release must keep this working, because the Gizai that updates runs the **
   - Nothing about the person or their work is sent.
 - **The notice.** When the latest release is newer than the Gizai that runs, the sidebar shows "Update to X.Y.Z" above Company. Settings → Updates shows the same, with the release notes.
 - **The update.** Pressing it runs these steps:
-  1. **Get the source:** a shallow fetch of the tag `vX.Y.Z` only, into `<data folder>/update/source`. The folder is kept with its `target/` and `node_modules/`, so later updates build faster.
+  1. **Get the source:** a shallow fetch of the tag `vX.Y.Z` only, into `<data folder>/update/source`. git works only in that folder's own repository. The folder is kept with its `target/`, so later updates build faster.
   2. **Check the version:** the source's `Cargo.toml` must say `X.Y.Z`.
   3. **Build:** the release's own `./install.sh --build-only`, at low CPU priority. Gizai stays usable meanwhile. Every command's output goes to `<data folder>/update/update.log`.
   4. **Back up the data:** `<data folder>/backups/gizai-before-update-<time>.db`.
-  5. **Install:** the release's own `./install.sh --skip-build`, with `GIZAI_PREFIX` set to where the running Gizai was installed (usually `~/.local`) and `GIZAI_DATA_DIR` set to its data folder. The installer backs up again with the new build, then replaces the programs with a rename.
+  5. **Install:** the release's own `./install.sh --skip-build`, with `GIZAI_PREFIX` set to where the running Gizai was installed (usually `~/.local`) and `XDG_DATA_HOME` set to `<prefix>/share`. So the desktop entry and icons go with the install: `~/.local/share` for the usual one, and never over yours for a test's scratch prefix. The installer backs up `<prefix>/share/gizai` again with the new build, then replaces the programs with a rename.
   6. **Check:** `gizai --version` of the installed program must say `X.Y.Z`. Then the notice offers **Restart to use X.Y.Z**. Restart quits Gizai the usual way (agents at work are stopped first) and starts the installed one.
-- **When a step fails,** nothing installed changes. The notice says the update failed, and Settings → Updates says why, with the end of the output, the log and Try again.
+- **When a step fails,** nothing installed changes: the notice says the update failed, and Settings → Updates says why, with the end of the output, the log and Try again.
+  - The installed version decides. When the installer fails after the new programs are in place (the icons, say), the update counts as installed, with what the installer said.
+  - Only an install that stopped between its renames (seconds) can leave a mix. Settings → Updates then says to try again or to run `./install.sh`.
 - **Stop** ends the update while it gets the source or builds. Quitting Gizai does that too.
-- **So `install.sh` must keep these working:** `--build-only`, `--skip-build`, `GIZAI_PREFIX` and `GIZAI_DATA_DIR`.
+- **So `install.sh` must keep these working:** `--build-only`, `--skip-build`, `GIZAI_PREFIX` and `XDG_DATA_HOME`.
 - **Only an installed Gizai updates itself.** That is a Gizai that runs as `<prefix>/lib/gizai/gizai`. A dev build (`scripts/run.sh`) or a test build says why it doesn't, and never installs anything.
 - **From a terminal** it works as before: `git pull` in a checkout of `production`, then `./install.sh`.
+- **Headless test and screenshot runs** (`GIZAI_SELFTEST` or `GIZAI_ROUTE` set) skip the automatic check, unless `GIZAI_RELEASES_URL` is set too.
 - **Settings for tests and forks:**
   - `GIZAI_REPO`: the repository the tag is fetched from. Default `https://github.com/Yotech-AI/gizai.git`.
   - `GIZAI_RELEASES_URL`: what the check reads. Default: GitHub's latest release of `GIZAI_REPO`. It also takes `http://` and `file://` addresses.
@@ -145,8 +148,8 @@ Never test against the Gizai Jeffrey uses: not `./install.sh`, not `~/.local/lib
      "$T/home/.local/lib/gizai/gizai"
    ```
 
-   - `HOME` and `XDG_DATA_HOME` must be in the scratch folder too. The installer writes a desktop entry and icons under `$XDG_DATA_HOME` (else `$HOME/.local/share`), and the real ones must stay as they are.
-   - Gizai installs an update into the prefix it runs from: here `$T/home/.local`.
+   - Gizai installs an update into the prefix it runs from: here `$T/home/.local`. The installer's desktop entry and icons go to `$T/home/.local/share`.
+   - Keep `HOME` and `XDG_DATA_HOME` in the scratch folder anyway: other tools write there too.
    - A Gizai that runs from `target/release` never installs; it says why in Settings → Updates.
 
    Make the stub's `install.sh` fail to see the failure path: the old programs must stay in place, and Settings → Updates must say why.

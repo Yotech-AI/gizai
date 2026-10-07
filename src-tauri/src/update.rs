@@ -143,10 +143,14 @@ pub struct UpdateJob {
     pub log: String,
     /// The backup of your data it made before installing.
     pub backup: Option<String>,
-    /// Why it failed, in plain words.
+    /// Why it failed, in plain words. For an installed update: what the installer said went wrong after the new
+    /// version was in place (the desktop entry, the icons).
     pub problem: Option<String>,
     /// The end of what the failed command said.
     pub output: Option<String>,
+    /// While it runs and when it failed: whether the Gizai installed before is still in place, as it was. It is, unless
+    /// the install step failed partway.
+    pub unchanged: bool,
 }
 
 impl UpdateJob {
@@ -325,7 +329,7 @@ pub fn start(st: &AppState, version: &str) -> Result<UpdateStatus, String> {
         let log = st.data_dir.join("update").join("update.log");
         inner.job = Some(Job {
             status: UpdateJob { version: release.version.clone(), step: "source".into(), started_at: ids::now_ms(), ended_at: None,
-                                log: log.display().to_string(), backup: None, problem: None, output: None },
+                                log: log.display().to_string(), backup: None, problem: None, output: None, unchanged: true },
             stop: stop.clone(),
         });
         (prefix, inner.source.repo.clone(), stop)
@@ -334,34 +338,64 @@ pub fn start(st: &AppState, version: &str) -> Result<UpdateStatus, String> {
     let st2 = st.clone();
     std::thread::spawn(move || {
         let ended = run(&st2, &release, &repo, &prefix, &stop);
-        finish(&st2, ended, stop.asked());
+        finish(&st2, ended);
     });
     Ok(status(st))
 }
 
-/// The update's steps, one after the other; the first that fails ends it. Ok: the backup it made.
-fn run(st: &AppState, release: &Release, repo: &str, prefix: &std::path::Path, stop: &Stop) -> Result<String, UpdateFailed> {
+/// How an update ended well: the backup it made, and what the installer said went wrong after the new version was in
+/// place, if anything.
+struct Done {
+    backup: String,
+    note: Option<String>,
+}
+
+/// How an update didn't work.
+struct Failed {
+    failed: UpdateFailed,
+    /// Stopped (Stop, or Gizai quit) while it got the source or built.
+    stopped: bool,
+    /// The Gizai installed before is still in place, as it was.
+    unchanged: bool,
+}
+
+impl From<UpdateFailed> for Failed {
+    fn from(failed: UpdateFailed) -> Failed {
+        Failed { failed, stopped: false, unchanged: true }
+    }
+}
+
+/// The update's steps, one after the other; the first that fails ends it.
+fn run(st: &AppState, release: &Release, repo: &str, prefix: &std::path::Path, stop: &Stop) -> Result<Done, Failed> {
     let dir = st.data_dir.join("update");
-    let source = dir.join("source");
     let log = up::Log::create(&dir.join("update.log"))
         .map_err(|e| UpdateFailed::plain(format!("Can't write the update's log in {}: {e}", dir.display())))?;
+    // a data folder given as a relative path works too: the installer runs in the source folder
+    let source = dir.canonicalize().unwrap_or(dir).join("source");
     let version = &release.version;
     log.say(&format!("== Updating Gizai {VERSION} to {version}: the release {} from {repo}, installed into {}", release.tag, prefix.display()));
-    up::get_source(repo, &release.tag, &source, &log, stop)?;
-    match up::source_version(&source) {
-        Some(v) if &v == version => {}
-        said => {
-            return Err(UpdateFailed::plain(format!("The source of {} says it is version {}, not {version}, so Gizai doesn't install it",
-                                                   release.tag, said.as_deref().unwrap_or("unknown"))));
-        }
-    }
-    step(st, "build", None);
-    log.say(&format!("== Building {version}"));
     let path = crate::runs::command_path();
-    up::build(&source, Some(&path), &log, stop)?;
-    if stop.asked() {
-        return Err(UpdateFailed::plain("Stopped"));
+    let built = (|| {
+        up::get_source(repo, &release.tag, &source, &log, stop)?;
+        match up::source_version(&source) {
+            Some(v) if &v == version => {}
+            said => {
+                return Err(UpdateFailed::plain(format!("The source of {} says it is version {}, not {version}, so Gizai doesn't install it",
+                                                       release.tag, said.as_deref().unwrap_or("unknown"))));
+            }
+        }
+        step(st, "build", None);
+        log.say(&format!("== Building {version}"));
+        up::build(&source, Some(&path), &log, stop)?;
+        if stop.asked() {
+            return Err(UpdateFailed::plain("Stopped"));
+        }
+        Ok(())
+    })();
+    if let Err(failed) = built {
+        return Err(Failed { failed, stopped: stop.asked(), unchanged: true });
     }
+    // from here on Stop doesn't apply: the backup and the install take seconds
     step(st, "backup", None);
     log.say("== Backing up your data");
     let backup = crate::backup_data_dir(&st.data_dir, "before-update")
@@ -370,17 +404,23 @@ fn run(st: &AppState, release: &Release, repo: &str, prefix: &std::path::Path, s
     log.say(&format!("Backed up your data to {backup}"));
     step(st, "install", Some(&backup));
     log.say(&format!("== Installing {version} into {}", prefix.display()));
-    // a few seconds, never stopped halfway
-    up::install(&source, prefix, &st.data_dir, Some(&path), &log, &Stop::default())?;
-    match up::installed_version(prefix) {
-        Some(v) if &v == version => {}
-        said => {
-            return Err(UpdateFailed::plain(format!("The installer finished, but the installed Gizai says it is version {}",
-                                                   said.as_deref().unwrap_or("unknown"))));
+    let installed = up::install(&source, prefix, Some(&path), &log, &Stop::default());
+    // what is in place now decides, whatever the installer said
+    let now = up::installed_version(prefix);
+    match (installed, now) {
+        (installed, Some(v)) if &v == version => {
+            let note = installed.err().map(|f| format!("{version} is installed, but the installer said: {}", f.what));
+            log.say(&format!("== Installed {version}. Restart Gizai to use it."));
+            Ok(Done { backup, note })
         }
+        (Ok(()), said) => Err(Failed {
+            failed: UpdateFailed::plain(format!("The installer finished, but the installed Gizai says it is version {}",
+                                                said.as_deref().unwrap_or("unknown"))),
+            stopped: false,
+            unchanged: said.as_deref() == Some(VERSION),
+        }),
+        (Err(failed), said) => Err(Failed { failed, stopped: false, unchanged: said.as_deref() == Some(VERSION) }),
     }
-    log.say(&format!("== Installed {version}. Restart Gizai to use it."));
-    Ok(backup)
 }
 
 /// The update moved on to `name`.
@@ -394,7 +434,7 @@ fn step(st: &AppState, name: &str, backup: Option<&str>) {
     changed(st);
 }
 
-fn finish(st: &AppState, ended: Result<String, UpdateFailed>, stopped: bool) {
+fn finish(st: &AppState, ended: Result<Done, Failed>) {
     {
         let mut inner = st.updates.lock();
         let mut installed = None;
@@ -402,19 +442,22 @@ fn finish(st: &AppState, ended: Result<String, UpdateFailed>, stopped: bool) {
             let s = &mut job.status;
             s.ended_at = Some(ids::now_ms());
             match ended {
-                Ok(backup) => {
+                Ok(done) => {
                     s.step = "installed".into();
-                    s.backup = Some(backup);
+                    s.backup = Some(done.backup);
+                    s.problem = done.note;
+                    s.unchanged = false;
                     installed = Some(s.version.clone());
                 }
-                Err(f) => {
-                    let said = if stopped { "Stopped".to_string() } else { f.what.clone() };
+                Err(Failed { failed, stopped, unchanged }) => {
+                    let said = if stopped { "Stopped".to_string() } else { failed.what.clone() };
                     if let Ok(mut log) = std::fs::OpenOptions::new().append(true).open(&s.log) {
                         let _ = writeln!(log, "== {said}");
                     }
                     s.step = if stopped { "stopped" } else { "failed" }.into();
-                    s.problem = (!stopped).then_some(f.what);
-                    s.output = Some(f.output).filter(|o| !o.trim().is_empty());
+                    s.problem = (!stopped).then_some(failed.what);
+                    s.output = Some(failed.output).filter(|o| !o.trim().is_empty());
+                    s.unchanged = unchanged;
                 }
             }
         }

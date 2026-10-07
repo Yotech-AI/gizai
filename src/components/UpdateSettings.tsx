@@ -45,6 +45,7 @@ export function UpdateSettings() {
           ) : job?.step === "installed" || s.installed ? (
             <>
               <div className="gh-line ok"><CircleCheck className="icon" /><span>Version {job?.step === "installed" ? job.version : s.installed} is installed. Restart Gizai to use it.</span></div>
+              {job?.step === "installed" && job.problem && <span className="warn">{job.problem}</span>}
               {job?.backup && <span className="hint">Your data was backed up to <span className="mono">{job.backup}</span></span>}
               <div><RestartButton className="btn primary" label="Restart Gizai" /></div>
             </>
@@ -52,7 +53,9 @@ export function UpdateSettings() {
             <>
               {job?.step === "failed" && (
                 <div className="update-failed" role="alert">
-                  <div className="gh-line failed"><CircleX className="icon" /><span>The update to {job.version} didn't work: {job.problem ?? "it failed"}. Gizai {s.current} is still installed and works as before.</span></div>
+                  <div className="gh-line failed"><CircleX className="icon" /><span>The update to {job.version} didn't work: {job.problem ?? "it failed"}. {job.unchanged
+                    ? `Gizai ${s.current} is still installed and works as before.`
+                    : "The installer stopped partway, so the installed Gizai may not start: try again, or run ./install.sh from a checkout of production."}</span></div>
                   {job.output && <pre className="update-output mono">{job.output}</pre>}
                   <span className="hint">Everything it did is in <span className="mono">{job.log}</span></span>
                 </div>

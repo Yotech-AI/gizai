@@ -14,8 +14,7 @@
 #   ./install.sh --skip-build    install the binaries already built in target/release
 #   ./install.sh --uninstall     remove Gizai (add --purge to delete your data too)
 # Environment: GIZAI_REPO (the git URL to clone), GIZAI_BRANCH (default production: the released code; main is
-# development), GIZAI_PREFIX (default ~/.local), GIZAI_DATA_DIR (the data folder that is backed up before an install,
-# default ~/.local/share/gizai).
+# development), GIZAI_PREFIX (default ~/.local).
 set -euo pipefail
 
 DEFAULT_REPO="https://github.com/Yotech-AI/gizai.git"
@@ -26,7 +25,7 @@ LIB="$PREFIX/lib/gizai"
 BIN="$PREFIX/bin"
 APPS="$SHARE/applications"
 ICONS="$SHARE/icons/hicolor"
-DATA="${GIZAI_DATA_DIR:-$SHARE/gizai}"
+DATA="$SHARE/gizai"
 SRC_CLONE="$SHARE/gizai-src"
 
 CHECK=0 BUILD_ONLY=0 SKIP_BUILD=0 UNINSTALL=0 PURGE=0
@@ -37,7 +36,7 @@ for arg in "$@"; do
     --skip-build) SKIP_BUILD=1 ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -187,15 +186,15 @@ fi
 # ---------- install ----------
 step "Installing"
 mkdir -p "$LIB" "$BIN" "$APPS" "$ICONS/scalable/apps"
-# Each program goes in under a temporary name first, then replaces the old one in one step (a rename): a copy that
-# fails (a full disk) leaves the installed Gizai as it was.
-staged=("$LIB/.gizai.new" "$LIB/.gizai-mcp.new" "$LIB/.gizai-launch.new")
-trap 'rm -f "${staged[@]}"' EXIT
-if ! install -m 755 "$SRC/target/release/gizai" "$LIB/.gizai.new" || ! install -m 755 "$SRC/target/release/gizai-mcp" "$LIB/.gizai-mcp.new"; then
+# Each program goes in under a temporary name of this installer's own first, then replaces the old one in one step (a
+# rename): a copy that fails (a full disk) leaves the installed Gizai as it was.
+new_gizai="$LIB/.gizai.new.$$" new_mcp="$LIB/.gizai-mcp.new.$$" new_launch="$LIB/.gizai-launch.new.$$"
+trap 'rm -f "$new_gizai" "$new_mcp" "$new_launch"' EXIT
+if ! install -m 755 "$SRC/target/release/gizai" "$new_gizai" || ! install -m 755 "$SRC/target/release/gizai-mcp" "$new_mcp"; then
   say "Could not copy Gizai into $LIB, so nothing was installed."
   exit 1
 fi
-cat > "$LIB/.gizai-launch.new" <<LAUNCH
+cat > "$new_launch" <<LAUNCH
 #!/bin/sh
 # Starts Gizai with your login shell's PATH, so its agents find claude, git, npm and cargo even when
 # Gizai is started from the app launcher. On machines without an NVIDIA GPU, WebKitGTK needs Mesa's EGL.
@@ -207,10 +206,10 @@ if command -v bash >/dev/null 2>&1; then
 fi
 exec "$LIB/gizai" "\$@"
 LAUNCH
-chmod 755 "$LIB/.gizai-launch.new"
-mv -f "$LIB/.gizai.new" "$LIB/gizai"
-mv -f "$LIB/.gizai-mcp.new" "$LIB/gizai-mcp"
-mv -f "$LIB/.gizai-launch.new" "$LIB/gizai-launch"
+chmod 755 "$new_launch"
+mv -f "$new_gizai" "$LIB/gizai"
+mv -f "$new_mcp" "$LIB/gizai-mcp"
+mv -f "$new_launch" "$LIB/gizai-launch"
 ln -sfn "$LIB/gizai-launch" "$BIN/gizai"
 # The app icon in every size launchers ask for, plus the SVG it is drawn from.
 for pair in 32:32x32.png 64:64x64.png 128:128x128.png 256:128x128@2x.png 512:icon.png; do

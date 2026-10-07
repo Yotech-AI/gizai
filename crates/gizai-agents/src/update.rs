@@ -132,7 +132,8 @@ pub fn latest_release_url(owner: &str, name: &str) -> String {
 /// Ok(None): there is no release yet.
 pub fn latest_release(url: &str, user_agent: &str, limit: Duration) -> Result<Option<Release>, Problem> {
     let mut cmd = Command::new("curl");
-    cmd.args(["--silent", "--show-error", "--location", "--proto", "=https,http,file", "--proto-redir", "=https"])
+    // -q first: your ~/.curlrc plays no part
+    cmd.args(["-q", "--silent", "--show-error", "--location", "--proto", "=https,http,file", "--proto-redir", "=https"])
         .args(["--max-time", &limit.as_secs().max(1).to_string()])
         .args(["--header", "Accept: application/vnd.github+json", "--header", "X-GitHub-Api-Version: 2022-11-28"])
         .args(["--user-agent", user_agent, "--write-out", "\n%{http_code}", "--url", url]);
@@ -277,11 +278,15 @@ impl std::fmt::Display for UpdateFailed {
 }
 
 /// Gets the source of release `tag` from `repo` into `dir`, a folder of its own (made when missing): a shallow fetch of
-/// that tag alone, checked out as it is. Everything else in the folder goes, except the build's own folders (target/,
-/// node_modules/), so the next build is quicker.
+/// that tag alone, checked out as it is. Everything else in the folder goes, except the build's target/, so the next
+/// build is quicker. git only ever works in `dir`'s own repository, never in one around it.
 pub fn get_source(repo: &str, tag: &str, dir: &Path, log: &Log, stop: &Stop) -> Result<(), UpdateFailed> {
     std::fs::create_dir_all(dir).map_err(|e| UpdateFailed::plain(format!("Can't make {}: {e}", dir.display())))?;
-    if !dir.join(".git").exists() {
+    let dir = &dir.canonicalize().map_err(|e| UpdateFailed::plain(format!("Can't find {}: {e}", dir.display())))?;
+    if !own_repo(dir) {
+        // a .git cut short (Stop, a full disk) is made again
+        let dot_git = dir.join(".git");
+        let _ = if dot_git.is_dir() { std::fs::remove_dir_all(&dot_git) } else { std::fs::remove_file(&dot_git) };
         run("git init", git(dir, &["init", "--quiet"]), log, SOURCE_LIMIT, stop, false)?;
     }
     let refspec = format!("+refs/tags/{tag}:refs/tags/{tag}");
@@ -289,14 +294,25 @@ pub fn get_source(repo: &str, tag: &str, dir: &Path, log: &Log, stop: &Stop) -> 
         log, SOURCE_LIMIT, stop, false)
         .map_err(|f| fetch_problem(f, repo, tag))?;
     run("git checkout", git(dir, &["checkout", "--quiet", "--force", "--detach", &format!("refs/tags/{tag}")]), log, SOURCE_LIMIT, stop, false)?;
-    run("git clean", git(dir, &["clean", "-ffdxq", "--exclude=/target/", "--exclude=/node_modules/"]), log, SOURCE_LIMIT, stop, false)?;
+    run("git clean", git(dir, &["clean", "-ffdxq", "--exclude=/target/"]), log, SOURCE_LIMIT, stop, false)?;
     Ok(())
 }
 
+/// git in `dir` that never looks for a repository above it, so a broken one here can't send it into a checkout around
+/// the data folder.
 fn git(dir: &Path, args: &[&str]) -> Command {
     let mut c = Command::new("git");
     c.arg("-C").arg(dir).args(args);
+    if let Some(parent) = dir.parent() {
+        c.env("GIT_CEILING_DIRECTORIES", parent);
+    }
     c
+}
+
+/// Whether `dir` (canonical) holds a git repository of its own that works.
+fn own_repo(dir: &Path) -> bool {
+    let Ok(out) = git(dir, &["rev-parse", "--show-toplevel"]).stdin(Stdio::null()).stderr(Stdio::null()).output() else { return false };
+    out.status.success() && Path::new(String::from_utf8_lossy(&out.stdout).trim()).canonicalize().ok().as_deref() == Some(dir)
 }
 
 /// What a failed fetch of a release's tag means, in plain words.
@@ -322,11 +338,13 @@ pub fn build(dir: &Path, path: Option<&OsStr>, log: &Log, stop: &Stop) -> Result
     run("./install.sh --build-only", cmd, log, BUILD_LIMIT, stop, true).map(|_| ())
 }
 
-/// Installs what `build` made into `prefix` with the release's installer, `install.sh --skip-build`. The installer backs
-/// up the data in `data_dir` with the new build first, and installs nothing when it can't.
-pub fn install(dir: &Path, prefix: &Path, data_dir: &Path, path: Option<&OsStr>, log: &Log, stop: &Stop) -> Result<(), UpdateFailed> {
+/// Installs what `build` made into `prefix` with the release's installer, `install.sh --skip-build`. Its desktop entry
+/// and icons go under the prefix too (`<prefix>/share`: ~/.local/share for the usual install), so an install anywhere
+/// else, a test's scratch folder, never changes the launcher entry you use. The installer backs up the data folder
+/// there (`<prefix>/share/gizai`) with the new build first, and installs nothing when it can't.
+pub fn install(dir: &Path, prefix: &Path, path: Option<&OsStr>, log: &Log, stop: &Stop) -> Result<(), UpdateFailed> {
     let mut cmd = installer(dir, path)?;
-    cmd.arg("--skip-build").env("GIZAI_PREFIX", prefix).env("GIZAI_DATA_DIR", data_dir);
+    cmd.arg("--skip-build").env("GIZAI_PREFIX", prefix).env("XDG_DATA_HOME", prefix.join("share"));
     run("./install.sh --skip-build", cmd, log, INSTALL_LIMIT, stop, false).map(|_| ())
 }
 
@@ -423,8 +441,13 @@ fn run(shown: &str, mut cmd: Command, log: &Log, limit: Duration, stop: &Stop, l
     }
     if readers.iter().any(|r| !r.is_finished()) {
         signal(pgid, libc::SIGKILL);
+        let quiet_by = Instant::now() + Duration::from_secs(2);
+        while readers.iter().any(|r| !r.is_finished()) && Instant::now() < quiet_by {
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
-    for r in readers {
+    // a reader still busy belongs to something that left the group and keeps the pipe open: it is left behind
+    for r in readers.into_iter().filter(|r| r.is_finished()) {
         let _ = r.join();
     }
     let text = crate::prepare::tail(&String::from_utf8_lossy(&output.lock().unwrap_or_else(|p| p.into_inner())));

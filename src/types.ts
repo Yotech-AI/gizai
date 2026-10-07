@@ -150,8 +150,11 @@ export type UpdateJob = {
   log: string;
   /** The backup of your data made before installing. */
   backup?: string | null;
-  /** Why it failed, and the end of what the failed command said. */
+  /** Why it failed, and the end of what the failed command said. For an installed update: what the installer said
+   * went wrong after the new version was in place. */
   problem?: string | null; output?: string | null;
+  /** When it failed: whether the Gizai installed before is still in place, as it was (unless the install failed partway). */
+  unchanged: boolean;
 };
 export type UpdateStatus = {
   /** This Gizai's version. */

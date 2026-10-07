@@ -277,7 +277,9 @@ pub fn run() {
             }
             // The release check: 20 seconds after start, then every ten minutes, Gizai asks GitHub for the latest
             // release when a check is due (Check for new releases is on, and the last check is six hours old).
-            {
+            // Headless test and screenshot runs don't ask GitHub, unless they point the check at a fake release.
+            let test_run = ["GIZAI_SELFTEST", "GIZAI_ROUTE"].iter().any(|v| std::env::var_os(v).is_some());
+            if !test_run || std::env::var_os("GIZAI_RELEASES_URL").is_some() {
                 let st = state.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(update::FIRST_CHECK_AFTER).await;

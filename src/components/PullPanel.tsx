@@ -16,6 +16,7 @@ export function PullPanel({ task, live }: { task: Task; live: boolean }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [pushed, setPushed] = useState<string | null>(null);
   const [checkErr, setCheckErr] = useState<string | null>(null);
   const linked = !!project?.repoUrl && project.repoUrl.includes("github.com");
   const follow = linked && !!task.branch && followsPull(task) && !live;
@@ -25,13 +26,17 @@ export function PullPanel({ task, live }: { task: Task; live: boolean }) {
     checkPullRequest(task.id).then(() => alive && setCheckErr(null)).catch((e) => alive && setCheckErr(String(e)));
     return () => { alive = false; };
   }, [task.id, follow]);
-  useEffect(() => { setErr(null); setNote(null); }, [task.id]);
+  useEffect(() => { setErr(null); setNote(null); setPushed(null); }, [task.id]);
 
   const action = linked ? pullAction(task, live) : null;
   if (!task.prUrl && !action) return null;
   const open = async () => {
-    setBusy(true); setErr(null); setNote(null);
-    try { setNote((await openPullRequest(task.id)).note ?? null); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+    setBusy(true); setErr(null); setNote(null); setPushed(null);
+    try {
+      const pr = await openPullRequest(task.id);
+      setNote(pr.note ?? null);
+      setPushed(`Pushed ${task.branch} to GitHub${pr.number != null ? `; pull request #${pr.number} is ${pr.state}` : ""}.`);
+    } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
   const state = (task.prState ?? "open") as keyof typeof ICONS;
   const Icon = ICONS[state] ?? GitPullRequest;
@@ -53,6 +58,7 @@ export function PullPanel({ task, live }: { task: Task; live: boolean }) {
       </div>
       <div className="run-summary">
         <span className="muted">{action?.why ?? pullHint(task, project?.defaultBranch ?? "main")}</span>
+        {pushed && <div style={{ color: "var(--success)", fontSize: "var(--fs-sm)", marginTop: 6 }}>{pushed}</div>}
         {note && <div style={{ color: "var(--warning)", fontSize: "var(--fs-sm)", marginTop: 6 }}>{note}</div>}
         {err && <div role="alert" style={{ color: "var(--danger)", marginTop: 6 }}>{err}</div>}
         {checkErr && !err && <div className="muted" style={{ fontSize: "var(--fs-sm)", marginTop: 6 }}>Couldn't ask GitHub: {checkErr}</div>}

@@ -25,6 +25,10 @@ tauri-plugin-opener = "2"
 libc = { workspace = true }
 tauri-plugin-single-instance = "2"
 
+# Ends WebKit's page process before Gizai quits (see src/quit.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0", features = ["v2_34"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }

@@ -5,6 +5,7 @@ import { Field, FormSection } from "../components/Form";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
 import { OldWorktrees } from "../components/OldWorktrees";
+import { UpdateSettings } from "../components/UpdateSettings";
 
 export function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
@@ -35,6 +36,7 @@ export function SettingsPage() {
       <div className="content"><div className="page" style={{ maxWidth: 1100 }}>
         {msg && <div className={msg.ok ? "ok-banner" : "error-banner"} role="status" style={{ margin: 0 }}>{msg.text}</div>}
         <div className="form">
+          <UpdateSettings />
           <FormSection title="Coding CLIs" text="Agents run one of these programs headless in their worktree, with its own login. Claude Code is the default; add Codex, Gemini, any other coding CLI, or a second account of one. Each agent picks its CLI under Runs on.">
             <Field label="Claude Code" htmlFor="s-bin" wide hint="Its program (claude -p). Detect looks in your login shell and the usual install folders.">
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />

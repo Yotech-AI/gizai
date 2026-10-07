@@ -1,6 +1,6 @@
 //! Agent runtime pieces: the coding CLIs (Claude Code, Codex, Gemini, others) and their command lines, stream parsing, outcomes, git worktrees and how they are prepared,
-//! pull requests (gh), the connection to GitHub (pushes over SSH or HTTPS, gh's login), prompts and process control.
-//! Never imports Tauri.
+//! pull requests (gh), the connection to GitHub (pushes over SSH or HTTPS, gh's login), prompts and process control,
+//! and Gizai's own updates (the release check, building and installing a release). Never imports Tauri.
 pub mod chat_stream;
 pub mod claude;
 pub mod cli;
@@ -12,6 +12,7 @@ pub mod prepare;
 pub mod process;
 pub mod prompt;
 pub mod stream;
+pub mod update;
 pub mod worktree;
 
 use std::path::PathBuf;

@@ -103,6 +103,21 @@ export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { pat
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
 
+// ---- updates: the release check and Update to <version> ----
+/** This version, what the release check found, and the update that runs (or ran). */
+export const updateStatus = () => invoke<T.UpdateStatus>("update_status");
+/** Asks GitHub for the latest release now. */
+export const checkForUpdates = () => invoke<T.UpdateStatus>("check_for_updates");
+/** Check for new releases (at start and every six hours): on or off. */
+export const setUpdateAutoCheck = (on: boolean) => invoke<T.UpdateStatus>("set_update_auto_check", { on });
+/** Builds `version` in the background, backs up your data and installs it; resolves at once. */
+export const startUpdate = (version: string) => invoke<T.UpdateStatus>("start_update", { version });
+/** Stops an update while it gets the source or builds. */
+export const stopUpdate = () => invoke<T.UpdateStatus>("stop_update");
+/** Quits and starts the Gizai an update installed (agents at work are stopped first, as when you quit). */
+export const restartGizai = () => invoke<void>("restart_gizai");
+export const onUpdateChanged = (cb: () => void): Promise<UnlistenFn> => listen("update-changed", () => cb());
+
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>
   listen<{ table: string }>("rows-changed", (e) => cb(e.payload.table));

@@ -21,6 +21,7 @@ Background, only when the card needs it:
   - Don't run `./install.sh`.
   - Don't start `~/.local/bin/gizai` or anything in `~/.local/lib/gizai`.
   - Don't open, copy or change `~/.local/share/gizai`: that is his real data, and an older build refuses a newer database.
+  - Test Gizai's own update only with a scratch install and a fake release, with `HOME` and `XDG_DATA_HOME` in the scratch folder too (`docs/RELEASING.md` → Testing an update).
 - **Never start a GUI on Jeffrey's screen.** UI tests run headless in `cage` (`scripts/ui-test.sh`, `scripts/shot-cage.sh`).
 - **Never kill by process name or pattern** (`pkill`, `killall`): end only the exact PIDs you started.
 - **Never run against Brave or its profile.**
@@ -43,7 +44,7 @@ Background, only when the card needs it:
 
   The tests use fake Claude Code scripts (`crates/gizai-agents/tests/fake-claude*.{sh,py}`), never the real one.
 - **Release build:** always use `npm run tauri build -- --no-bundle`. A plain `cargo build --release -p gizai` can produce a binary that loads the dev URL.
-- **Git:** `main` is development (cards start from it); `production` is the released code, protected, changed only by a pull request from `main` (see `docs/RELEASING.md`). Work on your card's branch. Commit as you go: Gizai stops a run at its limits. Write commit messages in plain English that say what changed for the person using Gizai.
+- **Git:** `main` is development (cards start from it); `production` is the released code, protected, changed only by a pull request from `main`. A release is a `vX.Y.Z` tag on `production`, which installed Gizais offer as an update (`docs/RELEASING.md` says how and when). Work on your card's branch. Commit as you go: Gizai stops a run at its limits. Write commit messages in plain English that say what changed for the person using Gizai.
 - **Writing:** UI text and docs are plain and short, in sentence case, and say what happens.
 - **Design rules:**
   - teal `--live` only for an agent working now;

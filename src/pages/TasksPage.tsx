@@ -1,4 +1,4 @@
-// Tasks (and the Inbox): Paperclip-style list grouped by column, or the board. View options are remembered on this device.
+// Tasks (and the Inbox): Paperclip-style list grouped by column, or the board. The Inbox is always the list. View options are remembered on this device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, Plus, X } from "lucide-react";
 import { getTeam, listProjects, listTasks, listUsers, moveTask } from "../api";
@@ -26,7 +26,9 @@ const GROUPS: [GroupBy, string][] = [["status", "Column"], ["assignee", "Assigne
 export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: View; onNewTask: (stateId?: string) => void; inboxFor?: string }) {
   const inbox = inboxFor !== undefined;
   // The board is the default view (2026-10-07); the key changed so an earlier "list" choice doesn't hide that.
-  const [view, setView] = usePref<View>(inbox ? "gizai-inbox-view" : "gizai-tasks-view", initialView ?? "board");
+  // The Inbox has no board (GA-2): it lists what needs you, so a board of columns only confuses.
+  const [pickedView, setView] = usePref<View>("gizai-tasks-view", initialView ?? "board");
+  const view: View = inbox ? "list" : pickedView;
   const [sort, setSort] = usePref<SortBy>("gizai-task-sort", "updated");
   const [group, setGroup] = usePref<GroupBy>("gizai-task-group", "status");
   const [filter, setFilterState] = useState<Filter>(() => ({ ...readPref<Filter>("gizai-task-filter", {}), projectId: (() => { try { return localStorage.getItem("gizai-task-project"); } catch { return null; } })() }));
@@ -49,7 +51,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); setView(view === "list" ? "board" : "list"); }
+      if (!inbox && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); setView(view === "list" ? "board" : "list"); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -89,10 +91,10 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <button className="btn" onClick={() => onNewTask()}><Plus className="icon" />New task</button>
         <input className="input search-input" type="search" aria-label="Search tasks" placeholder="Search ID or title" value={filter.text ?? ""} onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
         <span className="spacer" />
-        <div className="seg" role="group" aria-label="View">
+        {!inbox && <div className="seg" role="group" aria-label="View">
           <button aria-pressed={view === "board"} aria-label="Board" title="Board (Ctrl+B)" onClick={() => setView("board")}><Columns3 className="icon" /></button>
           <button aria-pressed={view === "list"} aria-label="List" title="List (Ctrl+B)" onClick={() => setView("list")}><List className="icon" /></button>
-        </div>
+        </div>}
         <Popover label="Filters" align="right" button={() => <button className={`btn ghost${nFilters ? " on" : ""}`}><ListFilter className="icon" />{nFilters ? `Filters: ${nFilters}` : "Filters"}</button>}>
           {() => (<>
             <div className="pop-label">Project</div>

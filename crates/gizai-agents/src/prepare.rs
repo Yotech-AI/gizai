@@ -103,6 +103,7 @@ const DEPS: [Dep; 2] = [
 /// installed for: a folder whose lock file (else its composer.json or package.json) changed since then is installed
 /// again. `path` is the PATH the commands get (None: Gizai's own).
 pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: Option<&OsStr>) -> Result<Prepared, PrepareFailed> {
+    let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
     let mut out = Prepared::default();
     for entry in &p.copy {
         let rel = entry.trim().trim_start_matches("./").trim_end_matches('/');

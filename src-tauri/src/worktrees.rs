@@ -112,7 +112,9 @@ pub fn remove(st: &AppState, task_ids: &[String]) -> Result<Vec<RemovedWorktree>
             continue;
         }
         let repo = Path::new(&c.repo_path);
-        let merged = worktree::merged(repo, &c.branch, &c.default_branch);
+        // main here, or main as last fetched from GitHub (a run fetches it into one of these)
+        let mains = [c.default_branch.clone(), format!("refs/gizai/base/{}", c.default_branch), format!("refs/remotes/origin/{}", c.default_branch)];
+        let merged = mains.iter().any(|m| worktree::merged(repo, &c.branch, m));
         let removal = worktree::remove_card_worktree(repo, &dir, &c.branch, merged);
         let mut said = removal.phrases(&c.branch);
         if !merged && removal.kept.is_none() {

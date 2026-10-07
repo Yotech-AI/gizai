@@ -39,7 +39,7 @@ fn opening_an_older_database_snapshots_it_before_upgrading() {
     seed::ensure_seed(&Db::open(&path).unwrap(), "Jeffrey").unwrap();
     // Pretend it was made by the previous version: one schema step back.
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch(&format!("ALTER TABLE agent_configs DROP COLUMN effort; PRAGMA user_version = {};", db::SCHEMA_VERSION - 1)).unwrap();
+    c.execute_batch(&format!("ALTER TABLE tasks DROP COLUMN pr_state; PRAGMA user_version = {};", db::SCHEMA_VERSION - 1)).unwrap();
     drop(c);
     let _db = Db::open(&path).unwrap();
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()

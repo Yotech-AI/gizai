@@ -81,7 +81,7 @@ pub fn find(st: &AppState) -> Result<Vec<Cli>, String> {
         Path::new(&cmd).file_name().is_some_and(|n| n == program) && c.env.is_empty()
     });
     Ok(KNOWN.iter()
-        .filter(|(program, ..)| !listed(program))
+        .filter(|(program, _, name, _)| !listed(program) && !have.iter().any(|c| c.name.eq_ignore_ascii_case(name)))
         .filter_map(|(program, kind, name, args)| {
             let found = resolve_program(program, &path)?;
             Some(Cli { id: String::new(), name: name.to_string(), kind: kind.to_string(), command: found.display().to_string(),

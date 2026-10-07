@@ -250,3 +250,17 @@ async fn gh_problems_are_said_plainly_and_change_nothing() {
     assert!(e.contains("Link Kade to its GitHub repository first"), "{e}");
     assert_eq!(task(&c).state_name, "Review");
 }
+
+#[tokio::test]
+async fn the_github_cli_is_a_setting_and_empty_means_find_it_when_needed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let mut s = gizai_lib::runs::get_settings(&st);
+    assert_eq!(s.gh_bin, None);
+    s.gh_bin = Some("  /opt/gh/bin/gh ".into());
+    gizai_lib::runs::save_settings(&st, &s).unwrap();
+    assert_eq!(gizai_lib::runs::get_settings(&st).gh_bin.as_deref(), Some("/opt/gh/bin/gh"));
+    s.gh_bin = Some("   ".into());
+    gizai_lib::runs::save_settings(&st, &s).unwrap();
+    assert_eq!(gizai_lib::runs::get_settings(&st).gh_bin, None);
+}

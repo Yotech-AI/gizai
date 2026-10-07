@@ -1,4 +1,4 @@
-//! Runs Claude Code agents for tasks: start (worktree, prompt, process), follow the stream, finish with
+//! Runs agents for tasks on their coding CLI (Claude Code, Codex, Gemini, others): start (worktree, prompt, process), follow the stream, finish with
 //! the gates, stop, heartbeats and on-assign dispatch. Usable without a Tauri app (tests): everything the
 //! UI needs to hear goes through `AppState::notify`.
 use std::collections::{HashMap, HashSet};
@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use gizai_agents::claude::ClaudeArgs;
+use gizai_agents::cli::{self as agent_cli, Kind, TaskRun};
 use gizai_agents::prepare::{self as prep, Prepare};
 use gizai_agents::process::{self, Caps, StopHandle};
 use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
@@ -62,13 +62,20 @@ struct Live {
 #[derive(Default)]
 pub struct RunManager {
     live: Mutex<HashMap<String, Live>>,
-    /// Claude Code's model list, asked once and kept for a while.
-    models: Mutex<Option<(Instant, Vec<gizai_agents::models::ModelOption>)>>,
+    /// Each Claude Code CLI's model list (by CLI id), asked once and kept for a while.
+    models: Mutex<HashMap<String, (Instant, Vec<gizai_agents::models::ModelOption>)>>,
     stopped: Mutex<HashSet<String>>,
     /// Set while Gizai quits: no new runs start.
     closing: AtomicBool,
     /// Cards whose run is starting (their worktree being made and prepared): one start at a time per card.
     starting: std::sync::Arc<Mutex<HashSet<String>>>,
+}
+
+impl RunManager {
+    /// The CLIs changed: ask for model lists again.
+    pub fn forget_models(&self) {
+        self.models.lock().unwrap().clear();
+    }
 }
 
 /// Held while a card's run starts.
@@ -228,17 +235,27 @@ const MODELS_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// The models this user's Claude Code offers (its /model list), kept for half an hour; `refresh` asks again.
 pub async fn models(st: &AppState, refresh: bool) -> Result<Vec<gizai_agents::models::ModelOption>, String> {
+    models_for(st, None, refresh).await
+}
+
+/// The same for one Claude Code CLI (another account can offer other models); None = the built-in Claude Code. Other
+/// kinds of CLI have no list Gizai can ask for: empty.
+pub async fn models_for(st: &AppState, cli_id: Option<&str>, refresh: bool) -> Result<Vec<gizai_agents::models::ModelOption>, String> {
+    let cli = crate::clis::of_agent(st, cli_id)?;
+    if cli.kind != "claude_code" {
+        return Ok(vec![]);
+    }
     if !refresh {
-        if let Some((at, list)) = st.runs.models.lock().unwrap().as_ref() {
+        if let Some((at, list)) = st.runs.models.lock().unwrap().get(&cli.id) {
             if at.elapsed() < MODELS_TTL {
                 return Ok(list.clone());
             }
         }
     }
-    let bin = claude_bin(st, None)?;
+    let spec = crate::clis::spec(st, &cli, None)?;
     let cwd = st.data_dir.clone();
-    let list = gizai_agents::models::fetch_models(&bin, &cwd).await.map_err(|e| e.to_string())?;
-    *st.runs.models.lock().unwrap() = Some((Instant::now(), list.clone()));
+    let list = gizai_agents::models::fetch_models_with_env(&spec.bin, &cwd, &spec.env).await.map_err(|e| e.to_string())?;
+    st.runs.models.lock().unwrap().insert(cli.id.clone(), (Instant::now(), list.clone()));
     Ok(list)
 }
 
@@ -255,7 +272,7 @@ pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     }
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
     let text = std::fs::read_to_string(&run.log_path).unwrap_or_default();
-    text.lines().flat_map(gizai_agents::stream::parse_line).enumerate().map(|(i, event)| SeqEvent { seq: i as u64, event }).collect()
+    agent_cli::parse_log(&text).into_iter().enumerate().map(|(i, event)| SeqEvent { seq: i as u64, event }).collect()
 }
 
 pub fn stop(st: &AppState, run_id: &str) {
@@ -331,11 +348,13 @@ pub async fn start(st: &AppState, task_id: &str, agent_id: Option<String>, bin_o
 /// A session to resume instead of starting one: Continue.
 struct Resume {
     session: String,
+    /// The CLI that ran the session: only it (that program, that account) can resume it.
+    cli: gizai_core::clis::Cli,
     /// Why the run being continued stopped, told to the agent.
     reason: String,
 }
 
-/// Continue: resumes a stopped run's Claude Code session in its worktree, as a new run of the same agent. Only the
+/// Continue: resumes a stopped run's session in its worktree, as a new run of the same agent on the same CLI. Only the
 /// card's latest run continues, and only one that stopped part-way. A hold on the card is cleared: you asked for
 /// the work (clearing also resets its failure count).
 pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<String>)
@@ -351,12 +370,16 @@ pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<Stri
     if !stopped {
         return Err("this run finished; Run starts a new one".into());
     }
-    let session = run.session_id.clone().filter(|s| !s.is_empty()).ok_or("this run has no Claude Code session to continue")?;
+    let cli = crate::clis::of_agent(st, run.adapter.as_deref())?;
+    if !Kind::parse(&cli.kind).is_some_and(Kind::can_resume) {
+        return Err(format!("{} can't continue a run: Run starts the card fresh", cli.name));
+    }
+    let session = run.session_id.clone().filter(|s| !s.is_empty()).ok_or_else(|| format!("this run has no {} session to continue", cli.name))?;
     if !run.worktree_path.as_deref().is_some_and(|p| Path::new(p).is_dir()) {
         return Err("its worktree is gone; Run starts the card fresh".into());
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
-    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, reason })).await
+    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason })).await
         .map_err(|e| match e { StartError::Card(m) | StartError::Held(m) | StartError::Other(m) => m })?;
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
         let patch = gizai_core::model::TaskPatch { hold: Some(String::new()), ..Default::default() };
@@ -489,7 +512,13 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                                agent.name, spent as f64 / 1e6, budget as f64 / 1e6).into());
         }
     }
-    let bin = claude_bin(st, bin_override)?;
+    let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
+    // The agent may have moved to another CLI since the run being continued: its session isn't there.
+    if let Some(r) = resume.as_ref().filter(|r| r.cli.id != cli.id) {
+        return Err(format!("{} now runs on {}, and this run was on {}: Run starts the card fresh on {}",
+                           agent.name, cli.name, r.cli.name, cli.name).into());
+    }
+    let spec = crate::clis::spec(st, &cli, bin_override)?;
     let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
     let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| StartError::Card(e.to_string()))?;
     let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
@@ -542,19 +571,25 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         limits: Some(limits), base, project_goal_md: project.goal_md.clone().unwrap_or_default(),
     };
     let instructions = agent.instructions_md.clone().filter(|i| !i.trim().is_empty()).unwrap_or_else(|| gizai_core::seed::role_template(&role));
-    let args = ClaudeArgs {
-        bin, session_id: session.clone(), resume: resume.is_some(),
+    let run = TaskRun {
+        session_id: session.clone(), resume: resume.is_some(),
         prompt: match &resume { Some(r) => prompt::continue_prompt(&r.reason, Some(limits)), None => prompt::build(&ctx, &instructions) },
-        permission_mode: agent.permission_mode.clone().unwrap_or_else(|| "acceptEdits".into()),
+        permission_mode: agent.permission_mode.clone().unwrap_or_default(),
         allowed_tools: if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() },
-        append_system_prompt: None, model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd,
-        // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
-        // for headless agents.
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(),
-        ..Default::default()
+        model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
+        // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
+        writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
     };
-    let mut handle = match process::spawn::<RunEvent>(&args, &wt.path, &log_path,
-        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }) {
+    let exec = agent_cli::task_exec(&spec, &run);
+    if spec.kind != Kind::ClaudeCode {
+        // The log says which CLI wrote it, so it can be read again after the run.
+        if let Err(e) = std::fs::write(&log_path, format!("{}\n", agent_cli::log_header(spec.kind))) {
+            let _ = core_runs::finish(&st.db, &run_id, "failed", None, 0, 0, 0, Some(&e.to_string()));
+            return Err(StartError::Other(e.to_string()));
+        }
+    }
+    let mut handle = match process::spawn_exec::<RunEvent, _>(&exec, &wt.path, &log_path,
+        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, agent_cli::Parser::new(spec.kind)) {
         Ok(h) => h,
         Err(e) => {
             let msg = e.to_string();
@@ -573,12 +608,17 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let st2 = st.clone();
     let rid = run_id.clone();
     let tid = task_id.to_string();
+    let cli_name = cli.name.clone();
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
         let mut exit = String::new();
         while let Some(ev) = handle.events.recv().await {
             match &ev {
+                // Codex names its session itself: Continue resumes that one.
+                RunEvent::Init { session_id, .. } if !session_id.is_empty() && *session_id != session => {
+                    let _ = core_runs::set_session(&st2.db, &rid, session_id);
+                }
                 RunEvent::Result { .. } => result = Some(ev.clone()),
                 RunEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type.clone()),
                 RunEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type.clone(),
@@ -600,13 +640,21 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
-        finish_run(&st2, &rid, &tid, result, capped, &exit).await
+        finish_run(&st2, &rid, &tid, result, capped, &exit, &cli_name).await
     });
     Ok((run_id, done))
 }
 
-/// `capped`: why Gizai stopped the run at a limit, if it did.
-async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<RunEvent>, capped: Option<String>, exit: &str) -> RunSummary {
+/// The repository's shared git folder for a worktree (where its commits go), as an absolute path.
+fn git_common_dir(wt: &Path) -> Option<String> {
+    let out = std::process::Command::new("git").args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).current_dir(wt)
+        .stdin(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!dir.is_empty()).then_some(dir)
+}
+
+/// `capped`: why Gizai stopped the run at a limit, if it did. `cli`: the CLI's name, for the reason a run failed.
+async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<RunEvent>, capped: Option<String>, exit: &str, cli: &str) -> RunSummary {
     let cancelled = st.runs.stopped.lock().unwrap().remove(run_id);
     let (cost, input, output, text, ok) = match &result {
         Some(RunEvent::Result { cost_usd, input_tokens, output_tokens, text, is_error, .. }) =>
@@ -619,11 +667,11 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<R
         "cancelled" => Some("stopped".to_string()),
         "timed_out" => capped.clone(),
         "failed" => Some(match &result {
-            Some(RunEvent::Result { text, .. }) if !text.trim().is_empty() => format!("Claude Code: {}", text.trim().chars().take(300).collect::<String>()),
-            Some(RunEvent::Result { subtype, .. }) => format!("Claude Code ended with {subtype}"),
+            Some(RunEvent::Result { text, .. }) if !text.trim().is_empty() => format!("{cli}: {}", text.trim().chars().take(300).collect::<String>()),
+            Some(RunEvent::Result { subtype, .. }) => format!("{cli} ended with {subtype}"),
             _ => {
                 let tail = stderr_tail(run_id, st);
-                format!("Claude Code exited without a result ({}){}", exit.trim_start_matches("exit:"),
+                format!("{cli} exited without a result ({}){}", exit.trim_start_matches("exit:"),
                         if tail.is_empty() { String::new() } else { format!(": {tail}") })
             }
         }),
@@ -655,7 +703,7 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, result: Option<R
     RunSummary { run_id: run_id.to_string(), status: status.into(), outcome: verdict.map(|v| v.outcome), cost_usd_micros: cost, error }
 }
 
-/// The last lines Claude Code wrote to stderr (argument errors, login problems), at most 400 characters.
+/// The last lines the CLI wrote to stderr (argument errors, login problems), at most 400 characters.
 fn stderr_tail(run_id: &str, st: &AppState) -> String {
     let Ok(run) = core_runs::get(&st.db, run_id) else { return String::new() };
     let text = std::fs::read_to_string(Path::new(&run.log_path).with_extension("stderr.log")).unwrap_or_default();

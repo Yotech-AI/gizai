@@ -1,15 +1,15 @@
 # Gizai
 
-A desktop app where a team of Claude Code agents works through your software tasks. You keep clients, projects and tasks in Gizai. The agents pick up the cards, build each one in its own git worktree, test each other's work and hand it to you for review. You can also ask the Team Lead agent for things in chat.
+A desktop app where a team of coding agents (Claude Code, Codex, Gemini or another coding CLI) works through your software tasks. You keep clients, projects and tasks in Gizai. The agents pick up the cards, build each one in its own git worktree, test each other's work and hand it to you for review. You can also ask the Team Lead agent for things in chat.
 
-Everything runs on your machine, with your own git repositories and your own Claude Code login. It's early (v0.1) and runs on Linux only for now. MIT licence.
+Everything runs on your machine, with your own git repositories and your own logins. It's early (v0.1) and runs on Linux only for now. MIT licence.
 
 ## Install
 
 You need:
 
 - Linux with WebKitGTK 4.1;
-- [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once);
+- [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once). Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs); the Team Lead chat needs Claude Code;
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
 - optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in.
 
@@ -47,6 +47,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Clients with contacts, projects with docs and files
 - Tasks on a board or in a list, with labels, priorities, acceptance criteria and an Inbox
 - Agents for each role (frontend, backend, design, QA, DevOps), with their own model, effort and allowed commands
+- Each agent runs on the coding CLI you pick: Claude Code, Codex, Gemini, any other CLI (its output is read as text), or a second account of one with its own environment (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Settings → Coding CLIs adds them, or finds the ones installed
 - A git worktree and branch for every card, started from main on GitHub when the project is linked
 - Worktrees that start warm: per project, paths copied from your checkout (`cp --reflink=auto`), missing dependencies installed (`composer install`, `npm ci`) and a setup command; a new card takes over a finished card's worktree, and Settings → Data removes old ones
 - Routing rules and a QA gate: In progress → Testing → your Review

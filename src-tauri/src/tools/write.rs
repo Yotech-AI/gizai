@@ -36,8 +36,9 @@ fn keep(a: &Args, k: &str, current: &Option<String>) -> Option<String> {
 /// The Team Lead reads text other people and agents wrote, so it can't hand an agent unlimited powers: no
 /// bypassPermissions, no "any command" (bare Bash). People set those in the agent form.
 fn guard_agent_powers(a: &Args) -> Result<(), String> {
-    if a.opt("permission_mode").as_deref() == Some("bypassPermissions") {
-        return Err("bypassPermissions can't be set from chat: it lets an agent run anything. Set it yourself in the agent form if you really want it.".into());
+    // Claude Code's bypassPermissions, Codex without its sandbox, Gemini's yolo: each lets an agent run anything.
+    if let Some(m @ ("bypassPermissions" | "danger-full-access" | "yolo")) = a.opt("permission_mode").as_deref() {
+        return Err(format!("{m} can't be set from chat: it lets an agent run anything. Set it yourself in the agent form if you really want it."));
     }
     for t in a.list("allowed_tools").unwrap_or_default() {
         let t = t.trim().to_lowercase().replace(' ', "");
@@ -281,12 +282,31 @@ fn agent_result(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
               "link": link("agent", &m.actor_id, &m.name)}))
 }
 
+/// The coding CLI from `runs_on` (its name or id), as its id; None when not given. An Other CLI runs with its own
+/// permissions (whatever its arguments allow), so only you can pick one, in the agent form.
+fn runs_on(cx: &Cx<'_>, a: &Args) -> Result<Option<gizai_core::clis::Cli>, String> {
+    let Some(want) = a.opt("runs_on") else { return Ok(None) };
+    let all = gizai_core::clis::list(cx.db()).map_err(err)?;
+    let Some(c) = all.iter().find(|c| c.id == want.trim() || c.name.eq_ignore_ascii_case(want.trim())) else {
+        let names: Vec<&str> = all.iter().map(|c| c.name.as_str()).collect();
+        return Err(format!("there is no coding CLI called \"{want}\". Use one of: {}.", names.join(", ")));
+    };
+    if c.kind == "other" {
+        return Err(format!("{} runs with its own permissions, so it can't be picked from chat: set it yourself in the agent's settings (Runs on).", c.name));
+    }
+    Ok(Some(c.clone()))
+}
+
 pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     guard_agent_powers(a)?;
-    check_model(cx, a.opt("model").as_deref(), a.opt("effort").as_deref()).await?;
+    let cli = runs_on(cx, a)?;
+    // Only Claude Code has a model list to check against; Codex and Gemini take their own model names.
+    if cli.as_ref().is_none_or(|c| c.kind == "claude_code") {
+        check_model(cx, a.opt("model").as_deref(), a.opt("effort").as_deref()).await?;
+    }
     let team_id = resolve::team_of(cx, None)?.id;
     let id = team::add_agent(cx.db(), cx.actor, &team_id, AgentInput {
-        name: a.req("name")?, role_key: a.req("role")?, title: a.opt("title"), adapter: String::new(), model: a.opt("model"),
+        name: a.req("name")?, role_key: a.req("role")?, title: a.opt("title"), adapter: cli.map(|c| c.id).unwrap_or_default(), model: a.opt("model"),
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
         allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: a.opt("wakeup").unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
@@ -298,15 +318,23 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
 pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     guard_agent_powers(a)?;
     let m = resolve::agent(cx, &a.req("agent")?)?;
-    let model = keep(a, "model", &m.model);
-    let effort = keep(a, "effort", &m.effort);
-    if a.text("model").is_some() || a.text("effort").is_some() {
+    // Moved to another kind of CLI: its model, effort and permission mode don't carry over unless given (the CLI's defaults).
+    let kind_now = crate::clis::of_agent(cx.st, m.adapter.as_deref()).map(|c| c.kind).unwrap_or_default();
+    let new_cli = runs_on(cx, a)?;
+    let moved = new_cli.as_ref().is_some_and(|c| c.kind != kind_now);
+    let model = if moved { a.opt("model") } else { keep(a, "model", &m.model) };
+    let effort = if moved { a.opt("effort") } else { keep(a, "effort", &m.effort) };
+    let permission_mode = a.opt("permission_mode").or(if moved { None } else { m.permission_mode.clone() }).unwrap_or_default();
+    let adapter = match new_cli { Some(c) => Some(c.id), None => m.adapter.clone() };
+    // Only Claude Code has a model list to check against; Codex, Gemini and other CLIs take their own model names.
+    let on_claude = crate::clis::of_agent(cx.st, adapter.as_deref()).is_ok_and(|c| c.kind == "claude_code");
+    if on_claude && (moved || a.text("model").is_some() || a.text("effort").is_some()) {
         check_model(cx, model.as_deref(), effort.as_deref()).await?;
     }
     team::update_agent(cx.db(), cx.actor, &m.actor_id, AgentInput {
         name: a.opt("name").unwrap_or(m.name.clone()), role_key: a.opt("role").unwrap_or(m.role_key.clone()),
-        title: keep(a, "title", &m.title), adapter: m.adapter.clone().unwrap_or_default(), model,
-        instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").or(m.permission_mode.clone()).unwrap_or_default(),
+        title: keep(a, "title", &m.title), adapter: adapter.unwrap_or_default(), model,
+        instructions_md: a.opt("instructions_md"), permission_mode,
         allowed_tools: a.list("allowed_tools").unwrap_or(m.allowed_tools.clone()),
         wakeup: a.opt("wakeup").or(m.wakeup.clone()).unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?.or(m.heartbeat_minutes),

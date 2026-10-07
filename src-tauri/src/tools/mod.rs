@@ -200,14 +200,15 @@ const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("iban", "string", "IBAN"), ("payment_terms_days", "integer", "Payment terms in days"), ("notes_md", "string", "Notes (Markdown)"),
 ];
 
-const AGENT_FIELDS: [(&str, &str, &str); 10] = [
-    ("model", "string", "A model Claude Code offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5); empty = Claude Code's default"),
-    ("effort", "enum:low|medium|high|xhigh|max", "How hard the model thinks (Claude Code --effort); empty = Claude Code's default. Higher costs more."),
+const AGENT_FIELDS: [(&str, &str, &str); 11] = [
+    ("runs_on", "string", "The coding CLI it runs on, by name as Settings → Coding CLIs lists them (Claude Code, Codex, Gemini, a second account, …). Omit: Claude Code for a new agent, unchanged on update"),
+    ("model", "string", "On Claude Code, a model it offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5). On Codex or Gemini, that CLI's model name. Empty = the CLI's default"),
+    ("effort", "string", "How hard the model thinks. Claude Code: low, medium, high, xhigh or max. Codex: minimal, low, medium, high or xhigh. Gemini takes none. Empty = the CLI's default; higher costs more"),
     ("instructions_md", "string", "Instructions sent with every run (Markdown). Omit on create to use the role's template; it must end by asking for the GIZAI_RESULT line"),
     ("wakeup", "enum:manual|on_assign|heartbeat", "When it starts work by itself: manual (only Run), on_assign, or heartbeat"),
     ("heartbeat_minutes", "integer", "With wakeup heartbeat: every how many minutes it looks for its next card (1–1440)"),
     ("cards_at_once", "integer", "How many cards it works on at the same time, each in its own git worktree (1–10, default 1)"),
-    ("permission_mode", "enum:acceptEdits|dontAsk|auto|plan|manual|bypassPermissions", "Claude Code permission mode for task runs (acceptEdits is the usual)"),
+    ("permission_mode", "string", "Permission mode for task runs, in its CLI's terms. Claude Code: acceptEdits (the usual), dontAsk, auto, plan or manual. Codex: workspace-write (the usual) or read-only. Gemini: auto_edit (the usual), plan or default"),
     ("allowed_tools", "string[]", "Commands it may run without asking, like Bash(npm test:*); empty = Gizai's default list"),
     ("monthly_budget_usd", "number", "Monthly spending cap in dollars; empty = no cap"),
     ("title", "string", "Job title shown on the team page"),
@@ -267,7 +268,7 @@ pub fn catalog() -> Vec<ToolDef> {
                ("hold_reason", "string", "Why it is on hold"), ("clear_hold", "boolean", "Take it off hold")], &["task"]),
         tool("move_task", "Moves a task to another column (to the bottom of that column).", &[TASK, ("column", "string", "Column name, like In progress")], &["task", "column"]),
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
-        tool("create_agent", "Adds a Claude Code agent to the team. It starts from the role's instructions unless instructions_md is given.",
+        tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions unless instructions_md is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
         tool("update_agent", "Changes an agent's settings. Only the fields given change.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),

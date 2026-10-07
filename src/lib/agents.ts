@@ -48,14 +48,16 @@ export const DEFAULT_TOOLS = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(gi
 export type AgentPreset = { name?: string; role?: string; chat?: boolean };
 
 export type AgentDraft = { name: string; role: string; model: string; wakeup: Wakeup; minutes: string; instructions: string;
-  permissionMode: string; tools: string; budget: string; chat: boolean; effort: string; maxRuns: string };
+  permissionMode: string; tools: string; budget: string; chat: boolean; effort: string; maxRuns: string;
+  /** The id of the coding CLI it runs on. */
+  cli: string };
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
     name: m?.name ?? preset?.name ?? "", role: m?.roleKey ?? preset?.role ?? "frontend", model: m?.model ?? "", wakeup: (m?.wakeup as Wakeup) ?? "manual",
     minutes: String(m?.heartbeatMinutes ?? 15), instructions: m?.instructionsMd ?? "", permissionMode: m?.permissionMode ?? "acceptEdits",
     tools: (m ? m.allowedTools : DEFAULT_TOOLS).join("\n"), budget: microsToDollars(m?.budgetUsdMicros), chat: m ? !!m.chatEnabled : !!preset?.chat,
-    effort: m?.effort ?? "", maxRuns: String(m?.maxRuns ?? 1),
+    effort: m?.effort ?? "", maxRuns: String(m?.maxRuns ?? 1), cli: m?.adapter || "claude_code",
   };
 }
 
@@ -64,7 +66,7 @@ export function inputFrom(d: AgentDraft): AgentInput {
     name: d.name, roleKey: d.role, model: d.model.trim() || null, instructionsMd: d.instructions.trim() ? d.instructions : null,
     permissionMode: d.permissionMode, allowedTools: parseTools(d.tools), wakeup: d.wakeup,
     heartbeatMinutes: d.wakeup === "heartbeat" ? Number(d.minutes) || 0 : Number(d.minutes) || null,
-    budgetUsdMicros: dollarsToMicros(d.budget), adapter: "claude_code", chatEnabled: d.chat, effort: d.effort || null,
+    budgetUsdMicros: dollarsToMicros(d.budget), adapter: d.cli || "claude_code", chatEnabled: d.chat, effort: d.effort || null,
     maxRuns: /^\d+$/.test(d.maxRuns.trim()) ? Number(d.maxRuns) : null,
   };
 }

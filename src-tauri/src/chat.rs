@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use gizai_agents::chat_stream::ChatEvent;
 use gizai_agents::claude::ClaudeArgs;
+use gizai_agents::cli::CliSpec;
 use gizai_agents::process::{self, Caps, StopHandle};
 use gizai_core::chat::{self, ChatMessage, ChatThread, NewMessage, Totals};
 use gizai_core::team::Member;
@@ -145,7 +146,12 @@ pub async fn send(st: &AppState, thread_id: Option<String>, text: String, bin_ov
                                agent.name, spent as f64 / 1e6, budget as f64 / 1e6));
         }
     }
-    let bin = crate::runs::claude_bin(st, bin_override)?;
+    // The Team Lead's own Claude Code CLI (another account, say); chat needs Claude Code's MCP and stream support.
+    let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
+    if cli.kind != "claude_code" {
+        return Err(format!("{} runs on {}: Chat needs a Claude Code CLI (agent settings → Runs on)", agent.name, cli.name));
+    }
+    let bin = crate::clis::spec(st, &cli, bin_override)?;
     let shim = st.mcp_shim.clone().filter(|p| p.is_file())
         .ok_or("The gizai-mcp helper is missing next to Gizai: rebuild with scripts/run.sh")?;
     if let Some(id) = &thread_id {
@@ -188,7 +194,7 @@ pub async fn send(st: &AppState, thread_id: Option<String>, text: String, bin_ov
 /// One turn, with one retry in a new session when the old session can't be resumed. A thread that has
 /// history but no session to resume (its first answer crashed before Claude Code started) also starts a new
 /// session that carries the recent messages. The thread's session is only replaced by one that started.
-async fn turn(st: &AppState, thread_id: &str, agent: &Member, text: &str, bin: &Path, shim: &Path) -> TurnSummary {
+async fn turn(st: &AppState, thread_id: &str, agent: &Member, text: &str, bin: &CliSpec, shim: &Path) -> TurnSummary {
     let Ok(thread) = chat::get_thread(&st.db, thread_id) else {
         return TurnSummary { run_id: String::new(), status: "failed".into(), error: Some("the chat was deleted".into()) };
     };
@@ -289,7 +295,7 @@ fn set_live(st: &AppState, thread_id: &str, f: impl FnOnce(&mut LiveTurn)) {
 
 /// One `claude -p` run for a turn: resuming the thread's session, or `fresh` in a new one.
 #[allow(clippy::too_many_arguments)]
-async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt: &str, bin: &Path, shim: &Path, fresh: bool) -> Attempt {
+async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt: &str, bin: &CliSpec, shim: &Path, fresh: bool) -> Attempt {
     let fail = |run_id: &str, msg: String| Attempt { summary: TurnSummary { run_id: run_id.into(), status: "failed".into(), error: Some(msg) }, saw_init: false };
     let chat_dir = st.data_dir.join("chat");
     let cwd = st.data_dir.join("lead");
@@ -323,7 +329,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
     }
     let settings = crate::runs::get_settings(st);
     let args = ClaudeArgs {
-        bin: bin.to_path_buf(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
+        bin: bin.bin.clone(), env: bin.env.clone(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
         allowed_tools: vec!["mcp__gizai".into()], append_system_prompt: Some(system_prompt(st, agent)), model: agent.model.clone(),
         max_budget_usd: settings.max_run_usd, resume, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
         tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: repo_dirs(st),

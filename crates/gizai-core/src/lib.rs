@@ -16,6 +16,7 @@ pub mod runs;
 pub mod settings;
 pub mod workflow;
 pub mod chat;
+pub mod clis;
 pub mod tokens;
 pub mod repo_url;
 pub mod pulls;

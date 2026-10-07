@@ -348,11 +348,13 @@ pub async fn start(st: &AppState, task_id: &str, agent_id: Option<String>, bin_o
 /// A session to resume instead of starting one: Continue.
 struct Resume {
     session: String,
+    /// The CLI that ran the session: only it (that program, that account) can resume it.
+    cli: gizai_core::clis::Cli,
     /// Why the run being continued stopped, told to the agent.
     reason: String,
 }
 
-/// Continue: resumes a stopped run's Claude Code session in its worktree, as a new run of the same agent. Only the
+/// Continue: resumes a stopped run's session in its worktree, as a new run of the same agent on the same CLI. Only the
 /// card's latest run continues, and only one that stopped part-way. A hold on the card is cleared: you asked for
 /// the work (clearing also resets its failure count).
 pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<String>)
@@ -377,7 +379,7 @@ pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<Stri
         return Err("its worktree is gone; Run starts the card fresh".into());
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
-    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, reason })).await
+    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason })).await
         .map_err(|e| match e { StartError::Card(m) | StartError::Held(m) | StartError::Other(m) => m })?;
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
         let patch = gizai_core::model::TaskPatch { hold: Some(String::new()), ..Default::default() };
@@ -511,6 +513,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         }
     }
     let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
+    // The agent may have moved to another CLI since the run being continued: its session isn't there.
+    if let Some(r) = resume.as_ref().filter(|r| r.cli.id != cli.id) {
+        return Err(format!("{} now runs on {}, and this run was on {}: Run starts the card fresh on {}",
+                           agent.name, cli.name, r.cli.name, cli.name).into());
+    }
     let spec = crate::clis::spec(st, &cli, bin_override)?;
     let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
     let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| StartError::Card(e.to_string()))?;

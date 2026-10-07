@@ -4,6 +4,7 @@ import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
 import { GithubSettings } from "../components/GithubSettings";
 import { OldWorktrees } from "../components/OldWorktrees";
+import { UpdateSettings } from "../components/UpdateSettings";
 
 export function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
@@ -34,6 +35,7 @@ export function SettingsPage() {
       <div className="content"><div className="page" style={{ maxWidth: 1100 }}>
         {msg && <div className={msg.ok ? "ok-banner" : "error-banner"} role="status" style={{ margin: 0 }}>{msg.text}</div>}
         <div className="form">
+          <UpdateSettings />
           <FormSection title="Claude Code" text="Agents run this program headless (claude -p) with your Claude login.">
             <Field label="Program" htmlFor="s-bin" wide hint="Detect looks in your login shell and the usual install folders.">
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />

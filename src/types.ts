@@ -138,6 +138,40 @@ export type ConnectionCheckItem = {
   name: string; result: "ok" | "failed" | "skipped"; text: string; fix?: string | null; projectId?: string | null; repo?: string | null;
 };
 export type ConnectionCheck = { ok: boolean; pushOver: PushOver; checks: ConnectionCheckItem[] };
+
+// ---- updates: Settings → Updates and the notice above Company ----
+/** A release on GitHub: `version` "0.1.6" from the tag "v0.1.6"; `url` is its page, `notes` its Markdown notes. */
+export type Release = { version: string; tag: string; name?: string | null; url?: string | null; publishedAt?: string | null; notes?: string | null };
+/** While an update runs: source (getting it), build, backup, install. When it has ended: installed, failed, stopped. */
+export type UpdateStep = "source" | "build" | "backup" | "install" | "installed" | "failed" | "stopped";
+export type UpdateJob = {
+  version: string; step: UpdateStep; startedAt: number; endedAt?: number | null;
+  /** Its log: every command and what it said. */
+  log: string;
+  /** The backup of your data made before installing. */
+  backup?: string | null;
+  /** Why it failed, and the end of what the failed command said. */
+  problem?: string | null; output?: string | null;
+};
+export type UpdateStatus = {
+  /** This Gizai's version. */
+  current: string;
+  /** Check for new releases (at start and every six hours). */
+  autoCheck: boolean;
+  checking: boolean;
+  /** The last check: when, the latest release it found, and why it didn't work. */
+  checkedAt?: number | null; latest?: Release | null; problem?: GithubProblem | null;
+  /** The latest release when it is newer than this Gizai. */
+  available?: Release | null;
+  /** A newer version that is installed already: a restart starts it. */
+  installed?: string | null;
+  /** Where an update installs, or why this Gizai can't update itself (a dev build). */
+  installTo?: string | null; cannotInstall?: string | null;
+  /** The update that runs now, or the last one since Gizai started. */
+  job?: UpdateJob | null;
+  /** Where releases come from. */
+  repo: string;
+};
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- chat with the Team Lead ----

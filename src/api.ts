@@ -70,6 +70,8 @@ export const startRun = (taskId: string, agentId: string | null) => invoke<strin
 export const stopRun = (runId: string) => invoke<void>("stop_run", { runId });
 export const continueRun = (runId: string) => invoke<string>("continue_run", { runId });
 export const listRuns = (taskId: string) => invoke<T.Run[]>("list_runs", { taskId });
+/** The commits a finished run made, oldest first. */
+export const runCommits = (runId: string) => invoke<T.Commit[]>("run_commits", { runId });
 export const runEvents = (runId: string) => invoke<T.SeqEvent[]>("run_events", { runId });
 export const liveRuns = () => invoke<T.LiveRun[]>("live_runs");
 export const suggestAgent = (taskId: string) => invoke<string | null>("suggest_agent", { taskId });

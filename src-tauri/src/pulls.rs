@@ -1,13 +1,15 @@
-//! Review on GitHub. Open pull request (a card in Review) pushes the card's branch with your git login and opens its
-//! pull request with your GitHub CLI (gh). The PR check follows the pull requests of cards in Review, and of any open
-//! card whose pull request isn't merged yet: every two minutes, when a run moves a card to Review, and when you open
-//! such a card. A merge on GitHub moves its card to Done and removes its worktree. Usable without a Tauri app (tests):
-//! the UI hears about changes through `AppState::notify`.
+//! Review on GitHub. Open pull request (a card in Review) pushes the card's branch over SSH with your keys, or over
+//! HTTPS with gh's login (Settings → GitHub → Push over), and opens its pull request with your GitHub CLI (gh). The PR
+//! check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet: every
+//! two minutes, when a run moves a card to Review, and when you open such a card. A merge on GitHub moves its card to
+//! Done and removes its worktree. Usable without a Tauri app (tests): the UI hears about changes through
+//! `AppState::notify`.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use gizai_agents::connection::PushOver;
 use gizai_agents::github::{self, PullRequest};
 use gizai_agents::{AgentError, worktree};
 use gizai_core::model::Task;
@@ -145,10 +147,11 @@ fn is_live(st: &AppState, task_id: &str) -> bool {
     crate::runs::live(st).iter().any(|r| r.task_id == task_id)
 }
 
-/// Open pull request, for a card in Review: pushes the card's branch to GitHub with your git login (through your
-/// remote for the project's GitHub link, else to the link itself), then opens a pull request into the project's main
-/// branch with gh, titled and described after the card. A branch that already has an open pull request (an agent
-/// opened one) keeps it, and the push adds any new commits to it.
+/// Open pull request, for a card in Review: pushes the card's branch to GitHub (through your remote for the project's
+/// GitHub link, else to the link itself) over SSH with your keys or over HTTPS with gh's login, as Settings → GitHub
+/// says, then opens a pull request into the project's main branch with gh, titled and described after the card. A
+/// branch that already has an open pull request (an agent opened one) keeps it, and the push adds any new commits to
+/// it. A failed push records nothing.
 pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
     let card = pulls::card(&st.db, task_id).map_err(|e| e.to_string())?;
     if card.category != "review" {
@@ -161,8 +164,8 @@ pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
     let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
     let _busy = Busy::take(st, task_id).ok_or_else(|| format!("Gizai is already busy with {}'s pull request", card.identifier))?;
     let (title, body) = (format!("{}: {}", task.identifier, task.title), body(&task));
-    let c = card.clone();
-    let (info, created) = tokio::task::spawn_blocking(move || open_blocking(&gh, &c, &title, &body)).await.map_err(|e| e.to_string())??;
+    let (c, over) = (card.clone(), crate::github::push_over(st, &gh));
+    let (info, created) = tokio::task::spawn_blocking(move || open_blocking(&gh, &c, &title, &body, &over)).await.map_err(|e| e.to_string())??;
     // one an agent opened earlier is noted as seen by Gizai, not as opened by you
     pulls::record(&st.db, created.then_some(st.you_id.as_str()), task_id, &info.url, &info.state, created).map_err(|e| e.to_string())?;
     (st.notify)(Note::RowsChanged("tasks"));
@@ -170,14 +173,14 @@ pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
 }
 
 /// Pushes and opens (or keeps the open pull request); returns it, and whether Gizai opened it now.
-fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str) -> Result<(PullInfo, bool), String> {
+fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str, over: &PushOver) -> Result<(PullInfo, bool), String> {
     let repo = Path::new(&card.repo_path);
     if worktree::rev_parse(repo, &format!("refs/heads/{}", card.branch)).is_err() {
         return Err(format!("{}'s branch {} isn't in {} any more", card.identifier, card.branch, card.repo_path));
     }
     // the same place a run fetches main from
     let to = crate::git::remote_for(repo, &card.repo_url).unwrap_or_else(|| card.repo_url.clone());
-    worktree::push_branch(repo, &to, &card.branch).map_err(plain)?;
+    worktree::push_branch_over(repo, &to, &card.branch, over).map_err(plain)?;
     let open = github::pulls_for_branch(gh, repo, &card.repo, &card.branch)?.into_iter().find(|p| p.state == "OPEN");
     let (url, state, created) = match open {
         Some(p) => (p.url.clone(), p.state().to_string(), false),

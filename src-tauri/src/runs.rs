@@ -129,10 +129,14 @@ pub struct Settings {
     /// The GitHub CLI (gh) that opens and follows pull requests with your GitHub login; None = found when needed.
     #[serde(default)]
     pub gh_bin: Option<String>,
+    /// How Open pull request and Push branch reach GitHub: "ssh" (your SSH keys, the default) or "https" (gh's login).
+    #[serde(default = "default_push_over")]
+    pub push_over: String,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
 fn default_tool_calls() -> u32 { DEFAULT_MAX_RUN_TOOL_CALLS }
+fn default_push_over() -> String { "ssh".into() }
 
 pub fn get_settings(st: &AppState) -> Settings {
     Settings {
@@ -144,6 +148,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         max_run_minutes: settings::get(&st.db, "max_run_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_MINUTES),
         max_run_tool_calls: settings::get(&st.db, "max_run_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_TOOL_CALLS),
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
+        push_over: crate::github::push_over_name(st),
     }
 }
 
@@ -160,6 +165,9 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !(20..=2000).contains(&s.max_run_tool_calls) {
         return Err("a run may make between 20 and 2000 tool calls".into());
     }
+    if !crate::github::PUSH_OVER_NAMES.contains(&s.push_over.as_str()) {
+        return Err("pushes go over ssh or https".into());
+    }
     let bin = s.claude_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
     settings::set(&st.db, "claude_bin", &bin).map_err(|e| e.to_string())?;
     let gh = s.gh_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
@@ -169,6 +177,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_run_usd", &s.max_run_usd).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_minutes", &s.max_run_minutes).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_tool_calls", &s.max_run_tool_calls).map_err(|e| e.to_string())?;
+    crate::github::save_push_over(st, &s.push_over)?;
     Ok(())
 }
 

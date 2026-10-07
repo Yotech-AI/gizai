@@ -183,3 +183,18 @@ a.member:hover { border-color: var(--line-2); }
 .chat-composer .chat-col { padding-top: 12px; padding-bottom: 14px; }
 @media (max-width: 1100px) { .chat { grid-template-columns: 220px minmax(0, 1fr); } }
 .org-panel { padding: 6px 0; background: var(--bg); }
+
+/* ---------- Settings → GitHub ---------- */
+.gh-line { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; color: var(--text); }
+.gh-line .icon, .gh-check .icon { margin-top: 2px; }
+.gh-line.ok .icon, .gh-check.ok > .icon, .gh-summary.ok { color: var(--success); }
+.gh-line.failed .icon, .gh-check.failed > .icon, .gh-summary.failed { color: var(--danger); }
+.gh-line.skipped, .gh-check.skipped { color: var(--text-3); }
+.gh-login { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--raised); }
+.gh-login .gh-code { font-size: var(--fs-lg); font-weight: 600; letter-spacing: .08em; }
+.gh-login .muted { flex-basis: 100%; font-size: var(--fs-sm); }
+.gh-checks { margin-top: 4px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); }
+.gh-summary { padding: 10px 14px; font-weight: 600; }
+.gh-check { display: grid; grid-template-columns: 16px 180px minmax(0, 1fr); gap: 2px 10px; align-items: start; padding: 10px 14px; border-top: 1px solid var(--line); line-height: 1.5; }
+.gh-check .name { font-weight: 600; overflow-wrap: anywhere; }
+.gh-check .fix { grid-column: 3; color: var(--text-2); font-size: var(--fs-sm); }

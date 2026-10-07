@@ -106,13 +106,38 @@ export type Run = {
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
   /** The GitHub CLI; null = found when needed. */
-  ghBin?: string | null };
+  ghBin?: string | null;
+  /** How Open pull request and Push branch reach GitHub. */
+  pushOver: PushOver };
 /** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
 export type OldWorktree = {
   taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;
   bytes: number; uncommitted: number; live: boolean;
 };
 export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
+
+// ---- Settings → GitHub ----
+/** ssh: your SSH keys (the default); https: the GitHub CLI's login. */
+export type PushOver = "ssh" | "https";
+/** What went wrong talking to GitHub, and what to do about it. */
+export type GithubProblem = { what: string; fix?: string | null };
+/** Log in with GitHub: the one-time code to enter on GitHub, and where. */
+export type GithubLoginCode = { code: string; url: string };
+/** Whether Gizai can use GitHub: the GitHub CLI, the account it is logged in as, and how pushes go. */
+export type GithubStatus = {
+  ghPath?: string | null; ghVersion?: string | null; ghProblem?: GithubProblem | null;
+  account?: string | null; accountProblem?: GithubProblem | null;
+  pushOver: PushOver;
+  /** A login in the browser that waits for its code to be entered. */
+  login?: GithubLoginCode | null;
+  /** The command that logs gh in from a terminal. */
+  loginCommand?: string | null;
+};
+/** One line of Check connection. Skipped: not needed now, or it needs something that failed. */
+export type ConnectionCheckItem = {
+  name: string; result: "ok" | "failed" | "skipped"; text: string; fix?: string | null; projectId?: string | null; repo?: string | null;
+};
+export type ConnectionCheck = { ok: boolean; pushOver: PushOver; checks: ConnectionCheckItem[] };
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- chat with the Team Lead ----

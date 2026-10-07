@@ -11,7 +11,7 @@ You need:
 - Linux with WebKitGTK 4.1;
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once);
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
-- optionally the [GitHub CLI](https://cli.github.com), logged in (`gh auth login`), to review cards as pull requests on GitHub.
+- optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in.
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -37,7 +37,8 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 - A git worktree and branch for every card, started from main on GitHub when the project is linked
 - Worktrees that start warm: per project, paths copied from your checkout (`cp --reflink=auto`), missing dependencies installed (`composer install`, `npm ci`) and a setup command; a new card takes over a finished card's worktree, and Settings → Data removes old ones
 - Routing rules and a QA gate: In progress → Testing → your Review
-- Review on GitHub: Open pull request pushes a card's branch with your git login and opens its pull request with gh; a merge on GitHub moves the card to Done and removes its worktree
+- Review on GitHub: Open pull request pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh; a merge on GitHub moves the card to Done and removes its worktree
+- Settings → GitHub: whether gh is found and logged in, how pushes go, Check connection for every linked project, and Log in with GitHub; Gizai never stores a token or password
 - Agents that start when you press Run, when a card is assigned, or on a heartbeat, on several cards at once
 - Live run output, run history with the reason each run ended, and Continue
 - The Team Lead chat, which manages clients, projects, tasks and agents with Gizai's own tools

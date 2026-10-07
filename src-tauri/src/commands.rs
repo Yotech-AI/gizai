@@ -356,6 +356,28 @@ pub async fn detect_gh(st: State<'_, AppState>) -> R<Option<String>> {
     tauri::async_runtime::spawn_blocking(move || crate::pulls::detect_gh(&st)).await.map_err(|err| err.to_string())
 }
 
+// ---- Settings → GitHub ----
+/// Whether Gizai can use GitHub: the GitHub CLI, the account it is logged in as, and how pushes go.
+#[tauri::command]
+pub async fn github_status(st: State<'_, AppState>) -> R<crate::github::Status> { Ok(crate::github::status(&st).await) }
+/// Check connection: gh, its login, ssh to GitHub, and whether you can push to each project with a GitHub link.
+#[tauri::command]
+pub async fn github_check(st: State<'_, AppState>) -> R<crate::github::ConnectionCheck> { Ok(crate::github::check(&st).await) }
+/// Log in with GitHub: starts gh's login in the browser and returns its one-time code and link.
+#[tauri::command]
+pub async fn github_login(st: State<'_, AppState>) -> R<crate::github::LoginCode> { crate::github::login(&st).await }
+/// Waits until the login in the browser has ended: the account gh logged in as, or why it didn't.
+#[tauri::command]
+pub async fn github_login_wait(st: State<'_, AppState>) -> R<Option<String>> {
+    match crate::github::login_wait(&st).await {
+        Some(Err(p)) => Err(p.to_string()),
+        Some(Ok(who)) => Ok(who),
+        None => Ok(None),
+    }
+}
+#[tauri::command]
+pub fn github_login_cancel(st: State<AppState>) { crate::github::login_cancel(&st) }
+
 // ---- worktrees of finished cards (Settings → Data) ----
 /// The worktrees of Done and Cancelled cards, with their disk use.
 #[tauri::command]

@@ -76,6 +76,12 @@ export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEve
   listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
+/** Pushes a Review card's branch with your git login and opens its pull request with gh (keeps an open one). */
+export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
+/** Asks GitHub about the card's pull request now; a merge moves the card to Done. */
+export const checkPullRequest = (taskId: string) => invoke<T.PullInfo | null>("check_pull_request", { taskId });
+export const detectGh = () => invoke<string | null>("detect_gh");
+
 export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null };
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
 

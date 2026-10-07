@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { detectClaude, getSettings, saveSettings } from "../api";
+import { detectClaude, detectGh, getSettings, saveSettings } from "../api";
 import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
 
@@ -8,6 +8,7 @@ export function SettingsPage() {
   const [budget, setBudget] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [detectingGh, setDetectingGh] = useState(false);
   useEffect(() => { getSettings().then((x) => { setS(x); setBudget(x.maxRunUsd != null ? String(x.maxRunUsd) : ""); }).catch((e) => setMsg({ ok: false, text: String(e) })); }, []);
   if (!s) return msg ? <div className="error-banner">{msg.text}</div> : null;
   const detect = async () => {
@@ -17,6 +18,14 @@ export function SettingsPage() {
       if (p) { setS({ ...s, claudeBin: p }); setMsg({ ok: true, text: `Found Claude Code at ${p}` }); }
       else setMsg({ ok: false, text: "Claude Code was not found. Install it, or type the path to the claude program." });
     } finally { setDetecting(false); }
+  };
+  const findGh = async () => {
+    setDetectingGh(true);
+    try {
+      const p = await detectGh();
+      if (p) { setS({ ...s, ghBin: p }); setMsg({ ok: true, text: `Found the GitHub CLI at ${p}` }); }
+      else setMsg({ ok: false, text: "The GitHub CLI (gh) was not found. Install it from cli.github.com, or type the path to the gh program." });
+    } catch (e) { setMsg({ ok: false, text: String(e) }); } finally { setDetectingGh(false); }
   };
   const save = async (next: Settings = s) => {
     const usd = budget.trim() === "" ? null : Number(budget.replace(",", "."));
@@ -34,6 +43,11 @@ export function SettingsPage() {
             <Field label="Program" htmlFor="s-bin" wide hint="Detect looks in your login shell and the usual install folders.">
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />
                 <button className="btn" onClick={detect} disabled={detecting}>{detecting ? "Looking…" : "Detect"}</button></div></Field>
+          </FormSection>
+          <FormSection title="GitHub" text="Open pull request pushes a card's branch with your own git login and opens its pull request with the GitHub CLI, logged in as you (gh auth login). Every two minutes Gizai asks GitHub about the pull requests of cards in Review; a merge moves the card to Done.">
+            <Field label="GitHub CLI" htmlFor="s-gh" wide hint="Empty: Gizai finds gh when it needs it. Detect looks in your login shell and the usual install folders.">
+              <div className="input-group"><input id="s-gh" className="input mono" value={s.ghBin ?? ""} onChange={(e) => setS({ ...s, ghBin: e.target.value })} placeholder="/usr/bin/gh" />
+                <button className="btn" onClick={findGh} disabled={detectingGh}>{detectingGh ? "Looking…" : "Detect"}</button></div></Field>
           </FormSection>
           <FormSection title="Runs" text="Each run is a Claude Code process in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
             <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>

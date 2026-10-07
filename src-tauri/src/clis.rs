@@ -1,0 +1,117 @@
+//! Settings → Coding CLIs: the programs agents run on (Claude Code, Codex, Gemini, others, more accounts of one), whether
+//! each is found, finding the ones installed, and what a run of an agent starts (`spec`).
+use std::path::{Path, PathBuf};
+
+use gizai_agents::cli::{CliSpec, Kind};
+use gizai_core::clis::{self as core_clis, Cli};
+use serde::Serialize;
+
+use crate::AppState;
+
+/// A CLI and the program that would run (None: not found, with the reason).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliStatus {
+    #[serde(flatten)]
+    pub cli: Cli,
+    pub path: Option<String>,
+    pub problem: Option<String>,
+}
+
+fn home() -> String {
+    std::env::var("HOME").unwrap_or_default()
+}
+
+/// The program a command names: a path (`~` expanded) that is executable, or a name found in `path`.
+pub fn resolve_program(command: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    let c = core_clis::expand_home(command.trim(), &home());
+    if c.is_empty() {
+        return None;
+    }
+    if c.contains('/') {
+        let p = PathBuf::from(&c);
+        return crate::runs::executable(&p).then_some(p);
+    }
+    std::env::split_paths(path).map(|d| d.join(&c)).find(|p| crate::runs::executable(p))
+}
+
+fn status(st: &AppState, cli: Cli, path: &std::ffi::OsStr) -> CliStatus {
+    let found = if cli.id == core_clis::CLAUDE_CODE {
+        crate::runs::claude_bin(st, None).ok()
+    } else {
+        resolve_program(&cli.command, path)
+    };
+    let problem = match &found {
+        Some(_) => None,
+        None if cli.command.trim().is_empty() => Some(format!("{} not found: set its program", cli.name)),
+        None => Some(format!("{} not found", cli.command.trim())),
+    };
+    CliStatus { path: found.map(|p| p.display().to_string()), problem, cli }
+}
+
+/// Every CLI, Claude Code first, with the program each would run.
+pub fn list(st: &AppState) -> Result<Vec<CliStatus>, String> {
+    let path = crate::runs::command_path();
+    let all = core_clis::list(&st.db).map_err(|e| e.to_string())?;
+    Ok(all.into_iter().map(|c| status(st, c, &path)).collect())
+}
+
+/// Saves the CLIs added in Settings; returns the full list as `list` does.
+pub fn save(st: &AppState, clis: Vec<Cli>) -> Result<Vec<CliStatus>, String> {
+    core_clis::save(&st.db, clis).map_err(|e| e.to_string())?;
+    st.runs.forget_models();
+    list(st)
+}
+
+/// Coding CLIs Gizai knows how to start, by program name: kind, name and (Other) arguments.
+const KNOWN: [(&str, &str, &str, &str); 5] = [
+    ("codex", "codex", "Codex", ""),
+    ("gemini", "gemini", "Gemini", ""),
+    ("opencode", "other", "OpenCode", "run -m {model} {prompt}"),
+    ("cursor-agent", "other", "Cursor Agent", "-p --force --output-format text --model {model} {prompt}"),
+    ("crush", "other", "Crush", "run --quiet"),
+];
+
+/// The known CLIs installed here (your login shell's PATH) that aren't in the list yet, ready to add.
+pub fn find(st: &AppState) -> Result<Vec<Cli>, String> {
+    let path = crate::runs::command_path();
+    let have = core_clis::list(&st.db).map_err(|e| e.to_string())?;
+    let listed = |program: &str| have.iter().any(|c| {
+        let cmd = core_clis::expand_home(c.command.trim(), &home());
+        Path::new(&cmd).file_name().is_some_and(|n| n == program) && c.env.is_empty()
+    });
+    Ok(KNOWN.iter()
+        .filter(|(program, ..)| !listed(program))
+        .filter_map(|(program, kind, name, args)| {
+            let found = resolve_program(program, &path)?;
+            Some(Cli { id: String::new(), name: name.to_string(), kind: kind.to_string(), command: found.display().to_string(),
+                       env: vec![], args: args.to_string() })
+        })
+        .collect())
+}
+
+/// What a run on `cli` starts: its kind, program, environment and arguments. `bin_override` replaces the program (tests).
+/// A CLI other than Claude Code also gets your login shell's PATH, since many are Node programs that need `node` on it.
+pub fn spec(st: &AppState, cli: &Cli, bin_override: Option<String>) -> Result<CliSpec, String> {
+    let kind = Kind::parse(&cli.kind).ok_or_else(|| format!("{} is of an unknown kind {}", cli.name, cli.kind))?;
+    let mut env = core_clis::env_pairs(cli, &home());
+    let bin = if cli.id == core_clis::CLAUDE_CODE {
+        crate::runs::claude_bin(st, bin_override)?
+    } else {
+        let path = crate::runs::command_path();
+        let bin = match bin_override {
+            Some(b) => Some(PathBuf::from(b)).filter(|p| crate::runs::executable(p)),
+            None => resolve_program(&cli.command, &path),
+        };
+        if kind != Kind::ClaudeCode && !env.iter().any(|(k, _)| k == "PATH") {
+            env.push(("PATH".into(), path.to_string_lossy().into_owned()));
+        }
+        bin.ok_or_else(|| format!("{} not found ({}): set its program in Settings → Coding CLIs", cli.name, cli.command))?
+    };
+    Ok(CliSpec { kind, bin, env, args: cli.args.clone() })
+}
+
+/// The CLI an agent runs on (its `adapter`; none = Claude Code).
+pub fn of_agent(st: &AppState, adapter: Option<&str>) -> Result<Cli, String> {
+    core_clis::get(&st.db, adapter.unwrap_or_default()).map_err(|e| e.to_string())
+}

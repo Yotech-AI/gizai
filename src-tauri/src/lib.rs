@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod clis;
 mod commands;
 pub mod git;
 pub mod github;
@@ -295,7 +296,7 @@ pub fn run() {
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status,
             commands::add_rule, commands::delete_rule, commands::rename_state, commands::role_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
-            commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
+            commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,

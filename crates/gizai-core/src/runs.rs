@@ -1,4 +1,4 @@
-//! Agent runs: the bookkeeping around one `claude` process working one task.
+//! Agent runs: the bookkeeping around one agent CLI process (`claude`, `codex`, …) working one task.
 use rusqlite::OptionalExtension;
 
 use crate::db::{Db, Writer};
@@ -11,7 +11,7 @@ const ACTIVE: &str = "('queued','running','waiting_approval')";
 
 const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.trigger, r.status, r.outcome, r.summary_md, r.created_at,
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
-                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha";
+                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -19,7 +19,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
         status: r.get(6)?, outcome: r.get(7)?, summary_md: r.get(8)?, created_at: r.get(9)?, started_at: r.get(10)?,
         ended_at: r.get(11)?, cost_usd_micros: r.get(12)?, input_tokens: r.get(13)?, output_tokens: r.get(14)?,
         branch: r.get(15)?, worktree_path: r.get(16)?, session_id: r.get(17)?, error: r.get(18)?, log_path: r.get(19)?, pid: r.get(20)?,
-        base_sha: r.get(21)?,
+        base_sha: r.get(21)?, adapter: r.get(22)?,
     })
 }
 
@@ -99,6 +99,14 @@ pub fn finish_chat(db: &Db, run_id: &str, status: &str, cost_usd_micros: i64, in
             return Err(Error::NotFound(format!("chat run {run_id}")));
         }
         w.update("runs", run_id, serde_json::json!({"status": status, "cost_usd_micros": cost_usd_micros}))
+    })
+}
+
+/// The session the CLI started, when the CLI picks it (Codex names its thread once it runs).
+pub fn set_session(db: &Db, run_id: &str, session_id: &str) -> Result<()> {
+    db.write(None, |w| {
+        w.conn().execute("UPDATE runs SET session_id=?2 WHERE id=?1", rusqlite::params![run_id, session_id])?;
+        Ok(())
     })
 }
 

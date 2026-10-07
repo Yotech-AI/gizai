@@ -300,7 +300,9 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
     let m = resolve::agent(cx, &a.req("agent")?)?;
     let model = keep(a, "model", &m.model);
     let effort = keep(a, "effort", &m.effort);
-    if a.text("model").is_some() || a.text("effort").is_some() {
+    // Only Claude Code has a model list to check against; Codex, Gemini and other CLIs take their own model names.
+    let on_claude = crate::clis::of_agent(cx.st, m.adapter.as_deref()).is_ok_and(|c| c.kind == "claude_code");
+    if on_claude && (a.text("model").is_some() || a.text("effort").is_some()) {
         check_model(cx, model.as_deref(), effort.as_deref()).await?;
     }
     team::update_agent(cx.db(), cx.actor, &m.actor_id, AgentInput {

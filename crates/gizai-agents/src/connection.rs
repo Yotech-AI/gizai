@@ -31,14 +31,6 @@ const HTTPS: [&str; 4] = ["https://github.com/", "http://github.com/", "https://
 const SSH: [&str; 2] = ["git@github.com:", "ssh://git@github.com/"];
 
 impl PushOver {
-    /// "ssh" or "https", as Settings keeps it.
-    pub fn name(&self) -> &'static str {
-        match self {
-            PushOver::Ssh => "ssh",
-            PushOver::Https { .. } => "https",
-        }
-    }
-
     /// The `-c` settings for one git command; they change no git config and no remote. git takes the longest rewrite
     /// that matches an address, so a more specific one in your own config (a mirror, a test's local repository) wins.
     pub fn git_config(&self) -> Vec<String> {
@@ -99,8 +91,12 @@ pub fn push_problem(said: &str, over: &PushOver) -> Problem {
         return Problem::new(format!("Your GitHub account {who} can't push to this repository"),
                             "Ask for write access to it, or use an account that has it.");
     }
-    if ["could not read Username", "could not read Password", "Authentication failed", "terminal prompts disabled"].iter().any(|s| has(s)) {
+    let no_login = ["could not read Username", "could not read Password", "terminal prompts disabled"].iter().any(|s| has(s));
+    let refused = has("Authentication failed") || has("Invalid username or token");
+    if no_login || refused {
         return match over {
+            PushOver::Https { .. } if refused => Problem::new("GitHub refused gh's login for HTTPS",
+                                                              "Use Log in with GitHub again in Settings → GitHub, or run gh auth login in a terminal."),
             PushOver::Https { .. } => not_logged_in_for_https(),
             PushOver::Ssh => Problem::new("git tried HTTPS, and has no login for it",
                                           "Check where this repository pushes to (git remote -v), or push over HTTPS with gh's login (Settings → GitHub)."),

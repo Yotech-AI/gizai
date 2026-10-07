@@ -1,8 +1,9 @@
 //! Review on GitHub. Open pull request (a card in Review) pushes the card's branch over SSH with your keys, or over
-//! HTTPS with gh's login (Settings → GitHub → Push over), and opens its pull request with your GitHub CLI (gh). The PR check follows the pull requests of cards in Review, and of any open
-//! card whose pull request isn't merged yet: every two minutes, when a run moves a card to Review, and when you open
-//! such a card. A merge on GitHub moves its card to Done and removes its worktree. Usable without a Tauri app (tests):
-//! the UI hears about changes through `AppState::notify`.
+//! HTTPS with gh's login (Settings → GitHub → Push over), and opens its pull request with your GitHub CLI (gh). The PR
+//! check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet: every
+//! two minutes, when a run moves a card to Review, and when you open such a card. A merge on GitHub moves its card to
+//! Done and removes its worktree. Usable without a Tauri app (tests): the UI hears about changes through
+//! `AppState::notify`.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

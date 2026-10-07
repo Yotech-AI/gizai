@@ -215,9 +215,12 @@ fn check_blocking(st: &AppState) -> ConnectionCheck {
     ConnectionCheck { ok: !checks.iter().any(|c| c.result == "failed"), push_over: over_name, checks }
 }
 
-/// For each project with a GitHub link (archived ones aside): whether you can push to it, all at once.
+/// How many projects are checked at the same time (GitHub may drop a burst of SSH connections).
+const PROJECTS_AT_ONCE: usize = 4;
+
+/// For each project with a GitHub link (archived ones aside): whether you can push to it, a few at a time.
 fn project_checks(st: &AppState, over: Option<&PushOver>) -> Vec<Check> {
-    let linked: Vec<(Project, String, String)> = projects::list(&st.db).unwrap_or_default().into_iter()
+    let mut linked: Vec<(Project, String, String)> = projects::list(&st.db).unwrap_or_default().into_iter()
         .filter(|p| p.status != "archived")
         .filter_map(|p| {
             let link = repo_url::normalize(p.repo_url.as_deref()?).ok().flatten().filter(|l| l.provider == "github")?;
@@ -225,18 +228,22 @@ fn project_checks(st: &AppState, over: Option<&PushOver>) -> Vec<Check> {
             Some((p, link.url, repo))
         })
         .collect();
-    let threads: Vec<_> = linked.into_iter().map(|(p, link, repo)| {
-        let over = over.cloned();
-        std::thread::spawn(move || {
-            let mut c = match project_check(&p, &link, over.as_ref()) {
-                Ok(()) => Check::ok(&p.name, format!("You can push to {repo}")),
-                Err(problem) => Check::failed(&p.name, problem),
-            };
-            (c.project_id, c.repo) = (Some(p.id), Some(repo));
-            c
-        })
-    }).collect();
-    threads.into_iter().filter_map(|t| t.join().ok()).collect()
+    let mut out = vec![];
+    while !linked.is_empty() {
+        let batch: Vec<_> = linked.drain(..linked.len().min(PROJECTS_AT_ONCE)).map(|(p, link, repo)| {
+            let over = over.cloned();
+            std::thread::spawn(move || {
+                let mut c = match project_check(&p, &link, over.as_ref()) {
+                    Ok(()) => Check::ok(&p.name, format!("You can push to {repo}")),
+                    Err(problem) => Check::failed(&p.name, problem),
+                };
+                (c.project_id, c.repo) = (Some(p.id), Some(repo));
+                c
+            })
+        }).collect();
+        out.extend(batch.into_iter().filter_map(|t| t.join().ok()));
+    }
+    out
 }
 
 fn project_check(p: &Project, link: &str, over: Option<&PushOver>) -> Result<(), Problem> {

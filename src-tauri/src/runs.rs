@@ -112,8 +112,8 @@ pub struct Settings {
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
-fn default_push_over() -> String { "ssh".into() }
 fn default_tool_calls() -> u32 { DEFAULT_MAX_RUN_TOOL_CALLS }
+fn default_push_over() -> String { "ssh".into() }
 
 pub fn get_settings(st: &AppState) -> Settings {
     Settings {

@@ -156,13 +156,15 @@ pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
     let _busy = Busy::take(st, task_id).ok_or_else(|| format!("Gizai is already busy with {}'s pull request", card.identifier))?;
     let (title, body) = (format!("{}: {}", task.identifier, task.title), body(&task));
     let c = card.clone();
-    let info = tokio::task::spawn_blocking(move || open_blocking(&gh, &c, &title, &body)).await.map_err(|e| e.to_string())??;
-    pulls::record(&st.db, Some(&st.you_id), task_id, &info.url, &info.state, true).map_err(|e| e.to_string())?;
+    let (info, created) = tokio::task::spawn_blocking(move || open_blocking(&gh, &c, &title, &body)).await.map_err(|e| e.to_string())??;
+    // one an agent opened earlier is noted as seen by Gizai, not as opened by you
+    pulls::record(&st.db, created.then_some(st.you_id.as_str()), task_id, &info.url, &info.state, created).map_err(|e| e.to_string())?;
     (st.notify)(Note::RowsChanged("tasks"));
     Ok(info)
 }
 
-fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str) -> Result<PullInfo, String> {
+/// Pushes and opens (or keeps the open pull request); returns it, and whether Gizai opened it now.
+fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str) -> Result<(PullInfo, bool), String> {
     let repo = Path::new(&card.repo_path);
     if worktree::rev_parse(repo, &format!("refs/heads/{}", card.branch)).is_err() {
         return Err(format!("{}'s branch {} isn't in {} any more", card.identifier, card.branch, card.repo_path));
@@ -171,16 +173,16 @@ fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str) -> Result<Pu
     let to = crate::git::remote_for(repo, &card.repo_url).unwrap_or_else(|| card.repo_url.clone());
     worktree::push_branch(repo, &to, &card.branch).map_err(plain)?;
     let open = github::pulls_for_branch(gh, repo, &card.repo, &card.branch)?.into_iter().find(|p| p.state == "OPEN");
-    let (url, state) = match open {
-        Some(p) => (p.url.clone(), p.state().to_string()),
-        None => (github::create_pull(gh, repo, &card.repo, &card.branch, &card.default_branch, title, body)?, "open".to_string()),
+    let (url, state, created) = match open {
+        Some(p) => (p.url.clone(), p.state().to_string(), false),
+        None => (github::create_pull(gh, repo, &card.repo, &card.branch, &card.default_branch, title, body)?, "open".to_string(), true),
     };
     let left_out = worktree::worktree_of(repo, &card.branch).ok().flatten()
         .and_then(|wt| worktree::uncommitted(&wt).ok())
         .filter(|n| *n > 0);
     let note = left_out.map(|n| format!("Its worktree has {n} uncommitted {}, which the pull request doesn't have",
                                         if n == 1 { "change" } else { "changes" }));
-    Ok(PullInfo { number: github::pull_number(&url), url, state, note })
+    Ok((PullInfo { number: github::pull_number(&url), url, state, note }, created))
 }
 
 /// The pull request's description: the card's description and acceptance criteria, and the card it comes from.

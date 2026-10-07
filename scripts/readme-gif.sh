@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Makes docs/gizai.gif for the README: the demo data plus a team and a chat (example prep_readme), shown in a
 # HEADLESS cage (never on your screen), one fresh copy of the data per frame. The Backend Agent works on KADE-1 with
-# the fake Claude Code. Needs the release build (npm run tauri build -- --no-bundle) and ffmpeg.
+# the fake Claude Code. Screens are 1490x900 (a 13-inch laptop). Needs the release build
+# (npm run tauri build -- --no-bundle), ffmpeg and wlr-randr.
 # usage: scripts/readme-gif.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/env.sh
+command -v wlr-randr > /dev/null || { echo "readme-gif needs wlr-randr to size the headless screen: sudo pacman -S wlr-randr"; exit 1; }
+# 937 high: the window's title bar (37 px) is cropped off, leaving 1490x900
+export SHOT_SIZE=1490x937
 GZ=$PWD; R=$GZ/.devdata/readme; FAKE=$GZ/crates/gizai-agents/tests/fake-claude.sh
 # The data sits in Gizai's usual folder under shot-cage's XDG_DATA_HOME, so the screens show no "Test data" tag.
 DATA=$GZ/.devdata/xdg/data/gizai

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Screenshot one Gizai screen inside a HEADLESS cage (never on Jeffrey's screen).
-# usage: [MODE=open:project|steps:<sel>;#/route] [SHOT_WAIT=s] scripts/shot-cage.sh <route e.g. tasks|clients|task/<id>> <out.png> [data-dir]
+# SHOT_SIZE=<width>x<height> sets the headless screen's size (needs wlr-randr); the default is 1280x720.
+# usage: [MODE=open:project|steps:<sel>;#/route] [SHOT_WAIT=s] [SHOT_SIZE=WxH] scripts/shot-cage.sh <route e.g. tasks|clients|task/<id>> <out.png> [data-dir]
 set -uo pipefail
 cd "$(dirname "$0")/.."
 GZ=$PWD; ROUTE=${1:-tasks}; OUT=${2:-$GZ/.devdata/shot.png}; DATA=${3:-$GZ/.devdata/demo}
@@ -8,6 +9,7 @@ DEV=$GZ/.devdata; mkdir -p "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
 RUNNER=$DEV/shot-runner.sh
 cat > "$RUNNER" <<RUN
 #!/usr/bin/env bash
+${SHOT_SIZE:+wlr-randr --output "\$(wlr-randr | head -n1 | cut -d' ' -f1)" --custom-mode $SHOT_SIZE}
 "$GZ/target/release/gizai" & APP=\$!
 sleep ${SHOT_WAIT:-3.5}
 grim "$OUT"

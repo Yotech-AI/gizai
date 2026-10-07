@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Screenshot one Gizai screen inside a HEADLESS cage (never on Jeffrey's screen).
 # SHOT_SIZE=<width>x<height> sets the headless screen's size (needs wlr-randr); the default is 1280x720.
+# Makes .devdata/demo when it is missing (and no data dir is given), and builds the app when it is missing or stale.
 # usage: [MODE=open:project|steps:<sel>;#/route] [SHOT_WAIT=s] [SHOT_SIZE=WxH] scripts/shot-cage.sh <route e.g. tasks|clients|task/<id>> <out.png> [data-dir]
 set -uo pipefail
 cd "$(dirname "$0")/.."
 GZ=$PWD; ROUTE=${1:-tasks}; OUT=${2:-$GZ/.devdata/shot.png}; DATA=${3:-$GZ/.devdata/demo}
+# A brand-new worktree has no demo data and no app yet; an app older than its sources is built again.
+source scripts/app-ready.sh
+if [ "$DATA" = "$GZ/.devdata/demo" ]; then gz_demo || { echo "could not make the demo data"; exit 1; }; fi
+gz_app || { echo "could not build the app"; exit 1; }
 DEV=$GZ/.devdata; mkdir -p "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
 RUNNER=$DEV/shot-runner.sh
 cat > "$RUNNER" <<RUN

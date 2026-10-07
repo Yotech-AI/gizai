@@ -1,13 +1,23 @@
 use gizai_agents::github::{self, PullRequest};
 use std::path::{Path, PathBuf};
 
+/// Writes an executable script through a child `sh`, so this process never holds it open for writing: such a
+/// handle leaks into any process another test thread starts at that moment, and running the script would then
+/// fail with "Text file busy" (ETXTBSY).
+fn write_script(path: &Path, script: &str) {
+    use std::io::Write;
+    let mut sh = std::process::Command::new("sh").args(["-c", r#"cat > "$1" && chmod 755 "$1""#, "sh"]).arg(path)
+        .stdin(std::process::Stdio::piped()).spawn().unwrap();
+    sh.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    assert!(sh.wait().unwrap().success(), "can't write {}", path.display());
+}
+
 /// A fake gh in `dir`, never the real one. It writes each call's arguments to dir/gh-args (one line per call) and
 /// GH_PROMPT_DISABLED to dir/gh-env; `pr list` answers with dir/list.json (nothing when it is missing); `pr create`
 /// keeps its stdin in dir/gh-stdin and fails with dir/create.err, else answers with dir/create.out.
 fn fake_gh(dir: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let gh = dir.join("gh");
-    std::fs::write(&gh, format!(r#"#!/bin/sh
+    write_script(&gh, &format!(r#"#!/bin/sh
 d='{d}'
 echo "$*" >> "$d/gh-args"
 echo "prompt=$GH_PROMPT_DISABLED" >> "$d/gh-env"
@@ -19,8 +29,7 @@ case "$1 $2" in
     cat "$d/create.out"; exit 0 ;;
 esac
 echo "unknown command: $*" >&2; exit 1
-"#, d = dir.display())).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+"#, d = dir.display()));
     gh
 }
 

@@ -9,3 +9,5 @@ export CARGO_HOME=$GZ_MAIN/.cargo
 export npm_config_cache=$GZ_MAIN/.npm-cache
 export npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
 export TAURI_TELEMETRY_DISABLED=1
+# A shared compile cache when sccache is installed: worktrees reuse each other's compiled crates. Without it, nothing changes.
+if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then export RUSTC_WRAPPER=sccache; fi

@@ -10,6 +10,7 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { CSS } from "@dnd-kit/utilities";
 import type { Task, WorkflowState } from "../types";
 import { dropKey, groupByColumn } from "../lib/board";
+import { pullBadge, pullLabel } from "../lib/pulls";
 import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
 import { Plus } from "lucide-react";
@@ -30,7 +31,9 @@ const Card = memo(function Card({ task, onOpen, working }: { task: Task; onOpen:
     <div ref={setNodeRef} className={"card" + (isDragging ? " dragging" : "")} data-card={task.identifier}
       style={{ transform: CSS.Transform.toString(transform), transition }} {...attributes} {...listeners}
       onClick={() => onOpen(task.id)} onKeyDown={(e) => { if (e.key === "Enter") onOpen(task.id); }}>
-      <div className="top"><span className="id">{task.identifier}</span>{task.hold && <span className="badge needs">On hold</span>}{task.priority > 0 && <PriorityIcon priority={task.priority} />}</div>
+      <div className="top"><span className="id">{task.identifier}</span>
+        {task.prUrl && <span className={`badge ${pullBadge(task.prState).cls}`} title={`Pull request: ${pullBadge(task.prState).text.toLowerCase()} on GitHub`}>{pullLabel(task.prUrl)}</span>}
+        {task.hold && <span className="badge needs">On hold</span>}{task.priority > 0 && <PriorityIcon priority={task.priority} />}</div>
       <div className="title">{task.title}</div>
       {working && <div className="working"><span className="pulse" aria-hidden />{working} is working</div>}
       {(task.labels.length > 0 || task.assigneeName) && (

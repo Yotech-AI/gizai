@@ -10,7 +10,8 @@ You need:
 
 - Linux with WebKitGTK 4.1;
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once);
-- git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer.
+- git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
+- optionally the [GitHub CLI](https://cli.github.com), logged in (`gh auth login`), to review cards as pull requests on GitHub.
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -35,6 +36,7 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 - Agents for each role (frontend, backend, design, QA, DevOps), with their own model, effort and allowed commands
 - A git worktree and branch for every card, started from main on GitHub when the project is linked
 - Routing rules and a QA gate: In progress → Testing → your Review
+- Review on GitHub: Open pull request pushes a card's branch with your git login and opens its pull request with gh; a merge on GitHub moves the card to Done and removes its worktree
 - Agents that start when you press Run, when a card is assigned, or on a heartbeat, on several cards at once
 - Live run output, run history with the reason each run ended, and Continue
 - The Team Lead chat, which manages clients, projects, tasks and agents with Gizai's own tools

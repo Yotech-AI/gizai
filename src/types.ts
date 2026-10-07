@@ -28,8 +28,14 @@ export type Task = {
   title: string; descriptionMd: string; acceptanceMd?: string | null; stateId: string; stateName: string; stateCategory: string;
   priority: number; assigneeId?: string | null; assigneeName?: string | null; assigneeKind?: string | null; labels: Label[];
   hold?: string | null; holdReason?: string | null; bounceCount: number; failCount: number; sortKey: string;
-  branch?: string | null; createdAt: number; updatedAt: number;
+  branch?: string | null;
+  /** The card's pull request on GitHub, and its state as Gizai last saw it. */
+  prUrl?: string | null; prState?: PullState | null;
+  createdAt: number; updatedAt: number;
 };
+export type PullState = "open" | "draft" | "merged" | "closed";
+/** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
+export type PullInfo = { url: string; number?: number | null; state: PullState; note?: string | null };
 export type TaskInput = {
   projectId: string; title: string; descriptionMd?: string; acceptanceMd?: string | null; stateId?: string | null;
   priority?: number; assigneeId?: string | null; labelIds?: string[];
@@ -94,7 +100,9 @@ export type Run = {
   baseSha?: string | null;
 };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
-export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number };
+export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
+  /** The GitHub CLI; null = found when needed. */
+  ghBin?: string | null };
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- chat with the Team Lead ----

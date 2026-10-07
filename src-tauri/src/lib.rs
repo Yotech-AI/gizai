@@ -2,6 +2,7 @@ pub mod chat;
 mod commands;
 pub mod git;
 pub mod mcp;
+pub mod pulls;
 mod quit;
 pub mod runs;
 pub mod tools;
@@ -23,6 +24,8 @@ pub struct AppState {
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
     pub mcp_shim: Option<PathBuf>,
     pub chat: Arc<chat::ChatManager>,
+    /// Pull requests being opened or checked on GitHub (see `pulls`).
+    pub pulls: Arc<pulls::PullChecks>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
@@ -157,7 +160,8 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     chat::remove_stray_configs(&dir);
     let mcp_socket = mcp::socket_path(&dir);
     Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
-                  mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), _lock: Arc::new(lock), notify })
+                  mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), pulls: Arc::new(pulls::PullChecks::default()),
+                  _lock: Arc::new(lock), notify })
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -251,6 +255,18 @@ pub fn run() {
                     }
                 });
             }
+            // The pull request check: at start and every two minutes, cards in Review (and open pull requests) hear
+            // what happened on GitHub; a merge moves its card to Done.
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut tick = tokio::time::interval(pulls::CHECK_EVERY);
+                    loop {
+                        tick.tick().await;
+                        let _ = pulls::check_all(&st).await;
+                    }
+                });
+            }
             // Heartbeats: once a minute, agents whose interval has passed look for their next card.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -277,6 +293,7 @@ pub fn run() {
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
+            commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")

@@ -1,4 +1,4 @@
-//! Read-only git checks for the project screen.
+//! Read-only git checks for the project screen, and which remote of a repository is its GitHub repository.
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
@@ -30,4 +30,12 @@ pub fn repo_check(path: &Path) -> RepoCheck {
     remotes.sort_by_key(|(name, _)| name != "origin");
     let github = remotes.iter().find_map(|(_, url)| gizai_core::repo_url::normalize(url).ok().flatten().filter(|r| r.provider == "github").map(|r| r.url));
     RepoCheck { is_git: true, branch, dirty, github }
+}
+
+/// The repository's remote for the project link `url` (your own name for it, e.g. `upstream`; origin first), if it has one.
+pub fn remote_for(path: &Path, url: &str) -> Option<String> {
+    gizai_agents::worktree::remotes(path).unwrap_or_default().into_iter()
+        .filter(|(_, u)| gizai_core::repo_url::same_repo(u, url))
+        .min_by_key(|(name, _)| name != "origin")
+        .map(|(name, _)| name)
 }

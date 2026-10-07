@@ -16,6 +16,7 @@ import { RunHistory } from "../components/RunHistory";
 import { Properties } from "../components/Properties";
 import { FileDrop } from "../components/FileDrop";
 import { RunPanel } from "../components/RunPanel";
+import { PullPanel } from "../components/PullPanel";
 
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function writePref(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
@@ -131,6 +132,7 @@ export function TaskPage({ id }: { id: string }) {
               <FileDrop ownerType="task" ownerId={task.id} />
             </section>
             {team && <RunPanel task={task} team={team} />}
+            <PullPanel task={task} live={live} />
 
             <div className="tabs" role="tablist">
               {([["comments", MessageSquare, "Comments", comments?.length], ["activity", Activity, "Activity", undefined], ["runs", Play, "Runs", runs?.length]] as const).map(([k, I, l, n]) => (
@@ -162,7 +164,7 @@ export function TaskPage({ id }: { id: string }) {
             {tab === "activity" && (
               <ul className="activity">
                 {(activity ?? []).slice().reverse().map((a, i) => (
-                  <li key={i}><b>{a.actorName ?? "Someone"}</b><span className="grow">{describeChange(a)}</span><span className="faint" title={new Date(a.at).toLocaleString("en-GB")}>{relTime(a.at)}</span></li>
+                  <li key={i}><b>{a.actorName ?? "Gizai"}</b><span className="grow">{describeChange(a)}</span><span className="faint" title={new Date(a.at).toLocaleString("en-GB")}>{relTime(a.at)}</span></li>
                 ))}
                 {activity && activity.length === 0 && <li className="faint">Nothing yet.</li>}
               </ul>

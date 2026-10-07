@@ -18,6 +18,7 @@ pub mod workflow;
 pub mod chat;
 pub mod tokens;
 pub mod repo_url;
+pub mod pulls;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

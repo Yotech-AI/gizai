@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -21,6 +21,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0002_agents.sql")),
         M::up(include_str!("../migrations/0003_chat.sql")),
         M::up(include_str!("../migrations/0004_effort.sql")),
+        M::up(include_str!("../migrations/0005_pull_requests.sql")),
     ])
 }
 

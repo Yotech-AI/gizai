@@ -142,6 +142,35 @@ pub fn rev_parse(dir: &Path, rev: &str) -> Result<String, AgentError> {
     git(dir, &["rev-parse", "--verify", "--quiet", rev])
 }
 
+/// Pushes the local `branch` to the branch of the same name at `to` (a remote's name, or a URL) with the user's own
+/// git login (ssh keys, credential helpers). Never forces and never asks for a password; gives up after two minutes.
+pub fn push_branch(repo: &Path, to: &str, branch: &str) -> Result<(), AgentError> {
+    let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    git_quiet(repo, &["push", "--quiet", to, &spec], Duration::from_secs(120))
+        .map(|_| ())
+        .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {e}")))
+}
+
+/// The worktree that has `branch` checked out, if one does.
+pub fn worktree_of(repo: &Path, branch: &str) -> Result<Option<PathBuf>, AgentError> {
+    Ok(worktrees(repo)?.into_iter().find(|(_, b)| b.as_deref() == Some(branch)).map(|(p, _)| p))
+}
+
+/// Removes a worktree, never by force: git refuses one with uncommitted changes or untracked files, and says so.
+pub fn remove_worktree(repo: &Path, path: &Path) -> Result<(), AgentError> {
+    git(repo, &["worktree", "remove", &path.to_string_lossy()]).map(|_| ())
+}
+
+/// Deletes a local branch (git refuses one that is checked out somewhere).
+pub fn delete_branch(repo: &Path, branch: &str) -> Result<(), AgentError> {
+    git(repo, &["branch", "-D", branch]).map(|_| ())
+}
+
+/// How many files in the checkout at `dir` have uncommitted changes (untracked ones included).
+pub fn uncommitted(dir: &Path) -> Result<usize, AgentError> {
+    Ok(git(dir, &["status", "--porcelain"])?.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
 /// git without prompts (no terminal, ssh in batch mode unless you set your own ssh command), ended after `limit`.
 fn git_quiet(repo: &Path, args: &[&str], limit: Duration) -> Result<String, String> {
     let mut cmd = Command::new("git");

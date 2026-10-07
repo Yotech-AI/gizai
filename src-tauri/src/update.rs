@@ -250,6 +250,7 @@ pub async fn check(st: &AppState) -> UpdateStatus {
         inner.checking = true;
         (inner.source.releases_url.clone(), install_prefix(&inner).ok())
     };
+    let running = Checking(&st.updates);
     changed(st);
     let found = tokio::task::spawn_blocking(move || {
         let latest = match url {
@@ -273,15 +274,21 @@ pub async fn check(st: &AppState) -> UpdateStatus {
     if let Err(e) = settings::set(&st.db, LAST_CHECK, &last) {
         eprintln!("gizai: can't keep the release check's result: {e}");
     }
-    {
-        let mut inner = st.updates.lock();
-        inner.checking = false;
-        if installed.is_some() || last.problem.is_none() {
-            inner.installed = installed;
-        }
+    if installed.is_some() || last.problem.is_none() {
+        st.updates.lock().installed = installed;
     }
+    drop(running);
     changed(st);
     status(st)
+}
+
+/// Held while a check runs: `checking` goes back to false however the check ends.
+struct Checking<'a>(&'a Updates);
+
+impl Drop for Checking<'_> {
+    fn drop(&mut self) {
+        self.0.lock().checking = false;
+    }
 }
 
 /// The automatic check: asks GitHub when Check for new releases is on and the last check is six hours old (an hour,

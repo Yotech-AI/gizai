@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canContinue, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, resumeCommand, runReason, toolCalls } from "./runs";
+import { badgeOf, dayRate, canContinue, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, resumeCommand, runReason, toolCalls } from "./runs";
 import type { Run, SeqEvent } from "../types";
 
 const ev = (seq: number, text = `t${seq}`) => ({ seq, event: { kind: "text" as const, text } });
@@ -83,5 +83,25 @@ describe("canContinue", () => {
     expect(canContinue(run({ status: "timed_out", ...worked, sessionId: null }))).toBe(false);
     expect(canContinue(run({ status: "timed_out", ...worked, worktreePath: null }))).toBe(false);
     expect(canContinue(run({ status: "running", ...worked }))).toBe(false);
+  });
+});
+
+describe("badgeOf", () => {
+  it("shows a run that is working now as live, never as failed", () => {
+    expect(badgeOf(run({ status: "running" }))).toEqual({ cls: "live", text: "Running" });
+    expect(badgeOf(run({ status: "queued" }))).toEqual({ cls: "live", text: "Starting" });
+  });
+  it("keeps the finished states", () => {
+    expect(badgeOf(run({ status: "succeeded", outcome: "ready_for_testing" })).cls).toBe("ok");
+    expect(badgeOf(run({ status: "timed_out" }))).toEqual({ cls: "warn", text: "Hit a limit" });
+    expect(badgeOf(run({ status: "failed", outcome: "error" }))).toEqual({ cls: "fail", text: "Failed" });
+    expect(badgeOf(run({ status: "cancelled" })).text).toBe("stopped");
+  });
+});
+
+describe("dayRate", () => {
+  it("has no rate for a day without finished runs", () => {
+    expect(dayRate({ dayStart: 0, succeeded: 0, failed: 0, other: 1 })).toBeNull();
+    expect(dayRate({ dayStart: 0, succeeded: 3, failed: 1, other: 1 })).toBe(0.75);
   });
 });

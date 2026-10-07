@@ -7,7 +7,7 @@ import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { relTime } from "../lib/format";
 import { roleLabel, wakeupLabel } from "../lib/agents";
-import { formatCost } from "../lib/runs";
+import { formatCost, dayRate } from "../lib/runs";
 import { useDrawer } from "../lib/drawers";
 import type { DayStat, Run } from "../types";
 import { Avatar } from "../components/Avatar";
@@ -26,7 +26,8 @@ function Bars({ days, mode }: { days: DayStat[]; mode: "activity" | "success" })
           const total = d.succeeded + d.failed + d.other;
           if (total === 0) return <div key={d.dayStart} className="day"><div className="seg-none" style={{ height: "3%" }} /></div>;
           if (mode === "success") {
-            const rate = d.succeeded / Math.max(1, d.succeeded + d.failed);
+            const rate = dayRate(d);
+            if (rate === null) return <div key={d.dayStart} className="day"><div className="seg-none" style={{ height: "3%" }} /></div>;
             return <div key={d.dayStart} className="day" title={`${md(d.dayStart)}: ${Math.round(rate * 100)}%`}><div className={rate >= 0.8 ? "seg-ok" : rate >= 0.5 ? "seg-warn" : "seg-fail"} style={{ height: `${Math.max(4, rate * 100)}%` }} /></div>;
           }
           return (

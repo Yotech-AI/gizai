@@ -5,23 +5,16 @@ import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "luci
 import { continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
-import { canContinue, elapsed, formatCost, formatTokens, mergeEvents, resumeCommand, runReason } from "../lib/runs";
+import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, resumeCommand, runReason } from "../lib/runs";
 import { relTime } from "../lib/format";
 import type { Run, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
 import { MarkdownView } from "./MarkdownView";
 
-export const OUTCOME_TEXT: Record<string, string> = {
-  ready_for_testing: "Ready for testing", qa_pass: "QA passed", qa_fail: "QA failed", needs_decision: "Needs your decision",
-  no_result: "Ended without a result", error: "Failed",
-};
-const STATUS_TEXT: Record<string, string> = { timed_out: "Hit a limit", failed: "Failed", running: "Running", queued: "Queued", succeeded: "Done" };
 const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", nudge: "Continue" };
 export function outcomeBadge(r: Run) {
-  const ok = r.status === "succeeded" && r.outcome !== "no_result";
-  const cls = r.status === "cancelled" ? "" : r.outcome === "needs_decision" || r.outcome === "qa_fail" ? "needs" : ok ? "ok" : r.status === "timed_out" ? "warn" : "fail";
-  const text = r.status === "cancelled" ? "stopped" : r.trigger === "chat" && r.status === "succeeded" ? "answered" : r.status === "timed_out" ? STATUS_TEXT.timed_out : OUTCOME_TEXT[r.outcome ?? ""] ?? STATUS_TEXT[r.status] ?? r.status;
-  return <span className={`badge ${cls}`}>{text}</span>;
+  const b = badgeOf(r);
+  return <span className={`badge ${b.cls}`}>{b.text}</span>;
 }
 
 export function Stream({ events }: { events: SeqEvent[] }) {

@@ -50,6 +50,12 @@ pub fn save_contact(app: AppHandle, st: State<AppState>, contact: Contact) -> R<
     Ok(id)
 }
 #[tauri::command]
+pub fn remove_contact(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    clients::remove_contact(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "contacts");
+    Ok(())
+}
+#[tauri::command]
 pub fn list_users(st: State<AppState>) -> R<Vec<Person>> { users::list(&st.db).map_err(e) }
 #[tauri::command]
 pub fn add_user(app: AppHandle, st: State<AppState>, name: String, email: Option<String>) -> R<String> {

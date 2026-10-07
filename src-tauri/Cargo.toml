@@ -20,10 +20,14 @@ serde_json = { workspace = true }
 gizai-core = { path = "../crates/gizai-core" }
 gizai-agents = { path = "../crates/gizai-agents" }
 gizai-mcp = { path = "../crates/gizai-mcp" }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 tauri-plugin-opener = "2"
 libc = { workspace = true }
 tauri-plugin-single-instance = "2"
+
+# Ends WebKit's page process before Gizai quits (see src/quit.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0", features = ["v2_34"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

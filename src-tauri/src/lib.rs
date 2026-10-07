@@ -3,6 +3,7 @@ mod commands;
 pub mod git;
 pub mod mcp;
 pub mod pulls;
+mod quit;
 pub mod runs;
 pub mod tools;
 
@@ -238,10 +239,13 @@ pub fn run() {
                 Err(e) => {
                     // e.g. another Gizai holds this data folder (from another login session)
                     eprintln!("gizai: {e}");
+                    quit::end_web_content(app.handle());
                     std::process::exit(1);
                 }
             };
             app.manage(state.clone());
+            // After manage: quitting reads the state.
+            quit::on_signals(app.handle());
             // The MCP server chat turns reach Gizai's tools through.
             {
                 let st = state.clone();
@@ -276,7 +280,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, exit_app,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
-            commands::list_contacts, commands::save_contact, commands::list_users, commands::add_user,
+            commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,
             commands::list_tasks, commands::get_task, commands::create_task, commands::update_task, commands::move_task,
             commands::set_task_labels, commands::task_activity, commands::list_comments, commands::add_comment,
@@ -308,7 +312,15 @@ pub fn run() {
                     });
                 }
             }
+            // Nothing keeps the window open, so a close request means it closes now and Gizai quits. WebKit's
+            // page process ends before the window goes (see `quit`); Exit does the same for every other way out.
+            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { .. }, .. } = &event
+                && label == "main"
+            {
+                quit::end_web_content(app);
+            }
             if let tauri::RunEvent::Exit = event {
+                quit::end_web_content(app);
                 mcp::remove_socket(app.state::<AppState>().inner());
             }
         });

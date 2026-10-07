@@ -13,7 +13,9 @@ ${SHOT_SIZE:+wlr-randr --output "\$(wlr-randr | head -n1 | cut -d' ' -f1)" --cus
 "$GZ/target/release/gizai" & APP=\$!
 sleep ${SHOT_WAIT:-3.5}
 grim "$OUT"
-# End the agent runs it started (their own process groups, found by parent PID), then the app.
+# End the agent runs it started (their own process groups, found by parent PID), then quit the app with SIGTERM:
+# it quits the usual way, which ends WebKit's page process first. Not SIGKILL: killed outright, the app leaves
+# that process to crash in its own teardown (WebKitWebProcess core dumps).
 me=\$(ps -o pgid= -p \$\$ | tr -d ' ')
 for k in \$(pgrep -P \$APP); do pg=\$(ps -o pgid= -p \$k | tr -d ' '); [ -n "\$pg" ] && [ "\$pg" != "\$me" ] && kill -- -\$pg 2>/dev/null; done
 kill \$APP 2>/dev/null; wait \$APP 2>/dev/null

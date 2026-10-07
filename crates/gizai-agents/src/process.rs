@@ -36,12 +36,21 @@ pub struct Caps {
 }
 
 #[derive(Clone)]
-pub struct StopHandle(Arc<Notify>);
+pub struct StopHandle {
+    notify: Arc<Notify>,
+    /// The run's process group (its leader is the `claude` Gizai started).
+    group: u32,
+}
 
 impl StopHandle {
     /// SIGINT to the run's process group, SIGTERM after 5 s, SIGKILL after 10 s.
     pub fn stop(&self) {
-        self.0.notify_one();
+        self.notify.notify_one();
+    }
+
+    /// SIGKILL to the run's process group at once: Gizai is exiting and can't wait for a stop.
+    pub fn kill(&self) {
+        signal_group(self.group, libc::SIGKILL);
     }
 }
 
@@ -98,6 +107,12 @@ fn signal_group(pgid: u32, sig: i32) {
         // SAFETY: plain syscall; a negative pid addresses the process group we created for this run.
         unsafe { libc::kill(-(pgid as i32), sig); }
     }
+}
+
+/// Whether a process is still in the run's process group (one that ended counts until it has been reaped).
+fn group_alive(pgid: u32) -> bool {
+    // SAFETY: signal 0 only checks that the group exists; nothing is sent.
+    pgid > 1 && unsafe { libc::kill(-(pgid as i32), 0) } == 0
 }
 
 /// For a run a previous Gizai left behind: ends (SIGTERM) the process group led by `pid`, but only when
@@ -158,7 +173,7 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
     let stop = Arc::new(Notify::new());
 
     // Reader: log every line, forward its events, count tool-calling turns.
-    let reader = {
+    let mut reader = {
         let tx = tx.clone();
         let stop = stop.clone();
         tokio::spawn(async move {
@@ -220,9 +235,15 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
             };
             timer.abort();
             // Background processes the agent started (a dev server, a watcher) would outlive the run
-            // and keep stdout open; end them with the run.
+            // and keep stdout open; end them with the run. One that ignores SIGTERM gets SIGKILL after 3 s.
             signal_group(pid, libc::SIGTERM);
-            if tokio::time::timeout(Duration::from_secs(3), reader).await.is_err() {
+            let ended = tokio::time::timeout(Duration::from_secs(3), async {
+                let _ = (&mut reader).await;
+                while group_alive(pid) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await;
+            if ended.is_err() {
                 signal_group(pid, libc::SIGKILL);
                 reader_abort.abort(); // a dropped JoinHandle doesn't stop the task; it would keep the channel open
             }
@@ -240,5 +261,5 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
         });
     }
 
-    Ok(RunHandle { pid, events: rx, stop: StopHandle(stop) })
+    Ok(RunHandle { pid, events: rx, stop: StopHandle { notify: stop, group: pid } })
 }

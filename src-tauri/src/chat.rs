@@ -103,6 +103,21 @@ pub async fn stop_all(st: &AppState, wait: Duration) -> usize {
     threads.len()
 }
 
+/// Gizai exits with answers still being written: ends their Claude Code at once (SIGKILL to its process group), and
+/// one that is only starting stops as soon as it has. Each is recorded as stopped because Gizai quit as soon as it has
+/// ended. Returns how many there were.
+pub fn kill_all(st: &AppState) -> usize {
+    crate::runs::mark_closing(st);
+    let live: Vec<(String, Option<StopHandle>)> = st.chat.live.lock().unwrap().iter().map(|(t, l)| (t.clone(), l.stop.clone())).collect();
+    for (thread_id, stop) in &live {
+        st.chat.stopped.lock().unwrap().insert(thread_id.clone());
+        if let Some(h) = stop {
+            h.kill();
+        }
+    }
+    live.len()
+}
+
 fn emit(st: &AppState, thread_id: &str, event: ChatUiEvent) {
     (st.notify)(Note::Chat { thread_id: thread_id.to_string(), event });
 }
@@ -210,7 +225,7 @@ async fn turn(st: &AppState, thread_id: &str, agent: &Member, text: &str, bin: &
             continue;
         }
         match a.summary.status.as_str() {
-            "cancelled" if crate::runs::is_closing(st) => system(st, thread_id, "Stopped because Gizai quit."),
+            "cancelled" if crate::runs::is_closing(st) => system(st, thread_id, crate::runs::STOPPED_BY_QUIT),
             "cancelled" => system(st, thread_id, "Stopped."),
             "succeeded" => {}
             _ => system(st, thread_id, &format!("The Team Lead couldn't answer: {}", a.summary.error.clone().unwrap_or_else(|| "unknown error".into()))),
@@ -416,7 +431,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         save(st, NewMessage { body_md: Some(draft.trim().to_string()), ..base("agent") });
     }
     cleanup(&token);
-    let cancelled = st.chat.stopped.lock().unwrap().contains(&thread.id);
+    let stopped = st.chat.stopped.lock().unwrap().contains(&thread.id);
     let (now_totals, ok) = match &result {
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, .. }) => (
             Totals { cost_usd_micros: (cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, input_tokens: *input_tokens, output_tokens: *output_tokens },
@@ -424,9 +439,13 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         _ => (Totals::default(), false),
     };
     let own = chat::turn_cost(prev, now_totals);
-    let status = if cancelled { "cancelled" } else if capped { "timed_out" } else if ok && exit == "exit:0" { "succeeded" } else { "failed" };
+    let finished = ok && exit == "exit:0";
+    // While Gizai quits, an answer that didn't finish was stopped by the quit, also when Claude Code ended first:
+    // logging out sends SIGTERM to the agents as well as to Gizai. It isn't retried in a new session either.
+    let quit = crate::runs::is_closing(st) && (stopped || !finished);
+    let status = if stopped || quit { "cancelled" } else if capped { "timed_out" } else if finished { "succeeded" } else { "failed" };
     let error = match status {
-        "cancelled" => Some("stopped".to_string()),
+        "cancelled" => Some(if quit { crate::runs::STOPPED_BY_QUIT } else { "stopped" }.to_string()),
         "timed_out" => Some(format!("it stopped at the limit ({} min or {} tool calls)", CAPS.max_time.as_secs() / 60, CAPS.max_tool_calls)),
         "failed" => Some(match &result {
             Some(ChatEvent::Result { text, .. }) if !text.trim().is_empty() => format!("Claude Code: {}", cut(text.trim(), 300)),

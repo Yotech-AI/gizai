@@ -328,17 +328,10 @@ pub fn run() {
         .run(|app, event| {
             // Quitting with agents at work (runs or a chat answer): stop them first, then quit (a second request
             // quits at once).
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                let st = app.state::<AppState>().inner().clone();
-                if !runs::is_closing(&st) && (!runs::live(&st).is_empty() || !chat::live(&st).is_empty()) {
-                    api.prevent_exit();
-                    let app = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let (a, b) = tokio::join!(runs::stop_all(&st, std::time::Duration::from_secs(12)), chat::stop_all(&st, std::time::Duration::from_secs(12)));
-                        let _ = (a, b);
-                        app.exit(0);
-                    });
-                }
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event
+                && quit::stop_agents_first(app)
+            {
+                api.prevent_exit();
             }
             // Nothing keeps the window open, so a close request means it closes now and Gizai quits. WebKit's
             // page process ends before the window goes (see `quit`); Exit does the same for every other way out.
@@ -349,6 +342,8 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);
+                // agents still at work end now, so none outlives Gizai
+                quit::end_agents(app.state::<AppState>().inner());
                 mcp::remove_socket(app.state::<AppState>().inner());
                 // an update that is building stops (its source and build so far are kept for the next one)
                 update::on_exit(app.state::<AppState>().inner());

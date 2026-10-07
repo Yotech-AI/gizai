@@ -59,7 +59,9 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [modelsErr, setModelsErr] = useState<string | null>(null);
   const [clis, setClis] = useState<CliStatus[] | null>(null);
-  useEffect(() => { listClis().then(setClis).catch(() => setClis([])); }, []);
+  useEffect(() => {
+    listClis().then(setClis).catch(() => setClis([{ id: CLAUDE_CODE, name: "Claude Code", kind: "claude_code", command: "", env: [], args: "" }]));
+  }, []);
   const [d, setD] = useState<AgentDraft | null>(initial);
   const cliId = d?.cli ?? CLAUDE_CODE;
   const kind = kindOf(cliId, clis);

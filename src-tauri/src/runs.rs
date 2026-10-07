@@ -569,7 +569,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         allowed_tools: if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() },
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
-        writable_dirs: git_common_dir(&wt.path).into_iter().collect(),
+        writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
     };
     let exec = agent_cli::task_exec(&spec, &run);
     if spec.kind != Kind::ClaudeCode {

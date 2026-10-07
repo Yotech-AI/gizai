@@ -297,48 +297,19 @@ fn check_blocking(st: &AppState, gh: &Path, card: &PrCard) -> Result<Checked, St
     Ok(out)
 }
 
-/// Whether `path` is inside `dir` (both as they are on disk).
-fn inside(path: &Path, dir: &Path) -> bool {
-    match (path.canonicalize(), dir.canonicalize()) {
-        (Ok(p), Ok(d)) => p.starts_with(d),
-        _ => false,
-    }
-}
-
-/// After a merge: removes the card's worktree (only one in Gizai's worktrees folder, and never by force: one with
-/// uncommitted changes stays), then deletes the card's branch when the pull request has its latest commit. Returns
-/// what it did as one sentence for the card's activity ("" when there was nothing to clean up).
+/// After a merge: removes the card's worktree (`worktree::remove_card_worktree`: only one of Gizai's, never by
+/// force, so one with uncommitted changes stays) and deletes its branch when the pull request has its latest commit.
+/// Returns what it did as one sentence for the card's activity ("" when there was nothing to clean up).
 fn clean_up(st: &AppState, card: &PrCard, pr: &PullRequest, tip: Option<&str>) -> String {
-    let repo = Path::new(&card.repo_path);
-    let mut said: Vec<String> = vec![];
-    let mut checked_out = false;
-    if let Ok(Some(wt)) = worktree::worktree_of(repo, &card.branch) {
-        if !inside(&wt, &st.data_dir.join("worktrees")) {
-            checked_out = true;
-            said.push(format!("left {} alone, as it isn't one of Gizai's worktrees", wt.display()));
-        } else {
-            match worktree::remove_worktree(repo, &wt) {
-                Ok(()) => said.push("removed its worktree".into()),
-                Err(e) => {
-                    checked_out = true;
-                    said.push(format!("kept its worktree {} ({})", wt.display(), plain(e)));
-                }
-            }
-        }
-    }
-    if !checked_out {
-        match tip {
-            Some(t) if pr.contains(t) => said.push(match worktree::delete_branch(repo, &card.branch) {
-                Ok(()) => format!("deleted branch {}", card.branch),
-                Err(e) => format!("kept branch {} ({})", card.branch, plain(e)),
-            }),
-            Some(_) => said.push(format!("kept branch {}, which has commits the pull request doesn't", card.branch)),
-            None => {}
-        }
+    let all_in = tip.is_some_and(|t| pr.contains(t));
+    let removal = worktree::remove_card_worktree(Path::new(&card.repo_path), &st.data_dir.join("worktrees"), &card.branch, all_in);
+    let mut said = removal.phrases(&card.branch);
+    if tip.is_some() && !all_in && removal.kept.is_none() {
+        said.push(format!("kept branch {}, which has commits the pull request doesn't", card.branch));
     }
     match said.len() {
         0 => String::new(),
         1 => format!("{} after the merge", said[0]),
-        _ => format!("{} and {} after the merge", said[..said.len() - 1].join(", "), said[said.len() - 1]),
+        n => format!("{} and {} after the merge", said[..n - 1].join(", "), said[n - 1]),
     }
 }

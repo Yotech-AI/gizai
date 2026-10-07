@@ -166,6 +166,115 @@ pub fn delete_branch(repo: &Path, branch: &str) -> Result<(), AgentError> {
     git(repo, &["branch", "-D", branch]).map(|_| ())
 }
 
+/// What `remove_card_worktree` did with a card's worktree and branch.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Removal {
+    /// The worktree it removed.
+    pub removed: Option<PathBuf>,
+    /// The worktree it left in place, and why: it isn't one of Gizai's, or git refused (uncommitted changes).
+    pub kept: Option<(PathBuf, String)>,
+    /// Whether it deleted the branch.
+    pub branch_deleted: bool,
+    /// Why the branch stayed, when it was asked to delete it.
+    pub branch_kept: Option<String>,
+}
+
+impl Removal {
+    /// What it did, as short phrases for one sentence ("removed its worktree", "deleted branch gizai/gz-1-x").
+    pub fn phrases(&self, branch: &str) -> Vec<String> {
+        let mut out = vec![];
+        if self.removed.is_some() {
+            out.push("removed its worktree".to_string());
+        }
+        if let Some((path, why)) = &self.kept {
+            out.push(format!("kept its worktree {} ({why})", path.display()));
+        }
+        if self.branch_deleted {
+            out.push(format!("deleted branch {branch}"));
+        }
+        if let Some(why) = &self.branch_kept {
+            out.push(format!("kept branch {branch} ({why})"));
+        }
+        out
+    }
+}
+
+/// Removes a card's worktree and, with `delete_branch`, its branch. One function for every clean-up: after a card's
+/// pull request is merged, and Settings → Data for the worktrees of finished cards.
+/// - The worktree is the one that has `branch` checked out. Only one inside `worktrees_dir` (Gizai's own folder) is
+///   removed, and never by force: git keeps one with uncommitted changes or untracked files. One whose folder is
+///   already gone only leaves git's list.
+/// - The branch goes only when no worktree has it checked out any more (a kept worktree keeps it). `git branch -D`
+///   also deletes commits that aren't merged anywhere, so the caller decides whether that is fine.
+pub fn remove_card_worktree(repo: &Path, worktrees_dir: &Path, branch: &str, delete_branch: bool) -> Removal {
+    let mut out = Removal::default();
+    let checked_out = match worktree_of(repo, branch) {
+        Ok(None) => false,
+        Ok(Some(wt)) if !inside(&wt, worktrees_dir) => {
+            out.kept = Some((wt, "it isn't one of Gizai's worktrees".into()));
+            true
+        }
+        Ok(Some(wt)) => match remove_worktree(repo, &wt) {
+            Ok(()) => {
+                out.removed = Some(wt);
+                false
+            }
+            Err(e) => {
+                out.kept = Some((wt, refusal(e)));
+                true
+            }
+        },
+        Err(e) => {
+            if delete_branch {
+                out.branch_kept = Some(refusal(e));
+            }
+            return out;
+        }
+    };
+    // a kept worktree keeps its branch (and `kept` says why)
+    if delete_branch && !checked_out {
+        match self::delete_branch(repo, branch) {
+            Ok(()) => out.branch_deleted = true,
+            Err(e) => out.branch_kept = Some(refusal(e)),
+        }
+    }
+    out
+}
+
+/// git's reason, in plain words where Gizai knows them.
+fn refusal(e: AgentError) -> String {
+    let msg = match e {
+        AgentError::Git(m) => m,
+        other => other.to_string(),
+    };
+    if msg.contains("modified or untracked files") {
+        return "it has uncommitted changes".into();
+    }
+    let msg = msg.lines().last().unwrap_or("git failed").trim();
+    msg.strip_prefix("fatal: ").or_else(|| msg.strip_prefix("error: ")).unwrap_or(msg).to_string()
+}
+
+/// Whether `path` is inside `dir`, as they are on disk. A folder that is gone counts by the nearest folder above it
+/// that is still there.
+fn inside(path: &Path, dir: &Path) -> bool {
+    let Ok(dir) = dir.canonicalize() else { return false };
+    let (mut here, mut rest) = (path.to_path_buf(), vec![]);
+    while !here.exists() {
+        match (here.file_name(), here.parent()) {
+            (Some(name), Some(up)) => {
+                rest.push(name.to_os_string());
+                here = up.to_path_buf();
+            }
+            _ => return false,
+        }
+    }
+    let Ok(mut real) = here.canonicalize() else { return false };
+    for name in rest.into_iter().rev() {
+        real.push(name);
+    }
+    real != dir && real.starts_with(&dir)
+}
+
 /// How many files in the checkout at `dir` have uncommitted changes (untracked ones included).
 pub fn uncommitted(dir: &Path) -> Result<usize, AgentError> {
     Ok(git(dir, &["status", "--porcelain"])?.lines().filter(|l| !l.trim().is_empty()).count())

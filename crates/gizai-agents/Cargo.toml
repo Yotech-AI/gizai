@@ -1,0 +1,17 @@
+[package]
+name = "gizai-agents"
+description = "Gizai agents: Claude Code argv, stream-json parsing, outcomes, worktrees and processes (no Tauri)"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

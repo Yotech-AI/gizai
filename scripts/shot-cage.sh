@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Screenshot one Gizai screen inside a HEADLESS cage (never on Jeffrey's screen).
+# usage: [MODE=open:project|steps:<sel>;#/route] [SHOT_WAIT=s] scripts/shot-cage.sh <route e.g. tasks|clients|task/<id>> <out.png> [data-dir]
+set -uo pipefail
+cd "$(dirname "$0")/.."
+GZ=$PWD; ROUTE=${1:-tasks}; OUT=${2:-$GZ/.devdata/shot.png}; DATA=${3:-$GZ/.devdata/demo}
+DEV=$GZ/.devdata; mkdir -p "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
+RUNNER=$DEV/shot-runner.sh
+cat > "$RUNNER" <<RUN
+#!/usr/bin/env bash
+"$GZ/target/release/gizai" & APP=\$!
+sleep ${SHOT_WAIT:-3.5}
+grim "$OUT"
+# End the agent runs it started (their own process groups, found by parent PID), then the app.
+me=\$(ps -o pgid= -p \$\$ | tr -d ' ')
+for k in \$(pgrep -P \$APP); do pg=\$(ps -o pgid= -p \$k | tr -d ' '); [ -n "\$pg" ] && [ "\$pg" != "\$me" ] && kill -- -\$pg 2>/dev/null; done
+kill \$APP 2>/dev/null; wait \$APP 2>/dev/null
+RUN
+chmod +x "$RUNNER"
+env -i HOME="$HOME" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$DEV/run" \
+  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
+  GIZAI_DATA_DIR="$DATA" GIZAI_ROUTE="$ROUTE" GIZAI_SELFTEST_MODE="${MODE:-}" \
+  XDG_DATA_HOME="$DEV/xdg/data" XDG_CACHE_HOME="$DEV/xdg/cache" XDG_CONFIG_HOME="$DEV/xdg/config" \
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  timeout -k 5 30 dbus-run-session -- cage -- "$RUNNER" > "$DEV/shot.log" 2>&1
+[ -s "$OUT" ] && echo "shot: $OUT" || { echo "no screenshot; see .devdata/shot.log"; exit 1; }

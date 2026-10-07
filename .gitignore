@@ -1,0 +1,12 @@
+target/
+.cargo/
+.npm-cache/
+node_modules/
+dist/
+.devdata/
+src-tauri/gen/
+.superpowers/
+*.log
+*.tsbuildinfo
+design/project/
+design/glyphs.json

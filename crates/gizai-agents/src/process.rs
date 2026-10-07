@@ -1,0 +1,200 @@
+//! Runs `claude` as a child in its own process group, streams its events, enforces the caps and stops it.
+//! Signals only ever go to that process group (never pid 0 or 1), so nothing else on the machine is touched.
+use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::{Notify, mpsc};
+
+use crate::AgentError;
+use crate::chat_stream::ChatEvent;
+use crate::claude::ClaudeArgs;
+use crate::stream::RunEvent;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Caps {
+    pub max_time: Duration,
+    /// Tool calls, each one counted (a message can make several).
+    pub max_tool_calls: u32,
+}
+
+#[derive(Clone)]
+pub struct StopHandle(Arc<Notify>);
+
+impl StopHandle {
+    /// SIGINT to the run's process group, SIGTERM after 5 s, SIGKILL after 10 s.
+    pub fn stop(&self) {
+        self.0.notify_one();
+    }
+}
+
+/// The events a run's stdout turns into: task runs read `RunEvent`s, chat turns `ChatEvent`s.
+pub trait StreamEvent: Clone + Send + 'static {
+    fn parse(line: &str) -> Vec<Self>;
+    /// An assistant message that calls a tool (counted against the turn cap).
+    fn is_tool_call(&self) -> bool;
+    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`.
+    fn other(raw: String) -> Self;
+}
+
+impl StreamEvent for RunEvent {
+    fn parse(line: &str) -> Vec<Self> { crate::stream::parse_line(line) }
+    fn is_tool_call(&self) -> bool { matches!(self, RunEvent::ToolUse { .. }) }
+    fn other(raw: String) -> Self { RunEvent::Other { raw_type: raw } }
+}
+
+impl StreamEvent for ChatEvent {
+    fn parse(line: &str) -> Vec<Self> { crate::chat_stream::parse_line(line) }
+    fn is_tool_call(&self) -> bool { matches!(self, ChatEvent::ToolUse { .. }) }
+    fn other(raw: String) -> Self { ChatEvent::Other { raw_type: raw } }
+}
+
+pub struct RunHandle<E = RunEvent> {
+    pub pid: u32,
+    /// Closed after the final `other("exit:<code>")` event.
+    pub events: mpsc::Receiver<E>,
+    pub stop: StopHandle,
+}
+
+fn signal_group(pgid: u32, sig: i32) {
+    if pgid > 1 {
+        // SAFETY: plain syscall; a negative pid addresses the process group we created for this run.
+        unsafe { libc::kill(-(pgid as i32), sig); }
+    }
+}
+
+/// For a run a previous Gizai left behind: ends (SIGTERM) the process group led by `pid`, but only when
+/// /proc shows that `pid` still leads its own group and still works in `expected_cwd` (the run's worktree),
+/// so a reused pid can never hit anything else. Returns whether it signalled.
+pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
+    if pid <= 1 {
+        return false;
+    }
+    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { return false };
+    // After "pid (comm) " come: state, ppid, pgrp, …
+    let Some(close) = stat.rfind(')') else { return false };
+    let fields: Vec<&str> = stat[close + 1..].split_whitespace().collect();
+    if fields.get(2).and_then(|p| p.parse::<u32>().ok()) != Some(pid) {
+        return false;
+    }
+    let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd")) else { return false };
+    match (cwd.canonicalize(), expected_cwd.canonicalize()) {
+        (Ok(a), Ok(b)) if a == b => {}
+        _ => return false,
+    }
+    signal_group(pid, libc::SIGTERM);
+    true
+}
+
+/// Must be called inside a Tokio runtime.
+pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, caps: Caps) -> Result<RunHandle<E>, AgentError> {
+    let stderr = std::fs::File::create(log_path.with_extension("stderr.log"))?;
+    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(log_path)?;
+    let mut child = Command::new(&args.bin)
+        .args(args.argv())
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(stderr)
+        .process_group(0)
+        .kill_on_drop(false)
+        .spawn()
+        .map_err(|e| AgentError::Spawn(format!("{}: {e}", args.bin.display())))?;
+    let pid = child.id().ok_or_else(|| AgentError::Spawn("the process exited at once".into()))?;
+    let stdout = child.stdout.take().expect("stdout is piped");
+    // The prompt goes in on stdin, then stdin closes so claude starts.
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let prompt = args.prompt.clone().into_bytes();
+    tokio::spawn(async move {
+        let _ = stdin.write_all(&prompt).await;
+        let _ = stdin.shutdown().await;
+    });
+
+    let (tx, rx) = mpsc::channel::<E>(512);
+    let stop = Arc::new(Notify::new());
+
+    // Reader: log every line, forward its events, count tool-calling turns.
+    let reader = {
+        let tx = tx.clone();
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            let mut calls = 0u32;
+            let mut capped = false;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = writeln!(log, "{line}");
+                let evs = E::parse(&line);
+                calls += evs.iter().filter(|e| E::is_tool_call(e)).count() as u32;
+                for e in evs {
+                    let _ = tx.send(e).await;
+                }
+                if calls > caps.max_tool_calls && !capped {
+                    capped = true;
+                    let _ = tx.send(E::other("cap_exceeded:tools".into())).await;
+                    stop.notify_one();
+                }
+            }
+        })
+    };
+
+    let reader_abort = reader.abort_handle();
+
+    // Timer: the time cap.
+    let timer = {
+        let tx = tx.clone();
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(caps.max_time).await;
+            let _ = tx.send(E::other("cap_exceeded:time".into())).await;
+            stop.notify_one();
+        })
+    };
+
+    // Waiter: owns the child (so its pid can't be reused while we may still signal it), escalates on stop,
+    // cleans up whatever the run left in its group, then reports the exit and closes the channel.
+    {
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            let status = tokio::select! {
+                s = child.wait() => s,
+                _ = stop.notified() => {
+                    signal_group(pid, libc::SIGINT);
+                    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                        Ok(s) => s,
+                        Err(_) => {
+                            signal_group(pid, libc::SIGTERM);
+                            match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                                Ok(s) => s,
+                                Err(_) => { signal_group(pid, libc::SIGKILL); child.wait().await }
+                            }
+                        }
+                    }
+                }
+            };
+            timer.abort();
+            // Background processes the agent started (a dev server, a watcher) would outlive the run
+            // and keep stdout open; end them with the run.
+            signal_group(pid, libc::SIGTERM);
+            if tokio::time::timeout(Duration::from_secs(3), reader).await.is_err() {
+                signal_group(pid, libc::SIGKILL);
+                reader_abort.abort(); // a dropped JoinHandle doesn't stop the task; it would keep the channel open
+            }
+            let code = match status {
+                Ok(s) => match s.code() {
+                    Some(c) => c.to_string(),
+                    None => {
+                        use std::os::unix::process::ExitStatusExt;
+                        format!("signal-{}", s.signal().unwrap_or(0))
+                    }
+                },
+                Err(e) => format!("unknown ({e})"),
+            };
+            let _ = tx.send(E::other(format!("exit:{code}"))).await;
+        });
+    }
+
+    Ok(RunHandle { pid, events: rx, stop: StopHandle(stop) })
+}

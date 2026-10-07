@@ -1,0 +1,30 @@
+[package]
+name = "gizai"
+description = "Gizai: clients, projects, tasks and local AI agents"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "gizai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+gizai-core = { path = "../crates/gizai-core" }
+gizai-agents = { path = "../crates/gizai-agents" }
+gizai-mcp = { path = "../crates/gizai-mcp" }
+tokio = { workspace = true }
+tauri-plugin-opener = "2"
+libc = { workspace = true }
+tauri-plugin-single-instance = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

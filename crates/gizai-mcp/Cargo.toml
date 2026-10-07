@@ -1,0 +1,14 @@
+[package]
+name = "gizai-mcp"
+description = "Gizai MCP: the Model Context Protocol over JSON lines (server side) and the gizai-mcp stdio shim"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

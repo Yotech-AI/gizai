@@ -1,0 +1,87 @@
+import { describe, expect, it } from "vitest";
+import { canContinue, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, resumeCommand, runReason, toolCalls } from "./runs";
+import type { Run, SeqEvent } from "../types";
+
+const ev = (seq: number, text = `t${seq}`) => ({ seq, event: { kind: "text" as const, text } });
+
+describe("mergeEvents", () => {
+  it("keeps one copy of each event, in order, whichever arrived first", () => {
+    const merged = mergeEvents([ev(0), ev(1), ev(2)], [ev(2), ev(3), ev(1)]);
+    expect(merged.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
+  });
+  it("caps the list at the newest N", () => {
+    const many = Array.from({ length: 10 }, (_, i) => ev(i));
+    expect(mergeEvents(many, [], 4).map((e) => e.seq)).toEqual([6, 7, 8, 9]);
+  });
+});
+
+describe("formats", () => {
+  it("shows cost, tokens and elapsed time compactly", () => {
+    expect(formatCost(420_000)).toBe("$0.42");
+    expect(formatCost(0)).toBe("$0.00");
+    expect(formatCost(12_345_678)).toBe("$12.35");
+    expect(formatTokens(950)).toBe("950");
+    expect(formatTokens(38_000)).toBe("38k");
+    expect(formatTokens(1_250_000)).toBe("1.3M");
+    expect(elapsed(0, 45_000)).toBe("45s");
+    expect(elapsed(0, 372_000)).toBe("6m 12s");
+    expect(elapsed(0, 3_900_000)).toBe("1h 5m");
+  });
+  it("builds a resume command that survives spaces in paths", () => {
+    expect(resumeCommand("/home/j/My Data/wt/KADE-1", "0192-ab")).toBe("cd '/home/j/My Data/wt/KADE-1' && claude --resume 0192-ab");
+    expect(resumeCommand("/x/it's", "s")).toBe("cd '/x/it'\\''s' && claude --resume s");
+  });
+});
+
+const run = (over: Partial<Run>): Run => ({ id: "r1", agentId: "a", agentName: "Backend Agent", trigger: "manual", status: "succeeded",
+  createdAt: 0, costUsdMicros: 0, inputTokens: 0, outputTokens: 0, logPath: "/x.jsonl", ...over });
+
+describe("runReason", () => {
+  it("gives the full error of a failed or stopped run", () => {
+    const long = "Claude Code: There's an issue with the selected model (opus 5.5). It may not exist or you may not have access to it.";
+    expect(runReason(run({ status: "failed", outcome: "error", error: long }))).toBe(long);
+    expect(runReason(run({ status: "timed_out", error: "stopped at the limit (45 min or 80 tool turns)" }))).toBe("stopped at the limit (45 min or 80 tool turns)");
+  });
+  it("explains the runs that end without an error message", () => {
+    expect(runReason(run({ status: "succeeded", outcome: "no_result" }))).toMatch(/without reporting a result/);
+    expect(runReason(run({ status: "cancelled" }))).toMatch(/Stopped/);
+    expect(runReason(run({ status: "failed" }))).toMatch(/no error message/);
+  });
+  it("has nothing to explain for a run that reported its result", () => {
+    expect(runReason(run({ status: "succeeded", outcome: "ready_for_testing" }))).toBeNull();
+  });
+});
+
+describe("what the agent did", () => {
+  const events: SeqEvent[] = [
+    { seq: 0, event: { kind: "text", text: "Looking at the wireframe module." } },
+    { seq: 1, event: { kind: "tool_use", name: "Read", summary: "src/a.ts" } },
+    { seq: 2, event: { kind: "tool_use", name: "Bash", summary: "npm test" } },
+    { seq: 3, event: { kind: "text", text: "Tests fail on the import; fixing the path.\nGIZAI_RESULT: {\"outcome\":\"no\"}" } },
+    { seq: 4, event: { kind: "text", text: "   " } },
+  ];
+  it("finds the agent's last words, without the result line", () => {
+    expect(lastAgentText(events)).toBe("Tests fail on the import; fixing the path.");
+    expect(lastAgentText([])).toBeNull();
+  });
+  it("counts its tool calls", () => {
+    expect(toolCalls(events)).toBe(2);
+  });
+});
+
+describe("canContinue", () => {
+  const worked = { sessionId: "S", worktreePath: "/wt", costUsdMicros: 3_920_000 };
+  it("offers Continue for a run that stopped after doing some work", () => {
+    expect(canContinue(run({ status: "timed_out", ...worked }))).toBe(true);
+    expect(canContinue(run({ status: "failed", ...worked }))).toBe(true);
+    expect(canContinue(run({ status: "cancelled", ...worked }))).toBe(true);
+    expect(canContinue(run({ status: "succeeded", outcome: "no_result", ...worked }))).toBe(true);
+  });
+  it("not for a finished run, one that never got going, or one without a session or worktree", () => {
+    expect(canContinue(run({ status: "succeeded", outcome: "ready_for_testing", ...worked }))).toBe(false);
+    expect(canContinue(run({ status: "failed", ...worked, costUsdMicros: 0 }))).toBe(false);
+    expect(canContinue(run({ status: "timed_out", ...worked, sessionId: null }))).toBe(false);
+    expect(canContinue(run({ status: "timed_out", ...worked, worktreePath: null }))).toBe(false);
+    expect(canContinue(run({ status: "running", ...worked }))).toBe(false);
+  });
+});

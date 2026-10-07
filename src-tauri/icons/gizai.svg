@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Gizai: the "in progress" status glyph (a ring with its right half filled) in white on the accent blue,
+       and a teal dot on the ring: an agent at work. -->
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#3f6df2"/>
+  <rect x="68" y="68" width="888" height="888" rx="204" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="8"/>
+  <circle cx="512" cy="512" r="262" fill="none" stroke="#ffffff" stroke-width="76"/>
+  <path d="M512 340 a172 172 0 0 1 0 344 z" fill="#ffffff"/>
+  <circle cx="697" cy="327" r="74" fill="#2fd3c6" stroke="#3f6df2" stroke-width="34"/>
+</svg>

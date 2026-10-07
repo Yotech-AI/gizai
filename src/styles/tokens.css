@@ -1,0 +1,131 @@
+/* Generated from design/tokens.json by scripts/tokens-css.ts. Do not edit by hand. */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --side: #0b0c0f;
+  --bg: #0f1013;
+  --raised: #15171b;
+  --overlay: #16181d;
+  --hover: #1b1d22;
+  --selected: #22252c;
+  --line: #23262c;
+  --line-2: #30333a;
+  --text: #ededf0;
+  --text-2: #a5a8b1;
+  --text-3: #7f838d;
+  --accent: #6f97ff;
+  --accent-hover: #8aabff;
+  --accent-soft: rgba(111, 151, 255, 0.14);
+  --on-accent: #0b1636;
+  --focus: #8aabff;
+  --live: #2fd3c6;
+  --live-soft: rgba(47, 211, 198, 0.13);
+  --needs: #f472b6;
+  --needs-soft: rgba(244, 114, 182, 0.12);
+  --success: #4cc38a;
+  --success-soft: rgba(76, 195, 138, 0.13);
+  --warning: #f0b429;
+  --warning-soft: rgba(240, 180, 41, 0.13);
+  --danger: #f2706b;
+  --danger-soft: rgba(242, 112, 107, 0.13);
+  --st-backlog: #8a8e98;
+  --st-todo: #60a5fa;
+  --st-progress: #f0b429;
+  --st-testing: #a98bfa;
+  --st-review: var(--needs);
+  --st-done: var(--success);
+  --st-blocked: var(--danger);
+  --st-cancelled: #6c707a;
+  --pr-urgent: var(--danger);
+  --c-blue: #6f97ff;
+  --c-teal: #3fb8a0;
+  --c-yellow: #e3bd3c;
+  --c-violet: #a98bfa;
+  --c-orange: #f29a4a;
+  --c-pink: #e77ab3;
+  --c-red: #f2706b;
+  --c-grey: #8a8e98;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-drawer: -24px 0 48px rgba(0, 0, 0, 0.5);
+  --shadow-drag: 0 16px 36px rgba(0, 0, 0, 0.5);
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --side: #f3f4f7;
+  --bg: #ffffff;
+  --raised: #ffffff;
+  --overlay: #ffffff;
+  --hover: #f0f2f5;
+  --selected: #e6e9f0;
+  --line: #e3e5ea;
+  --line-2: #d0d3da;
+  --text: #14161b;
+  --text-2: #4b4f59;
+  --text-3: #636772;
+  --accent: #2f5bdb;
+  --accent-hover: #2449b8;
+  --accent-soft: rgba(47, 91, 219, 0.10);
+  --on-accent: #ffffff;
+  --focus: #2f5bdb;
+  --live: #0b7d73;
+  --live-soft: rgba(11, 125, 115, 0.10);
+  --needs: #c0287a;
+  --needs-soft: rgba(192, 40, 122, 0.08);
+  --success: #1a7f4e;
+  --success-soft: rgba(26, 127, 78, 0.10);
+  --warning: #a15c07;
+  --warning-soft: rgba(161, 92, 7, 0.10);
+  --danger: #c93530;
+  --danger-soft: rgba(201, 53, 48, 0.10);
+  --st-backlog: #7f838d;
+  --st-todo: #2563eb;
+  --st-progress: #b45309;
+  --st-testing: #7c4ddb;
+  --st-cancelled: #8a8e98;
+  --scrim: rgba(20, 22, 27, 0.28);
+  --shadow-pop: 0 12px 32px rgba(15, 17, 23, 0.14);
+  --shadow-drawer: -24px 0 48px rgba(15, 17, 23, 0.12);
+  --shadow-drag: 0 16px 36px rgba(15, 17, 23, 0.18);
+}
+:root {
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 20px;
+  --fs-xl: 26px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-s: 4px;
+  --radius: 6px;
+  --radius-l: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+  --size-side: 248px;
+  --size-props: 320px;
+  --size-drawer: 1024px;
+  --size-topbar: 52px;
+  --size-row: 40px;
+  --size-board-col: 286px;
+  --font-sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+}
+.t-entity-title { font-family: var(--font-sans); font-size: 26px; line-height: 30px; font-weight: 700; letter-spacing: -0.015em; }
+.t-task-title { font-family: var(--font-sans); font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: -0.01em; }
+.t-drawer-title { font-family: var(--font-sans); font-size: 20px; line-height: 26px; font-weight: 650; letter-spacing: -0.01em; }
+.t-section { font-family: var(--font-sans); font-size: 15px; line-height: 22px; font-weight: 600; }
+.t-group { font-family: var(--font-sans); font-size: 12.5px; line-height: 16px; font-weight: 700; letter-spacing: 0.06em; }
+.t-nav-label { font-family: var(--font-sans); font-size: 11px; line-height: 16px; font-weight: 700; letter-spacing: 0.07em; }
+.t-row { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 500; }
+.t-body { font-family: var(--font-sans); font-size: 13.5px; line-height: 20px; font-weight: 400; }
+.t-prose { font-family: var(--font-sans); font-size: 15px; line-height: 24px; font-weight: 400; }
+.t-small { font-family: var(--font-sans); font-size: 12.5px; line-height: 18px; font-weight: 400; }
+.t-caption { font-family: var(--font-sans); font-size: 11.5px; line-height: 16px; font-weight: 400; }
+.t-id { font-family: var(--font-mono); font-size: 12px; line-height: 16px; font-weight: 400; }
+.t-code { font-family: var(--font-mono); font-size: 12.5px; line-height: 20px; font-weight: 400; }
+.t-metric { font-family: var(--font-mono); font-size: 20px; line-height: 24px; font-weight: 500; }

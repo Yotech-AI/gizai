@@ -1,0 +1,33 @@
+//! Read-only git checks for the project screen.
+use serde::Serialize;
+use std::path::Path;
+use std::process::Command;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoCheck {
+    pub is_git: bool,
+    pub branch: Option<String>,
+    pub dirty: bool,
+    /// The repository's GitHub remote as a link (origin first), offered for the project's GitHub field.
+    pub github: Option<String>,
+}
+
+fn git(path: &Path, args: &[&str]) -> Option<String> {
+    let out = Command::new("git").arg("-C").arg(path).args(args).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+pub fn repo_check(path: &Path) -> RepoCheck {
+    if !path.is_dir() || git(path, &["rev-parse", "--is-inside-work-tree"]).as_deref() != Some("true") {
+        return RepoCheck { is_git: false, branch: None, dirty: false, github: None };
+    }
+    let branch = git(path, &["branch", "--show-current"]).filter(|b| !b.is_empty());
+    let dirty = git(path, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false);
+    let mut remotes: Vec<(String, String)> = git(path, &["remote", "-v"]).unwrap_or_default().lines()
+        .filter_map(|l| { let p: Vec<&str> = l.split_whitespace().collect(); (p.len() == 3 && p[2] == "(fetch)").then(|| (p[0].to_string(), p[1].to_string())) })
+        .collect();
+    remotes.sort_by_key(|(name, _)| name != "origin");
+    let github = remotes.iter().find_map(|(_, url)| gizai_core::repo_url::normalize(url).ok().flatten().filter(|r| r.provider == "github").map(|r| r.url));
+    RepoCheck { is_git: true, branch, dirty, github }
+}

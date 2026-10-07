@@ -201,5 +201,5 @@ fn an_agent_keeps_its_effort_level_and_unknown_levels_are_refused() {
     team::update_agent(&db, &s.you_id, &id, AgentInput { name: "Frontend Agent".into(), role_key: "frontend".into(), effort: Some(" ".into()), ..Default::default() }).unwrap();
     assert_eq!(team::agent(&db, &id).unwrap().effort, None, "empty means Claude Code's default");
     let e = team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "X".into(), role_key: "qa".into(), effort: Some("extreme".into()), ..Default::default() }).unwrap_err();
-    assert!(e.to_string().contains("low, medium, high, xhigh or max"), "{e}");
+    assert!(e.to_string().contains("low, medium, high, xhigh, max"), "{e}");
 }

@@ -35,6 +35,7 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 - Tasks on a board or in a list, with labels, priorities, acceptance criteria and an Inbox
 - Agents for each role (frontend, backend, design, QA, DevOps), with their own model, effort and allowed commands
 - A git worktree and branch for every card, started from main on GitHub when the project is linked
+- Worktrees that start warm: per project, paths copied from your checkout (`cp --reflink=auto`), missing dependencies installed (`composer install`, `npm ci`) and a setup command; a new card takes over a finished card's worktree, and Settings → Data removes old ones
 - Routing rules and a QA gate: In progress → Testing → your Review
 - Review on GitHub: Open pull request pushes a card's branch with your git login and opens its pull request with gh; a merge on GitHub moves the card to Done and removes its worktree
 - Agents that start when you press Run, when a card is assigned, or on a heartbeat, on several cards at once

@@ -30,9 +30,7 @@ Background, only when the card needs it:
 
 ## Working rules
 
-- **Commands:**
-  - Run `source scripts/env.sh` before any cargo or npm command. In a worktree it shares the main checkout's download caches.
-  - In a fresh worktree, run `npm ci` once before `npm test` or `npm run build`.
+- **Commands:** run `source scripts/env.sh` before any cargo or npm command. In a worktree it shares the main checkout's download caches, and it uses `sccache` when that is installed.
 - **Layering:**
   - Core logic lives in `crates/` and never imports Tauri.
   - `src-tauri/` is a thin adapter.

@@ -11,7 +11,7 @@ const ACTIVE: &str = "('queued','running','waiting_approval')";
 
 const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.trigger, r.status, r.outcome, r.summary_md, r.created_at,
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
-                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter";
+                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -19,7 +19,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
         status: r.get(6)?, outcome: r.get(7)?, summary_md: r.get(8)?, created_at: r.get(9)?, started_at: r.get(10)?,
         ended_at: r.get(11)?, cost_usd_micros: r.get(12)?, input_tokens: r.get(13)?, output_tokens: r.get(14)?,
         branch: r.get(15)?, worktree_path: r.get(16)?, session_id: r.get(17)?, error: r.get(18)?, log_path: r.get(19)?, pid: r.get(20)?,
-        base_sha: r.get(21)?, adapter: r.get(22)?,
+        base_sha: r.get(21)?, adapter: r.get(22)?, head_sha: r.get(23)?,
     })
 }
 
@@ -114,6 +114,14 @@ pub fn set_session(db: &Db, run_id: &str, session_id: &str) -> Result<()> {
 pub fn set_base_sha(db: &Db, run_id: &str, sha: &str) -> Result<()> {
     db.write(None, |w| {
         w.conn().execute("UPDATE runs SET base_sha=?2 WHERE id=?1", rusqlite::params![run_id, sha])?;
+        Ok(())
+    })
+}
+
+/// The commit the run's worktree was at when it ended: with `base_sha`, it gives the commits the run made.
+pub fn set_head_sha(db: &Db, run_id: &str, sha: &str) -> Result<()> {
+    db.write(None, |w| {
+        w.conn().execute("UPDATE runs SET head_sha=?2 WHERE id=?1", rusqlite::params![run_id, sha])?;
         Ok(())
     })
 }

@@ -5,6 +5,8 @@
 # but leaves a background child that ignores SIGTERM (not on stdout).
 # A prompt containing FAKE_HANG (e.g. from a task description) also hangs, FAKE_STUBBORN is stubborn; FAKE_CRASH exits 1
 # with an error on stderr.
+# FAKE_COMMIT_TWICE commits twice in its working folder (the run's worktree), "First change" then "Second change",
+# and then finishes like run-ok.
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -34,6 +36,11 @@ if [ "$prompt" = "hang" ] || [ "$prompt" = "stubborn" ]; then
   wait $!
   exit 0
 fi
+case "$prompt" in *FAKE_COMMIT_TWICE*)
+  for subject in "First change" "Second change"; do
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m "$subject" || exit 1
+  done ;;
+esac
 if [ "$prompt" = "orphan" ]; then
   sleep 600 &
 fi

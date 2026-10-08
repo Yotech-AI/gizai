@@ -257,7 +257,7 @@ pub fn catalog() -> Vec<ToolDef> {
              &[("title", "string", "A short title, like \"GA-12: pick the export format\""), ("kind", "enum:question|approval", "question, or approval for something you want to do"),
                ("tasks", "string[]", "The identifiers of the cards it is about, like GA-12"), ("body_md", "string", "Your first message (Markdown): what you found, what you recommend and what you need")],
              &["title", "kind", "tasks", "body_md"]),
-        tool("continue_agent_run", "Continues the agent's latest run on a task, like the Continue button: it resumes the run's session in its worktree, for a run that stopped part-way (a limit, a failure, stopped). A hold on the card is cleared.",
+        tool("continue_agent_run", "Continues the agent's latest run on a task, like the Continue button: it resumes the run's session in its worktree, for a run that stopped part-way (a limit, a failure, stopped) or one that asked for a decision that has been answered on the card since (the agent hears the comments written since). A hold on the card is cleared.",
              &[TASK], &["task"]),
         tool("list_clients", "All clients with city, main contact and counts of projects and open tasks.", &[("status", "enum:lead|active|inactive", "Only clients with this status")], &[]),
         tool("get_client", "One client with every field, its contacts, projects and files.", &[CLIENT], &["client"]),

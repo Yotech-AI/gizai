@@ -425,6 +425,8 @@ struct Resume {
     cli: gizai_core::clis::Cli,
     /// Why the run being continued stopped, told to the agent.
     reason: String,
+    /// It ended asking for a decision: what was written on the card since, told to the agent instead.
+    answer: Option<String>,
 }
 
 /// Continue: resumes a stopped run's session in its worktree, as a new run of the same agent on the same CLI. Only the
@@ -432,17 +434,42 @@ struct Resume {
 /// the work (clearing also resets its failure count).
 pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<String>)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    continue_inner(st, run_id, bin_override, false).await
+}
+
+/// The Team Lead's Continue after an answer (`continue_agent_run`): also a run that ended asking for a decision
+/// (`needs_decision`) resumes, told what was written on the card since it ended.
+pub async fn continue_answered(st: &AppState, run_id: &str) -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    continue_inner(st, run_id, None, true).await
+}
+
+async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String>, answered: bool)
+    -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
     let run = core_runs::get(&st.db, run_id).map_err(|e| e.to_string())?;
     let task_id = run.task_id.clone().ok_or("only a card's run can continue")?;
     let latest = core_runs::list_for_task(&st.db, &task_id).map_err(|e| e.to_string())?.into_iter().next();
     if latest.as_ref().map(|r| r.id.as_str()) != Some(run_id) {
         return Err("only the card's latest run can continue".into());
     }
+    let asked = answered && run.status == "succeeded" && run.outcome.as_deref() == Some("needs_decision");
     let stopped = matches!(run.status.as_str(), "timed_out" | "failed" | "cancelled")
-        || (run.status == "succeeded" && run.outcome.as_deref() == Some("no_result"));
+        || (run.status == "succeeded" && run.outcome.as_deref() == Some("no_result")) || asked;
     if !stopped {
         return Err("this run finished; Run starts a new one".into());
     }
+    let answer = if asked {
+        let since = run.ended_at.unwrap_or(run.created_at);
+        let lines: Vec<String> = comments::list(&st.db, &task_id).unwrap_or_default().into_iter()
+            .filter(|c| c.created_at > since && c.run_id.as_deref() != Some(run_id))
+            .map(|c| format!("{}: {}", c.author_name, c.body_md.trim()))
+            .collect();
+        if lines.is_empty() {
+            return Err("nobody has answered on the card since this run asked for a decision".into());
+        }
+        Some(lines[lines.len().saturating_sub(5)..].join("\n\n"))
+    } else {
+        None
+    };
     let cli = crate::clis::of_agent(st, run.adapter.as_deref())?;
     if !Kind::parse(&cli.kind).is_some_and(Kind::can_resume) {
         return Err(format!("{} can't continue a run: Run starts the card fresh", cli.name));
@@ -452,7 +479,7 @@ pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<Stri
         return Err("its worktree is gone; Run starts the card fresh".into());
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
-    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason })).await
+    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason, answer })).await
         .map_err(StartError::message)?;
     resume_pull(st, &run.agent_id);
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
@@ -671,7 +698,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let instructions = agent.instructions_md.clone().filter(|i| !i.trim().is_empty()).unwrap_or_else(|| gizai_core::seed::role_template(&role));
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
-        prompt: match &resume { Some(r) => prompt::continue_prompt(&r.reason, Some(limits)), None => prompt::build(&ctx, &instructions) },
+        prompt: match &resume {
+            Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
+            Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
+            None => prompt::build(&ctx, &instructions),
+        },
         permission_mode: agent.permission_mode.clone().unwrap_or_default(),
         allowed_tools: if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() },
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),

@@ -401,13 +401,14 @@ pub(crate) async fn start_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
               "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
 }
 
-/// Continue on the card's latest run, like the Continue button (`runs::continue_run`).
+/// Continue on the card's latest run, like the Continue button (`runs::continue_run`); a run that ended asking for a
+/// decision continues too, with what was written on the card since (`runs::continue_answered`).
 pub(crate) async fn continue_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let last = gizai_core::runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().next()
         .ok_or_else(|| format!("{} has no run to continue: start_agent_run starts one", t.identifier))?;
     check_free_slot(cx, Some(&last.agent_id))?;
-    let (run_id, _done) = crate::runs::continue_run(cx.st, &last.id, None).await?;
+    let (run_id, _done) = crate::runs::continue_answered(cx.st, &last.id).await?;
     cx.changed("tasks");
     let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
     Ok(json!({"ok": true, "done": "continued", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},

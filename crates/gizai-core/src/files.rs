@@ -34,6 +34,9 @@ pub fn add_from_path(db: &Db, actor: &str, data_dir: &Path, owner_type: &str, ow
     if !OWNER_TYPES.contains(&owner_type) {
         return Err(Error::Invalid(format!("files can't belong to a {owner_type}")));
     }
+    if owner_type == "task" {
+        db.read(|c| crate::tasks::not_archived(c, owner_id))?;
+    }
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let meta = std::fs::metadata(path).map_err(|_| Error::Invalid(format!("can't read {name}")))?;
     if !meta.is_file() {

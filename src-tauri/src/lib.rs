@@ -314,6 +314,7 @@ pub fn run() {
             commands::list_projects, commands::get_project, commands::save_project,
             commands::list_tasks, commands::get_task, commands::create_task, commands::update_task, commands::move_task,
             commands::set_task_labels, commands::task_activity, commands::list_comments, commands::add_comment,
+            commands::list_archived_tasks, commands::archive_task, commands::restore_task,
             commands::list_teams, commands::get_team, commands::check_repo,
             commands::list_docs, commands::get_doc, commands::create_doc, commands::save_doc, commands::rename_doc,
             commands::doc_versions, commands::doc_version_body,

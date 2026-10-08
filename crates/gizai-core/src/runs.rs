@@ -37,6 +37,7 @@ pub fn create_with_trigger(db: &Db, agent_id: &str, task_id: &str, role_key: &st
     db.write(Some(agent_id), |w| {
         let c = w.conn();
         let now = ids::now_ms();
+        crate::tasks::not_archived(c, task_id)?;
         let claim: Option<(Option<String>, Option<i64>)> = c.query_row(
             "SELECT claimed_by_run_id, lease_expires_at FROM tasks WHERE id=?1 AND deleted_at IS NULL", [task_id],
             |r| Ok((r.get(0)?, r.get(1)?))).optional()?;

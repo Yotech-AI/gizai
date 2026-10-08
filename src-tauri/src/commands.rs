@@ -120,6 +120,26 @@ pub fn set_task_labels(app: AppHandle, st: State<AppState>, id: String, label_id
     Ok(())
 }
 #[tauri::command]
+pub fn list_archived_tasks(st: State<AppState>, project_id: Option<String>) -> R<Vec<Task>> {
+    tasks::archived(&st.db, project_id.as_deref().filter(|p| !p.is_empty())).map_err(e)
+}
+/// Archives a card in Done. Refused while an agent works on it, its run's worktree being made included.
+#[tauri::command]
+pub fn archive_task(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    if crate::runs::working_on(&st, &id) {
+        return Err("An agent is working on this card".into());
+    }
+    tasks::archive(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "tasks");
+    Ok(())
+}
+#[tauri::command]
+pub fn restore_task(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    tasks::restore(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "tasks");
+    Ok(())
+}
+#[tauri::command]
 pub fn task_activity(st: State<AppState>, task_id: String) -> R<Vec<ChangeEntry>> { tasks::activity(&st.db, &task_id).map_err(e) }
 #[tauri::command]
 pub fn list_comments(st: State<AppState>, task_id: String) -> R<Vec<Comment>> { comments::list(&st.db, &task_id).map_err(e) }

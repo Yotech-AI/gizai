@@ -8,11 +8,17 @@ use serde_json::{Value, json};
 use super::{Args, Cx, err, resolve, ymd};
 
 fn task_line(t: &Task) -> Value {
-    json!({
+    let mut v = json!({
         "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
         "testing": t.testing,
-    })
+    });
+    if let Some(at) = t.archived_at {
+        v["archived"] = json!(true);
+        v["archived_on"] = json!(ymd(at));
+        v["archived_by"] = json!(t.archived_by);
+    }
+    v
 }
 
 fn file_lines(list: Vec<FileRow>) -> Vec<Value> {
@@ -112,7 +118,11 @@ pub(crate) fn get_project(cx: &Cx, a: &Args) -> Result<Value, String> {
 pub(crate) fn list_tasks(cx: &Cx, a: &Args) -> Result<Value, String> {
     let project = match a.opt("project") { Some(p) => Some(resolve::project(cx, &p)?), None => None };
     let include_done = a.flag("include_done").unwrap_or(false);
-    let mut list = tasks::list(cx.db(), &TaskFilter { project_id: project.as_ref().map(|p| p.id.clone()), open_only: !include_done }).map_err(err)?;
+    let mut list = if a.flag("archived").unwrap_or(false) {
+        tasks::archived(cx.db(), project.as_ref().map(|p| p.id.as_str())).map_err(err)?
+    } else {
+        tasks::list(cx.db(), &TaskFilter { project_id: project.as_ref().map(|p| p.id.clone()), open_only: !include_done }).map_err(err)?
+    };
     if let Some(c) = a.opt("column") {
         let col = resolve::column(&resolve::team_of(cx, project.as_ref())?, &c)?;
         list.retain(|t| t.state_name.eq_ignore_ascii_case(&col.name));
@@ -150,6 +160,7 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
         "hold_reason": t.hold_reason, "testing": t.testing, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
+        "archived": t.archived_at.is_some(), "archived_on": t.archived_at.map(ymd), "archived_by": t.archived_by,
     }, "comments": comments, "runs": runs, "files": file_lines(files::list(cx.db(), "task", &t.id).map_err(err)?)}))
 }
 

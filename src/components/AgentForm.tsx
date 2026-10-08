@@ -171,6 +171,15 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
             hint="In chat it uses Gizai's tools: clients, projects, tasks, agents, docs, files and your inbox. It can read your linked repositories but doesn't edit files or run commands there. The settings below are for its work on tasks.">
             <label className="check"><input id="a-chat" type="checkbox" checked={d.chat} disabled={kind !== "claude_code"} onChange={(e) => set("chat", e.target.checked)} /> Talk to this agent on the Chat page</label>
           </Field>
+          <Field label="Board check" wide htmlFor="a-board"
+            warn={d.chat && d.boardCheck && !(Number(d.boardMinutes) >= 5 && Number(d.boardMinutes) <= 1440) ? "Pick a number from 5 to 1440" : null}
+            hint="It looks for held, answered, stuck and waiting cards. Only something new starts it: an answered question gets its agent going again, and what needs you comes as a chat at the top of your Inbox.">
+            <span className="inline">
+              <label className="check"><input id="a-board" type="checkbox" checked={d.chat && d.boardCheck} disabled={!d.chat} onChange={(e) => set("boardCheck", e.target.checked)} /> Check the board every</label>
+              <input className="input" aria-label="Board check minutes" type="number" min={5} max={1440} style={{ width: 90 }} value={d.boardMinutes}
+                disabled={!d.chat || !d.boardCheck} onChange={(e) => set("boardMinutes", e.target.value)} /> min
+            </span>
+          </Field>
         </FormSection>
         <FormSection title="Wakes up" text="When the agent starts work without you pressing Run, and on how many cards at once.">
           <Field label="Wake-up" wide>

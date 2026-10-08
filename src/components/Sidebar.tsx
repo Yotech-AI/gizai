@@ -2,12 +2,12 @@
 // company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
 // data than the usual folder says so there.
 import { Building2, FlaskConical, FolderKanban, Inbox, ListTodo, MessagesSquare, Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon } from "lucide-react";
-import { getTeam, listProjects, listTasks } from "../api";
+import { getTeam, listChatThreads, listProjects, listTasks } from "../api";
 import { href, type Route } from "../router";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
-import { needsYou } from "../lib/inbox";
+import { inboxCount } from "../lib/inbox";
 import { useDrawer } from "../lib/drawers";
 import { roleIcon } from "./Avatar";
 import { useChatLive } from "./chat/useChat";
@@ -32,7 +32,8 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
   const live = useLiveRuns();
   const chatLive = useChatLive();
   const agents = (team.data?.members ?? []).filter((m) => m.kind === "agent");
-  const inbox = (allTasks.data ?? []).filter((t) => needsYou(t, youId)).length;
+  const threads = useData(() => listChatThreads().catch(() => []));
+  const inbox = inboxCount(allTasks.data ?? [], threads.data ?? [], youId);
   const is = (...pages: Route["page"][]) => pages.includes(route.page);
   const liveFor = (id: string) => live.filter((r) => r.agentId === id).length;
   return (

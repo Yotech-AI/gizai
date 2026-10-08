@@ -49,6 +49,8 @@ export type AgentPreset = { name?: string; role?: string; chat?: boolean };
 
 export type AgentDraft = { name: string; role: string; model: string; wakeup: Wakeup; minutes: string; instructions: string;
   permissionMode: string; tools: string; budget: string; chat: boolean; effort: string; maxRuns: string;
+  /** The Team Lead's board check (with Chat on), every `boardMinutes` minutes. */
+  boardCheck: boolean; boardMinutes: string;
   /** The id of the coding CLI it runs on. */
   cli: string };
 
@@ -58,6 +60,7 @@ export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
     minutes: String(m?.heartbeatMinutes ?? 15), instructions: m?.instructionsMd ?? "", permissionMode: m?.permissionMode ?? "acceptEdits",
     tools: (m ? m.allowedTools : DEFAULT_TOOLS).join("\n"), budget: microsToDollars(m?.budgetUsdMicros), chat: m ? !!m.chatEnabled : !!preset?.chat,
     effort: m?.effort ?? "", maxRuns: String(m?.maxRuns ?? 1), cli: m?.adapter || "claude_code",
+    boardCheck: !!m?.boardCheckMinutes, boardMinutes: String(m?.boardCheckMinutes ?? 15),
   };
 }
 
@@ -68,5 +71,7 @@ export function inputFrom(d: AgentDraft): AgentInput {
     heartbeatMinutes: d.wakeup === "heartbeat" ? Number(d.minutes) || 0 : Number(d.minutes) || null,
     budgetUsdMicros: dollarsToMicros(d.budget), adapter: d.cli || "claude_code", chatEnabled: d.chat, effort: d.effort || null,
     maxRuns: /^\d+$/.test(d.maxRuns.trim()) ? Number(d.maxRuns) : null,
+    // The board check belongs to the agent with Chat on: off with Chat.
+    boardCheckMinutes: d.chat && d.boardCheck ? Number(d.boardMinutes) || 0 : 0,
   };
 }

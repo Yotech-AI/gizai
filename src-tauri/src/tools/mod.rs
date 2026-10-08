@@ -273,7 +273,7 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions unless instructions_md is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
-        tool("update_agent", "Changes an agent's settings. Only the fields given change.",
+        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change) are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
         tool("set_agent_status", "Pauses an agent (no heartbeats, no new runs) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
         tool("add_routing_rule", "Adds a routing rule: a card with a label, or entering a column, goes to the first idle agent with a role.",

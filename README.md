@@ -47,6 +47,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Clients with contacts, projects with docs and files
 - Tasks on a board or in a list, with labels, priorities, acceptance criteria and an Inbox
 - Agents for each role (frontend, backend, design, QA, DevOps), with their own model, effort and allowed commands
+- Folders per agent besides its worktree, each set to read or read and change (agent form → Permissions). They limit the agent's file tools, not the commands it runs; `/`, your home folder, Gizai's data and folders with keys are refused
 - Each agent runs on the coding CLI you pick: Claude Code, Codex, Gemini, any other CLI (its output is read as text), or a second account of one with its own environment (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Settings → Coding CLIs adds them, or finds the ones installed
 - A git worktree and branch for every card, started from main on GitHub when the project is linked
 - Worktrees that start warm: per project, paths copied from your checkout (`cp --reflink=auto`), missing dependencies installed (`composer install`, `npm ci`) and a setup command; a new card takes over a finished card's worktree, and Settings → Data removes old ones

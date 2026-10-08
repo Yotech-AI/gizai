@@ -419,3 +419,30 @@ async fn continue_agent_run_resumes_a_run_that_asked_a_decision_once_it_is_answe
     let first_run = core_runs::get(&st.db, &first).unwrap();
     assert_eq!(resumed.session_id, first_run.session_id, "the same session, resumed");
 }
+
+#[tokio::test]
+async fn in_a_check_the_team_lead_never_starts_more_runs_than_the_agents_free_slots_allow() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    settings::set(&st.db, "claude_bin", &RUN_FAKE.to_string()).unwrap();
+    let repo = git_repo(tmp.path());
+    let busy = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    tasks::update(&st.db, &st.you_id, &busy, TaskPatch { description_md: Some("FAKE_HANG".into()), ..Default::default() }).unwrap();
+    gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let team_id = team::list(&st.db).unwrap()[0].id.clone();
+    let lead = team::add_agent(&st.db, &st.you_id, &team_id, AgentInput { name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true),
+        ..Default::default() }).unwrap();
+    // the Backend Agent (one card at a time) works on KADE-1
+    let (_, done) = runs::start(&st, &busy, None, None, "manual").await.unwrap();
+    until("KADE-1 runs", || runs::live(&st).len() == 1).await;
+    let check = core_board::create_run(&st.db, &lead, "S", "/tmp", "/tmp/c.jsonl", &[]).unwrap();
+    let e = tools::call_check(&st, &lead, &check, "start_agent_run", json!({"task": "KADE-2", "agent": "Backend Agent"})).await.unwrap_err();
+    assert!(e.contains("no free slot"), "{e}");
+    // without an agent the busy one isn't picked at all (the start is refused before the slot check)
+    assert!(tools::call_check(&st, &lead, &check, "start_agent_run", json!({"task": "KADE-2"})).await.is_err());
+    assert_eq!(runs::live(&st).len(), 1, "nothing more started");
+    assert!(core_runs::list_for_task(&st.db, &tasks::list(&st.db, &TaskFilter::default()).unwrap().iter().find(|t| t.identifier == "KADE-2").unwrap().id)
+        .unwrap().is_empty());
+    runs::stop_all(&st, Duration::from_secs(12)).await;
+    let _ = tokio::time::timeout(Duration::from_secs(15), done).await;
+}

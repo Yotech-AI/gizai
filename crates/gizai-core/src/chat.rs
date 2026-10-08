@@ -557,7 +557,7 @@ pub fn edit_queued(db: &Db, you: &str, id: &str, text: &str) -> Result<QueuedMes
         let c = w.conn();
         let n = c.execute("UPDATE chat_queue SET body_md=?2, updated_at=?3 WHERE id=?1", rusqlite::params![id, text, ids::now_ms()])?;
         if n == 0 {
-            return Err(Error::NotFound("that queued message: it has gone already".into()));
+            return Err(Error::Invalid("that message has gone already, so it can't be changed".into()));
         }
         w.update("chat_queue", id, serde_json::json!({"edited": true}))?;
         Ok(c.query_row(&format!("{QUEUE_SELECT} WHERE id=?1"), [id], queued_row)?)
@@ -569,7 +569,7 @@ pub fn remove_queued(db: &Db, you: &str, id: &str) -> Result<()> {
     db.write(Some(you), |w| {
         let n = w.conn().execute("DELETE FROM chat_queue WHERE id=?1", [id])?;
         if n == 0 {
-            return Err(Error::NotFound("that queued message: it has gone already".into()));
+            return Err(Error::Invalid("that message has gone already".into()));
         }
         w.delete("chat_queue", id)
     })

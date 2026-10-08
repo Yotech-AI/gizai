@@ -201,6 +201,41 @@ pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
     })
 }
 
+/// Who would start a card (the board check): its routed role, the agents that could take it (the pinned agent, else the
+/// assigned agent, else the agents with the routed role, its builder first in In progress; paused ones included, so
+/// the check can say why the card waits) and the person it is assigned to, if any.
+pub(crate) struct Route {
+    pub role: Option<String>,
+    pub agents: Vec<String>,
+    pub person: Option<String>,
+}
+
+pub(crate) fn route(c: &Connection, task_id: &str) -> Result<Route> {
+    let t = task_row(c, task_id)?;
+    let assignee: Option<(String, String)> = c.query_row(
+        "SELECT a.id, a.kind FROM tasks t JOIN actors a ON a.id = t.assignee_actor_id WHERE t.id=?1 AND a.deleted_at IS NULL",
+        [task_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let person = assignee.as_ref().filter(|(_, k)| k == "person").map(|(id, _)| id.clone());
+    let role = routed_role(c, task_id, &t)?;
+    if let Some(pin) = t.pinned.clone() {
+        return Ok(Route { role, agents: vec![pin], person });
+    }
+    if let Some((a, _)) = assignee.filter(|(_, k)| k == "agent") {
+        return Ok(Route { role, agents: vec![a], person });
+    }
+    let Some(r) = role.clone() else { return Ok(Route { role, agents: vec![], person }) };
+    let mut st = c.prepare(
+        "SELECT m.actor_id FROM team_members m JOIN actors a ON a.id = m.actor_id
+         WHERE m.team_id=?1 AND m.role_key=?2 AND m.deleted_at IS NULL AND a.kind='agent' AND a.status<>'archived' AND a.deleted_at IS NULL
+         ORDER BY m.created_at, a.name")?;
+    let mut agents = st.query_map(rusqlite::params![t.team_id, r], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    if t.category == "in_progress" && let Some(i) = t.implementer.as_ref().and_then(|imp| agents.iter().position(|a| a == imp)) {
+        let imp = agents.remove(i);
+        agents.insert(0, imp);
+    }
+    Ok(Route { role, agents, person })
+}
+
 /// Run on a Deploy card without a chosen agent: the first active agent with the devops role in the card's team.
 pub fn devops_agent(db: &Db, task_id: &str) -> Result<Option<String>> {
     db.read(|c| {
@@ -289,7 +324,7 @@ fn reviewer(c: &Connection, t: &TaskRow) -> Result<Option<String>> {
 }
 
 fn set_hold(w: &Writer, task_id: &str, hold: &str, reason: &str) -> Result<()> {
-    w.conn().execute("UPDATE tasks SET hold=?2, hold_reason=?3, updated_at=?4, version=version+1 WHERE id=?1",
+    w.conn().execute("UPDATE tasks SET hold=?2, hold_reason=?3, hold_at=?4, updated_at=?4, version=version+1 WHERE id=?1",
                      rusqlite::params![task_id, hold, reason, ids::now_ms()])?;
     w.update("tasks", task_id, serde_json::json!({"hold": hold, "holdReason": reason}))
 }

@@ -179,7 +179,8 @@ fn checkout_warning(p: &Path, places: &Places) -> Option<String> {
     })
 }
 
-/// Each folder of the list as the form shows it: the reason it's refused, or a warning.
+/// Each folder of the list as the form shows it: the reason it's refused, or a warning (it isn't there now, or it is a
+/// read and change folder in a project's main checkout). A folder that isn't there may still be saved.
 pub fn check(list: &[Folder], places: &Places) -> Vec<FolderCheck> {
     let paths: Vec<Option<PathBuf>> = list.iter().map(|f| normalize(&f.path, &places.home)).collect();
     let mut out: Vec<FolderCheck> = vec![];
@@ -200,6 +201,8 @@ pub fn check(list: &[Folder], places: &Places) -> Vec<FolderCheck> {
             .and_then(|(_, (_, op))| op.clone());
         c.error = if !ACCESS.contains(&f.access.as_str()) {
             Some(format!("pick read or read and change, not {}", f.access))
+        } else if p.is_file() {
+            Some("that's a file: pick a folder".into())
         } else if i >= MAX {
             Some(format!("an agent has at most {MAX} folders"))
         } else if paths[..i].iter().any(|o| o.as_ref() == Some(&p)) {
@@ -210,8 +213,14 @@ pub fn check(list: &[Folder], places: &Places) -> Vec<FolderCheck> {
         } else {
             None
         };
-        if c.error.is_none() && f.change() {
-            c.warning = checkout_warning(&p, places);
+        if c.error.is_none() {
+            c.warning = if !p.exists() {
+                Some("It isn't there now: runs go without it until it is".into())
+            } else if f.change() {
+                checkout_warning(&p, places)
+            } else {
+                None
+            };
         }
         out.push(c);
     }

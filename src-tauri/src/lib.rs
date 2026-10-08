@@ -304,12 +304,14 @@ pub fn run() {
                     }
                 });
             }
-            // Heartbeats: once a minute, agents whose interval has passed look for their next card.
+            // Heartbeats: once a minute, agents whose interval has passed look for their next card, and agents that wake up
+            // when a card is routed or assigned to them take cards that had to wait (the run limit was full, Gizai just started).
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
                     let _ = runs::heartbeat_tick(&state, gizai_core::ids::now_ms()).await;
+                    let _ = runs::pull(&state).await;
                 }
             });
             Ok(())
@@ -326,7 +328,7 @@ pub fn run() {
             commands::doc_versions, commands::doc_version_body,
             commands::add_files, commands::list_files, commands::remove_file, commands::open_file,
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status,
-            commands::add_rule, commands::delete_rule, commands::rename_state, commands::role_template,
+            commands::add_rule, commands::delete_rule, commands::rename_state, commands::add_state, commands::role_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,

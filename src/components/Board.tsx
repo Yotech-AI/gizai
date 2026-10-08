@@ -22,6 +22,11 @@ const OWNER_NOTE: Record<string, string> = {
   qa: "Tested by the QA agent",
   human: "Waiting for your review",
 };
+/** A note that follows the column's category, before its owner's (a Deploy column is yours too, but not a review). */
+const CATEGORY_NOTE: Record<string, string> = {
+  deploy: "Merged: deploy it, or press Run for the DevOps Agent",
+};
+const noteOf = (s: WorkflowState): string | undefined => CATEGORY_NOTE[s.category] ?? (s.ownerRole ? OWNER_NOTE[s.ownerRole] : undefined);
 
 type Cols = Record<string, string[]>;
 
@@ -60,6 +65,7 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, working }
     );
   }
   const visible = ids.slice(0, shown);
+  const note = noteOf(state);
   return (
     <div className="col" data-col={state.name}>
       <div className="col-head">
@@ -70,7 +76,7 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, working }
           {onAdd && <button className="btn ghost sm icon-only" aria-label={`New task in ${state.name}`} title={`New task in ${state.name}`} onClick={(e) => { e.stopPropagation(); onAdd(state.id); }}><Plus className="icon" /></button>}
         </span>
       </div>
-      {state.ownerRole && OWNER_NOTE[state.ownerRole] && <div className="col-note">{OWNER_NOTE[state.ownerRole]}</div>}
+      {note && <div className="col-note">{note}</div>}
       <SortableContext id={state.id} items={visible} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="col-body">
           {visible.map((id) => { const t = byId.get(id); return t ? <Card key={id} task={t} onOpen={onOpen} working={working.get(id)} /> : null; })}

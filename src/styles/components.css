@@ -47,6 +47,7 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 .select { appearance: none; padding-right: 30px; cursor: pointer;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238a8e98' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 8px center; }
+.select:disabled { opacity: .6; cursor: default; border-color: var(--line-2); }
 .input-group { display: flex; gap: 8px; align-items: center; }
 .input-group > .input, .input-group > .select { flex: 1; }
 .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--text); }
@@ -134,6 +135,7 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 .st-in_progress { color: var(--st-progress); }
 .st-testing { color: var(--st-testing); }
 .st-review { color: var(--st-review); }
+.st-deploy { color: var(--needs); } /* merged, waits for you to deploy (or press Run): needs you, like Review */
 .st-done { color: var(--st-done); }
 .st-cancelled { color: var(--st-cancelled); }
 .st-hold { color: var(--st-blocked); }

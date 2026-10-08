@@ -457,3 +457,49 @@ fn the_agent_tools_offer_runs_on() {
         assert!(t.input_schema["properties"]["runs_on"].is_object(), "{name}");
     }
 }
+
+#[tokio::test]
+async fn the_testing_switch_is_set_and_shown_by_the_task_tools() {
+    // GA-32: on by default, off for a small fix, and the read tools say which.
+    let t = setup();
+    t.project("Kade portal", "KADE");
+    let r = t.ok("create_task", json!({"project": "KADE", "title": "Export invoices"})).await;
+    assert_eq!(r["task"]["testing"], true);
+    let r = t.ok("create_task", json!({"project": "KADE", "title": "Fix a typo", "testing": false})).await;
+    assert_eq!(r["task"]["testing"], false);
+    assert!(!tasks::get(&t.st.db, r["link"]["id"].as_str().unwrap()).unwrap().testing);
+    assert_eq!(t.ok("get_task", json!({"task": "KADE-2"})).await["task"]["testing"], false);
+    let listed = t.ok("list_tasks", json!({})).await;
+    let line = |id: &str| listed["tasks"].as_array().unwrap().iter().find(|x| x["task"] == id).cloned().unwrap_or_else(|| panic!("{listed}"));
+    assert_eq!((line("KADE-1")["testing"].clone(), line("KADE-2")["testing"].clone()), (json!(true), json!(false)));
+    // update_task changes only the switch when that is all it is given
+    t.ok("update_task", json!({"task": "KADE-2", "testing": true})).await;
+    assert_eq!(t.ok("get_task", json!({"task": "KADE-2"})).await["task"]["testing"], true);
+    t.ok("update_task", json!({"task": "KADE-1", "testing": false})).await;
+    let task = tasks::list(&t.st.db, &TaskFilter::default()).unwrap().into_iter().find(|x| x.identifier == "KADE-1").unwrap();
+    assert_eq!((task.testing, task.title.as_str()), (false, "Export invoices"));
+}
+
+#[tokio::test]
+async fn the_team_lead_adds_a_deploy_column_after_review_and_no_column_rule_for_it() {
+    let t = setup();
+    let r = t.ok("add_column", json!({"name": "Deploy", "after": "review", "category": "deploy", "worked_by": "qa"})).await;
+    assert_eq!(r["columns"], json!(["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Done"]));
+    let w = t.ok("get_workflow", json!({})).await;
+    let deploy = w["columns"].as_array().unwrap().iter().find(|c| c["name"] == "Deploy").cloned().unwrap();
+    assert_eq!(deploy["category"], "deploy");
+    assert_eq!(deploy["worked_by"], "you (deploy, or press Run for the DevOps Agent)");
+    let team_id = team::list(&t.st.db).unwrap()[0].id.clone();
+    let state = team::get(&t.st.db, &team_id).unwrap().states.into_iter().find(|s| s.name == "Deploy").unwrap();
+    assert_eq!(state.owner_role.as_deref(), Some("human"), "a Deploy column is always yours");
+    // a name in use is refused, and so is a column rule on Deploy
+    let err = t.call("add_column", json!({"name": "deploy", "after": "Done", "category": "done"})).await.unwrap_err();
+    assert!(err.contains("already has a column called deploy"), "{err}");
+    let err = t.call("add_routing_rule", json!({"kind": "column", "match": "Deploy", "role": "devops"})).await.unwrap_err();
+    assert!(err.contains("Deploy column"), "{err}");
+    // other columns: a role, or you
+    t.ok("add_column", json!({"name": "Staging", "after": "Review", "category": "review", "worked_by": "you"})).await;
+    let states = team::get(&t.st.db, &team_id).unwrap().states;
+    assert_eq!(states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Staging", "Deploy", "Done"]);
+    assert_eq!(states.iter().find(|s| s.name == "Staging").unwrap().owner_role.as_deref(), Some("human"));
+}

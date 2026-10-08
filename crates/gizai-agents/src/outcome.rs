@@ -1,7 +1,7 @@
 //! The agent's verdict: the last `GIZAI_RESULT: {json}` line of its final message.
 use serde::{Deserialize, Serialize};
 
-pub const OUTCOMES: [&str; 4] = ["ready_for_testing", "qa_pass", "qa_fail", "needs_decision"];
+pub const OUTCOMES: [&str; 5] = ["ready_for_testing", "qa_pass", "qa_fail", "needs_decision", "deployed"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Outcome {

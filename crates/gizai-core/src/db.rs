@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -23,6 +23,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0004_effort.sql")),
         M::up(include_str!("../migrations/0005_pull_requests.sql")),
         M::up(include_str!("../migrations/0006_worktree_prepare.sql")),
+        M::up(include_str!("../migrations/0007_card_flow.sql")),
     ])
 }
 
@@ -94,9 +95,12 @@ impl Db {
     }
 
     fn init(mut conn: Connection) -> Result<Db> {
-        conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // Foreign keys are off while the schema is upgraded: a migration that changes a CHECK rebuilds its table (SQLite's
+        // way), and the old table's rows must be dropped while other tables still point at them. The rebuild keeps every id.
+        conn.pragma_update(None, "foreign_keys", "OFF")?;
         migrations().to_latest(&mut conn)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         let device_id: Option<String> = conn
             .query_row("SELECT id FROM devices WHERE is_self = 1 LIMIT 1", [], |r| r.get(0))
             .ok();

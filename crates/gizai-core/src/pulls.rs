@@ -1,5 +1,5 @@
 //! A card's pull request on GitHub: its link and state as Gizai last saw them, which cards the PR check follows, and
-//! what a merge does to its card (Done). Talking to GitHub (gh, git push) is gizai-agents' `github`; the app joins
+//! what a merge does to its card (Deploy, or Done for a team without a Deploy column). Talking to GitHub (gh, git push) is gizai-agents' `github`; the app joins
 //! the two.
 use rusqlite::OptionalExtension;
 use serde_json::json;
@@ -107,9 +107,10 @@ pub fn record(db: &Db, actor: Option<&str>, task_id: &str, url: &str, state: &st
     })
 }
 
-/// GitHub merged the card's pull request: records it and moves the card to its team's Done column (a card that is
-/// already Done or Cancelled stays). The activity says Gizai did it; `by` is the person it did it for (the card's
-/// `updated_by`). Returns the column it moved to.
+/// GitHub merged the card's pull request: records it and moves the card to its team's Deploy column (merged, not
+/// deployed yet), or to Done when the team has no Deploy column. A card that is already in Deploy, Done or Cancelled
+/// stays. Nothing starts on it: no agent picks up a Deploy card by itself. The activity says Gizai did it; `by` is the
+/// person it did it for (the card's `updated_by`). Returns the column it moved to.
 pub fn merged(db: &Db, by: &str, task_id: &str, url: &str) -> Result<Option<String>> {
     db.write(None, |w| {
         let c = w.conn();
@@ -121,15 +122,16 @@ pub fn merged(db: &Db, by: &str, task_id: &str, url: &str) -> Result<Option<Stri
         c.execute("UPDATE tasks SET pr_url=?2, pr_state='merged', updated_at=?3, updated_by=?4, version=version+1 WHERE id=?1",
                   rusqlite::params![task_id, url, ids::now_ms(), by])?;
         w.update("tasks", task_id, json!({"pullRequest": url, "prState": "merged"}))?;
-        if matches!(category.as_str(), "done" | "cancelled") {
+        if matches!(category.as_str(), "deploy" | "done" | "cancelled") {
             return Ok(None);
         }
-        let done: Option<(String, String)> = c
-            .query_row("SELECT id, name FROM workflow_states WHERE team_id=?1 AND category='done' AND deleted_at IS NULL ORDER BY sort_key LIMIT 1",
+        let to: Option<(String, String)> = c
+            .query_row("SELECT id, name FROM workflow_states WHERE team_id=?1 AND category IN ('deploy','done') AND deleted_at IS NULL
+                        ORDER BY category = 'done', sort_key LIMIT 1",
                        [&team], |r| Ok((r.get(0)?, r.get(1)?)))
             .optional()?;
-        let Some((done_id, name)) = done else { return Ok(None) };
-        tasks::move_in(w, by, task_id, &done_id, None)?;
+        let Some((to_id, name)) = to else { return Ok(None) };
+        tasks::move_in(w, by, task_id, &to_id, None)?;
         Ok(Some(name))
     })
 }

@@ -126,7 +126,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       ) : !team || !fetched ? null : view === "list" ? (
         <div className="content">
           <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
-            empty={inbox ? <div className="empty"><b>Nothing needs you.</b><span>Cards on hold and cards waiting for your review show up here.</span></div>
+            empty={inbox ? <div className="empty"><b>Nothing needs you.</b><span>Cards on hold and cards waiting for your review or deploy show up here.</span></div>
               : <div className="empty"><b>No tasks here.</b><span>{nFilters ? "Nothing matches these filters." : "Press N to add one."}</span></div>} />
         </div>
       ) : (

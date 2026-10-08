@@ -243,10 +243,71 @@ fn an_older_database_gets_an_empty_folder_list_for_each_agent() {
         team::add_agent(&db, &s.you_id, &s.team_id, agent_input("Backend Agent", None)).unwrap()
     };
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 7;").unwrap();
+    // Schema 8: GA-35's 0008_board_check ran, 0009_agent_folders didn't.
+    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
     drop(c);
     let db = Db::open(&path).unwrap();
     assert_eq!(db.read(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)).unwrap(), db::SCHEMA_VERSION);
-    assert_eq!(db::SCHEMA_VERSION, 8);
+    assert_eq!(db::SCHEMA_VERSION, 9);
     assert!(team::agent(&db, &id).unwrap().folders.is_empty());
+}
+
+#[test]
+fn a_schema_8_database_keeps_its_board_check_and_every_agent_gets_folders_json_empty() {
+    // GA-47: main before the merge was schema 8 (GA-35's board check); 0009 adds the folders and keeps the rest.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gizai.db");
+    let (lead, backend) = {
+        let db = Db::open(&path).unwrap();
+        let s = seed::ensure_seed(&db, "Jeffrey").unwrap();
+        let lead = team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "Team Lead".into(), role_key: "lead".into(),
+            chat_enabled: Some(true), board_check_minutes: Some(30), ..Default::default() }).unwrap();
+        (lead, team::add_agent(&db, &s.you_id, &s.team_id, agent_input("Backend Agent", None)).unwrap())
+    };
+    let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
+    let agents: i64 = c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0)).unwrap();
+    drop(c);
+    let db = Db::open(&path).unwrap();
+    let (version, empty, all): (i64, i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
+        c.query_row("SELECT COUNT(*) FROM agent_configs WHERE folders_json = '[]'", [], |r| r.get(0))?,
+        c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0))?))).unwrap();
+    assert_eq!((version, empty, all), (9, agents, agents), "every agent kept, each with '[]'");
+    assert_eq!(team::agent(&db, &lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009");
+    assert!(team::agent(&db, &backend).unwrap().folders.is_empty());
+    let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v9-") && snaps[0].ends_with(".db"), "{snaps:?}");
+}
+
+#[test]
+fn the_board_check_and_the_folders_are_saved_side_by_side_and_each_leaves_the_other_alone() {
+    // GA-47 merged GA-35 (board_check_minutes, ?13) and GA-45 (folders_json, ?14) into the same INSERT and UPDATE.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("data")).unwrap();
+    let db = Db::open(&dir.path().join("data/gizai.db")).unwrap();
+    let s = seed::ensure_seed(&db, "Jeffrey").unwrap();
+    let (shared, out) = (dir.path().join("shared").display().to_string(), dir.path().join("out").display().to_string());
+    let lead_input = |board: Option<i64>, folders: Option<Vec<Folder>>| AgentInput { name: "Team Lead".into(), role_key: "lead".into(),
+        chat_enabled: Some(true), board_check_minutes: board, folders, ..Default::default() };
+    let id = team::add_agent(&db, &s.you_id, &s.team_id, lead_input(Some(20), Some(vec![f(&shared, "read")]))).unwrap();
+    let m = team::agent(&db, &id).unwrap();
+    assert_eq!((m.board_check_minutes, m.folders), (Some(20), vec![f(&shared, "read")]), "both saved by add_agent");
+
+    // the folders change, the board check stays
+    team::update_agent(&db, &s.you_id, &id, lead_input(None, Some(vec![f(&shared, "read"), f(&out, "change")]))).unwrap();
+    let m = team::agent(&db, &id).unwrap();
+    assert_eq!((m.board_check_minutes, m.folders.clone()), (Some(20), vec![f(&shared, "read"), f(&out, "change")]));
+    // the board check changes, the folders stay
+    team::update_agent(&db, &s.you_id, &id, lead_input(Some(45), None)).unwrap();
+    let m = team::agent(&db, &id).unwrap();
+    assert_eq!((m.board_check_minutes, m.folders.clone()), (Some(45), vec![f(&shared, "read"), f(&out, "change")]));
+    // both given at once, then neither: nothing else moves
+    team::update_agent(&db, &s.you_id, &id, lead_input(Some(0), Some(vec![f(&out, "read")]))).unwrap();
+    team::update_agent(&db, &s.you_id, &id, lead_input(None, None)).unwrap();
+    let m = team::agent(&db, &id).unwrap();
+    assert_eq!((m.board_check_minutes, m.folders), (None, vec![f(&out, "read")]), "0 turns the check off; the list as last saved");
+    // a refused folder stops the whole update, the board check included
+    assert!(team::update_agent(&db, &s.you_id, &id, lead_input(Some(60), Some(vec![f("/", "read")]))).is_err());
+    assert_eq!(team::agent(&db, &id).unwrap().board_check_minutes, None);
 }

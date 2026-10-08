@@ -446,3 +446,37 @@ async fn in_a_check_the_team_lead_never_starts_more_runs_than_the_agents_free_sl
     runs::stop_all(&st, Duration::from_secs(12)).await;
     let _ = tokio::time::timeout(Duration::from_secs(15), done).await;
 }
+
+#[tokio::test]
+async fn a_board_check_reads_the_leads_copies_of_the_code_and_its_own_folders_never_the_linked_folder() {
+    // GA-47: main's board check still passed the linked folders (repo_dirs, which GA-44 removed); after the merge it
+    // gets what a chat turn gets: the Team Lead's copies of the code, then its own folders (GA-45), a missing one left out.
+    let t = setup().await;
+    let repo = git_repo(t._tmp.path());
+    projects::update(&t.st.db, &t.st.you_id, &t.project, ProjectInput { name: "Kade portal".into(), key: "KADE".into(), status: Some("active".into()),
+        repo_path: Some(repo.display().to_string()), ..Default::default() }).unwrap();
+    gizai_lib::code::before_turn(&t.st, "warm-up").await;
+    let copy = t.st.data_dir.join("code/KADE");
+    assert!(copy.join(".git").exists(), "the Team Lead's copy is there");
+    let (shared, out, gone) = (t._tmp.path().join("shared"), t._tmp.path().join("out"), t._tmp.path().join("gone"));
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let folder = |p: &Path, access: &str| gizai_core::folders::Folder { path: p.display().to_string(), access: access.into() };
+    t.set_lead(|i| i.folders = Some(vec![folder(&shared, "read"), folder(&out, "change"), folder(&gone, "read")]));
+    assert_eq!(t.lead().board_check_minutes, Some(15), "saving its folders keeps its board check");
+
+    let t0 = ids::now_ms();
+    assert!(t.beat(t0).await.is_none());
+    t.loose("Export invoices");
+    let s = t.beat(t0 + 15 * MIN).await.expect("a check started");
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let argv: Vec<String> = serde_json::from_value(t.calls().last().unwrap()["argv"].clone()).unwrap();
+    assert_eq!(argv.iter().filter(|a| *a == "--add-dir").count(), 1, "{argv:?}");
+    let at = argv.iter().position(|a| a == "--add-dir").unwrap();
+    let dirs: Vec<&String> = argv[at + 1..].iter().take_while(|a| !a.starts_with("--")).collect();
+    let real = |p: &Path| p.canonicalize().unwrap().display().to_string();
+    assert_eq!(dirs, [&copy.display().to_string(), &real(&shared), &real(&out)], "its copy first, then its folders that are there");
+    assert!(!argv.contains(&repo.display().to_string()) && !argv.contains(&real(&repo)), "never the linked folder: {argv:?}");
+    let tools_flag = &argv[argv.iter().position(|a| a == "--tools").unwrap() + 1];
+    assert_eq!(tools_flag, "Read,Glob,Grep", "no tool that writes, so a read and change folder is only read");
+}

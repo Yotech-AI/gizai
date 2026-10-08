@@ -68,7 +68,7 @@ export function ChatPage({ id }: { id?: string }) {
               </a>
             ))}
           </aside>
-          <ChatThread threadId={id ?? null} agent={lead} />
+          <ChatThread threadId={id ?? null} thread={thread} agent={lead} />
         </div>
       )}
     </>

@@ -260,6 +260,11 @@ pub fn update_agent(app: AppHandle, st: State<AppState>, actor_id: String, input
     resume(&st, &actor_id);
     Ok(())
 }
+/// The agent form's Folders: why each folder is refused, or a warning (a project's main checkout).
+#[tauri::command]
+pub fn check_agent_folders(st: State<AppState>, folders: Vec<gizai_core::folders::Folder>) -> Vec<gizai_core::folders::FolderCheck> {
+    crate::folders::check(&st, &folders)
+}
 #[tauri::command]
 pub fn set_agent_status(app: AppHandle, st: State<AppState>, actor_id: String, status: String) -> R<()> {
     team::set_agent_status(&st.db, &st.you_id, &actor_id, &status).map_err(e)?;

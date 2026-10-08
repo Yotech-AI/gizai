@@ -310,7 +310,7 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions unless instructions_md is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
-        tool("update_agent", "Changes an agent's settings. Only the fields given change.",
+        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change) are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
         tool("set_agent_status", "Pauses an agent (no heartbeats, no new runs) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
         tool("add_routing_rule", "Adds a routing rule: a card with a label, or entering a column, goes to the first idle agent with a role.",
@@ -329,7 +329,7 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("attach_file", "Copies a local file (absolute path, or ~/…) into Gizai and attaches it to one task, project or client.",
              &[("path", "string", "Absolute path of the file"), ("task", "string", "Task identifier"), ("project", "string", "Project key or name"), ("client", "string", "Client name")], &["path"]),
         tool("add_person", "Adds a person (a colleague or reviewer) to Gizai.", &[("name", "string", "Full name"), ("email", "string", "Email")], &["name"]),
-        tool("update_checkout", "Chat only, and only after the user said yes in this chat: updates a project's linked folder (the user's own checkout, where new cards copy vendor/ and node_modules/ from) to main as last fetched. A fast-forward, then composer install or npm ci where a lock file changed or a folder is missing; never the setup command. Changes nothing, and says why, with uncommitted changes, a merge or rebase in progress, a local main with its own commits, or another branch unless switch is true. Answers at once; the result comes as a message in this chat.",
+        tool("update_checkout", "Chat only, and only after the user said yes in this chat: updates a project's linked folder (the user's own checkout, where new cards copy vendor/ and node_modules/ from) to main as last fetched. A fast-forward, then composer install or npm ci where a lock file changed or a folder is missing; never the setup command. Changes nothing, and says why, with uncommitted changes, a merge or rebase in progress, a local main with its own commits, another branch unless switch is true, or a folder that the Team Lead's folders (agent form) set to read. Answers at once; the result comes as a message in this chat.",
              &[PROJECT, ("switch", "boolean", "When the folder is on another branch: switch it to the default branch first (that branch stays as it is). Only when the user agreed to the switch"),
                ("folder", "string", "The folder to update; only the project's linked folder is allowed (the default)")], &["project"]),
     ]

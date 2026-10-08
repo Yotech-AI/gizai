@@ -347,6 +347,14 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
                  (its main branch as last fetched from GitHub, else its local default branch). A copy has the tracked files only: \
                  no vendor/, node_modules/ or .env.\n{copies}\n")
     };
+    // The folders from its agent form (Permissions → Folders) that are there: read only in chat, whatever they are set to.
+    let folders: String = crate::folders::lead_folders(st, agent).iter()
+        .map(|f| format!("- {} ({})\n", f.path, if f.change() { "read and change" } else { "read" }))
+        .collect();
+    let folders = if folders.is_empty() { String::new() } else {
+        format!("## Your folders\n\n{you} gave you these folders too, in your agent form. In chat you only read them (Read, Glob and Grep), \
+                 whatever they are set to; you never change files in them.\n{folders}\n")
+    };
     format!(
         "You are {name}, the Team Lead in Gizai: {you}'s desktop app for clients, projects, tasks and the AI agents that work on them. Today is {today}.\n\
          You are chatting with {you} on Gizai's Chat page. Act for them through the gizai tools (mcp__gizai__…):\n\
@@ -361,6 +369,7 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
          - Your instructions below also cover task runs; in chat, never write a GIZAI_RESULT line.\n\
          Answer in {you}'s language, short and plain.\n\n\
          {copies}\
+         {folders}\
          ## Your instructions\n\n{instructions}",
         name = agent.name, today = crate::tools::ymd(ids::now_ms()),
     )
@@ -385,8 +394,20 @@ fn set_live(st: &AppState, thread_id: &str, f: impl FnOnce(&mut LiveTurn)) {
     }
 }
 
+/// The folders the Team Lead may read, for `--add-dir` in a chat turn and in a board check: `copies` (its copies of the
+/// code), then its own folders (agent form → Folders). It only reads them, as it has no tool that writes.
+fn lead_dirs(st: &AppState, agent: &Member, copies: &[String]) -> Vec<String> {
+    let mut dirs = copies.to_vec();
+    for f in crate::folders::lead_folders(st, agent) {
+        if !dirs.contains(&f.path) {
+            dirs.push(f.path);
+        }
+    }
+    dirs
+}
+
 /// One `claude -p` run for a turn: resuming the thread's session, or `fresh` in a new one. `add_dirs`: the folders the
-/// Team Lead may read (its copies of the code).
+/// Team Lead may read (its copies of the code); its own folders from the agent form are added here.
 #[allow(clippy::too_many_arguments)]
 async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt: &str, bin: &CliSpec, shim: &Path, fresh: bool,
                       add_dirs: &[String]) -> Attempt {
@@ -426,9 +447,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         bin: bin.bin.clone(), env: bin.env.clone(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
         allowed_tools: vec!["mcp__gizai".into()], append_system_prompt: Some(system_prompt(st, agent)), model: agent.model.clone(),
         max_budget_usd: settings.max_run_usd, resume, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
-        tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: add_dirs.to_vec(),
+        tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, add_dirs),
         no_session_persistence: std::env::var("GIZAI_CHAT_NO_PERSIST").is_ok_and(|v| v == "1"),
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(),
+        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: vec![],
     };
     let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
         Ok(h) => h,
@@ -577,8 +598,8 @@ fn check_system_prompt(st: &AppState, agent: &Member) -> String {
 }
 
 /// Starts a board check of the Team Lead (`board::tick`) with `prompt` (its new findings) in a fresh session: like a
-/// chat turn (the gizai tools with a token of its own, `manual` permissions, Read, Glob and Grep in the linked
-/// repositories, a chat turn's limits), recorded as a `board_check` run with no card and no chat that remembers
+/// chat turn (the gizai tools with a token of its own, `manual` permissions, Read, Glob and Grep in its copies of the
+/// code and its own folders, a chat turn's limits), recorded as a `board_check` run with no card and no chat that remembers
 /// `saw`. It takes no "Runs at once" slot and doesn't block chat. One check at a time.
 pub fn start_check(st: &AppState, agent: Member, prompt: String, saw: Vec<gizai_core::board::Seen>)
     -> Result<tokio::task::JoinHandle<CheckSummary>, String> {
@@ -642,14 +663,17 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         return end("failed", Totals::default(), Some(e.to_string()), None);
     }
     let settings = crate::runs::get_settings(st);
+    // What a chat turn reads: its copies of the code as they are now (a check doesn't wait for a refresh), never the
+    // linked folders, and its own folders.
+    let copies: Vec<String> = crate::code::dirs(st).iter().map(|d| d.display().to_string()).collect();
     let args = ClaudeArgs {
         bin: bin.bin.clone(), env: bin.env.clone(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
         allowed_tools: vec!["mcp__gizai".into()], append_system_prompt: Some(check_system_prompt(st, agent)), model: agent.model.clone(),
         max_budget_usd: settings.max_run_usd, resume: false, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
-        tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: repo_dirs(st),
+        tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, &copies),
         // A check's session is never resumed.
         no_session_persistence: true,
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(),
+        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: vec![],
     };
     if crate::runs::is_closing(st) {
         cleanup(&token);

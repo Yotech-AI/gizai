@@ -3,16 +3,18 @@
 use crate::{ids, Result};
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 use rusqlite_migration::{M, Migrations};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 pub struct Db {
     conn: Mutex<Connection>,
     device_id: String,
     counter: AtomicU32,
+    /// The folder the database file is in (Gizai's data folder); None in memory.
+    dir: Option<PathBuf>,
 }
 
 fn migrations() -> Migrations<'static> {
@@ -25,6 +27,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0006_worktree_prepare.sql")),
         M::up(include_str!("../migrations/0007_card_flow.sql")),
         M::up(include_str!("../migrations/0008_board_check.sql")),
+        M::up(include_str!("../migrations/0009_agent_folders.sql")),
     ])
 }
 
@@ -88,11 +91,18 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        Self::init(conn)
+        let mut db = Self::init(conn)?;
+        db.dir = path.parent().map(|d| std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()));
+        Ok(db)
     }
 
     pub fn open_in_memory() -> Result<Db> {
         Self::init(Connection::open_in_memory()?)
+    }
+
+    /// The folder the database file is in: Gizai's data folder (None for a database in memory).
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
     }
 
     fn init(mut conn: Connection) -> Result<Db> {
@@ -117,7 +127,7 @@ impl Db {
                 id
             }
         };
-        Ok(Db { conn: Mutex::new(conn), device_id, counter: AtomicU32::new(0) })
+        Ok(Db { conn: Mutex::new(conn), device_id, counter: AtomicU32::new(0), dir: None })
     }
 
     pub fn read<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {

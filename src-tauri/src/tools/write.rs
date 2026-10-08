@@ -46,6 +46,10 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
             return Err("an agent can't be allowed to run any command from chat; name the commands, like Bash(npm test:*) or Bash(git commit:*)".into());
         }
     }
+    // The folders an agent may read or change: only the user sets them, in the agent form.
+    if a.0.get("folders").is_some_and(|v| !v.is_null()) {
+        return Err("an agent's folders can't be changed from chat: the user sets them in the agent form (Team page → the agent → Permissions → Folders). Nothing changed.".into());
+    }
     Ok(())
 }
 
@@ -313,7 +317,7 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
         allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: a.opt("wakeup").unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
-        max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?,
+        max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;
     agent_result(cx, &id, "created")
 }
@@ -342,7 +346,7 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         wakeup: a.opt("wakeup").or(m.wakeup.clone()).unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?.or(m.heartbeat_minutes),
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
-        board_check_minutes: a.int("board_check_minutes")?,
+        board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;
     crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "updated")
@@ -546,6 +550,8 @@ pub(crate) async fn update_checkout(cx: &Cx<'_>, a: &Args) -> Result<Value, Stri
             return Err(format!("update_checkout only updates {}'s linked folder ({linked}); {f} isn't it, so nothing changed", p.key));
         }
     }
+    // Not a folder that the Team Lead's own folders (agent form → Folders) set to read.
+    crate::folders::lead_may_update(cx.st, std::path::Path::new(&linked))?;
     let will = crate::code::start_update(cx.st, thread, &p, a.flag("switch").unwrap_or(false)).await?;
     Ok(json!({"ok": true, "done": "started", "folder": linked, "will": will,
               "result": "comes as a message in this chat when the update ends",

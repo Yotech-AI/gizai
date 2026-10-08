@@ -301,6 +301,9 @@ pub struct AgentInput {
     /// The Team Lead's board check: every this many minutes (5–1440), 0 = off. None: off for a new agent, unchanged on
     /// update.
     pub board_check_minutes: Option<i64>,
+    /// The folders besides its worktree its file tools may use (`folders`). None: none for a new agent, unchanged on
+    /// update. Only the agent form sets them: the Team Lead's tools always leave None.
+    pub folders: Option<Vec<crate::folders::Folder>>,
 }
 
 /// "When a card has label <match_name>" or "enters column <match_name>" → the first idle agent with `target_role`.

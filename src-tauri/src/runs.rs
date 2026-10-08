@@ -72,8 +72,10 @@ pub struct RunManager {
     /// Cards whose run is starting (their worktree being made and prepared): one start at a time per card.
     starting: std::sync::Arc<Mutex<HashSet<String>>>,
     /// Agents that stopped taking cards from the queue (`pull`) and heartbeats after a start that couldn't work or a run
-    /// that failed, with why: one missing login holds one card, not the whole queue. The pause ends when a person starts
-    /// the agent (Run or Continue), edits it or sets it active on the Team page, or when Gizai starts again.
+    /// that failed, with why (the first failure's). It is asked before every start, and only the failure that paused the
+    /// agent holds its card: a card started just before goes back to waiting when it fails the same way, so one missing
+    /// login holds one card, not the whole queue. The pause ends when a person starts the agent (Run or Continue), edits
+    /// it or sets it active on the Team page, or when Gizai starts again.
     pull_paused: Mutex<HashMap<String, String>>,
     /// One pull of the queue at a time: two runs ending together don't give an agent more cards than it may work on.
     pulling: tokio::sync::Mutex<()>,
@@ -96,9 +98,21 @@ pub fn resume_pull(st: &AppState, agent_id: &str) {
     st.runs.pull_paused.lock().unwrap().remove(agent_id);
 }
 
-fn pause_pull(st: &AppState, agent_id: &str, why: &str) {
+/// Pauses the agent's pull. True when this paused it; false when an earlier failure already had (its reason stays).
+fn pause_pull(st: &AppState, agent_id: &str, why: &str) -> bool {
+    let mut paused = st.runs.pull_paused.lock().unwrap();
+    if paused.contains_key(agent_id) {
+        return false;
+    }
     eprintln!("gizai: agent {agent_id} stops taking cards until you start or edit it: {why}");
-    st.runs.pull_paused.lock().unwrap().insert(agent_id.to_string(), why.to_string());
+    paused.insert(agent_id.to_string(), why.to_string());
+    true
+}
+
+/// Whether the queue and heartbeats may start another card for the agent now: Gizai isn't quitting, agents aren't
+/// paused in Settings and the agent's pull isn't paused. Asked again before each start.
+fn takes_cards(st: &AppState, agent_id: &str) -> bool {
+    !is_closing(st) && !settings::get::<bool>(&st.db, "agents_paused").ok().flatten().unwrap_or(false) && pull_paused(st, agent_id).is_none()
 }
 
 /// Held while a card's run starts.
@@ -447,13 +461,18 @@ pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<Stri
 
 /// A start nobody is watching (the queue, heartbeat): a start that can't work puts the card on hold "blocked" with the
 /// reason (it stays where it was, and its failure count doesn't change), so Jeffrey sees why, and the agent stops taking
-/// cards until a person starts or edits it. A start that only has to wait leaves the card waiting for the next pull.
+/// cards until a person starts or edits it. When another card's failure paused the agent while this card was starting,
+/// the card only waits again: one failure holds one card. A start that only has to wait leaves the card waiting for
+/// the next pull.
 async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger: &str) -> Option<tokio::task::JoinHandle<RunSummary>> {
     match start_inner(st, task_id, Some(agent_id.to_string()), None, trigger, None).await {
         Ok((_, done)) => Some(done),
         Err(StartError::Card(reason)) => {
-            hold_card(st, agent_id, task_id, &reason);
-            pause_pull(st, agent_id, &reason);
+            if pause_pull(st, agent_id, &reason) {
+                hold_card(st, agent_id, task_id, &reason);
+            } else {
+                eprintln!("gizai: {trigger} start of an agent failed while its pull was paused, the card waits: {reason}");
+            }
             None
         }
         Err(StartError::Held(reason)) => { pause_pull(st, agent_id, &reason); None }
@@ -596,6 +615,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         }
         None => project.default_branch.clone(),
     };
+    // A card the queue or a heartbeat starts waits when another of the agent's cards failed meanwhile: asked before its
+    // worktree is made and again before its process spawns.
+    let queued = matches!(trigger, "assigned" | "heartbeat");
+    let wait_if_paused = || match pull_paused(st, &agent_id) {
+        Some(why) if queued => Err(StartError::Wait(format!("{} stopped taking cards: {why}", agent.name))),
+        _ => Ok(()),
+    };
+    wait_if_paused()?;
     let wt = open_worktree(st, &project, &task, Path::new(&repo), &start)?;
     if let Some(todo) = worktree::unprepared(&wt.path) {
         prepare_worktree(st, &agent_id, &task, &project, Path::new(&repo), &wt, todo).await?;
@@ -609,6 +636,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if is_closing(st) {
         return Err(StartError::Other("Gizai is quitting".into()));
     }
+    wait_if_paused()?;
     let session = resume.as_ref().map(|r| r.session.clone()).unwrap_or_else(ids::new_id);
     let log_dir = st.data_dir.join("runs");
     std::fs::create_dir_all(&log_dir).map_err(|e| StartError::Other(e.to_string()))?;
@@ -722,7 +750,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
-        finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from }, &cli_name).await
+        finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued }, &cli_name).await
     });
     Ok((run_id, done))
 }
@@ -789,13 +817,15 @@ async fn check_model(st: &AppState, cli: &gizai_core::clis::Cli, spec: &agent_cl
 }
 
 /// What a run's process left behind. `capped`: why Gizai stopped the run at a limit, if it did. `tools`: how many tool
-/// calls it made. `moved_from`: the column the card was in before the start moved it to In progress.
+/// calls it made. `moved_from`: the column the card was in before the start moved it to In progress. `queued`: the
+/// queue or a heartbeat started it, not a person.
 struct Ran {
     result: Option<RunEvent>,
     capped: Option<String>,
     exit: String,
     tools: usize,
     moved_from: Option<String>,
+    queued: bool,
 }
 
 /// Claude Code's own words for a missing or expired login.
@@ -806,7 +836,7 @@ fn login_problem(error: &str) -> bool {
 
 /// `dir`: the run's worktree. `cli`: the CLI's name, for the reason a run failed.
 async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran: Ran, cli: &str) -> RunSummary {
-    let Ran { result, capped, exit, tools, moved_from } = ran;
+    let Ran { result, capped, exit, tools, moved_from, queued } = ran;
     let exit = exit.as_str();
     let stopped = st.runs.stopped.lock().unwrap().remove(run_id);
     let (cost, input, output, text, ok) = match &result {
@@ -839,17 +869,20 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
     let agent = core_runs::get(&st.db, run_id).map(|r| r.agent_id).unwrap_or_default();
-    // Claude Code couldn't start working (not logged in): not a failed run. The card goes back where it was, on hold.
+    // Claude Code couldn't start working (not logged in): not a failed run. The card goes back where it was, on hold;
+    // one failure holds one card, so a card the queue started before another card's failure paused the agent only
+    // waits again.
     let unstarted = status == "failed" && tools == 0 && error.as_deref().is_some_and(login_problem);
     if unstarted {
         let reason = error.clone().unwrap_or_default();
-        if let Err(e) = workflow::hold_unstarted(&st.db, run_id, &reason) {
+        let first = pause_pull(st, &agent, &reason);
+        let done = if first || !queued { workflow::hold_unstarted(&st.db, run_id, &reason) } else { workflow::release_unstarted(&st.db, run_id) };
+        if let Err(e) = done {
             eprintln!("gizai: holding the card of run {run_id} failed: {e}");
         }
         if let Some(from) = &moved_from {
             let _ = workflow::put_back(&st.db, &agent, task_id, from);
         }
-        pause_pull(st, &agent, &reason);
     } else if !cancelled {
         match workflow::apply_outcome(&st.db, run_id, if status == "succeeded" { verdict.as_ref() } else { None }) {
             Ok(g) => moved = g.moved_to.is_some(),
@@ -925,20 +958,26 @@ async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSu
     let _one = st.runs.pulling.lock().await;
     let max = get_settings(st).max_concurrent_runs as usize;
     for (_, a) in team::all_agents(&st.db).unwrap_or_default() {
-        if a.status != "active" || a.wakeup.as_deref() != Some("on_assign") || pull_paused(st, &a.actor_id).is_some() {
+        if a.status != "active" || a.wakeup.as_deref() != Some("on_assign") {
             continue;
         }
-        for task in workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default() {
-            let (mine, all, running) = {
+        // At most its cards at once per pull; a slot that frees up meanwhile is filled by the pull its run's end starts.
+        // The pause is asked before each start: a card this pull started may have failed already, and a failing CLI
+        // must not run through the queue.
+        for _ in 0..a.max_runs.max(1) {
+            if !takes_cards(st, &a.actor_id) {
+                break;
+            }
+            let (mine, all) = {
                 let live = st.runs.live.lock().unwrap();
-                (live.values().filter(|l| l.agent_id == a.actor_id).count() as i64, live.len(), live.values().any(|l| l.task_id == task))
+                (live.values().filter(|l| l.agent_id == a.actor_id).count() as i64, live.len())
             };
             if mine >= a.max_runs.max(1) || all >= max {
                 break;
             }
-            if running || st.runs.starting.lock().unwrap().contains(&task) {
-                continue;
-            }
+            // Read again each time: the cards this pull started are claimed now, and others may have moved or been held.
+            let busy = |t: &String| st.runs.live.lock().unwrap().values().any(|l| &l.task_id == t) || st.runs.starting.lock().unwrap().contains(t);
+            let Some(task) = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default().into_iter().find(|t| !busy(t)) else { break };
             match start_background(st, &task, &a.actor_id, "assigned").await {
                 Some(done) => started.push((task, done)),
                 None => break,
@@ -966,9 +1005,13 @@ pub async fn heartbeat_tick(st: &AppState, now: i64) -> Vec<tokio::task::JoinHan
         }
         let _ = team::touch_heartbeat(&st.db, &a.actor_id, now);
         woke = true;
-        // Up to the agent's cards-at-once, each on its own card (next_task_for skips claimed cards).
+        // Up to the agent's cards-at-once, each on its own card (next_task_for skips claimed cards). The pause is asked
+        // before each start, as in `pull`.
         let busy = st.runs.live.lock().unwrap().values().filter(|l| l.agent_id == a.actor_id).count() as i64;
         for _ in busy..a.max_runs.max(1) {
+            if !takes_cards(st, &a.actor_id) {
+                break;
+            }
             let Ok(Some(task)) = workflow::next_task_for(&st.db, &a.actor_id) else { break };
             match start_background(st, &task, &a.actor_id, "heartbeat").await {
                 Some(done) => started.push(done),

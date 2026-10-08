@@ -243,12 +243,25 @@ pub fn put_back(db: &Db, agent_id: &str, task_id: &str, state_id: &str) -> Resul
 /// A run that couldn't start working: it isn't a failed run. Puts the card on hold "blocked" with the error, records
 /// the run as without a result and releases its claim; `fail_count` stays as it was.
 pub fn hold_unstarted(db: &Db, run_id: &str, reason: &str) -> Result<()> {
+    unstarted(db, run_id, Some(reason))
+}
+
+/// The same without the hold: the card only waits again. For a card the queue started before another card's failure
+/// paused its agent: one failure holds one card.
+pub fn release_unstarted(db: &Db, run_id: &str) -> Result<()> {
+    unstarted(db, run_id, None)
+}
+
+fn unstarted(db: &Db, run_id: &str, hold: Option<&str>) -> Result<()> {
     let run = runs::get(db, run_id)?;
     let task_id = run.task_id.clone().ok_or_else(|| Error::Invalid("this run has no task".into()))?;
     db.write(Some(&run.agent_id), |w| {
         w.conn().execute("UPDATE runs SET outcome=COALESCE(outcome, 'no_result'), updated_at=?2 WHERE id=?1", rusqlite::params![run_id, ids::now_ms()])?;
         runs::release_claim(w, run_id)?;
-        set_hold(w, &task_id, "blocked", reason)
+        match hold {
+            Some(reason) => set_hold(w, &task_id, "blocked", reason),
+            None => Ok(()),
+        }
     })
 }
 

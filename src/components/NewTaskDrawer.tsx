@@ -22,6 +22,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   const [stateId, setStateId] = useState<string>(presetState ?? "");
   const [priority, setPriority] = useState(0);
   const [assigneeId, setAssigneeId] = useState<string>(presetAssignee ?? "");
+  const [testing, setTesting] = useState(true);
   const [description, setDescription] = useState("");
   const [acceptance, setAcceptance] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -44,7 +45,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
     setBusy(true);
     try {
       const id = await createTask({ projectId, title: title.trim(), stateId: stateId || null, labelIds, priority, assigneeId: assigneeId || null,
-        descriptionMd: description, acceptanceMd: acceptance.trim() ? acceptance : null });
+        descriptionMd: description, acceptanceMd: acceptance.trim() ? acceptance : null, testing });
       onClose();
       go({ page: "task", id });
     } catch (e) { setErr(String(e)); setBusy(false); }
@@ -83,6 +84,10 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
                 return <button key={l.id} type="button" className="label-pill" aria-pressed={on} onClick={() => setLabelIds((ids) => on ? ids.filter((x) => x !== l.id) : [...ids, l.id])}>
                   <span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</button>;
               })}</div></Field>
+            <Field label="Testing" htmlFor="t-testing" wide
+              hint="On: the QA Agent tests the card before Review. Turn it off for a small UI fix or a bug fix that doesn't need a full test sweep.">
+              <label className="check"><input id="t-testing" type="checkbox" checked={testing} onChange={(e) => setTesting(e.target.checked)} />Test before Review</label>
+            </Field>
           </FormSection>
           <FormSection title="Description" text="Context for whoever picks it up: people and agents read the same text.">
             <Field label="Description" wide><MarkdownEditor value={description} onChange={setDescription} ariaLabel="Description" minHeight={180}

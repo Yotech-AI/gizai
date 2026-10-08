@@ -35,7 +35,11 @@ export type Task = {
   branch?: string | null;
   /** The card's pull request on GitHub, and its state as Gizai last saw it. */
   prUrl?: string | null; prState?: PullState | null;
+  /** On: the QA Agent tests the card before Review. Off: it goes straight to Review (a small fix). */
+  testing: boolean;
   createdAt: number; updatedAt: number;
+  /** Archived from Done: when, and who archived it. Null for a card on the board. */
+  archivedAt?: number | null; archivedBy?: string | null;
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -43,11 +47,15 @@ export type PullInfo = { url: string; number?: number | null; state: PullState; 
 export type TaskInput = {
   projectId: string; title: string; descriptionMd?: string; acceptanceMd?: string | null; stateId?: string | null;
   priority?: number; assigneeId?: string | null; labelIds?: string[];
+  /** The Testing switch; left out = on. */
+  testing?: boolean;
 };
 /** Every field optional; "" clears an optional value. */
 export type TaskPatch = Partial<{
   title: string; descriptionMd: string; acceptanceMd: string; priority: number; assigneeId: string; pinnedActorId: string;
   dueOn: string; hold: string; holdReason: string;
+  /** The Testing switch. */
+  testing: boolean;
 }>;
 export type TaskFilter = { projectId?: string | null; openOnly?: boolean };
 export type Comment = { id: string; authorId: string; authorName: string; authorKind: string; bodyMd: string; runId?: string | null; createdAt: number };
@@ -62,7 +70,18 @@ export type Member = {
   effort?: string | null;
   /** Cards it works on at once (1 when absent). */
   maxRuns?: number;
+  /** The Team Lead checks the board this often (minutes); null = off. */
+  boardCheckMinutes?: number | null;
+  boardCheckedAt?: number | null;
+  /** Why its board check stopped (three failed checks in a row); null = not paused. */
+  boardCheckPaused?: string | null;
+  /** Folders besides its worktree its file tools may read, or read and change. */
+  folders?: AgentFolder[];
 };
+/** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
+export type AgentFolder = { path: string; access: "read" | "change" };
+/** What the agent form shows next to a folder: why it's refused, or a warning. `path` as it would be saved. */
+export type FolderCheck = { path: string; error?: string | null; warning?: string | null };
 /** A coding CLI agents run on (Settings → Coding CLIs); "claude_code" is the built-in Claude Code. */
 export type CliKind = "claude_code" | "codex" | "gemini" | "other";
 export type Cli = {
@@ -89,8 +108,14 @@ export type AgentInput = {
   effort?: string | null;
   /** Cards it works on at once (1–10); null leaves it unchanged on update. */
   maxRuns?: number | null;
+  /** The Team Lead's board check every this many minutes (5–1440), 0 = off; null leaves it unchanged on update. */
+  boardCheckMinutes?: number | null;
+  /** Its folders; null/absent leaves them unchanged on update (none for a new agent). */
+  folders?: AgentFolder[] | null;
 };
 export type RuleInput = { kind: "label" | "column"; matchName: string; targetRole: string; priority: number };
+/** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
+export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";
 export type WorkflowState = { id: string; name: string; category: string; ownerRole?: string | null; wipLimit?: number | null; color?: string | null; sortKey: string };
 export type RoutingRule = { id: string; kind: string; matchLabelId?: string | null; matchStateId?: string | null; targetRole?: string | null; targetActorId?: string | null; priority: number; enabled: boolean };
 export type Team = { id: string; name: string; members: Member[]; states: WorkflowState[]; labels: Label[]; rules: RoutingRule[] };
@@ -107,11 +132,15 @@ export type RunEvent =
   | { kind: "tool_use"; name: string; summary: string }
   | { kind: "tool_result"; is_error: boolean; preview: string }
   | { kind: "result"; is_error: boolean; subtype: string; text: string; cost_usd?: number | null; input_tokens: number; output_tokens: number; num_turns: number }
-  | { kind: "other"; raw_type: string };
+  | { kind: "other"; raw_type: string }
+  /** A note from Gizai, such as a folder the run goes without. */
+  | { kind: "note"; text: string };
 export type SeqEvent = { seq: number; event: RunEvent };
+/** How a run ended, from its GIZAI_RESULT line; `deployed` is the DevOps Agent's. */
+export type RunOutcome = "ready_for_testing" | "qa_pass" | "qa_fail" | "needs_decision" | "deployed" | "no_result" | "error";
 export type Run = {
   id: string; agentId: string; agentName: string; taskId?: string | null; roleKey?: string | null; trigger: string; status: string;
-  outcome?: string | null; summaryMd?: string | null; createdAt: number; startedAt?: number | null; endedAt?: number | null;
+  outcome?: RunOutcome | null; summaryMd?: string | null; createdAt: number; startedAt?: number | null; endedAt?: number | null;
   costUsdMicros: number; inputTokens: number; outputTokens: number; branch?: string | null; worktreePath?: string | null;
   sessionId?: string | null; error?: string | null; logPath: string;
   /** The commit its worktree was at when it started. */
@@ -199,7 +228,14 @@ export type DayStat = { dayStart: number; succeeded: number; failed: number; oth
 
 // ---- chat with the Team Lead ----
 export type ChatThread = { id: string; agentId: string; title: string; sessionId?: string | null; createdAt: number; updatedAt: number;
-  costUsdMicros: number; inputTokens: number; outputTokens: number };
+  costUsdMicros: number; inputTokens: number; outputTokens: number;
+  /** A chat the Team Lead started during a board check: question | approval; null = your own chat. */
+  kind?: "question" | "approval" | null;
+  /** The identifiers of the cards a Team Lead chat is about. */
+  tasks?: string[];
+  answeredAt?: number | null; dismissedAt?: number | null;
+  /** A Team Lead chat that still waits for you (it is in the Inbox). */
+  waiting?: boolean };
 /** role: user | agent | tool | system. Tool messages carry `tool` = {id, input, result?, isError?}. */
 export type ChatMessage = { id: string; threadId: string; role: string; authorId?: string | null; authorName?: string | null;
   bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number };

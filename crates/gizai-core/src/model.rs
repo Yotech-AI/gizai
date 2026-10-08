@@ -162,8 +162,13 @@ pub struct Task {
     /// The card's pull request on GitHub, and its state as Gizai last saw it: open, draft, merged or closed.
     pub pr_url: Option<String>,
     pub pr_state: Option<String>,
+    /// On: a finished run sends the card to Testing for the QA Agent. Off: straight to Review (a small fix).
+    pub testing: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Archived from Done (a soft delete): when, and the name of who archived it. None for a card on the board.
+    pub archived_at: Option<i64>,
+    pub archived_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -177,6 +182,8 @@ pub struct TaskInput {
     pub priority: i64,
     pub assignee_id: Option<String>,
     pub label_ids: Vec<String>,
+    /// The Testing switch; None = on.
+    pub testing: Option<bool>,
 }
 
 /// Every field is optional; for optional columns an empty string clears the value.
@@ -192,6 +199,9 @@ pub struct TaskPatch {
     pub due_on: Option<String>,
     pub hold: Option<String>,
     pub hold_reason: Option<String>,
+    /// The Testing switch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testing: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -288,6 +298,12 @@ pub struct AgentInput {
     pub effort: Option<String>,
     /// Cards it works on at once (1–10), each in its own worktree. None: 1 for a new agent, unchanged on update.
     pub max_runs: Option<i64>,
+    /// The Team Lead's board check: every this many minutes (5–1440), 0 = off. None: off for a new agent, unchanged on
+    /// update.
+    pub board_check_minutes: Option<i64>,
+    /// The folders besides its worktree its file tools may use (`folders`). None: none for a new agent, unchanged on
+    /// update. Only the agent form sets them: the Team Lead's tools always leave None.
+    pub folders: Option<Vec<crate::folders::Folder>>,
 }
 
 /// "When a card has label <match_name>" or "enters column <match_name>" → the first idle agent with `target_role`.

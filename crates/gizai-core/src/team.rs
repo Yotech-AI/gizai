@@ -40,6 +40,14 @@ pub struct Member {
     pub effort: Option<String>,
     /// Cards it works on at once.
     pub max_runs: i64,
+    /// The Team Lead checks the board this often (minutes); None = off.
+    pub board_check_minutes: Option<i64>,
+    /// When it last looked at the board.
+    pub board_checked_at: Option<i64>,
+    /// Why its board check stopped (three failed checks in a row), until it is changed or resumed; None = not paused.
+    pub board_check_paused: Option<String>,
+    /// Folders besides its worktree its file tools may read, or read and change (`folders`).
+    pub folders: Vec<crate::folders::Folder>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,17 +88,21 @@ pub struct Team {
 
 const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g.adapter, g.instructions_md, a.handle, a.status, m.is_lead,
         g.model, g.permission_mode, g.allowed_tools_json, g.wakeup, g.heartbeat_minutes, g.budget_usd_micros, g.last_heartbeat_at, m.team_id,
-        COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1)
+        COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1), g.board_check_minutes, g.board_checked_at, g.board_check_paused,
+        g.folders_json
      FROM team_members m JOIN actors a ON a.id = m.actor_id LEFT JOIN agent_configs g ON g.actor_id = a.id";
 
 fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
     let tools: Option<String> = r.get(12)?;
+    let folders: Option<String> = r.get(24)?;
     Ok(Member { actor_id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, role_key: r.get(3)?, title: r.get(4)?,
                 adapter: r.get(5)?, instructions_md: r.get(6)?, handle: r.get(7)?, status: r.get(8)?,
                 is_lead: r.get::<_, i64>(9)? != 0, model: r.get(10)?, permission_mode: r.get(11)?,
                 allowed_tools: tools.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
                 wakeup: r.get(13)?, heartbeat_minutes: r.get(14)?, budget_usd_micros: r.get(15)?, last_heartbeat_at: r.get(16)?,
-                chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)? })
+                chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)?,
+                board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)?,
+                folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default() })
 }
 
 /// Every agent of every team, with its team id (for the heartbeat scheduler).
@@ -185,6 +197,8 @@ struct CleanAgent {
     tools_json: String, wakeup: String, heartbeat_minutes: Option<i64>, budget: Option<i64>, effort: Option<String>,
     /// The kind of its CLI: claude_code, codex, gemini or other.
     kind: String,
+    /// Its folders as saved; None: unchanged (none for a new agent).
+    folders_json: Option<String>,
 }
 
 fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
@@ -231,15 +245,22 @@ fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
             return Err(Error::Invalid(format!("effort is {}, not {e}", levels.join(", "))));
         }
     }
+    if matches!(i.board_check_minutes, Some(m) if m != 0 && !(5..=1440).contains(&m)) {
+        return Err(Error::Invalid("the board check runs every 5 to 1440 minutes".into()));
+    }
     if matches!(i.max_runs, Some(n) if !(1..=10).contains(&n)) {
         return Err(Error::Invalid("an agent works on between 1 and 10 cards at once".into()));
     }
     let tools: Vec<String> = i.allowed_tools.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    let folders_json = match &i.folders {
+        Some(list) => Some(serde_json::to_string(&crate::folders::clean(list, &crate::folders::Places::of(db))?)?),
+        None => None,
+    };
     Ok(CleanAgent {
         name, role, title: util::clean(&i.title), adapter, model: util::clean(&i.model), permission_mode,
         tools_json: serde_json::to_string(&tools)?, wakeup,
         heartbeat_minutes: if i.wakeup.trim() == "heartbeat" { i.heartbeat_minutes } else { i.heartbeat_minutes.filter(|m| *m > 0) },
-        budget: i.budget_usd_micros, effort, kind,
+        budget: i.budget_usd_micros, effort, kind, folders_json,
     })
 }
 
@@ -262,10 +283,10 @@ pub fn add_agent(db: &Db, actor: &str, team_id: &str, input: AgentInput) -> Resu
         )?;
         c.execute(
             "INSERT INTO agent_configs(actor_id, created_at, updated_at, adapter, model, instructions_md, permission_mode, allowed_tools_json,
-                                       wakeup, heartbeat_minutes, budget_usd_micros, effort, max_concurrent_runs)
-             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                       wakeup, heartbeat_minutes, budget_usd_micros, effort, max_concurrent_runs, board_check_minutes, folders_json)
+             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![id, now, a.adapter, a.model, instructions, a.permission_mode, a.tools_json, a.wakeup, a.heartbeat_minutes, a.budget, a.effort,
-                              input.max_runs.unwrap_or(1)],
+                              input.max_runs.unwrap_or(1), input.board_check_minutes.filter(|m| *m > 0), a.folders_json.as_deref().unwrap_or("[]")],
         )?;
         c.execute(
             "INSERT INTO team_members(team_id, actor_id, role_key, is_lead, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -305,9 +326,11 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
         c.execute(
             "UPDATE agent_configs SET adapter=?2, model=?3, instructions_md=COALESCE(?4, instructions_md), permission_mode=?5, allowed_tools_json=?6,
                     wakeup=?7, heartbeat_minutes=?8, budget_usd_micros=?9, updated_at=?10, effort=?11,
-                    max_concurrent_runs=COALESCE(?12, max_concurrent_runs), version=version+1 WHERE actor_id=?1",
+                    max_concurrent_runs=COALESCE(?12, max_concurrent_runs),
+                    board_check_minutes=CASE WHEN ?13 IS NULL THEN board_check_minutes WHEN ?13 > 0 THEN ?13 END,
+                    board_check_paused=NULL, board_check_failures=0, folders_json=COALESCE(?14, folders_json), version=version+1 WHERE actor_id=?1",
             rusqlite::params![actor_id, a.adapter, a.model, instructions, a.permission_mode, a.tools_json, a.wakeup, a.heartbeat_minutes, a.budget, now, a.effort,
-                              input.max_runs],
+                              input.max_runs, input.board_check_minutes, a.folders_json],
         )?;
         c.execute("UPDATE team_members SET role_key=?2, is_lead=?3 WHERE actor_id=?1 AND deleted_at IS NULL",
                   rusqlite::params![actor_id, a.role, (a.role == "lead") as i64])?;
@@ -317,7 +340,8 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
             None => {}
         }
         w.update("agent_configs", actor_id, serde_json::json!({"name": a.name, "role": a.role, "adapter": a.adapter, "permission_mode": a.permission_mode,
-            "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes, "model": a.model, "effort": a.effort, "max_runs": input.max_runs, "instructions_changed": instructions.is_some()}))
+            "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes, "model": a.model, "effort": a.effort, "max_runs": input.max_runs, "board_check_minutes": input.board_check_minutes, "instructions_changed": instructions.is_some(),
+            "folders_changed": a.folders_json.is_some()}))
     })
 }
 
@@ -347,9 +371,16 @@ pub fn add_rule(db: &Db, actor: &str, team_id: &str, input: RuleInput) -> Result
         let (label, state): (Option<String>, Option<String>) = match input.kind.as_str() {
             "label" => (Some(c.query_row("SELECT id FROM labels WHERE name=?1 COLLATE NOCASE AND deleted_at IS NULL", [&name], |r| r.get(0))
                 .optional()?.ok_or_else(|| Error::Invalid(format!("there is no label called {name}")))?), None),
-            "column" => (None, Some(c.query_row("SELECT id FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
-                    rusqlite::params![team_id, name], |r| r.get(0))
-                .optional()?.ok_or_else(|| Error::Invalid(format!("this team has no column called {name}")))?)),
+            "column" => {
+                let (id, category): (String, String) = c.query_row(
+                    "SELECT id, category FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
+                    rusqlite::params![team_id, name], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()?.ok_or_else(|| Error::Invalid(format!("this team has no column called {name}")))?;
+                if category == "deploy" {
+                    return Err(Error::Invalid(format!("{name} is a Deploy column: no agent starts there by itself. Press Run on a card to start the DevOps Agent")));
+                }
+                (None, Some(id))
+            }
             other => return Err(Error::Invalid(format!("a rule matches a label or a column, not {other}"))),
         };
         let now = ids::now_ms();
@@ -400,6 +431,50 @@ pub fn rename_state(db: &Db, actor: &str, state_id: &str, name: &str) -> Result<
     })
 }
 
+/// The column categories, in board order. The gates key off them; `deploy` (merged, not deployed yet) is never routed.
+pub const CATEGORIES: [&str; 8] = ["backlog", "ready", "in_progress", "testing", "review", "deploy", "done", "cancelled"];
+
+/// Adds a column to the team's board, right after the column `after_id`. `owner_role`: who works it (None = nobody, a
+/// role, or "human" = you); a Deploy column is always worked by you. Names are unique per team. Returns its id.
+pub fn add_state(db: &Db, actor: &str, team_id: &str, name: &str, after_id: &str, category: &str, owner_role: Option<&str>) -> Result<String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(Error::Invalid("a column needs a name".into()));
+    }
+    if !CATEGORIES.contains(&category) {
+        return Err(Error::Invalid(format!("a column's category is one of {}, not {category}", CATEGORIES.join(", "))));
+    }
+    let owner = if category == "deploy" {
+        Some("human".to_string())
+    } else {
+        owner_role.map(|o| if o.trim() == "human" { "human".to_string() } else { role_key(o) }).filter(|o| !o.is_empty())
+    };
+    db.write(Some(actor), |w| {
+        let c = w.conn();
+        let after: Option<String> = c.query_row("SELECT sort_key FROM workflow_states WHERE id=?1 AND team_id=?2 AND deleted_at IS NULL",
+                                                rusqlite::params![after_id, team_id], |r| r.get(0)).optional()?;
+        let after = after.ok_or_else(|| Error::Invalid("pick the column it goes after".into()))?;
+        let clash: i64 = c.query_row("SELECT count(*) FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
+                                     rusqlite::params![team_id, name], |r| r.get(0))?;
+        if clash > 0 {
+            return Err(Error::Invalid(format!("this team already has a column called {name}")));
+        }
+        let next: Option<String> = c.query_row(
+            "SELECT min(sort_key) FROM workflow_states WHERE team_id=?1 AND sort_key > ?2 AND deleted_at IS NULL",
+            rusqlite::params![team_id, after], |r| r.get(0))?;
+        let sort_key = crate::sortkey::key_between(Some(&after), next.as_deref());
+        let now = ids::now_ms();
+        let id = ids::new_id();
+        c.execute(
+            "INSERT INTO workflow_states(id, created_at, updated_at, created_by, updated_by, team_id, name, category, owner_role, sort_key)
+             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id, now, actor, team_id, name, category, owner, sort_key],
+        )?;
+        w.insert("workflow_states", &id, serde_json::json!({"name": name, "category": category, "owner_role": owner}))?;
+        Ok(id)
+    })
+}
+
 /// A new team with the six default columns and `actor` as its reviewer. No agents: Jeffrey adds them.
 pub fn add_team(db: &Db, actor: &str, name: &str) -> Result<String> {
     let name = name.trim().to_string();
@@ -432,6 +507,10 @@ pub fn set_agent_status(db: &Db, actor: &str, agent_id: &str, status: &str) -> R
             rusqlite::params![agent_id, status, ids::now_ms(), actor])?;
         if n == 0 {
             return Err(Error::NotFound(format!("agent {agent_id}")));
+        }
+        if status == "active" {
+            // resumed: a board check that paused after failures runs again
+            w.conn().execute("UPDATE agent_configs SET board_check_paused=NULL, board_check_failures=0 WHERE actor_id=?1", [agent_id])?;
         }
         w.update("actors", agent_id, serde_json::json!({"status": status}))
     })

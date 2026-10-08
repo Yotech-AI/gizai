@@ -15,7 +15,14 @@ fn changed(app: &AppHandle, table: &str) {
     let _ = app.emit("rows-changed", serde_json::json!({ "table": table }));
 }
 
-/// After a card changes, an agent that wakes up on assignment may start on it.
+/// A person edited or reactivated the agent: it takes cards from the queue again (`runs::pull_paused`).
+fn resume(st: &State<AppState>, agent_id: &str) {
+    crate::runs::resume_pull(st, agent_id);
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn(async move { crate::runs::pull(&st).await; });
+}
+
+/// After a card changes, agents that wake up when a card is routed or assigned to them take their next cards.
 fn wake(st: &State<AppState>, task_id: &str) {
     let (st, id) = (st.inner().clone(), task_id.to_string());
     tauri::async_runtime::spawn(async move { crate::runs::dispatch(&st, &id).await; });
@@ -110,6 +117,26 @@ pub fn set_task_labels(app: AppHandle, st: State<AppState>, id: String, label_id
     tasks::set_labels(&st.db, &st.you_id, &id, label_ids).map_err(e)?;
     changed(&app, "tasks");
     wake(&st, &id);
+    Ok(())
+}
+#[tauri::command]
+pub fn list_archived_tasks(st: State<AppState>, project_id: Option<String>) -> R<Vec<Task>> {
+    tasks::archived(&st.db, project_id.as_deref().filter(|p| !p.is_empty())).map_err(e)
+}
+/// Archives a card in Done. Refused while an agent works on it, its run's worktree being made included.
+#[tauri::command]
+pub fn archive_task(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    if crate::runs::working_on(&st, &id) {
+        return Err("An agent is working on this card".into());
+    }
+    tasks::archive(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "tasks");
+    Ok(())
+}
+#[tauri::command]
+pub fn restore_task(app: AppHandle, st: State<AppState>, id: String) -> R<()> {
+    tasks::restore(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "tasks");
     Ok(())
 }
 #[tauri::command]
@@ -230,12 +257,19 @@ pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: Ag
 pub fn update_agent(app: AppHandle, st: State<AppState>, actor_id: String, input: AgentInput) -> R<()> {
     team::update_agent(&st.db, &st.you_id, &actor_id, input).map_err(e)?;
     changed(&app, "actors");
+    resume(&st, &actor_id);
     Ok(())
+}
+/// The agent form's Folders: why each folder is refused, or a warning (a project's main checkout).
+#[tauri::command]
+pub fn check_agent_folders(st: State<AppState>, folders: Vec<gizai_core::folders::Folder>) -> Vec<gizai_core::folders::FolderCheck> {
+    crate::folders::check(&st, &folders)
 }
 #[tauri::command]
 pub fn set_agent_status(app: AppHandle, st: State<AppState>, actor_id: String, status: String) -> R<()> {
     team::set_agent_status(&st.db, &st.you_id, &actor_id, &status).map_err(e)?;
     changed(&app, "actors");
+    resume(&st, &actor_id);
     Ok(())
 }
 #[tauri::command]
@@ -249,6 +283,14 @@ pub fn delete_rule(app: AppHandle, st: State<AppState>, rule_id: String) -> R<()
     team::delete_rule(&st.db, &st.you_id, &rule_id).map_err(e)?;
     changed(&app, "routing_rules");
     Ok(())
+}
+/// Adds a column after `after_id` (`team::add_state`).
+#[tauri::command]
+pub fn add_state(app: AppHandle, st: State<AppState>, team_id: String, name: String, after_id: String, category: String,
+                 owner_role: Option<String>) -> R<String> {
+    let id = team::add_state(&st.db, &st.you_id, &team_id, &name, &after_id, &category, owner_role.as_deref()).map_err(e)?;
+    changed(&app, "workflow_states");
+    Ok(id)
 }
 #[tauri::command]
 pub fn rename_state(app: AppHandle, st: State<AppState>, state_id: String, name: String) -> R<()> {
@@ -370,6 +412,13 @@ pub fn chat_live(st: State<AppState>) -> Vec<chat::ChatStatus> { chat::live(&st)
 /// The agent that answers on the Chat page, if any.
 #[tauri::command]
 pub fn chat_agent(st: State<AppState>) -> R<Option<team::Member>> { team::chat_agent(&st.db).map_err(e) }
+/// × on a Team Lead chat in the Inbox: it no longer waits for you (it stays in Chat → Recent).
+#[tauri::command]
+pub fn dismiss_chat(app: AppHandle, st: State<AppState>, thread_id: String) -> R<()> {
+    gizai_core::chat::dismiss(&st.db, &st.you_id, &thread_id).map_err(e)?;
+    changed(&app, "chat_threads");
+    Ok(())
+}
 
 // ---- pull requests on GitHub ----
 /// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.

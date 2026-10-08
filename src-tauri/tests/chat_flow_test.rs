@@ -226,11 +226,24 @@ async fn the_turn_token_is_revoked_and_its_config_removed_afterwards() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
+/// A git repository with one tracked file and an ignored .env, in the test's folder.
+fn git_repo(t: &T, name: &str) -> PathBuf {
+    let repo = t._dir.path().join(name);
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success(), "git {args:?}");
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join(".gitignore"), ".env\n").unwrap();
+    std::fs::write(repo.join("README.md"), "# Kade\n").unwrap();
+    git(&["add", "."]);
+    git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+    std::fs::write(repo.join(".env"), "APP_KEY=secret\n").unwrap();
+    repo
+}
+
 #[tokio::test]
-async fn the_agent_sees_its_instructions_and_the_linked_repos() {
+async fn the_agent_sees_its_instructions_and_its_copies_of_the_code_not_the_linked_folders() {
     let t = setup().await;
-    let repo = t._dir.path().join("kade-repo");
-    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let repo = git_repo(&t, "kade-repo");
     let plain = t._dir.path().join("not-a-repo");
     std::fs::create_dir_all(&plain).unwrap();
     let other = projects::create(&t.st.db, &t.st.you_id, ProjectInput { name: "Other".into(), key: "OTH".into(), repo_path: Some(plain.display().to_string()), ..Default::default() }).unwrap();
@@ -243,9 +256,43 @@ async fn the_agent_sees_its_instructions_and_the_linked_repos() {
     let argv: Vec<String> = serde_json::from_value(t.calls()[0]["argv"].clone()).unwrap();
     let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
     assert!(sys.contains("Always answer in Dutch."), "{sys}");
-    let at = argv.iter().position(|a| a == "--add-dir").expect("repo dirs");
-    assert_eq!(argv[at + 1], repo.display().to_string());
+    let copy = t.st.data_dir.join("code/KADE");
+    let dirs: Vec<&String> = argv.iter().enumerate().filter(|(_, a)| *a == "--add-dir").map(|(i, _)| &argv[i + 1]).collect();
+    assert_eq!(dirs, [&copy.display().to_string()], "the Team Lead's copy, not the linked folder");
+    assert!(!argv.contains(&repo.display().to_string()), "the linked folder isn't passed");
     assert!(!argv.contains(&plain.display().to_string()), "a folder without .git is not opened to the Team Lead");
+    assert!(copy.join("README.md").is_file() && !copy.join(".env").exists(), "tracked files only");
+}
+
+#[tokio::test]
+async fn the_system_prompt_names_each_copy_and_stays_the_same_while_the_commit_line_goes_only_into_the_turns_prompt() {
+    let t = setup().await;
+    let repo = git_repo(&t, "kade-repo");
+    let p = projects::list(&t.st.db).unwrap().into_iter().find(|p| p.key == "KADE").unwrap();
+    projects::update(&t.st.db, &t.st.you_id, &p.id, ProjectInput { name: p.name, key: p.key, repo_path: Some(repo.display().to_string()), ..Default::default() }).unwrap();
+    let (thread, s) = t.turn(None, "what changed in KADE?").await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let (_, s) = t.turn(Some(thread.clone()), "and since then?").await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let calls = t.calls();
+    let sys = |i: usize| -> String {
+        let argv: Vec<String> = serde_json::from_value(calls[i]["argv"].clone()).unwrap();
+        argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1].clone()
+    };
+    assert_eq!(sys(0), sys(1), "the same system prompt two turns in a row (the prompt cache keeps working)");
+    assert!(sys(0).contains(&format!("- KADE: {}", t.st.data_dir.join("code/KADE").display())), "{}", sys(0));
+    assert!(!sys(0).contains("linked repositories"), "{}", sys(0));
+    assert!(sys(0).contains("ask Jeffrey once in this chat") || sys(0).contains("once in this chat, when that project comes up"), "{}", sys(0));
+    assert!(sys(0).contains("Call update_checkout only after a yes in this chat") && sys(0).contains("never update a folder without that yes"), "{}", sys(0));
+    let head = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "--short=7", "main"]).current_dir(&repo).output().unwrap().stdout).unwrap();
+    for (i, text) in [(0, "what changed in KADE?"), (1, "and since then?")] {
+        let prompt = calls[i]["prompt"].as_str().unwrap();
+        assert!(prompt.starts_with(&format!("[Gizai: Your copies of the code: KADE {} (", head.trim())), "{prompt}");
+        assert!(prompt.ends_with(text), "{prompt}");
+    }
+    let msgs = chat::messages(&t.st.db, &thread).unwrap();
+    assert!(msgs.iter().all(|m| !m.body_md.as_deref().unwrap_or("").contains("[Gizai:")), "the line isn't saved as a chat message");
+    assert_eq!(msgs.iter().filter(|m| m.role == "user").map(|m| m.body_md.clone().unwrap()).collect::<Vec<_>>(), ["what changed in KADE?", "and since then?"]);
 }
 
 #[tokio::test]
@@ -380,4 +427,30 @@ async fn a_turn_after_a_crashed_first_turn_carries_the_earlier_messages() {
     t.turn(Some(thread), "try again please").await;
     let prompt = t.calls().last().unwrap()["prompt"].as_str().unwrap().to_string();
     assert!(prompt.contains("plan the Kade portal") && prompt.ends_with("try again please"), "{prompt}");
+}
+
+#[tokio::test]
+async fn the_team_lead_gets_its_folders_in_chat_but_only_reads_them() {
+    // GA-45: its folders from the agent form, read only in chat whatever they are set to; a missing one is left out.
+    let t = setup().await;
+    let (shared, out, gone) = (t._dir.path().join("shared"), t._dir.path().join("out"), t._dir.path().join("gone"));
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let folder = |p: &std::path::Path, access: &str| gizai_core::folders::Folder { path: p.display().to_string(), access: access.into() };
+    let m = team::agent(&t.st.db, &t.lead).unwrap();
+    team::update_agent(&t.st.db, &t.st.you_id, &t.lead, AgentInput { name: m.name, role_key: m.role_key, chat_enabled: Some(true),
+        folders: Some(vec![folder(&shared, "read"), folder(&out, "change"), folder(&gone, "read")]), ..Default::default() }).unwrap();
+    t.turn(None, "hello").await;
+    let argv: Vec<String> = serde_json::from_value(t.calls()[0]["argv"].clone()).unwrap();
+    let real = |p: &std::path::Path| p.canonicalize().unwrap().display().to_string();
+    let at = argv.iter().position(|a| a == "--add-dir").expect("its folders");
+    let dirs: Vec<&String> = argv[at + 1..].iter().take_while(|a| !a.starts_with("--")).collect();
+    assert_eq!(dirs, [&real(&shared), &real(&out)], "the missing folder is left out");
+    let tools = &argv[argv.iter().position(|a| a == "--tools").unwrap() + 1];
+    assert_eq!(tools, "Read,Glob,Grep", "no tool that writes, so a read and change folder is read only too");
+    assert!(!argv.iter().any(|a| a == "--disallowedTools" || a.contains("Edit") || a.contains("Write(")), "{argv:?}");
+    let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
+    assert!(sys.contains("## Your folders") && sys.contains("you never change files in them"), "{sys}");
+    assert!(sys.contains(&format!("- {} (read)\n", real(&shared))) && sys.contains(&format!("- {} (read and change)\n", real(&out))), "{sys}");
+    assert!(!sys.contains(&gone.display().to_string()), "{sys}");
 }

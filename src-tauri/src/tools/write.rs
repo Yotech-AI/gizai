@@ -12,7 +12,7 @@ fn link(page: &str, id: &str, label: &str) -> Value {
 
 fn task_json(t: &Task) -> Value {
     json!({"id": t.id, "identifier": t.identifier, "title": t.title, "column": t.state_name, "assignee": t.assignee_name,
-           "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold})
+           "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold, "testing": t.testing})
 }
 
 fn task_done(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
@@ -45,6 +45,10 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
         if t == "bash" || t == "bash(*)" || t == "bash(:*)" || t == "bash(*:*)" {
             return Err("an agent can't be allowed to run any command from chat; name the commands, like Bash(npm test:*) or Bash(git commit:*)".into());
         }
+    }
+    // The folders an agent may read or change: only the user sets them, in the agent form.
+    if a.0.get("folders").is_some_and(|v| !v.is_null()) {
+        return Err("an agent's folders can't be changed from chat: the user sets them in the agent form (Team page → the agent → Permissions → Folders). Nothing changed.".into());
     }
     Ok(())
 }
@@ -215,7 +219,7 @@ pub(crate) fn create_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     };
     let id = tasks::create(cx.db(), cx.actor, TaskInput {
         project_id: p.id.clone(), title, description_md: a.opt("description_md").unwrap_or_default(), acceptance_md: a.opt("acceptance_md"),
-        state_id, priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids,
+        state_id, priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids, testing: Some(a.flag("testing").unwrap_or(true)),
     }).map_err(err)?;
     task_done(cx, &id, "created")
 }
@@ -223,7 +227,7 @@ pub(crate) fn create_task(cx: &Cx, a: &Args) -> Result<Value, String> {
 pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let mut patch = TaskPatch { title: a.opt("title"), description_md: a.text("description_md"), acceptance_md: a.text("acceptance_md"),
-                                priority: a.int("priority")?, ..Default::default() };
+                                priority: a.int("priority")?, testing: a.flag("testing"), ..Default::default() };
     if let Some(n) = a.text("assignee") {
         patch.assignee_id = Some(if n.is_empty() || n.eq_ignore_ascii_case("none") { String::new() } else { resolve::assignee(cx, &n)? });
     }
@@ -237,7 +241,7 @@ pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     }
     let labels = a.list("labels");
     let nothing = patch.title.is_none() && patch.description_md.is_none() && patch.acceptance_md.is_none() && patch.priority.is_none()
-        && patch.assignee_id.is_none() && patch.hold.is_none() && patch.hold_reason.is_none() && labels.is_none();
+        && patch.testing.is_none() && patch.assignee_id.is_none() && patch.hold.is_none() && patch.hold_reason.is_none() && labels.is_none();
     if nothing {
         return Err("nothing to change: give a field to update".into());
     }
@@ -253,6 +257,9 @@ pub(crate) fn move_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let project = t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok());
     let col = resolve::column(&resolve::team_of(cx, project.as_ref())?, &a.req("column")?)?;
+    if cx.check.is_some() && matches!(col.category.as_str(), "review" | "deploy" | "done") {
+        return Err(format!("A board check never moves a card to {}: ask the user in a chat (start_chat) instead.", col.name));
+    }
     tasks::move_to(cx.db(), cx.actor, &t.id, &col.id, "").map_err(err)?;
     task_done(cx, &t.id, "moved")
 }
@@ -310,7 +317,7 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
         allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: a.opt("wakeup").unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
-        max_runs: a.int("cards_at_once")?,
+        max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;
     agent_result(cx, &id, "created")
 }
@@ -339,14 +346,31 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         wakeup: a.opt("wakeup").or(m.wakeup.clone()).unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?.or(m.heartbeat_minutes),
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
+        board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;
+    crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "updated")
 }
 
 pub(crate) fn set_agent_status(cx: &Cx, a: &Args) -> Result<Value, String> {
     let m = resolve::agent(cx, &a.req("agent")?)?;
     team::set_agent_status(cx.db(), cx.actor, &m.actor_id, &a.req("status")?).map_err(err)?;
+    crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "status changed")
+}
+
+pub(crate) fn add_column(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let t = resolve::team_of(cx, None)?;
+    let after = resolve::column(&t, &a.req("after")?)?;
+    let category = a.req("category")?.trim().to_lowercase().replace([' ', '-'], "_");
+    let category = match category.as_str() { "to_do" | "todo" => "ready".to_string(), _ => category };
+    let worker = a.opt("worked_by").map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty() && w != "nobody");
+    let worker = worker.map(|w| if matches!(w.as_str(), "you" | "the user" | "user" | "me") { "human".to_string() } else { w });
+    team::add_state(cx.db(), cx.actor, &t.id, &a.req("name")?, &after.id, &category, worker.as_deref()).map_err(err)?;
+    cx.changed("workflow_states");
+    let t = resolve::team_of(cx, None)?;
+    let columns: Vec<String> = t.states.iter().map(|s| s.name.clone()).collect();
+    Ok(json!({"ok": true, "done": "column added", "columns": columns, "link": {"page": "team", "id": t.id, "label": "Workflow"}}))
 }
 
 pub(crate) fn add_rule(cx: &Cx, a: &Args) -> Result<Value, String> {
@@ -360,13 +384,66 @@ pub(crate) fn add_rule(cx: &Cx, a: &Args) -> Result<Value, String> {
     Ok(json!({"ok": true, "done": "rule added", "rules": rules, "link": {"page": "team", "id": t.id, "label": "Routing rules"}}))
 }
 
+/// A board check never starts more runs than the agent's free slots allow ("Runs at once" is checked by every start).
+fn check_free_slot(cx: &Cx, agent_id: Option<&str>) -> Result<(), String> {
+    let Some(agent_id) = agent_id.filter(|_| cx.check.is_some()) else { return Ok(()) };
+    let m = team::agent(cx.db(), agent_id).map_err(err)?;
+    let busy = crate::runs::live(cx.st).iter().filter(|r| r.agent_id == m.actor_id).count() as i64;
+    if busy >= m.max_runs.max(1) {
+        return Err(format!("{} has no free slot ({busy} of {} cards at once): a board check doesn't start more. Leave the card waiting.", m.name, m.max_runs.max(1)));
+    }
+    Ok(())
+}
+
 pub(crate) async fn start_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let agent = match a.opt("agent") { Some(n) => Some(resolve::agent(cx, &n)?.actor_id), None => None };
+    check_free_slot(cx, agent.clone().or_else(|| crate::runs::suggest(cx.st, &t.id)).as_deref())?;
     let (run_id, _done) = crate::runs::start(cx.st, &t.id, agent, None, "manual").await?;
     let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
     Ok(json!({"ok": true, "done": "started", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
               "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
+}
+
+/// Continue on the card's latest run, like the Continue button (`runs::continue_run`); a run that ended asking for a
+/// decision continues too, with what was written on the card since (`runs::continue_answered`).
+pub(crate) async fn continue_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
+    let t = resolve::task(cx, &a.req("task")?)?;
+    let last = gizai_core::runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().next()
+        .ok_or_else(|| format!("{} has no run to continue: start_agent_run starts one", t.identifier))?;
+    check_free_slot(cx, Some(&last.agent_id))?;
+    let (run_id, _done) = crate::runs::continue_answered(cx.st, &last.id).await?;
+    cx.changed("tasks");
+    let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
+    Ok(json!({"ok": true, "done": "continued", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
+              "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
+}
+
+// ---- chats the Team Lead starts ----
+
+/// Asks the user in a chat that waits at the top of their Inbox (`chat::start_lead_chat`): one waiting chat per card.
+pub(crate) fn start_chat(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let title = a.req("title")?;
+    let kind = a.req("kind")?.to_lowercase();
+    let body = a.req("body_md")?;
+    let refs = a.list("tasks").unwrap_or_default();
+    if refs.is_empty() {
+        return Err("name the cards the chat is about (tasks), like [\"GA-12\"]".into());
+    }
+    let mut ids = vec![];
+    for r in &refs {
+        let t = resolve::task(cx, r)?;
+        if !ids.contains(&t.id) {
+            ids.push(t.id);
+        }
+    }
+    let (id, new) = gizai_core::chat::start_lead_chat(cx.db(), cx.actor, &title, &kind, &ids, &body, cx.check).map_err(err)?;
+    cx.changed("chat_threads");
+    cx.changed("chat_messages");
+    (cx.st.notify)(crate::runs::Note::ChatChanged);
+    let t = gizai_core::chat::get_thread(cx.db(), &id).map_err(err)?;
+    Ok(json!({"ok": true, "done": if new { "chat started" } else { "added to the chat that already waits for this card" },
+              "chat": {"id": t.id, "title": t.title, "kind": t.kind, "tasks": t.tasks}, "link": link("chat", &t.id, &t.title)}))
 }
 
 pub(crate) fn stop_run(cx: &Cx, a: &Args) -> Result<Value, String> {
@@ -434,14 +511,15 @@ pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
     Ok(json!({"ok": true, "file": {"id": f.id, "name": f.name, "size_bytes": f.size_bytes}, "link": l}))
 }
 
-/// Spec §8: the Team Lead attaches only a file the user named in this chat, or one inside a linked repository,
-/// never something it found elsewhere on the disk (keys, credentials).
+/// Spec §8: the Team Lead attaches only a file the user named in this chat, or one inside its copies of the projects'
+/// code (`code`), never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked
+/// files, so a repository's .env isn't among them.
 fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), String> {
     let real = path.canonicalize().map_err(|_| format!("can't read {raw}"))?;
-    let in_repo = crate::chat::repo_dirs(cx.st).iter()
-        .filter_map(|r| std::path::Path::new(r).canonicalize().ok())
-        .any(|r| real.starts_with(&r));
-    if in_repo {
+    let in_copy = crate::code::dirs(cx.st).iter()
+        .filter_map(|d| d.canonicalize().ok())
+        .any(|d| real.starts_with(&d));
+    if in_copy {
         return Ok(());
     }
     let named = cx.thread.is_some_and(|t| {
@@ -453,8 +531,31 @@ fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), 
     if named {
         Ok(())
     } else {
-        Err(format!("I can only attach a file you named in this chat or one inside a linked repository; {raw} is neither. Ask the user to give the path."))
+        Err(format!("I can only attach a file you named in this chat or one inside my copies of the projects' code; {raw} is neither. Ask the user to give the path."))
     }
+}
+
+/// Chat only: starts the update of a project's linked folder to main (`code::start_update`), after the user said yes in
+/// the chat. Only the project's linked folder can be updated; the result comes later as a system message in the chat.
+pub(crate) async fn update_checkout(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
+    let Some(thread) = cx.thread else {
+        return Err("update_checkout works only in chat, after the user said yes there".into());
+    };
+    let p = resolve::project(cx, &a.req("project")?)?;
+    let linked = p.repo_path.clone().filter(|r| !r.trim().is_empty())
+        .ok_or_else(|| format!("{} has no linked folder to update", p.key))?;
+    if let Some(f) = a.opt("folder") {
+        let real = |s: &str| std::path::Path::new(s).canonicalize().ok();
+        if real(&f).is_none() || real(&f) != real(&linked) {
+            return Err(format!("update_checkout only updates {}'s linked folder ({linked}); {f} isn't it, so nothing changed", p.key));
+        }
+    }
+    // Not a folder that the Team Lead's own folders (agent form → Folders) set to read.
+    crate::folders::lead_may_update(cx.st, std::path::Path::new(&linked))?;
+    let will = crate::code::start_update(cx.st, thread, &p, a.flag("switch").unwrap_or(false)).await?;
+    Ok(json!({"ok": true, "done": "started", "folder": linked, "will": will,
+              "result": "comes as a message in this chat when the update ends",
+              "link": link("project", &p.id, &format!("{} ({})", p.name, p.key))}))
 }
 
 pub(crate) fn add_person(cx: &Cx, a: &Args) -> Result<Value, String> {

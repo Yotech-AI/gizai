@@ -8,7 +8,9 @@ use std::collections::HashMap;
 
 const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, {desc}, t.acceptance_md, t.state_id, s.name,
     s.category, t.priority, t.assignee_actor_id, a.name, a.kind, t.hold, t.hold_reason, t.bounce_count, t.fail_count,
-    t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state
+    t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state, t.testing, t.deleted_at,
+    CASE WHEN t.deleted_at IS NOT NULL THEN (SELECT x.name FROM changes ch JOIN actors x ON x.id = ch.actor_id
+      WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -24,7 +26,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         state_category: r.get(10)?, priority: r.get(11)?, assignee_id: r.get(12)?, assignee_name: r.get(13)?,
         assignee_kind: r.get(14)?, labels: vec![], hold: r.get(15)?, hold_reason: r.get(16)?, bounce_count: r.get(17)?,
         fail_count: r.get(18)?, sort_key: r.get(19)?, branch: r.get(20)?, created_at: r.get(21)?, updated_at: r.get(22)?,
-        pr_url: r.get(23)?, pr_state: r.get(24)?,
+        pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0, archived_at: r.get(26)?, archived_by: r.get(27)?,
     })
 }
 
@@ -59,25 +61,39 @@ pub fn list(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
         }
         sql.push_str(" ORDER BY s.sort_key, t.sort_key");
         let mut st = c.prepare(&sql)?;
-        let mut tasks: Vec<Task> = match &filter.project_id {
+        let tasks: Vec<Task> = match &filter.project_id {
             Some(p) => st.query_map([p], row)?.collect::<rusqlite::Result<_>>()?,
             None => st.query_map([], row)?.collect::<rusqlite::Result<_>>()?,
         };
-        let ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
-        let mut labels = labels_for(c, &ids)?;
-        for t in &mut tasks {
-            t.labels = labels.remove(&t.id).unwrap_or_default();
-        }
-        Ok(tasks)
+        with_labels(c, tasks)
     })
 }
 
-/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting in Review for `you`.
-/// Same rule as the UI's `needsYou`.
+fn with_labels(c: &Connection, mut tasks: Vec<Task>) -> Result<Vec<Task>> {
+    let ids: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+    let mut labels = labels_for(c, &ids)?;
+    for t in &mut tasks {
+        t.labels = labels.remove(&t.id).unwrap_or_default();
+    }
+    Ok(tasks)
+}
+
+/// The archived cards (the bin), of one project or of all: the most recently archived first. `list` leaves them out.
+pub fn archived(db: &Db, project_id: Option<&str>) -> Result<Vec<Task>> {
+    db.read(|c| {
+        let mut st = c.prepare(&format!(
+            "{} WHERE t.deleted_at IS NOT NULL AND (?1 IS NULL OR t.project_id = ?1) ORDER BY t.deleted_at DESC, t.identifier", select(false)))?;
+        let tasks: Vec<Task> = st.query_map([project_id], row)?.collect::<rusqlite::Result<_>>()?;
+        with_labels(c, tasks)
+    })
+}
+
+/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting for `you` in Review or Deploy
+/// (merged, not deployed yet). Same rule as the UI's `needsYou`.
 pub fn needs_you(db: &Db, you_id: &str) -> Result<Vec<Task>> {
     Ok(list(db, &TaskFilter { open_only: true, ..Default::default() })?
         .into_iter()
-        .filter(|t| t.hold.is_some() || (t.state_category == "review" && t.assignee_id.as_deref() == Some(you_id)))
+        .filter(|t| t.hold.is_some() || (matches!(t.state_category.as_str(), "review" | "deploy") && t.assignee_id.as_deref() == Some(you_id)))
         .collect())
 }
 
@@ -92,6 +108,65 @@ pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Task> {
         .ok_or_else(|| Error::NotFound(format!("task {id}")))?;
     t.labels = labels_for(c, &[t.id.clone()])?.remove(&t.id).unwrap_or_default();
     Ok(t)
+}
+
+/// An archived card is read-only until it's restored: moving, editing, commenting and starting a run are refused.
+pub(crate) fn not_archived(c: &Connection, id: &str) -> Result<()> {
+    let row: Option<(String, Option<i64>)> = c
+        .query_row("SELECT identifier, deleted_at FROM tasks WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    match row {
+        Some((identifier, Some(_))) => Err(Error::Invalid(format!("{identifier} is archived: restore it first"))),
+        _ => Ok(()),
+    }
+}
+
+/// Archives a card in Done (a soft delete): it leaves the board, the list, the Inbox, the queue and every count. Its
+/// column, comments, runs, files, branch and identifier stay. A card outside Done, or one an agent is working on, is
+/// refused. The activity says who archived it (a `delete` change, which `archived_by` reads).
+pub fn archive(db: &Db, actor: &str, id: &str) -> Result<()> {
+    db.write(Some(actor), |w| {
+        let c = w.conn();
+        let (identifier, column, category, deleted): (String, String, String, Option<i64>) = c
+            .query_row(
+                "SELECT t.identifier, s.name, s.category, t.deleted_at FROM tasks t JOIN workflow_states s ON s.id = t.state_id WHERE t.id=?1",
+                [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .optional()?
+            .ok_or_else(|| Error::NotFound(format!("task {id}")))?;
+        if deleted.is_some() {
+            return Err(Error::Invalid(format!("{identifier} is already archived")));
+        }
+        if category != "done" {
+            return Err(Error::Invalid(format!("Only a card in Done can be archived, and {identifier} is in {column}")));
+        }
+        let live: i64 = c.query_row(
+            "SELECT count(*) FROM runs WHERE task_id=?1 AND status IN ('queued','running','waiting_approval')", [id], |r| r.get(0))?;
+        if live > 0 {
+            return Err(Error::Invalid("An agent is working on this card".into()));
+        }
+        let now = ids::now_ms();
+        c.execute("UPDATE tasks SET deleted_at=?2, updated_at=?2, updated_by=?3, version=version+1 WHERE id=?1",
+                  rusqlite::params![id, now, actor])?;
+        w.delete("tasks", id)
+    })
+}
+
+/// Restores an archived card: back at the bottom of its Done column, as it was. The activity says who restored it.
+pub fn restore(db: &Db, actor: &str, id: &str) -> Result<()> {
+    db.write(Some(actor), |w| {
+        let c = w.conn();
+        let (identifier, state_id, deleted): (String, String, Option<i64>) = c
+            .query_row("SELECT identifier, state_id, deleted_at FROM tasks WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+            .ok_or_else(|| Error::NotFound(format!("task {id}")))?;
+        if deleted.is_none() {
+            return Err(Error::Invalid(format!("{identifier} isn't archived")));
+        }
+        let key = key_after(last_key(c, &state_id)?.as_deref());
+        c.execute("UPDATE tasks SET deleted_at=NULL, sort_key=?2, updated_at=?3, updated_by=?4, version=version+1 WHERE id=?1",
+                  rusqlite::params![id, key, ids::now_ms(), actor])?;
+        w.update("tasks", id, serde_json::json!({"archived": false}))
+    })
 }
 
 fn team_of_project(c: &Connection, project_id: &str) -> Result<(String, Option<String>, String)> {
@@ -155,12 +230,12 @@ pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
         c.execute(
             "INSERT INTO tasks(id, created_at, updated_at, created_by, updated_by, org_id, project_id, client_id, identifier, title,
                description_md, acceptance_md, state_id, state_category, owner_person_id, priority, assignee_actor_id,
-               creator_actor_id, sort_key, started_at)
+               creator_actor_id, sort_key, started_at, testing)
              VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?3, ?16,
-               CASE WHEN ?12 = 'in_progress' THEN ?2 END)",
+               CASE WHEN ?12 = 'in_progress' THEN ?2 END, ?17)",
             rusqlite::params![id, now, actor, org_id(c)?, input.project_id, client, identifier, title, input.description_md,
                               input.acceptance_md.as_ref().filter(|a| !a.trim().is_empty()), state_id, category, owner,
-                              input.priority.clamp(0, 4), assignee, sort_key],
+                              input.priority.clamp(0, 4), assignee, sort_key, input.testing.unwrap_or(true)],
         )?;
         w.insert("tasks", &id, serde_json::json!({"identifier": identifier, "title": title}))?;
         if !input.label_ids.is_empty() {
@@ -173,6 +248,7 @@ pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
 pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
     db.write(Some(actor), |w| {
         let c = w.conn();
+        not_archived(c, id)?;
         use rusqlite::types::Value as V;
         let mut cols: Vec<(&str, V)> = vec![];
         let opt = |s: &String| if s.trim().is_empty() { V::Null } else { V::Text(s.clone()) };
@@ -206,6 +282,9 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
         if let Some(d) = &patch.due_on {
             cols.push(("due_on", opt(d)));
         }
+        if let Some(on) = patch.testing {
+            cols.push(("testing", V::Integer(on as i64)));
+        }
         if let Some(h) = &patch.hold {
             if !h.is_empty() && !["needs_decision", "stalled", "merge_conflict", "waiting_approval", "rate_limited", "blocked"].contains(&h.as_str()) {
                 return Err(Error::Invalid("unknown hold".into()));
@@ -215,6 +294,10 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
                 // a person cleared it: the card gets fresh tries before it stalls again
                 cols.push(("hold_reason", V::Null));
                 cols.push(("fail_count", V::Integer(0)));
+                cols.push(("hold_at", V::Null));
+            } else {
+                // a comment after this answers it (the Team Lead's board check)
+                cols.push(("hold_at", V::Integer(ids::now_ms())));
             }
         }
         if let Some(r) = &patch.hold_reason {
@@ -239,13 +322,29 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
     })
 }
 
+/// A move by hand (the board, the Team Lead's `move_task`). A person dragging a card on hold into To do or In progress
+/// answers the hold: it comes off (with fresh tries), so the queue or the next board check starts the card. Gates move
+/// cards with `move_in` and keep their holds.
 pub fn move_to(db: &Db, actor: &str, id: &str, state_id: &str, sort_key: &str) -> Result<()> {
-    db.write(Some(actor), |w| move_in(w, actor, id, state_id, Some(sort_key)))
+    db.write(Some(actor), |w| {
+        move_in(w, actor, id, state_id, Some(sort_key))?;
+        let c = w.conn();
+        let person = actor_kind(c, actor)?.as_deref() == Some("person");
+        let (category, held): (String, bool) = c.query_row(
+            "SELECT state_category, hold IS NOT NULL FROM tasks WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        if person && held && matches!(category.as_str(), "ready" | "in_progress") {
+            c.execute("UPDATE tasks SET hold=NULL, hold_reason=NULL, hold_at=NULL, fail_count=0, updated_at=?2, version=version+1 WHERE id=?1",
+                      rusqlite::params![id, ids::now_ms()])?;
+            w.update("tasks", id, serde_json::json!({"hold": null, "released": "moved by hand"}))?;
+        }
+        Ok(())
+    })
 }
 
 /// Move inside an open write (used by the workflow gates). `sort_key` None appends to the column.
 pub(crate) fn move_in(w: &Writer, actor: &str, id: &str, state_id: &str, sort_key: Option<&str>) -> Result<()> {
     let c = w.conn();
+    not_archived(c, id)?;
     let (project, from): (Option<String>, String) = c
         .query_row(
             "SELECT t.project_id, s.name FROM tasks t JOIN workflow_states s ON s.id=t.state_id WHERE t.id=?1 AND t.deleted_at IS NULL",
@@ -277,7 +376,10 @@ pub(crate) fn move_in(w: &Writer, actor: &str, id: &str, state_id: &str, sort_ke
 }
 
 pub fn set_labels(db: &Db, actor: &str, id: &str, label_ids: Vec<String>) -> Result<()> {
-    db.write(Some(actor), |w| set_labels_in(w, id, &label_ids))
+    db.write(Some(actor), |w| {
+        not_archived(w.conn(), id)?;
+        set_labels_in(w, id, &label_ids)
+    })
 }
 
 fn set_labels_in(w: &Writer, id: &str, label_ids: &[String]) -> Result<()> {

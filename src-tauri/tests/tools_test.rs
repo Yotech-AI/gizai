@@ -48,7 +48,7 @@ fn the_catalog_has_unique_names_and_object_schemas() {
         assert_eq!(t.input_schema["type"], "object", "{}", t.name);
         assert!(t.input_schema["properties"].is_object(), "{}", t.name);
         assert!(!t.description.is_empty() && t.description.len() < 600, "{}", t.name);
-        let reads = t.name.starts_with("get_") || t.name.starts_with("list_") || t.name.starts_with("read_");
+        let reads = t.name.starts_with("get_") || t.name.starts_with("list_") || t.name.starts_with("read_") || t.name == "check_board";
         assert_eq!(t.read_only, reads, "{}", t.name);
     }
     for must in ["create_task", "read_inbox", "create_agent", "write_doc", "attach_file", "start_agent_run"] {
@@ -263,7 +263,7 @@ async fn docs_can_be_created_written_and_read() {
 }
 
 #[tokio::test]
-async fn attach_file_takes_only_files_named_in_the_chat_or_inside_a_linked_repo() {
+async fn attach_file_takes_only_files_named_in_the_chat_or_inside_the_team_leads_copies_of_the_code() {
     let t = setup();
     t.project("Kade portal", "KADE");
     t.ok("create_task", json!({"project": "KADE", "title": "Export"})).await;
@@ -281,14 +281,30 @@ async fn attach_file_takes_only_files_named_in_the_chat_or_inside_a_linked_repo(
     // a file nobody named in this chat
     let e = tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": secret.display().to_string(), "task": "KADE-1"})).await.unwrap_err();
     assert!(e.contains("named in this chat"), "{e}");
-    // without a chat, only files inside a linked repository
+    // without a chat, only files inside the Team Lead's copies of the code
     assert!(t.call("attach_file", json!({"path": f.display().to_string(), "task": "KADE-1"})).await.is_err());
     let repo = t._dir.path().join("kade");
-    std::fs::create_dir_all(repo.join(".git")).unwrap();
     std::fs::create_dir_all(repo.join("docs")).unwrap();
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success(), "git {args:?}");
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join(".gitignore"), ".env\n").unwrap();
     std::fs::write(repo.join("docs/spec.md"), "# Spec").unwrap();
+    git(&["add", "."]);
+    git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+    std::fs::write(repo.join(".env"), "APP_KEY=secret\n").unwrap();
     t.ok("update_project", json!({"project": "KADE", "repo_path": repo.display().to_string()})).await;
-    t.ok("attach_file", json!({"path": repo.join("docs/spec.md").display().to_string(), "task": "KADE-1"})).await;
+    gizai_lib::code::startup(&t.st).await;
+    let copy = t.st.data_dir.join("code/KADE");
+    t.ok("attach_file", json!({"path": copy.join("docs/spec.md").display().to_string(), "task": "KADE-1"})).await;
+    // the linked folder (in ~/Herd) isn't one of the copies: its .env, or any of its files, only when named in the chat
+    assert!(!copy.join(".env").exists(), "the copy holds tracked files only");
+    let env = repo.join(".env");
+    let e = tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": env.display().to_string(), "task": "KADE-1"})).await.unwrap_err();
+    assert!(e.contains("inside my copies of the projects' code"), "{e}");
+    assert!(t.call("attach_file", json!({"path": repo.join("docs/spec.md").display().to_string(), "task": "KADE-1"})).await.is_err());
+    gizai_core::chat::add_message(&t.st.db, gizai_core::chat::NewMessage { thread_id: thread.clone(), role: "user".into(),
+        author_id: Some(t.st.you_id.clone()), body_md: Some(format!("Attach {} to KADE-1 too", env.display())), ..Default::default() }).unwrap();
+    tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": env.display().to_string(), "task": "KADE-1"})).await.unwrap();
     // the checks before any of that
     assert!(tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": "/no/such/file.pdf", "task": "KADE-1"})).await.is_err());
     assert!(tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": f.display().to_string()})).await.unwrap_err().contains("task, project or client"));
@@ -456,4 +472,50 @@ fn the_agent_tools_offer_runs_on() {
         let t = cat.iter().find(|t| t.name == name).unwrap();
         assert!(t.input_schema["properties"]["runs_on"].is_object(), "{name}");
     }
+}
+
+#[tokio::test]
+async fn the_testing_switch_is_set_and_shown_by_the_task_tools() {
+    // GA-32: on by default, off for a small fix, and the read tools say which.
+    let t = setup();
+    t.project("Kade portal", "KADE");
+    let r = t.ok("create_task", json!({"project": "KADE", "title": "Export invoices"})).await;
+    assert_eq!(r["task"]["testing"], true);
+    let r = t.ok("create_task", json!({"project": "KADE", "title": "Fix a typo", "testing": false})).await;
+    assert_eq!(r["task"]["testing"], false);
+    assert!(!tasks::get(&t.st.db, r["link"]["id"].as_str().unwrap()).unwrap().testing);
+    assert_eq!(t.ok("get_task", json!({"task": "KADE-2"})).await["task"]["testing"], false);
+    let listed = t.ok("list_tasks", json!({})).await;
+    let line = |id: &str| listed["tasks"].as_array().unwrap().iter().find(|x| x["task"] == id).cloned().unwrap_or_else(|| panic!("{listed}"));
+    assert_eq!((line("KADE-1")["testing"].clone(), line("KADE-2")["testing"].clone()), (json!(true), json!(false)));
+    // update_task changes only the switch when that is all it is given
+    t.ok("update_task", json!({"task": "KADE-2", "testing": true})).await;
+    assert_eq!(t.ok("get_task", json!({"task": "KADE-2"})).await["task"]["testing"], true);
+    t.ok("update_task", json!({"task": "KADE-1", "testing": false})).await;
+    let task = tasks::list(&t.st.db, &TaskFilter::default()).unwrap().into_iter().find(|x| x.identifier == "KADE-1").unwrap();
+    assert_eq!((task.testing, task.title.as_str()), (false, "Export invoices"));
+}
+
+#[tokio::test]
+async fn the_team_lead_adds_a_deploy_column_after_review_and_no_column_rule_for_it() {
+    let t = setup();
+    let r = t.ok("add_column", json!({"name": "Deploy", "after": "review", "category": "deploy", "worked_by": "qa"})).await;
+    assert_eq!(r["columns"], json!(["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Done"]));
+    let w = t.ok("get_workflow", json!({})).await;
+    let deploy = w["columns"].as_array().unwrap().iter().find(|c| c["name"] == "Deploy").cloned().unwrap();
+    assert_eq!(deploy["category"], "deploy");
+    assert_eq!(deploy["worked_by"], "you (deploy, or press Run for the DevOps Agent)");
+    let team_id = team::list(&t.st.db).unwrap()[0].id.clone();
+    let state = team::get(&t.st.db, &team_id).unwrap().states.into_iter().find(|s| s.name == "Deploy").unwrap();
+    assert_eq!(state.owner_role.as_deref(), Some("human"), "a Deploy column is always yours");
+    // a name in use is refused, and so is a column rule on Deploy
+    let err = t.call("add_column", json!({"name": "deploy", "after": "Done", "category": "done"})).await.unwrap_err();
+    assert!(err.contains("already has a column called deploy"), "{err}");
+    let err = t.call("add_routing_rule", json!({"kind": "column", "match": "Deploy", "role": "devops"})).await.unwrap_err();
+    assert!(err.contains("Deploy column"), "{err}");
+    // other columns: a role, or you
+    t.ok("add_column", json!({"name": "Staging", "after": "Review", "category": "review", "worked_by": "you"})).await;
+    let states = team::get(&t.st.db, &team_id).unwrap().states;
+    assert_eq!(states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Staging", "Deploy", "Done"]);
+    assert_eq!(states.iter().find(|s| s.name == "Staging").unwrap().owner_role.as_deref(), Some("human"));
 }

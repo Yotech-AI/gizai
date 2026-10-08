@@ -15,12 +15,14 @@ pub mod files;
 pub mod runs;
 pub mod settings;
 pub mod workflow;
+pub mod board;
 pub mod chat;
 pub mod clis;
 pub mod tokens;
 pub mod repo_url;
 pub mod pulls;
 pub mod worktrees;
+pub mod folders;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

@@ -69,6 +69,10 @@ pub(crate) fn task(cx: &Cx, r: &str) -> Result<Task, String> {
     if let Some(t) = all.iter().find(|t| t.id == r || t.identifier.eq_ignore_ascii_case(r)) {
         return tasks::get(cx.db(), &t.id).map_err(err);
     }
+    // An archived card is found by its identifier (or id) only, never by its title.
+    if let Some(t) = tasks::archived(cx.db(), None).map_err(err)?.into_iter().find(|t| t.id == r || t.identifier.eq_ignore_ascii_case(r)) {
+        return tasks::get(cx.db(), &t.id).map_err(err);
+    }
     // Looks like an identifier: say so plainly instead of matching titles.
     let looks_like_id = r.split_once('-').is_some_and(|(k, n)| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric()) && n.chars().all(|c| c.is_ascii_digit()) && !n.is_empty());
     if looks_like_id {

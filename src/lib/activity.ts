@@ -16,7 +16,9 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
   if (e.table === "comments") return e.op === "insert" ? "commented" : "edited a comment";
   if (e.table !== "tasks") return `${e.op} ${e.table}`;
   if (e.op === "insert") return "created the task";
-  if (e.op === "delete") return "deleted the task";
+  // Archiving (from Done) is the card's soft delete; restoring undoes it.
+  if (e.op === "delete") return "archived the card";
+  if (d.archived === false) return "restored the card";
   if (Array.isArray(d.column)) return `moved it from ${d.column[0]} to ${d.column[1]}`;
   if (Array.isArray(d.labels)) return d.labels.length ? `set labels to ${d.labels.join(", ")}` : "removed all labels";
   // Review on GitHub: a pull request Gizai opened or saw change, and the clean-up after its merge
@@ -30,6 +32,11 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
   }
   const set = (k: string) => d[k] !== null && d[k] !== undefined;
   const fields = Object.keys(FIELD_NAMES).filter(set).map((k) => FIELD_NAMES[k]);
+  // The Testing switch: on, the QA Agent tests the card before Review
+  if (typeof d.testing === "boolean") {
+    if (!fields.length && !set("hold")) return d.testing ? "turned testing on" : "turned testing off";
+    fields.push("testing");
+  }
   if (set("hold")) {
     if (d.hold === "") return fields.length ? `cleared the hold and changed the ${joinWords(fields)}` : "cleared the hold";
     fields.push("hold");

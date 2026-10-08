@@ -20,6 +20,19 @@ pub struct ChatThread {
     pub cost_usd_micros: i64,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    /// Who started it: you, or the Team Lead during a board check.
+    pub created_by: Option<String>,
+    /// A chat the Team Lead started: question | approval. None: your own chat.
+    pub kind: Option<String>,
+    /// The cards a Team Lead chat is about (ids), and their identifiers.
+    pub task_ids: Vec<String>,
+    pub tasks: Vec<String>,
+    /// You sent a message in it.
+    pub answered_at: Option<i64>,
+    /// You dismissed it in the Inbox.
+    pub dismissed_at: Option<i64>,
+    /// A Team Lead chat that still waits for you: it is in the Inbox.
+    pub waiting: bool,
 }
 
 impl ChatThread {
@@ -97,11 +110,27 @@ pub fn title_from(text: &str) -> String {
     format!("{}…", cut.trim_end_matches([',', '.', ':', ';', ' ']))
 }
 
-const THREAD_COLS: &str = "id, agent_actor_id, COALESCE(title, 'New chat'), session_id, created_at, updated_at, cost_usd_micros, input_tokens, output_tokens";
+const THREAD_COLS: &str = "id, agent_actor_id, COALESCE(title, 'New chat'), session_id, created_at, updated_at, cost_usd_micros, input_tokens, output_tokens,
+    created_by, kind, task_ids_json, answered_at, dismissed_at";
 
 fn thread_row(r: &rusqlite::Row) -> rusqlite::Result<ChatThread> {
+    let task_ids: Vec<String> = serde_json::from_str(&r.get::<_, String>(11)?).unwrap_or_default();
+    let (kind, answered_at, dismissed_at): (Option<String>, Option<i64>, Option<i64>) = (r.get(10)?, r.get(12)?, r.get(13)?);
     Ok(ChatThread { id: r.get(0)?, agent_id: r.get(1)?, title: r.get(2)?, session_id: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)?,
-                    cost_usd_micros: r.get(6)?, input_tokens: r.get(7)?, output_tokens: r.get(8)? })
+                    cost_usd_micros: r.get(6)?, input_tokens: r.get(7)?, output_tokens: r.get(8)?, created_by: r.get(9)?,
+                    waiting: kind.is_some() && answered_at.is_none() && dismissed_at.is_none(), kind, task_ids, tasks: vec![], answered_at, dismissed_at })
+}
+
+/// Fills in the identifiers of the cards Team Lead chats are about.
+fn with_tasks(c: &rusqlite::Connection, mut threads: Vec<ChatThread>) -> Result<Vec<ChatThread>> {
+    for t in threads.iter_mut().filter(|t| !t.task_ids.is_empty()) {
+        for id in &t.task_ids {
+            if let Some(ident) = c.query_row("SELECT identifier FROM tasks WHERE id=?1 AND deleted_at IS NULL", [id], |r| r.get::<_, String>(0)).optional()? {
+                t.tasks.push(ident);
+            }
+        }
+    }
+    Ok(threads)
 }
 
 pub fn create_thread(db: &Db, you: &str, agent_id: &str, first_text: &str) -> Result<String> {
@@ -123,14 +152,78 @@ pub fn create_thread(db: &Db, you: &str, agent_id: &str, first_text: &str) -> Re
 pub fn list_threads(db: &Db) -> Result<Vec<ChatThread>> {
     db.read(|c| {
         let mut st = c.prepare(&format!("SELECT {THREAD_COLS} FROM chat_threads WHERE deleted_at IS NULL ORDER BY updated_at DESC, rowid DESC"))?;
-        Ok(st.query_map([], thread_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        with_tasks(c, st.query_map([], thread_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
     })
 }
 
 pub fn get_thread(db: &Db, id: &str) -> Result<ChatThread> {
     db.read(|c| {
-        c.query_row(&format!("SELECT {THREAD_COLS} FROM chat_threads WHERE id=?1 AND deleted_at IS NULL"), [id], thread_row)
-            .optional()?.ok_or_else(|| Error::NotFound(format!("chat {id}")))
+        let t = c.query_row(&format!("SELECT {THREAD_COLS} FROM chat_threads WHERE id=?1 AND deleted_at IS NULL"), [id], thread_row)
+            .optional()?.ok_or_else(|| Error::NotFound(format!("chat {id}")))?;
+        Ok(with_tasks(c, vec![t])?.remove(0))
+    })
+}
+
+/// The chats the Team Lead started that still wait for you (the Inbox), newest activity first.
+pub fn waiting_lead_chats(db: &Db) -> Result<Vec<ChatThread>> {
+    Ok(list_threads(db)?.into_iter().filter(|t| t.waiting).collect())
+}
+
+pub const LEAD_KINDS: [&str; 2] = ["question", "approval"];
+
+/// The Team Lead asks you something in a chat (`start_chat`): `body_md` is its first message, saved as the agent's.
+/// One waiting Team Lead chat per card: when one of `task_ids` already has one, the message goes there instead (it
+/// moves to the top again, and its cards are joined). Returns the chat's id and whether it was a new chat.
+pub fn start_lead_chat(db: &Db, agent_id: &str, title: &str, kind: &str, task_ids: &[String], body_md: &str, run_id: Option<&str>)
+    -> Result<(String, bool)> {
+    if !LEAD_KINDS.contains(&kind) {
+        return Err(Error::Invalid(format!("a Team Lead chat is a question or an approval, not {kind}")));
+    }
+    if body_md.trim().is_empty() {
+        return Err(Error::Invalid("write the first message (body_md)".into()));
+    }
+    let title = title_from(title);
+    let existing = waiting_lead_chats(db)?.into_iter().find(|t| t.agent_id == agent_id && t.task_ids.iter().any(|id| task_ids.contains(id)));
+    let (id, new) = match existing {
+        Some(t) => {
+            let mut ids = t.task_ids.clone();
+            ids.extend(task_ids.iter().filter(|id| !t.task_ids.contains(id)).cloned());
+            db.write(Some(agent_id), |w| {
+                w.conn().execute("UPDATE chat_threads SET task_ids_json=?2 WHERE id=?1", rusqlite::params![t.id, serde_json::to_string(&ids)?])?;
+                Ok(())
+            })?;
+            (t.id, false)
+        }
+        None => {
+            let id = db.write(Some(agent_id), |w| {
+                let c = w.conn();
+                let now = ids::now_ms();
+                let id = ids::new_id();
+                c.execute(
+                    "INSERT INTO chat_threads(id, created_at, updated_at, created_by, updated_by, org_id, agent_actor_id, title, kind, task_ids_json)
+                     VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?3, ?5, ?6, ?7)",
+                    rusqlite::params![id, now, agent_id, util::org_id(c)?, title, kind, serde_json::to_string(task_ids)?],
+                )?;
+                w.insert("chat_threads", &id, serde_json::json!({"agent": agent_id, "title": title, "kind": kind, "tasks": task_ids}))?;
+                Ok(id)
+            })?;
+            (id, true)
+        }
+    };
+    add_message(db, NewMessage { thread_id: id.clone(), role: "agent".into(), author_id: Some(agent_id.to_string()), body_md: Some(body_md.trim().to_string()),
+                                 run_id: run_id.map(str::to_string), ..Default::default() })?;
+    Ok((id, new))
+}
+
+/// You dismissed a Team Lead chat in the Inbox: it stays in Chat → Recent, no longer waiting.
+pub fn dismiss(db: &Db, you: &str, thread_id: &str) -> Result<()> {
+    db.write(Some(you), |w| {
+        let n = w.conn().execute("UPDATE chat_threads SET dismissed_at=COALESCE(dismissed_at, ?2) WHERE id=?1 AND deleted_at IS NULL",
+                                 rusqlite::params![thread_id, ids::now_ms()])?;
+        if n == 0 {
+            return Err(Error::NotFound(format!("chat {thread_id}")));
+        }
+        w.update("chat_threads", thread_id, serde_json::json!({"dismissed": true}))
     })
 }
 
@@ -167,6 +260,10 @@ pub fn add_message(db: &Db, m: NewMessage) -> Result<ChatMessage> {
         let n = c.execute("UPDATE chat_threads SET updated_at=?2 WHERE id=?1 AND deleted_at IS NULL", rusqlite::params![m.thread_id, now])?;
         if n == 0 {
             return Err(Error::NotFound(format!("chat {}", m.thread_id)));
+        }
+        if m.role == "user" {
+            // You answered a Team Lead chat: it leaves the Inbox.
+            c.execute("UPDATE chat_threads SET answered_at=?2 WHERE id=?1 AND kind IS NOT NULL AND answered_at IS NULL", rusqlite::params![m.thread_id, now])?;
         }
         c.execute(
             "INSERT INTO chat_messages(id, created_at, thread_id, role, author_actor_id, body_md, run_id, tool_name, tool_json)

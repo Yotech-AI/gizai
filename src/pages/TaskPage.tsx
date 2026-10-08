@@ -1,8 +1,8 @@
 // The task page, Paperclip layout: header line, title, description, acceptance criteria, attachments, the agent
 // run, tabs (Comments, Activity, Runs) and a closable properties panel (]).
 import { useEffect, useRef, useState } from "react";
-import { Activity, Copy, MessageSquare, PanelRight, Pencil, Play } from "lucide-react";
-import { addComment, getTask, getTeam, listComments, listRuns, listUsers, taskActivity, updateTask } from "../api";
+import { Activity, Archive, ArchiveRestore, Copy, MessageSquare, PanelRight, Pencil, Play } from "lucide-react";
+import { addComment, archiveTask, getTask, getTeam, listComments, listRuns, listUsers, restoreTask, taskActivity, updateTask } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { relTime } from "../lib/format";
@@ -21,9 +21,10 @@ import { PullPanel } from "../components/PullPanel";
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function writePref(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
 
-/** Shows Markdown; a click (or Edit) switches to the editor with its toolbar. Saves on blur or Ctrl+Enter, Escape cancels. */
-function EditableMarkdown({ label, value, placeholder, hint, onSave }: {
-  label: string; value: string; placeholder: string; hint?: string; onSave: (md: string) => Promise<void>;
+/** Shows Markdown; a click (or Edit) switches to the editor with its toolbar. Saves on blur or Ctrl+Enter, Escape cancels.
+ *  `readOnly` (an archived card) only shows it. */
+function EditableMarkdown({ label, value, placeholder, hint, onSave, readOnly }: {
+  label: string; value: string; placeholder: string; hint?: string; onSave: (md: string) => Promise<void>; readOnly?: boolean;
 }) {
   const [editing, setEditingState] = useState(false);
   const closed = useRef(false); // Ctrl+Enter, blur and Escape can all fire while the editor closes: act once
@@ -35,6 +36,14 @@ function EditableMarkdown({ label, value, placeholder, hint, onSave }: {
     if (md !== value) await onSave(md);
   };
   const cancel = () => { closed.current = true; setEditing(false); };
+  if (readOnly) {
+    return (
+      <section className="block md-block">
+        <div className="block-head"><h3>{label}</h3></div>
+        <div className="md-static">{value.trim() ? <MarkdownView md={value} /> : <span className="faint">None.</span>}</div>
+      </section>
+    );
+  }
   return (
     <section className="block md-block">
       <div className="block-head">
@@ -85,7 +94,15 @@ export function TaskPage({ id }: { id: string }) {
   if (error) return <div className="error-banner">{error}</div>;
   if (!task) return null;
   const fail = (e: unknown) => setErr(String(e));
+  // Archived (GA-43): read-only, with Restore. Only a card in Done can be archived, and not while an agent works on it.
+  const archived = !!task.archivedAt;
+  const archive = () => { setErr(null); archiveTask(id).catch(fail); };
+  const restore = () => { setErr(null); restoreTask(id).catch(fail); };
+  // A merge moves the card to the team's Deploy column (merged, not deployed yet), else to Done.
+  const columns = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
+  const mergeTo = (columns.find((s) => s.category === "deploy") ?? columns.find((s) => s.category === "done"))?.name;
   const saveTitle = () => {
+    if (archived) return;
     const t = title.trim();
     if (!t) { setTitle(task.title); return; }
     if (t !== task.title) updateTask(id, { title: t }).catch(fail);
@@ -105,6 +122,9 @@ export function TaskPage({ id }: { id: string }) {
         </div>
         <div className="actions">
           <button className="btn ghost sm" onClick={() => navigator.clipboard?.writeText(task.identifier).catch(() => {})} title="Copy the task ID"><Copy className="icon" />Copy ID</button>
+          {archived ? <button className="btn primary sm" onClick={restore} title="Put it back at the bottom of Done"><ArchiveRestore className="icon" />Restore</button>
+            : task.stateCategory === "done" && <button className="btn ghost sm" onClick={archive} disabled={live}
+              title={live ? "An agent is working on this card" : "Take it off the board; the bin on the Tasks page lists it"}><Archive className="icon" />Archive</button>}
           {!props && <button className="btn ghost sm icon-only" aria-label="Show properties" title="Show properties (])" onClick={() => setProps(true)}><PanelRight className="icon" /></button>}
         </div>
       </div>
@@ -118,21 +138,27 @@ export function TaskPage({ id }: { id: string }) {
               {task.projectName && <a className="proj" href={href({ page: "project", id: task.projectId! })}><span className="dot" style={{ width: 8, height: 8, borderRadius: "50%", background: task.projectColor ?? "var(--text-3)" }} />{task.projectName}</a>}
               {live && <span className="badge live"><span className="pulse" />Live</span>}
               {task.hold && <span className="badge needs">On hold</span>}
+              {archived && <span className="badge"><Archive className="icon sm" />Archived</span>}
             </div>
-            <input className="title-input" aria-label="Title" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
+            {archived && (
+              <div className="archived-note" role="note">
+                <span className="grow">Archived {relTime(task.archivedAt!)}{task.archivedBy ? ` by ${task.archivedBy}` : ""}. It is read-only: Restore puts it back at the bottom of {task.stateName}.</span>
+              </div>
+            )}
+            <input className="title-input" aria-label="Title" value={title} readOnly={archived} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setTitle(task.title); (e.target as HTMLInputElement).blur(); } }} />
-            <EditableMarkdown label="Description" value={task.descriptionMd}
+            <EditableMarkdown label="Description" value={task.descriptionMd} readOnly={archived}
               placeholder="Describe the task. Markdown works: headings, bold, checklists, KADE-12 refs, @mentions."
               onSave={(md) => updateTask(id, { descriptionMd: md }).catch(fail)} />
-            <EditableMarkdown label="Acceptance criteria" value={task.acceptanceMd ?? ""} hint="QA checks these one by one"
+            <EditableMarkdown label="Acceptance criteria" value={task.acceptanceMd ?? ""} hint="QA checks these one by one" readOnly={archived}
               placeholder="- [ ] What must be true when this task is done"
               onSave={(md) => updateTask(id, { acceptanceMd: md }).catch(fail)} />
             <section className="block">
               <div className="block-head"><h3>Attachments</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>Screenshots, exports, specs</span></div>
-              <FileDrop ownerType="task" ownerId={task.id} />
+              <FileDrop ownerType="task" ownerId={task.id} readOnly={archived} />
             </section>
-            {team && <RunPanel task={task} team={team} />}
-            <PullPanel task={task} live={live} />
+            {team && !archived && <RunPanel task={task} team={team} />}
+            {!archived && <PullPanel task={task} live={live} mergeTo={mergeTo} />}
 
             <div className="tabs" role="tablist">
               {([["comments", MessageSquare, "Comments", comments?.length], ["activity", Activity, "Activity", undefined], ["runs", Play, "Runs", runs?.length]] as const).map(([k, I, l, n]) => (
@@ -152,13 +178,13 @@ export function TaskPage({ id }: { id: string }) {
                   </div>
                 ))}
                 {comments && comments.length === 0 && <p className="faint">No comments yet.</p>}
-                <div className="composer" style={{ marginTop: 14 }}>
+                {!archived && <div className="composer" style={{ marginTop: 14 }}>
                   <MarkdownEditor key={composerKey} value="" onChange={setDraft} onSave={post} ariaLabel="New comment" minHeight={72} hint="Ctrl+Enter posts"
                     placeholder="Write a comment. Mention @someone or a task like KADE-12." />
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                     <button className="btn primary" disabled={!draft.trim()} onClick={() => post(draft)}>Comment</button>
                   </div>
-                </div>
+                </div>}
               </div>
             )}
             {tab === "activity" && (
@@ -172,7 +198,7 @@ export function TaskPage({ id }: { id: string }) {
             {tab === "runs" && <RunHistory runs={runs} />}
           </div>
         </div>
-        {props && team && people && <Properties task={task} team={team} people={people} onError={setErr} onClose={() => setProps(false)} />}
+        {props && team && people && <Properties task={task} team={team} people={people} onError={setErr} onClose={() => setProps(false)} readOnly={archived} />}
       </div>
     </>
   );

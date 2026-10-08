@@ -140,12 +140,18 @@ a.member:hover { border-color: var(--line-2); }
 .rule:first-child { border-top: 0; }
 .rule-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); color: var(--text-2); }
 .rule-add .select, .rule-add .input { width: auto; }
+.col-add { margin-top: 10px; }
+.col-add > .rule-add { border-top: 0; }
+.col-add .grow { flex: 1; }
+.col-add-err { padding: 0 14px 12px; color: var(--danger); font-size: var(--fs-sm); }
 .radios { display: flex; flex-direction: column; gap: 8px; }
 .radios label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .radios input { accent-color: var(--accent); margin: 0; }
 .radios .inline { display: flex; align-items: center; gap: 8px; padding-left: 24px; color: var(--text-2); }
 .tool-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
 .tool-sugg .label-pill { font-family: var(--font-mono); }
+.folder-list { display: flex; flex-direction: column; gap: 8px; }
+.folder-row { display: flex; flex-direction: column; gap: 4px; }
 
 /* ---------- docs and versions ---------- */
 .doc-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 14px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }
@@ -187,6 +193,14 @@ a.member:hover { border-color: var(--line-2); }
 .chat-threads .th.on { background: var(--selected); color: var(--text); }
 .chat-threads .th .t { display: flex; align-items: center; gap: 7px; min-width: 0; font-weight: 500; }
 .chat-threads .th .when { padding-left: 0; font-size: var(--fs-xs); color: var(--text-3); }
+.chat-threads .th .t .badge { flex: none; }
+/* the Inbox: chats the Team Lead started that wait for you, above the cards */
+.lead-chats-pad { padding-bottom: 0; }
+.board-wrap > .lead-chats { margin: 0 0 12px; }
+.lead-chats .section-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.lead-chat { display: flex; align-items: center; gap: 10px; }
+.lead-chat a { color: var(--text); text-decoration: none; min-width: 0; }
+.lead-chat a:hover { text-decoration: underline; }
 .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-scroll { flex: 1; min-height: 0; overflow: auto; }
 .chat-composer { border-top: 1px solid var(--line); background: var(--bg); }
@@ -229,3 +243,27 @@ a.member:hover { border-color: var(--line-2); }
 .icon.spin { animation: gz-spin 1s linear infinite; }
 @keyframes gz-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .icon.spin { animation: none; } }
+
+/* ---------- archived cards: Archive on Done cards, the bin, an archived task page ---------- */
+.card .card-archive { width: 22px; height: 22px; margin: -3px -5px -3px 0; color: var(--text-3); opacity: 0; transition: opacity .12s; }
+.card:hover .card-archive, .card:focus-within .card-archive { opacity: 1; }
+.card .card-archive:hover { color: var(--text); }
+.card .card-archive:focus-visible { opacity: 1; outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (hover: none) { .card .card-archive { opacity: 1; } }
+.bin-search { width: 100%; margin-bottom: 14px; }
+.bin-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 180px) 220px; align-items: center; gap: 12px; min-height: var(--size-row);
+  padding: 0 10px; border-radius: var(--radius); color: var(--text); text-decoration: none; }
+.bin-row:hover, .bin-row:focus-visible { background: var(--hover); }
+.bin-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.bin-row .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.bin-row .proj { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-2); font-size: var(--fs-sm); }
+.bin-row .proj span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bin-row .when { overflow: hidden; color: var(--text-3); font-size: var(--fs-sm); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .bin-row { grid-template-columns: auto minmax(0, 1fr); padding: 6px 10px; } .bin-row .proj, .bin-row .when { grid-column: 2; text-align: left; } }
+.archived-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius-l);
+  background: var(--raised); color: var(--text-2); font-size: var(--fs-sm); }
+.archived-note .grow { flex: 1; min-width: 200px; }
+.title-input[readonly]:hover { border-color: transparent; }
+.title-input[readonly]:focus { border-color: transparent; background: transparent; }
+.md-static { padding: 6px 0; min-height: 34px; }
+.filedrop.read-only { border-style: solid; border-color: var(--line); }

@@ -2,8 +2,8 @@
 //! HTTPS with gh's login (Settings → GitHub → Push over), and opens its pull request with your GitHub CLI (gh). The PR
 //! check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet: every
 //! two minutes, when a run moves a card to Review, and when you open such a card. A merge on GitHub moves its card to
-//! Done and removes its worktree. Usable without a Tauri app (tests): the UI hears about changes through
-//! `AppState::notify`.
+//! Deploy (Done for a team without a Deploy column), where nothing starts by itself, and removes its worktree. Usable
+//! without a Tauri app (tests): the UI hears about changes through `AppState::notify`.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -277,7 +277,7 @@ pub async fn check_all(st: &AppState) -> Vec<Checked> {
 }
 
 /// Asks GitHub for the card's pull requests and brings the card up to date with the one to show (an open one first,
-/// else the one Gizai follows, else the newest). A merge moves the card to Done and cleans up, once: when Gizai
+/// else the one Gizai follows, else the newest). A merge moves the card to Deploy (or Done) and cleans up, once: when Gizai
 /// followed that pull request, or when it has the branch's latest commit (so a card reopened after an earlier merge
 /// stays where it is).
 fn check_blocking(st: &AppState, gh: &Path, card: &PrCard) -> Result<Checked, String> {

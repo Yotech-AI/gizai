@@ -45,8 +45,9 @@ export function pullAction(t: PullTask, live: boolean): { label: string; why: st
   return { label, why: null };
 }
 
-/** One plain line under the pull request: what the button does, or what happens next. */
-export function pullHint(t: PullTask, defaultBranch: string): string {
+/** One plain line under the pull request: what the button does, or what happens next. `mergeTo`: the column a merge moves
+ *  the card to (the team's Deploy column, else Done). */
+export function pullHint(t: PullTask, defaultBranch: string, mergeTo = "Done"): string {
   const branch = t.branch ?? "the card's branch";
   if (t.prUrl && t.prState === "merged") return "Merged on GitHub.";
   if (t.prUrl && t.prState === "closed") {
@@ -54,7 +55,7 @@ export function pullHint(t: PullTask, defaultBranch: string): string {
   }
   if (t.prUrl) {
     const push = t.stateCategory === "review" ? ` Push branch adds new commits from ${branch} to it.` : "";
-    return `When it is merged on GitHub, the card moves to Done and its worktree is removed.${push}`;
+    return `When it is merged on GitHub, the card moves to ${mergeTo} and its worktree is removed.${push}`;
   }
-  return `Pushes ${branch} to GitHub with your git login and opens a pull request into ${defaultBranch} with gh. When it is merged, the card moves to Done.`;
+  return `Pushes ${branch} to GitHub with your git login and opens a pull request into ${defaultBranch} with gh. When it is merged, the card moves to ${mergeTo}.`;
 }

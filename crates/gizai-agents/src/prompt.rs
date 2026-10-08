@@ -95,6 +95,19 @@ your GIZAI_RESULT line, saying in the summary what is done and what is left.\n",
 }
 
 /// The message that resumes a session Gizai (or a person) stopped: the task and instructions are already in it.
+/// Continue after an answer: the last run ended asking for a decision, and `answer` is what was written on the card since
+/// (its comments, oldest first).
+pub fn answered_prompt(answer: &str, limits: Option<RunLimits>) -> String {
+    let quoted: Vec<String> = answer.trim().lines().map(|l| format!("> {l}")).collect();
+    let mut p = format!("Your last run on this task ended asking for a decision. It was answered on the card since:\n\n{}\n\n\
+Continue where you left off, with this answer. First check `git status` and `git diff`. Then finish the task, commit, and end with your \
+GIZAI_RESULT line.", quoted.join("\n"));
+    if let Some(l) = limits {
+        p.push_str(&limits_section(l));
+    }
+    p.trim_end().to_string() + "\n"
+}
+
 pub fn continue_prompt(reason: &str, limits: Option<RunLimits>) -> String {
     let mut p = format!("Your last run on this task was stopped: {}.\n\nContinue where you left off. First check `git status` and \
 `git diff`: edits that were cut off may not have been saved. Then finish the task, commit, and end with your GIZAI_RESULT line.",

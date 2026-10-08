@@ -27,6 +27,12 @@ export const createTask = (input: T.TaskInput) => invoke<string>("create_task", 
 export const updateTask = (id: string, patch: T.TaskPatch) => invoke<void>("update_task", { id, patch });
 export const moveTask = (id: string, stateId: string, sortKey: string) => invoke<void>("move_task", { id, stateId, sortKey });
 export const setTaskLabels = (id: string, labelIds: string[]) => invoke<void>("set_task_labels", { id, labelIds });
+/** The archived cards (the bin) of one project, or of all: the most recently archived first. */
+export const listArchivedTasks = (projectId: string | null = null) => invoke<T.Task[]>("list_archived_tasks", { projectId });
+/** Archives a card in Done; fails with a plain message for another column or while an agent works on it. */
+export const archiveTask = (id: string) => invoke<void>("archive_task", { id });
+/** Puts an archived card back at the bottom of its Done column. */
+export const restoreTask = (id: string) => invoke<void>("restore_task", { id });
 export const taskActivity = (taskId: string) => invoke<T.ChangeEntry[]>("task_activity", { taskId });
 export const listComments = (taskId: string) => invoke<T.Comment[]>("list_comments", { taskId });
 export const addComment = (taskId: string, bodyMd: string) => invoke<string>("add_comment", { taskId, bodyMd });
@@ -52,9 +58,15 @@ export const addTeam = (name: string) => invoke<string>("add_team", { name });
 export const addAgent = (teamId: string, input: T.AgentInput) => invoke<string>("add_agent", { teamId, input });
 export const updateAgent = (actorId: string, input: T.AgentInput) => invoke<void>("update_agent", { actorId, input });
 export const setAgentStatus = (actorId: string, status: "active" | "paused") => invoke<void>("set_agent_status", { actorId, status });
+/** The agent form's Folders: why each one is refused, or a warning. */
+export const checkAgentFolders = (folders: T.AgentFolder[]) => invoke<T.FolderCheck[]>("check_agent_folders", { folders });
 export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("add_rule", { teamId, input });
 export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });
+/** A new column right after `afterId`; resolves with its id. ownerRole: null = nobody, a role key ("qa", "backend"), or "human" (you,
+ * always for a Deploy column). Fails with "this team already has a column called X" for a name in use. */
+export const addState = (teamId: string, name: string, afterId: string, category: T.StateCategory, ownerRole: string | null) =>
+  invoke<string>("add_state", { teamId, name, afterId, category, ownerRole });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
 /** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
  * CLI (a second account); other kinds of CLI have no list. */
@@ -130,6 +142,8 @@ export const chatMessages = (threadId: string) => invoke<T.ChatMessage[]>("chat_
 /** Sends a message (a new thread when threadId is null) and starts the answer; resolves with the thread id. */
 export const sendChat = (threadId: string | null, text: string) => invoke<string>("send_chat", { threadId, text });
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
+/** × on a Team Lead chat in the Inbox: it no longer waits for you. */
+export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
 export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));

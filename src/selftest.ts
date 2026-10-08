@@ -122,7 +122,8 @@ export async function teamProbe(getTeam: () => Promise<{ members: { name: string
   const radios = [...dialog.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
   radios[2]?.click();
   await sleep(100);
-  const minutes = dialog.querySelector("input[type=number]") as HTMLInputElement | null;
+  // the wake-up minutes, not the board check's (the Chat section comes first)
+  const minutes = dialog.querySelector("input[type=number][aria-label=Minutes]") as HTMLInputElement | null;
   if (minutes) typeInto(minutes, "20");
   // The model list comes from Claude Code (the fake here): pick Opus, then Extra high effort.
   const modelSel = await waitFor(() => {

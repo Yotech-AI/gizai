@@ -27,6 +27,8 @@ pub struct ClaudeArgs {
     pub permission_prompts_none: bool,
     /// More directories the file tools may read (`--add-dir`).
     pub add_dirs: Vec<String>,
+    /// Tools or rules to refuse (`--disallowedTools`), like `Edit(//home/me/shared/**)`.
+    pub disallowed_tools: Vec<String>,
     /// Don't save the session (`--no-session-persistence`); such a session can't be resumed.
     pub no_session_persistence: bool,
     /// Run no hooks at all (`--settings {"disableAllHooks":true}`): not the user's, not a plugin's, not a repo's.
@@ -100,6 +102,10 @@ impl ClaudeArgs {
         if !self.allowed_tools.is_empty() {
             a.push("--allowedTools".into());
             a.extend(self.allowed_tools.iter().cloned());
+        }
+        if !self.disallowed_tools.is_empty() {
+            a.push("--disallowedTools".into());
+            a.extend(self.disallowed_tools.iter().cloned());
         }
         a
     }

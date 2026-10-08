@@ -8,10 +8,17 @@ use serde_json::{Value, json};
 use super::{Args, Cx, err, resolve, ymd};
 
 fn task_line(t: &Task) -> Value {
-    json!({
+    let mut v = json!({
         "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
-    })
+        "testing": t.testing,
+    });
+    if let Some(at) = t.archived_at {
+        v["archived"] = json!(true);
+        v["archived_on"] = json!(ymd(at));
+        v["archived_by"] = json!(t.archived_by);
+    }
+    v
 }
 
 fn file_lines(list: Vec<FileRow>) -> Vec<Value> {
@@ -44,9 +51,17 @@ pub(crate) fn overview(cx: &Cx) -> Result<Value, String> {
             "key": p.key, "name": p.name, "client": p.client_name, "open_tasks": p.open_tasks, "repo": p.repo_path.is_some()})).collect::<Vec<_>>(),
         "tasks_by_column": by_column,
         "inbox": tasks::needs_you(db, &cx.st.you_id).map_err(err)?.len(),
+        "team_lead_chats": lead_chats(cx)?,
         "agents": agents,
         "runs_working_now": live.len(),
     }))
+}
+
+/// The chats the Team Lead started that wait for the user's answer, newest first.
+fn lead_chats(cx: &Cx) -> Result<Vec<Value>, String> {
+    Ok(gizai_core::chat::waiting_lead_chats(cx.db()).map_err(err)?.into_iter().map(|t| json!({
+        "title": t.title, "kind": t.kind, "tasks": t.tasks, "since": ymd(t.updated_at),
+    })).collect())
 }
 
 pub(crate) fn inbox(cx: &Cx) -> Result<Value, String> {
@@ -55,7 +70,7 @@ pub(crate) fn inbox(cx: &Cx) -> Result<Value, String> {
         "why": if t.hold.is_some() { "on hold" } else { "waiting for your review" },
         "hold": t.hold, "reason": t.hold_reason, "assignee": t.assignee_name,
     })).collect();
-    Ok(json!({"count": items.len(), "items": items}))
+    Ok(json!({"count": items.len(), "items": items, "team_lead_chats": lead_chats(cx)?}))
 }
 
 pub(crate) fn list_clients(cx: &Cx, a: &Args) -> Result<Value, String> {
@@ -111,7 +126,11 @@ pub(crate) fn get_project(cx: &Cx, a: &Args) -> Result<Value, String> {
 pub(crate) fn list_tasks(cx: &Cx, a: &Args) -> Result<Value, String> {
     let project = match a.opt("project") { Some(p) => Some(resolve::project(cx, &p)?), None => None };
     let include_done = a.flag("include_done").unwrap_or(false);
-    let mut list = tasks::list(cx.db(), &TaskFilter { project_id: project.as_ref().map(|p| p.id.clone()), open_only: !include_done }).map_err(err)?;
+    let mut list = if a.flag("archived").unwrap_or(false) {
+        tasks::archived(cx.db(), project.as_ref().map(|p| p.id.as_str())).map_err(err)?
+    } else {
+        tasks::list(cx.db(), &TaskFilter { project_id: project.as_ref().map(|p| p.id.clone()), open_only: !include_done }).map_err(err)?
+    };
     if let Some(c) = a.opt("column") {
         let col = resolve::column(&resolve::team_of(cx, project.as_ref())?, &c)?;
         list.retain(|t| t.state_name.eq_ignore_ascii_case(&col.name));
@@ -147,8 +166,9 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     Ok(json!({"task": {
         "id": t.id, "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
-        "hold_reason": t.hold_reason, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
+        "hold_reason": t.hold_reason, "testing": t.testing, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
+        "archived": t.archived_at.is_some(), "archived_on": t.archived_at.map(ymd), "archived_by": t.archived_by,
     }, "comments": comments, "runs": runs, "files": file_lines(files::list(cx.db(), "task", &t.id).map_err(err)?)}))
 }
 
@@ -159,6 +179,7 @@ fn agent_json(cx: &Cx, m: &team::Member, live: &[crate::runs::LiveRun]) -> Value
         "heartbeat_minutes": m.heartbeat_minutes, "model": m.model, "effort": m.effort, "cards_at_once": m.max_runs, "chat": m.chat_enabled,
         "working": live.iter().any(|r| r.agent_id == m.actor_id),
         "spent_this_month_usd": usd(spent), "monthly_budget_usd": m.budget_usd_micros.map(usd),
+        "board_check_minutes": m.board_check_minutes, "board_check_paused": m.board_check_paused,
     })
 }
 
@@ -216,15 +237,16 @@ pub(crate) fn rule_sentence(r: &team::RoutingRule, t: &team::Team) -> String {
 
 pub(crate) fn workflow(cx: &Cx) -> Result<Value, String> {
     let t = resolve::team_of(cx, None)?;
-    let worked_by = |o: &Option<String>| match o.as_deref() {
-        Some("implementer") => "the agent whose role matches the card's label",
-        Some("qa") => "the QA agent",
-        Some("human") => "the user (review and merge)",
+    let worked_by = |s: &gizai_core::team::WorkflowState| match (s.category.as_str(), s.owner_role.as_deref()) {
+        ("deploy", _) => "you (deploy, or press Run for the DevOps Agent)",
+        (_, Some("implementer")) => "the agent whose role matches the card's label",
+        (_, Some("qa")) => "the QA agent",
+        (_, Some("human")) => "the user (review and merge)",
         _ => "nobody (waiting)",
     };
     Ok(json!({
         "team": t.name,
-        "columns": t.states.iter().map(|s| json!({"name": s.name, "category": s.category, "worked_by": worked_by(&s.owner_role)})).collect::<Vec<_>>(),
+        "columns": t.states.iter().map(|s| json!({"name": s.name, "category": s.category, "worked_by": worked_by(s)})).collect::<Vec<_>>(),
         "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
         "rules": t.rules.iter().map(|r| rule_sentence(r, &t)).collect::<Vec<_>>(),
     }))

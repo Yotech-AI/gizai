@@ -15,8 +15,9 @@ import type { DayStat, Run } from "../types";
 import { Avatar } from "../components/Avatar";
 import { MarkdownView } from "../components/MarkdownView";
 import { outcomeBadge } from "../components/RunPanel";
+import { RunHistory } from "../components/RunHistory";
 
-const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat" };
+const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat", board_check: "Board check", nudge: "Continue" };
 const md = (ms: number) => { const d = new Date(ms); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
 
 function Bars({ days, mode }: { days: DayStat[]; mode: "activity" | "success" }) {
@@ -80,7 +81,7 @@ export function AgentPage({ id }: { id: string }) {
           <div className="entity-head">
             <Avatar name={agent.name} kind="agent" size="xl" role={agent.roleKey} />
             <div className="names"><h1>{agent.name}</h1>
-              <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""} · {wakeupLabel(agent.wakeup, agent.heartbeatMinutes)}</p></div>
+              <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""}{agent.chatEnabled && agent.boardCheckMinutes ? ` · checks the board every ${agent.boardCheckMinutes} min` : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""} · {wakeupLabel(agent.wakeup, agent.heartbeatMinutes)}</p></div>
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>
@@ -92,6 +93,10 @@ export function AgentPage({ id }: { id: string }) {
             </div>
           </div>
           {msg && <div className="error-banner" style={{ margin: 0 }} role="status">{msg}</div>}
+          {agent.boardCheckPaused && (
+            <div className="error-banner" style={{ margin: 0 }} role="status">The board check stopped: {agent.boardCheckPaused} Change or resume {agent.name} to start it again.{" "}
+              <button className="link" onClick={() => setAgentStatus(id, "active").catch((e) => setMsg(String(e)))}>Start the board check again</button></div>
+          )}
 
           <section>
             <div className="section-head"><h3>{live.length ? "Working now" : "Latest run"}</h3>{last?.taskId && <a className="link" href={href({ page: "task", id: last.taskId })}>Open task</a>}</div>
@@ -125,13 +130,23 @@ export function AgentPage({ id }: { id: string }) {
             <div className="section-head"><h3>Recent runs</h3></div>
             <div className="panel">
               {(runs ?? []).map((r) => { const t = taskOf(r); return (
-                <a key={r.id} className="panel-row" href={r.taskId ? href({ page: "task", id: r.taskId }) : r.trigger === "chat" ? href({ page: "chat" }) : undefined}>
-                  {t && <span className="id">{t.identifier}</span>}<span className="grow">{t?.title ?? (r.trigger === "chat" ? "Chat answer" : "A deleted task")}</span>
+                <a key={r.id} className="panel-row" href={r.taskId ? href({ page: "task", id: r.taskId }) : r.trigger === "chat" ? href({ page: "chat" }) : undefined}
+                  title={r.trigger === "board_check" ? r.summaryMd ?? r.error ?? undefined : undefined}>
+                  {t && <span className="id">{t.identifier}</span>}
+                  {r.trigger === "board_check" ? <span className="grow ellipsis"><span className="badge info">Board check</span> <span className="muted">{(r.summaryMd ?? r.error ?? "").split("\n")[0]}</span></span>
+                    : <span className="grow">{t?.title ?? (r.trigger === "chat" ? "Chat answer" : "A deleted task")}</span>}
                   {outcomeBadge(r)}<span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" style={{ width: 80, textAlign: "right" }}>{relTime(r.createdAt)}</span>
                 </a>); })}
               {runs && runs.length === 0 && <div className="panel-row faint">No runs yet.</div>}
             </div>
           </section>
+
+          {(runs ?? []).some((r) => r.trigger === "board_check") && (
+            <section>
+              <div className="section-head"><h3>Board checks</h3></div>
+              <RunHistory runs={(runs ?? []).filter((r) => r.trigger === "board_check")} />
+            </section>
+          )}
 
           <section>
             <div className="section-head"><h3>Instructions</h3><button className="link" onClick={() => open({ kind: "agent", id })}>Edit</button></div>

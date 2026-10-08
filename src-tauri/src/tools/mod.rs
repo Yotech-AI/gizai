@@ -11,11 +11,14 @@ use crate::AppState;
 use crate::runs::Note;
 pub use gizai_mcp::ToolDef;
 
-/// The MCP server's view of the tools for one agent (the token's owner), in one chat thread (the token's scope).
+/// The MCP server's view of the tools for one agent (the token's owner), in one chat thread or one board check (the
+/// token's scope).
 pub struct GizaiTools {
     pub st: AppState,
     pub actor: String,
     pub thread: Option<String>,
+    /// The board check run the token was minted for.
+    pub check: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
@@ -23,7 +26,7 @@ impl gizai_mcp::Tools for GizaiTools {
         catalog()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
-        call_in(&self.st, &self.actor, self.thread.as_deref(), name, args).await
+        call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), name, args).await
     }
 }
 
@@ -34,15 +37,37 @@ pub async fn call(st: &AppState, actor: &str, name: &str, args: Value) -> Result
 
 /// Runs one tool as `actor` for a chat thread (what the user said there widens `attach_file`).
 pub async fn call_in(st: &AppState, actor: &str, thread: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
+    call_scoped(st, actor, thread, None, name, args).await
+}
+
+/// Runs one tool as `actor` in the board check `run_id`: nobody named a file, and the check's rules hold.
+pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, args: Value) -> Result<Value, String> {
+    call_scoped(st, actor, None, Some(run_id), name, args).await
+}
+
+/// What a board check may not do, whatever it is asked: attach a file nobody named, or change an agent's settings
+/// (the check asks you instead).
+const NOT_IN_A_CHECK: [&str; 4] = ["attach_file", "create_agent", "update_agent", "set_agent_status"];
+
+async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
     let a = Args(match args {
         Value::Object(m) => m,
         Value::Null => Map::new(),
         _ => return Err("arguments must be an object".into()),
     });
-    let cx = Cx { st, actor, thread };
+    if check.is_some() && NOT_IN_A_CHECK.contains(&name) {
+        return Err(match name {
+            "attach_file" => "In a board check nobody named a file, so nothing can be attached. Ask the user in a chat (start_chat) instead.".into(),
+            _ => format!("{name} can't be used in a board check: never change an agent's settings there. Ask the user in a chat (start_chat) instead."),
+        });
+    }
+    let cx = Cx { st, actor, thread, check };
     match name {
         "get_overview" => read::overview(&cx),
         "read_inbox" => read::inbox(&cx),
+        "check_board" => crate::board::check_json(st),
+        "start_chat" => write::start_chat(&cx, &a),
+        "continue_agent_run" => write::continue_run(&cx, &a).await,
         "list_clients" => read::list_clients(&cx, &a),
         "get_client" => read::get_client(&cx, &a),
         "list_projects" => read::list_projects(&cx, &a),
@@ -68,12 +93,14 @@ pub async fn call_in(st: &AppState, actor: &str, thread: Option<&str>, name: &st
         "update_agent" => write::update_agent(&cx, &a).await,
         "set_agent_status" => write::set_agent_status(&cx, &a),
         "add_routing_rule" => write::add_rule(&cx, &a),
+        "add_column" => write::add_column(&cx, &a),
         "start_agent_run" => write::start_run(&cx, &a).await,
         "stop_agent_run" => write::stop_run(&cx, &a),
         "create_doc" => write::create_doc(&cx, &a),
         "write_doc" => write::write_doc(&cx, &a),
         "attach_file" => write::attach_file(&cx, &a).await,
         "add_person" => write::add_person(&cx, &a),
+        "update_checkout" => write::update_checkout(&cx, &a).await,
         other => Err(format!("unknown tool {other}")),
     }
 }
@@ -84,6 +111,8 @@ pub(crate) struct Cx<'a> {
     pub actor: &'a str,
     /// The chat thread the call comes from, if any.
     pub thread: Option<&'a str>,
+    /// The board check run the call comes from, if any.
+    pub check: Option<&'a str>,
 }
 
 impl Cx<'_> {
@@ -183,7 +212,7 @@ fn schema(props: &[(&str, &str, &str)], required: &[&str]) -> Value {
 }
 
 fn tool(name: &str, description: &str, props: &[(&str, &str, &str)], required: &[&str]) -> ToolDef {
-    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_");
+    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_") || name == "check_board";
     ToolDef { name: name.into(), description: description.into(), input_schema: schema(props, required), read_only }
 }
 
@@ -200,7 +229,8 @@ const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("iban", "string", "IBAN"), ("payment_terms_days", "integer", "Payment terms in days"), ("notes_md", "string", "Notes (Markdown)"),
 ];
 
-const AGENT_FIELDS: [(&str, &str, &str); 11] = [
+const AGENT_FIELDS: [(&str, &str, &str); 12] = [
+    ("board_check_minutes", "integer", "Only for the agent with Chat on (the Team Lead): check the board every this many minutes (5–1440); 0 = off"),
     ("runs_on", "string", "The coding CLI it runs on, by name as Settings → Coding CLIs lists them (Claude Code, Codex, Gemini, a second account, …). Omit: Claude Code for a new agent, unchanged on update"),
     ("model", "string", "On Claude Code, a model it offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5). On Codex or Gemini, that CLI's model name. Empty = the CLI's default"),
     ("effort", "string", "How hard the model thinks. Claude Code: low, medium, high, xhigh or max. Codex: minimal, low, medium, high or xhigh. Gemini takes none. Empty = the CLI's default; higher costs more"),
@@ -222,16 +252,24 @@ fn with<const N: usize>(head: &[(&'static str, &'static str, &'static str)], res
 pub fn catalog() -> Vec<ToolDef> {
     vec![
         tool("get_overview", "A summary of the organisation: clients, active projects, tasks per column, how many items wait in the inbox, the agents and who is working now. Start here.", &[], &[]),
-        tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person) and tasks waiting in Review for them.", &[], &[]),
+        tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person), tasks waiting for them in Review or Deploy, and the chats you started that wait for their answer.", &[], &[]),
+        tool("check_board", "What on the board needs attention now: answered cards (a person commented after a needs-a-decision hold), held cards, cards no agent will start (and why) and cards whose run stopped part-way; then per agent its cards at once, the cards it works on, its free slots and whether its pull is paused (and why), and the free \"Runs at once\".", &[], &[]),
+        tool("start_chat", "Asks the user something in a new chat that waits at the top of their Inbox: a question, or an approval you need. One waiting chat per card: when a card already has one, the message is added to that chat. Returns a link to it.",
+             &[("title", "string", "A short title, like \"GA-12: pick the export format\""), ("kind", "enum:question|approval", "question, or approval for something you want to do"),
+               ("tasks", "string[]", "The identifiers of the cards it is about, like GA-12"), ("body_md", "string", "Your first message (Markdown): what you found, what you recommend and what you need")],
+             &["title", "kind", "tasks", "body_md"]),
+        tool("continue_agent_run", "Continues the agent's latest run on a task, like the Continue button: it resumes the run's session in its worktree, for a run that stopped part-way (a limit, a failure, stopped) or one that asked for a decision that has been answered on the card since (the agent hears the comments written since). A hold on the card is cleared.",
+             &[TASK], &["task"]),
         tool("list_clients", "All clients with city, main contact and counts of projects and open tasks.", &[("status", "enum:lead|active|inactive", "Only clients with this status")], &[]),
         tool("get_client", "One client with every field, its contacts, projects and files.", &[CLIENT], &["client"]),
         tool("list_projects", "Projects with key, client, status, linked repository and task counts.", &[("client", "string", "Only this client's projects"), ("status", "enum:planned|active|paused|done|archived", "Only projects with this status")], &[]),
         tool("get_project", "One project with its goal, repository, tasks per column, docs and files.", &[PROJECT], &["project"]),
-        tool("list_tasks", "Tasks, newest columns first. Done and cancelled tasks are left out unless include_done is true.",
+        tool("list_tasks", "Tasks, newest columns first. Done and cancelled tasks are left out unless include_done is true. Archived tasks are always left out; archived: true lists only them, the most recently archived first.",
              &[("project", "string", "Project key, name or id"), ("column", "string", "Column name, like To do or In progress"),
                ("assignee", "string", "A person or agent name; \"none\" for unassigned; \"me\" for the user"), ("label", "string", "Label name"),
-               ("text", "string", "Words in the title"), ("include_done", "boolean", "Include done and cancelled tasks"), ("limit", "integer", "At most this many (default 50)")], &[]),
-        tool("get_task", "One task with its description, acceptance criteria, labels, hold, latest comments, agent runs and files.", &[TASK], &["task"]),
+               ("text", "string", "Words in the title"), ("include_done", "boolean", "Include done and cancelled tasks"),
+               ("archived", "boolean", "Only the archived tasks (archived from Done; read-only until the user restores them)"), ("limit", "integer", "At most this many (default 50)")], &[]),
+        tool("get_task", "One task with its description, acceptance criteria, labels, hold, latest comments, agent runs and files. Finds an archived task by its identifier too, and says so (archived: true): it is read-only until the user restores it.", &[TASK], &["task"]),
         tool("list_agents", "The team's agents: role, status, wake-up, model, whether they work right now, spend this month and budget.", &[], &[]),
         tool("get_agent", "One agent's settings, instructions and recent runs.", &[AGENT], &["agent"]),
         tool("list_docs", "A project's docs (title, version, last change).", &[PROJECT], &["project"]),
@@ -260,22 +298,28 @@ pub fn catalog() -> Vec<ToolDef> {
              &[PROJECT, ("title", "string", "Short title"), ("description_md", "string", "What to do and why (Markdown)"),
                ("acceptance_md", "string", "Acceptance criteria, as a Markdown checklist"), ("column", "string", "Column name (default the first, Backlog)"),
                ("priority", "integer", "0 none, 1 urgent, 2 high, 3 medium, 4 low"), ("assignee", "string", "A person or agent name; \"me\" for the user"),
-               ("labels", "string[]", "Label names, like backend or bug")], &["project", "title"]),
+               ("labels", "string[]", "Label names, like backend or bug"),
+               ("testing", "boolean", "On (default): the QA Agent tests it before Review. Off: straight to Review, for a small UI fix or bug fix")], &["project", "title"]),
         tool("update_task", "Changes a task's fields, labels, assignee or hold. Only what is given changes.",
              &[TASK, ("title", "string", "New title"), ("description_md", "string", "Description (Markdown)"), ("acceptance_md", "string", "Acceptance criteria (Markdown)"),
                ("priority", "integer", "0 none, 1 urgent, 2 high, 3 medium, 4 low"), ("assignee", "string", "A person or agent name; \"none\" to unassign"),
                ("labels", "string[]", "The full new set of label names"), ("hold", "enum:needs_decision|blocked|stalled", "Put it on hold"),
-               ("hold_reason", "string", "Why it is on hold"), ("clear_hold", "boolean", "Take it off hold")], &["task"]),
+               ("hold_reason", "string", "Why it is on hold"), ("clear_hold", "boolean", "Take it off hold"),
+               ("testing", "boolean", "On: the QA Agent tests it before Review. Off: straight to Review")], &["task"]),
         tool("move_task", "Moves a task to another column (to the bottom of that column).", &[TASK, ("column", "string", "Column name, like In progress")], &["task", "column"]),
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions unless instructions_md is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
-        tool("update_agent", "Changes an agent's settings. Only the fields given change.",
+        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change) are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
         tool("set_agent_status", "Pauses an agent (no heartbeats, no new runs) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
         tool("add_routing_rule", "Adds a routing rule: a card with a label, or entering a column, goes to the first idle agent with a role.",
              &[("kind", "enum:label|column", "Match a label or a column"), ("match", "string", "The label or column name"),
                ("role", "string", "The role that takes the card"), ("priority", "integer", "Lower wins (default 10)")], &["kind", "match", "role"]),
+        tool("add_column", "Adds a column to the board, right after another one. A deploy column (merged, not deployed yet) is always worked by the user: no agent starts there by itself.",
+             &[("name", "string", "Column name, unique in the team"), ("after", "string", "The column it goes after, like Review"),
+               ("category", "enum:backlog|ready|in_progress|testing|review|deploy|done|cancelled", "What the column means to the gates"),
+               ("worked_by", "string", "Who works it: nobody, a role key like qa, or you (the user)")], &["name", "after", "category"]),
         tool("start_agent_run", "Starts an agent on a task now (the given agent, else the assigned or routed one). The project needs a linked git repository.",
              &[TASK, ("agent", "string", "Agent name; omit to use the assigned or routed agent")], &["task"]),
         tool("stop_agent_run", "Stops the agent working on a task right now.", &[TASK], &["task"]),
@@ -285,6 +329,9 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("attach_file", "Copies a local file (absolute path, or ~/…) into Gizai and attaches it to one task, project or client.",
              &[("path", "string", "Absolute path of the file"), ("task", "string", "Task identifier"), ("project", "string", "Project key or name"), ("client", "string", "Client name")], &["path"]),
         tool("add_person", "Adds a person (a colleague or reviewer) to Gizai.", &[("name", "string", "Full name"), ("email", "string", "Email")], &["name"]),
+        tool("update_checkout", "Chat only, and only after the user said yes in this chat: updates a project's linked folder (the user's own checkout, where new cards copy vendor/ and node_modules/ from) to main as last fetched. A fast-forward, then composer install or npm ci where a lock file changed or a folder is missing; never the setup command. Changes nothing, and says why, with uncommitted changes, a merge or rebase in progress, a local main with its own commits, another branch unless switch is true, or a folder set to read in the Team Lead's folders. Answers at once; the result comes as a message in this chat.",
+             &[PROJECT, ("switch", "boolean", "When the folder is on another branch: switch it to the default branch first (that branch stays as it is). Only when the user agreed to the switch"),
+               ("folder", "string", "The folder to update; only the project's linked folder is allowed (the default)")], &["project"]),
     ]
 }
 

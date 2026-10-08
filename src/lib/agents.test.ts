@@ -76,3 +76,34 @@ describe("cards at once", () => {
     expect(inputFrom({ ...draftFrom(null), maxRuns: "x" }).maxRuns).toBeNull();
   });
 });
+
+describe("the board check setting", () => {
+  const lead = { actorId: "a", name: "Team Lead", kind: "agent", roleKey: "lead", handle: "l", status: "active", isLead: true, allowedTools: [], chatEnabled: true };
+  it("is off for an existing agent, 15 min when turned on, and sent as 0 when off", () => {
+    const d = draftFrom(lead);
+    expect(d).toMatchObject({ boardCheck: false, boardMinutes: "15" });
+    expect(inputFrom(d).boardCheckMinutes).toBe(0);
+    expect(inputFrom({ ...d, boardCheck: true }).boardCheckMinutes).toBe(15);
+  });
+  it("keeps the agent's interval, and goes off with Chat", () => {
+    const d = draftFrom({ ...lead, boardCheckMinutes: 30 });
+    expect(d).toMatchObject({ boardCheck: true, boardMinutes: "30" });
+    expect(inputFrom(d).boardCheckMinutes).toBe(30);
+    expect(inputFrom({ ...d, chat: false }).boardCheckMinutes).toBe(0);
+  });
+});
+
+describe("a Team Lead with both a board check and folders (GA-35 and GA-45, merged by GA-47)", () => {
+  const lead = { actorId: "a", name: "Team Lead", kind: "agent", roleKey: "lead", handle: "l", status: "active", isLead: true, allowedTools: [],
+    chatEnabled: true, boardCheckMinutes: 30, folders: [{ path: "/srv/shared", access: "read" as const }] };
+  it("loads and sends both, and changing one keeps the other", () => {
+    const d = draftFrom(lead);
+    expect(d).toMatchObject({ boardCheck: true, boardMinutes: "30", folders: [{ path: "/srv/shared", access: "read" }] });
+    expect(inputFrom(d)).toMatchObject({ boardCheckMinutes: 30, folders: [{ path: "/srv/shared", access: "read" }] });
+    expect(inputFrom({ ...d, boardMinutes: "60" })).toMatchObject({ boardCheckMinutes: 60, folders: [{ path: "/srv/shared", access: "read" }] });
+    const more = { ...d, folders: [...d.folders, { path: " /srv/out ", access: "change" as const }] };
+    expect(inputFrom(more)).toMatchObject({ boardCheckMinutes: 30, folders: [{ path: "/srv/shared", access: "read" }, { path: "/srv/out", access: "change" }] });
+    // Chat off turns the check off, not the folders
+    expect(inputFrom({ ...d, chat: false })).toMatchObject({ boardCheckMinutes: 0, folders: [{ path: "/srv/shared", access: "read" }] });
+  });
+});

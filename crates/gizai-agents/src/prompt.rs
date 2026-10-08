@@ -117,3 +117,120 @@ pub fn continue_prompt(reason: &str, limits: Option<RunLimits>) -> String {
     }
     p.trim_end().to_string() + "\n"
 }
+
+/// How a headless task run works, told at the end of every task prompt, new and continued (`with_rules`): nobody can
+/// approve anything, the commands the agent may run, its CLI's shell rules and the run's temp folder. Only what holds
+/// for its CLI and permission mode goes in. Claude Code's shell rules were checked against Claude Code 2.1.289 in
+/// acceptEdits mode with Gizai's task-run flags (GA-48): `$(…)`, backticks, variables, a heredoc with an unquoted
+/// delimiter, and reading or writing outside the working folders (an allowed `ls /tmp`, a redirect to `/tmp`, the Write
+/// tool on `/tmp`) were refused; pipes, `2>&1`, `&&`, `;`, a quoted heredoc and a redirect to a file in the worktree ran.
+#[derive(Debug, Clone)]
+pub struct RunRules {
+    pub kind: crate::cli::Kind,
+    /// The agent's permission mode in its CLI's terms; empty is Gizai's default for that CLI (acceptEdits for Claude
+    /// Code, workspace-write for Codex, auto_edit for Gemini).
+    pub mode: String,
+    /// Claude Code style, e.g. `Bash(git status:*)`: the agent's own list, or Gizai's default one.
+    pub allowed_tools: Vec<String>,
+    /// The agent's folders besides the worktree that this run gets (absolute paths).
+    pub folders: Vec<String>,
+    /// The run's temp folder (`<worktree>/.gizai-tmp`); None when Gizai couldn't make it.
+    pub temp_dir: Option<String>,
+}
+
+/// `prompt` (a new run's, a continued run's or an answered one's) with "How this run works" at its end.
+pub fn with_rules(prompt: &str, rules: &RunRules) -> String {
+    format!("{}\n{}", prompt.trim_end(), rules_section(rules)).trim_end().to_string() + "\n"
+}
+
+/// The allowed list as the prompt shows it: `Bash(git status:*)` → `git status`, `Bash(npm test)` → `npm test` (exact),
+/// `Bash(./vendor/bin/*)` as it is, and other tools by their rule, like `WebFetch(domain:docs.rs)`.
+fn commands_line(tools: &[String], other_tools: bool) -> String {
+    let (mut cmds, mut other) = (vec![], vec![]);
+    for t in tools.iter().map(|t| t.trim()).filter(|t| !t.is_empty()) {
+        match t.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')).map(str::trim) {
+            Some(inner) => match inner.strip_suffix(":*") {
+                Some(prefix) => cmds.push(format!("`{}`", prefix.trim())),
+                None if inner.ends_with('*') => cmds.push(format!("`{inner}`")),
+                None => cmds.push(format!("`{inner}` (exact)")),
+            },
+            None if other_tools => other.push(format!("`{t}`")),
+            None => {}
+        }
+    }
+    let mut line = if cmds.is_empty() {
+        "No commands are allowed for you.".to_string()
+    } else {
+        format!("The commands you may run, with any arguments unless marked exact: {}.", cmds.join(", "))
+    };
+    if !other.is_empty() {
+        line.push_str(&format!(" Also allowed: {}.", other.join(", ")));
+    }
+    line
+}
+
+/// Where throwaway files go, after `make` (how to make a file, when the CLI's file tool may write in this mode).
+fn temp_line(temp_dir: Option<&str>, make: Option<&str>, literal_path: bool) -> String {
+    let make = make.map(|m| format!("{m} ")).unwrap_or_default();
+    match temp_dir {
+        Some(d) => format!("{make}Throwaway files go only in `{d}` (TMPDIR, TMP and TEMP point there{}), never in `/tmp` or anywhere else \
+outside the worktree, and are never committed. Gizai empties that folder when the run ends.",
+                           if literal_path { "; in a command, write this path, not `$TMPDIR`" } else { "" }),
+        None => format!("{make}Throwaway files never go in `/tmp` or anywhere else outside the worktree, and are never committed."),
+    }
+}
+
+pub fn rules_section(r: &RunRules) -> String {
+    use crate::cli::Kind;
+    let mode = r.mode.trim();
+    let temp = r.temp_dir.as_deref();
+    let refused = "Nobody can approve anything during this run: a command or tool that needs approval is refused.".to_string();
+    let mut lines: Vec<String> = vec![];
+    match r.kind {
+        Kind::ClaudeCode => {
+            let mode = if mode.is_empty() { "acceptEdits" } else { mode };
+            lines.push(refused);
+            if mode != "bypassPermissions" {
+                lines.push(commands_line(&r.allowed_tools, true));
+            }
+            // Checked in acceptEdits only; stricter modes refuse more (a redirect too), looser ones less.
+            if mode == "acceptEdits" {
+                let reach = if r.folders.is_empty() { "this worktree".to_string() } else {
+                    format!("this worktree and your folders ({})", r.folders.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", "))
+                };
+                lines.push(format!("Commands and file tools reach only {reach}: reading or writing anywhere else (`/tmp`, `..`) is refused, \
+also with an allowed command."));
+                lines.push("In a command, `$(…)`, backticks, variables such as `$TMPDIR` and heredocs with an unquoted delimiter (`<<EOF`) are \
+refused. Pipes, `2>&1`, `&&` and `;` between allowed commands are fine, and so is a redirect (`>`, `>>`, `2>`) to a file in this worktree.".into());
+            }
+            let writes = matches!(mode, "acceptEdits" | "auto" | "bypassPermissions")
+                || r.allowed_tools.iter().any(|t| t.trim().starts_with("Write") || t.trim().starts_with("Edit"));
+            lines.push(temp_line(temp, writes.then_some("Make files with the Write tool."), mode == "acceptEdits"));
+        }
+        Kind::Codex => {
+            // Codex gets no allowed list: approval_policy "never" and its sandbox decide.
+            lines.push("Nobody can approve anything during this run: nothing is asked, and a command the sandbox blocks fails.".into());
+            lines.push(temp_line(temp, None, false));
+        }
+        Kind::Gemini => {
+            let mode = if mode.is_empty() { "auto_edit" } else { mode };
+            lines.push(refused);
+            if mode != "yolo" {
+                lines.push(commands_line(&r.allowed_tools, false));
+            }
+            let writes = matches!(mode, "auto_edit" | "yolo");
+            lines.push(temp_line(temp, writes.then_some("Make files with the write_file tool."), false));
+        }
+        Kind::Other => {
+            lines.push("Nobody can approve anything during this run.".into());
+            lines.push(temp_line(temp, None, false));
+        }
+    }
+    lines.push("When something is refused, don't try other spellings of it: go on without it, and name the exact command in your summary \
+under what you could not check.".into());
+    let mut s = String::from("\n## How this run works\n\n");
+    for l in lines {
+        s.push_str(&format!("- {l}\n"));
+    }
+    s
+}

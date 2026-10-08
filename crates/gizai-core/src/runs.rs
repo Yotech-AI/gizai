@@ -2,7 +2,7 @@
 use rusqlite::OptionalExtension;
 
 use crate::db::{Db, Writer};
-use crate::model::{DayStat, Outcome, Run};
+use crate::model::{DayStat, Outcome, Refusal, Run};
 use crate::{Error, Result, ids, util};
 
 /// A run claims its task for this long; a crashed Gizai can't block a task forever.
@@ -11,7 +11,8 @@ const ACTIVE: &str = "('queued','running','waiting_approval')";
 
 const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.trigger, r.status, r.outcome, r.summary_md, r.created_at,
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
-                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha";
+                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha,
+                    COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]')";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -20,6 +21,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
         ended_at: r.get(11)?, cost_usd_micros: r.get(12)?, input_tokens: r.get(13)?, output_tokens: r.get(14)?,
         branch: r.get(15)?, worktree_path: r.get(16)?, session_id: r.get(17)?, error: r.get(18)?, log_path: r.get(19)?, pid: r.get(20)?,
         base_sha: r.get(21)?, adapter: r.get(22)?, head_sha: r.get(23)?,
+        refused: serde_json::from_str(&r.get::<_, String>(24)?).unwrap_or_default(),
     })
 }
 
@@ -123,6 +125,21 @@ pub fn set_base_sha(db: &Db, run_id: &str, sha: &str) -> Result<()> {
 pub fn set_head_sha(db: &Db, run_id: &str, sha: &str) -> Result<()> {
     db.write(None, |w| {
         w.conn().execute("UPDATE runs SET head_sha=?2 WHERE id=?1", rusqlite::params![run_id, sha])?;
+        Ok(())
+    })
+}
+
+/// The tool calls the run's CLI refused (Refused in this run), in the order it reported them (`run_refusals`).
+pub fn set_refused(db: &Db, run_id: &str, refused: &[Refusal]) -> Result<()> {
+    db.write(None, |w| {
+        let c = w.conn();
+        let n: i64 = c.query_row("SELECT count(*) FROM runs WHERE id=?1", [run_id], |r| r.get(0))?;
+        if n == 0 {
+            return Err(Error::NotFound(format!("run {run_id}")));
+        }
+        c.execute("INSERT INTO run_refusals(run_id, refused_json) VALUES (?1, ?2)
+                   ON CONFLICT(run_id) DO UPDATE SET refused_json = excluded.refused_json",
+                  rusqlite::params![run_id, serde_json::to_string(refused)?])?;
         Ok(())
     })
 }

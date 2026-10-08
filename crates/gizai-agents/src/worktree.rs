@@ -200,6 +200,82 @@ pub fn mark_prepared(wt: &Path) -> Result<(), AgentError> {
     }
 }
 
+/// The folder at a card's worktree root where its runs keep throwaway files: TMPDIR, TMP and TEMP point there, so
+/// `mktemp`, PHP, Node and Python put their temp files where the agent may write.
+pub const TEMP_DIR: &str = ".gizai-tmp";
+/// The line in the repository's `info/exclude` that keeps the temp folder out of git status.
+pub const TEMP_EXCLUDE: &str = "/.gizai-tmp/";
+
+/// One look-and-add of the exclude line at a time: runs of the same repository can start together.
+static EXCLUDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Gets the worktree's temp folder (`<wt>/.gizai-tmp`) ready for a run and returns it. First `/.gizai-tmp/` goes into
+/// the repository's `info/exclude` (`exclude_temp`), then the folder is made, empty: a run Gizai couldn't follow to its
+/// end (Gizai quit or crashed) can have left files in it. Something else by that name, such as a link, is removed,
+/// never followed.
+pub fn prepare_temp(wt: &Path) -> Result<PathBuf, AgentError> {
+    let common = PathBuf::from(git(wt, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?);
+    exclude_temp(&common)?;
+    let dir = wt.join(TEMP_DIR);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| !m.is_dir()) {
+        std::fs::remove_file(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    empty_temp(wt)?;
+    Ok(dir)
+}
+
+/// Adds `/.gizai-tmp/` to `info/exclude` in the repository's common git folder `common` (shared by the main checkout
+/// and every worktree, so none of them shows the folder), unless a line already says it. `.gitignore` is never touched.
+pub fn exclude_temp(common: &Path) -> Result<(), AgentError> {
+    let _one = EXCLUDING.lock().unwrap_or_else(|e| e.into_inner());
+    let info = common.join("info");
+    std::fs::create_dir_all(&info)?;
+    let file = info.join("exclude");
+    let text = match std::fs::read_to_string(&file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
+    if text.lines().any(|l| l.trim() == TEMP_EXCLUDE) {
+        return Ok(());
+    }
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&file)?;
+    let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+    write!(f, "{sep}{TEMP_EXCLUDE}\n")?;
+    Ok(())
+}
+
+/// Empties the worktree's temp folder once a run has ended, however it ended (finished, Stop, a limit). The folder
+/// stays and goes with the worktree. Links in it are removed, never followed; one link or file in the folder's place
+/// is removed. Goes on past what it can't remove, and returns the first error.
+pub fn empty_temp(wt: &Path) -> Result<(), AgentError> {
+    let dir = wt.join(TEMP_DIR);
+    match std::fs::symlink_metadata(&dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+        Ok(m) if !m.is_dir() => return Ok(std::fs::remove_file(&dir)?),
+        Ok(_) => {}
+    }
+    let mut first: Option<std::io::Error> = None;
+    for entry in std::fs::read_dir(&dir)? {
+        let done = entry.and_then(|e| {
+            let path = e.path();
+            if e.file_type()?.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) }
+        });
+        if let Err(e) = done {
+            first.get_or_insert(e);
+        }
+    }
+    first.map_or(Ok(()), |e| Err(e.into()))
+}
+
+/// The environment that points a run's temp files at `dir`: TMPDIR, TMP and TEMP.
+pub fn temp_env(dir: &Path) -> Vec<(String, String)> {
+    ["TMPDIR", "TMP", "TEMP"].iter().map(|k| (k.to_string(), dir.display().to_string())).collect()
+}
+
 /// Whether `path` is inside `dir` (Gizai's worktree folder, or one project's part of it), as they are on disk.
 pub fn is_inside(path: &Path, dir: &Path) -> bool {
     inside(path, dir)
@@ -316,7 +392,8 @@ pub fn worktree_of(repo: &Path, branch: &str) -> Result<Option<PathBuf>, AgentEr
     Ok(worktrees(repo)?.into_iter().find(|(_, b)| b.as_deref() == Some(branch)).map(|(p, _)| p))
 }
 
-/// Removes a worktree, never by force: git refuses one with uncommitted changes or untracked files, and says so.
+/// Removes a worktree, never by force: git refuses one with uncommitted changes or untracked files, and says so. Its
+/// temp folder goes with it: `info/exclude` makes it ignored, not untracked (`exclude_temp`).
 pub fn remove_worktree(repo: &Path, path: &Path) -> Result<(), AgentError> {
     git(repo, &["worktree", "remove", &path.to_string_lossy()]).map(|_| ())
 }

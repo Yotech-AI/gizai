@@ -13,7 +13,7 @@ use gizai_agents::process::{self, Caps, StopHandle};
 use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
 use gizai_agents::stream::RunEvent;
 use gizai_agents::{outcome, worktree};
-use gizai_core::model::{Outcome, Project, Task, TaskPatch};
+use gizai_core::model::{Outcome, Project, Refusal, Task, TaskPatch};
 use gizai_core::{comments, ids, projects, runs as core_runs, settings, tasks, team, workflow};
 use serde::{Deserialize, Serialize};
 
@@ -27,10 +27,13 @@ const BUFFER: usize = 500;
 /// Why a run or chat answer ended when Gizai quit (logging out and SIGTERM included), and the note a chat shows.
 pub const STOPPED_BY_QUIT: &str = "Stopped because Gizai quit.";
 
-/// Used when an agent has no allowed commands of its own.
-pub const DEFAULT_TOOLS: [&str; 16] = [
+/// Used when an agent has no allowed commands of its own; new agents start with the same list (`src/lib/agents.ts`).
+/// The read-only helpers at the end are the ones agents use in pipes.
+pub const DEFAULT_TOOLS: [&str; 28] = [
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(composer:*)",
     "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)",
+    "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(diff:*)", "Bash(grep:*)", "Bash(jq:*)",
+    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)",
 ];
 
 /// What the UI hears about.
@@ -711,19 +714,36 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let (folders, mut notes) = gizai_core::folders::for_run(&agent.folders, &gizai_core::folders::Places::of(&st.db));
     let folders: Vec<RunFolder> = folders.into_iter().map(|f| RunFolder { change: f.change(), path: f.path }).collect();
     notes.extend(agent_cli::folders_left_out(spec.kind, &folders));
+    // The run's own temp folder in its worktree, out of git status and empty: every CLI gets it as TMPDIR, TMP and TEMP.
+    // Without it the run still starts, and its log says why.
+    let temp_dir = match worktree::prepare_temp(&wt.path) {
+        Ok(d) => Some(d.to_string_lossy().to_string()),
+        Err(e) => {
+            notes.push(format!("Couldn't make this run's temp folder {}: {e}. TMPDIR, TMP and TEMP stay as they were.",
+                               wt.path.join(worktree::TEMP_DIR).display()));
+            None
+        }
+    };
+    let allowed_tools: Vec<String> =
+        if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() };
+    let permission_mode = agent.permission_mode.clone().unwrap_or_default();
+    // "How this run works" ends every task prompt, new and continued.
+    let rules = prompt::RunRules {
+        kind: spec.kind, mode: permission_mode.clone(), allowed_tools: allowed_tools.clone(),
+        folders: folders.iter().map(|f| f.path.clone()).collect(), temp_dir: temp_dir.clone(),
+    };
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
-        prompt: match &resume {
+        prompt: prompt::with_rules(&match &resume {
             Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
             Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
             None => prompt::build(&ctx, &instructions),
-        },
-        permission_mode: agent.permission_mode.clone().unwrap_or_default(),
-        allowed_tools: if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() },
+        }, &rules),
+        permission_mode, allowed_tools,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
-        folders,
+        folders, temp_dir,
     };
     let exec = agent_cli::task_exec(&spec, &run);
     // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then
@@ -780,9 +800,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         let mut capped: Option<String> = None;
         let mut exit = String::new();
         let mut tools = 0usize;
+        let mut refused: Vec<Refusal> = vec![];
         while let Some(ev) = handle.events.recv().await {
             match &ev {
                 RunEvent::ToolUse { .. } => tools += 1,
+                RunEvent::Refused { tool, input, reason } => refused.push(Refusal { tool: tool.clone(), input: input.clone(), reason: reason.clone() }),
                 // Codex names its session itself: Continue resumes that one.
                 RunEvent::Init { session_id, .. } if !session_id.is_empty() && *session_id != session => {
                     let _ = core_runs::set_session(&st2.db, &rid, session_id);
@@ -808,7 +830,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
-        finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued }, &cli_name).await
+        // The run's process group has ended, whatever way (finished, Stop, a limit): its throwaway files go.
+        if let Err(e) = worktree::empty_temp(&dir) {
+            eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");
+        }
+        finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued, refused }, &cli_name).await
     });
     Ok((run_id, done))
 }
@@ -876,7 +902,7 @@ async fn check_model(st: &AppState, cli: &gizai_core::clis::Cli, spec: &agent_cl
 
 /// What a run's process left behind. `capped`: why Gizai stopped the run at a limit, if it did. `tools`: how many tool
 /// calls it made. `moved_from`: the column the card was in before the start moved it to In progress. `queued`: the
-/// queue or a heartbeat started it, not a person.
+/// queue or a heartbeat started it, not a person. `refused`: the tool calls its CLI refused (Refused in this run).
 struct Ran {
     result: Option<RunEvent>,
     capped: Option<String>,
@@ -884,6 +910,7 @@ struct Ran {
     tools: usize,
     moved_from: Option<String>,
     queued: bool,
+    refused: Vec<Refusal>,
 }
 
 /// Claude Code's own words for a missing or expired login.
@@ -894,7 +921,7 @@ fn login_problem(error: &str) -> bool {
 
 /// `dir`: the run's worktree. `cli`: the CLI's name, for the reason a run failed.
 async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran: Ran, cli: &str) -> RunSummary {
-    let Ran { result, capped, exit, tools, moved_from, queued } = ran;
+    let Ran { result, capped, exit, tools, moved_from, queued, refused } = ran;
     let exit = exit.as_str();
     let stopped = st.runs.stopped.lock().unwrap().remove(run_id);
     let (cost, input, output, text, ok) = match &result {
@@ -924,6 +951,9 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
         _ => None,
     };
     record_head(&st.db, run_id, dir);
+    if !refused.is_empty() && let Err(e) = core_runs::set_refused(&st.db, run_id, &refused) {
+        eprintln!("gizai: saving what run {run_id} was refused failed: {e}");
+    }
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
     let agent = core_runs::get(&st.db, run_id).map(|r| r.agent_id).unwrap_or_default();

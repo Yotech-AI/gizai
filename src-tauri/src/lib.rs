@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod clis;
+pub mod code;
 mod commands;
 pub mod git;
 pub mod github;
@@ -28,6 +29,8 @@ pub struct AppState {
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
     pub mcp_shim: Option<PathBuf>,
     pub chat: Arc<chat::ChatManager>,
+    /// The Team Lead's read-only copies of the projects' code (see `code`).
+    pub code: Arc<code::Copies>,
     /// Pull requests being opened or checked on GitHub (see `pulls`).
     pub pulls: Arc<pulls::PullChecks>,
     /// Log in with GitHub, while gh waits for its code (see `github`).
@@ -172,7 +175,7 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     chat::remove_stray_configs(&dir);
     let mcp_socket = mcp::socket_path(&dir);
     Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
-                  mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), pulls: Arc::new(pulls::PullChecks::default()),
+                  mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify })
 }
 
@@ -267,6 +270,12 @@ pub fn run() {
                         eprintln!("gizai: the chat tools socket {} could not start: {e}", st.mcp_socket.display());
                     }
                 });
+            }
+            // The Team Lead's copies of the projects' code: the missing ones are made now, so the first answer rarely
+            // waits for them, and copies that no longer belong go.
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move { code::startup(&st).await });
             }
             // The pull request check: at start and every two minutes, cards in Review (and open pull requests) hear
             // what happened on GitHub; a merge moves its card to Done.

@@ -540,16 +540,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         .ok_or_else(|| StartError::Card(format!("Link a git repository to {} first (project page → Edit)", project.name)))?;
     // With a GitHub link, a card starts from the main branch just fetched from GitHub, and a card that already has
     // a branch hears how far that main has moved on.
-    let start = match project.repo_url.clone() {
-        Some(url) => {
-            let (dir, branch) = (PathBuf::from(&repo), project.default_branch.clone());
-            tokio::task::spawn_blocking(move || {
-                let remote = crate::git::remote_for(&dir, &url);
-                worktree::fetch_start(&dir, remote.as_deref(), &url, &branch)
-            }).await.map_err(|e| StartError::Other(e.to_string()))?.map_err(|e| StartError::Card(e.to_string()))?
-        }
-        None => project.default_branch.clone(),
+    let start = {
+        let (p, dir) = (project.clone(), PathBuf::from(&repo));
+        tokio::task::spawn_blocking(move || crate::git::start_point(&p, &dir, Some(crate::git::START_FETCH_LIMIT)))
+            .await.map_err(|e| StartError::Other(e.to_string()))?.map_err(|e| StartError::Card(e.to_string()))?
     };
+    if project.repo_url.is_some() {
+        crate::code::fetched(st, &project.key);
+    }
     let wt = open_worktree(st, &project, &task, Path::new(&repo), &start)?;
     if let Some(todo) = worktree::unprepared(&wt.path) {
         prepare_worktree(st, &agent_id, &task, &project, Path::new(&repo), &wt, todo).await?;

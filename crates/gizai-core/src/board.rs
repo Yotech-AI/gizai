@@ -306,6 +306,8 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                 }
             } else if !waits_only && let Some((id, code, reason)) = first_blocker {
                 out.push(base("waiting", &code, since, agent_of(&id), reason));
+            } else if !waits_only {
+                out.push(base("waiting", "no_route", since, None, "The agent it is assigned or pinned to is no longer on the team".into()));
             }
         }
         let order = |k: &str| match k { "answered" => 0, "held" => 1, "stopped" => 2, _ => 3 };

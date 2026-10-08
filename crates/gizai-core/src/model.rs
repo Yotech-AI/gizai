@@ -352,11 +352,14 @@ pub struct Run {
     pub refused: Vec<Refusal>,
 }
 
-/// A tool call a headless run's CLI refused: the tool and what it asked for (the command, the file).
+/// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI
+/// said (empty when only its result line reported it).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refusal {
     pub tool: String,
     pub input: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// An agent's runs on one UTC day.

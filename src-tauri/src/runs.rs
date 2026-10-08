@@ -804,7 +804,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         while let Some(ev) = handle.events.recv().await {
             match &ev {
                 RunEvent::ToolUse { .. } => tools += 1,
-                RunEvent::Refused { tool, input } => refused.push(Refusal { tool: tool.clone(), input: input.clone() }),
+                RunEvent::Refused { tool, input, reason } => refused.push(Refusal { tool: tool.clone(), input: input.clone(), reason: reason.clone() }),
                 // Codex names its session itself: Continue resumes that one.
                 RunEvent::Init { session_id, .. } if !session_id.is_empty() && *session_id != session => {
                     let _ = core_runs::set_session(&st2.db, &rid, session_id);

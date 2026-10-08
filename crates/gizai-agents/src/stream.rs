@@ -13,9 +13,10 @@ pub enum RunEvent {
     Other { raw_type: String },
     /// A note from Gizai in the run log, such as a folder the run goes without (`cli::note_line`).
     Note { text: String },
-    /// A tool call the CLI refused because it needed an approval nobody can give in a headless run: the tool and what
-    /// it was asked to do (the command, the file). Claude Code lists them in its result line (`permission_denials`).
-    Refused { tool: String, input: String },
+    /// A tool call the CLI refused because it needed an approval nobody can give in a headless run: the tool, what it
+    /// asked for (the command, the file) and why, when the CLI said. Claude Code lists them in its result line
+    /// (`permission_denials`, without a reason); `cli::Parser` also shows each one as it happens, with its reason.
+    Refused { tool: String, input: String, reason: String },
 }
 
 fn s(v: &Value) -> String {
@@ -43,7 +44,7 @@ pub fn refused_input(input: &Value) -> String {
 /// The refused tool calls in a Claude Code result line (`permission_denials`: tool_name, tool_use_id, tool_input).
 fn refusals(v: &Value) -> Vec<RunEvent> {
     v.get("permission_denials").and_then(Value::as_array).into_iter().flatten()
-        .map(|d| RunEvent::Refused { tool: s(&d["tool_name"]), input: refused_input(&d["tool_input"]) })
+        .map(|d| RunEvent::Refused { tool: s(&d["tool_name"]), input: refused_input(&d["tool_input"]), reason: String::new() })
         .collect()
 }
 

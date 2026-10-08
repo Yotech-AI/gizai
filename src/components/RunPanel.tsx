@@ -30,7 +30,7 @@ export function Stream({ events }: { events: SeqEvent[] }) {
           case "tool_result": return e.is_error ? <div key={seq} className="err">{e.preview}</div> : null;
           case "result": return <div key={seq} className={e.is_error ? "err" : "ok"}>{e.is_error ? `Ended with ${e.subtype}` : "Done"} · {e.num_turns} turns</div>;
           case "note": return <div key={seq} style={{ color: "var(--warning)" }}>{e.text}</div>;
-          case "refused": return <div key={seq} className="err">Refused: <b>{e.tool}</b> {e.input}</div>;
+          case "refused": return <div key={seq} className="err">Refused: <b>{e.tool}</b> {e.input}{e.reason ? ` (${e.reason})` : ""}</div>;
           default: return e.raw_type?.startsWith("cap_exceeded") ? <div key={seq} className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;
         }
       })}
@@ -45,7 +45,8 @@ export function Refused({ list }: { list: Refusal[] }) {
     <div className="run-refused" aria-label="Refused in this run" style={{ marginTop: 8, fontSize: "var(--fs-sm)" }}>
       <div style={{ color: "var(--warning)" }}>Refused in this run ({list.length})</div>
       <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-        {list.map((r, i) => <li key={i}><b>{r.tool}</b> <code className="mono" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.input}</code></li>)}
+        {list.map((r, i) => <li key={i}><b>{r.tool}</b> <code className="mono" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.input}</code>
+          {r.reason && <span className="muted"> {r.reason}</span>}</li>)}
       </ul>
     </div>
   );

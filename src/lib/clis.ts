@@ -31,6 +31,14 @@ export const PERMISSIONS: Record<CliKind, Record<string, string>> = {
   other: {},
 };
 
+/** What each kind of CLI does with the agent's folders (agent form → Folders); the backend's `cli::task_exec`. */
+export const FOLDERS_NOTE: Record<CliKind, string> = {
+  claude_code: "Claude Code may use each folder with its file tools, and can't edit or write files in a read folder.",
+  codex: "Codex reads every folder anyway; it may write a read and change folder in its workspace-write sandbox, which covers its commands too.",
+  gemini: "Gemini can't keep a folder read only, so it gets only the read and change folders.",
+  other: "This CLI can't limit folders: Gizai passes it none of them.",
+};
+
 /** The risky mode of each kind, shown as a warning. */
 export const RISKY = new Set(["bypassPermissions", "danger-full-access", "yolo"]);
 

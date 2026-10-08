@@ -68,7 +68,13 @@ export type Member = {
   effort?: string | null;
   /** Cards it works on at once (1 when absent). */
   maxRuns?: number;
+  /** Folders besides its worktree its file tools may read, or read and change. */
+  folders?: AgentFolder[];
 };
+/** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
+export type AgentFolder = { path: string; access: "read" | "change" };
+/** What the agent form shows next to a folder: why it's refused, or a warning. `path` as it would be saved. */
+export type FolderCheck = { path: string; error?: string | null; warning?: string | null };
 /** A coding CLI agents run on (Settings → Coding CLIs); "claude_code" is the built-in Claude Code. */
 export type CliKind = "claude_code" | "codex" | "gemini" | "other";
 export type Cli = {
@@ -95,6 +101,8 @@ export type AgentInput = {
   effort?: string | null;
   /** Cards it works on at once (1–10); null leaves it unchanged on update. */
   maxRuns?: number | null;
+  /** Its folders; null/absent leaves them unchanged on update (none for a new agent). */
+  folders?: AgentFolder[] | null;
 };
 export type RuleInput = { kind: "label" | "column"; matchName: string; targetRole: string; priority: number };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
@@ -115,7 +123,9 @@ export type RunEvent =
   | { kind: "tool_use"; name: string; summary: string }
   | { kind: "tool_result"; is_error: boolean; preview: string }
   | { kind: "result"; is_error: boolean; subtype: string; text: string; cost_usd?: number | null; input_tokens: number; output_tokens: number; num_turns: number }
-  | { kind: "other"; raw_type: string };
+  | { kind: "other"; raw_type: string }
+  /** A note from Gizai, such as a folder the run goes without. */
+  | { kind: "note"; text: string };
 export type SeqEvent = { seq: number; event: RunEvent };
 /** How a run ended, from its GIZAI_RESULT line; `deployed` is the DevOps Agent's. */
 export type RunOutcome = "ready_for_testing" | "qa_pass" | "qa_fail" | "needs_decision" | "deployed" | "no_result" | "error";

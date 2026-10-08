@@ -1,4 +1,4 @@
-import type { AgentInput, Member, Wakeup } from "../types";
+import type { AgentFolder, AgentInput, Member, Wakeup } from "../types";
 
 export function wakeupLabel(wakeup: Wakeup | string | null | undefined, minutes: number | null | undefined): string {
   if (wakeup === "on_assign") return "When assigned";
@@ -50,7 +50,9 @@ export type AgentPreset = { name?: string; role?: string; chat?: boolean };
 export type AgentDraft = { name: string; role: string; model: string; wakeup: Wakeup; minutes: string; instructions: string;
   permissionMode: string; tools: string; budget: string; chat: boolean; effort: string; maxRuns: string;
   /** The id of the coding CLI it runs on. */
-  cli: string };
+  cli: string;
+  /** Folders besides its worktree, as typed (rows with an empty path are dropped on save). */
+  folders: AgentFolder[] };
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
@@ -58,7 +60,13 @@ export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
     minutes: String(m?.heartbeatMinutes ?? 15), instructions: m?.instructionsMd ?? "", permissionMode: m?.permissionMode ?? "acceptEdits",
     tools: (m ? m.allowedTools : DEFAULT_TOOLS).join("\n"), budget: microsToDollars(m?.budgetUsdMicros), chat: m ? !!m.chatEnabled : !!preset?.chat,
     effort: m?.effort ?? "", maxRuns: String(m?.maxRuns ?? 1), cli: m?.adapter || "claude_code",
+    folders: (m?.folders ?? []).map((f) => ({ path: f.path, access: f.access })),
   };
+}
+
+/** The folders to save: trimmed, without empty rows. */
+export function foldersFrom(list: AgentFolder[]): AgentFolder[] {
+  return list.map((f) => ({ path: f.path.trim(), access: f.access })).filter((f) => f.path);
 }
 
 export function inputFrom(d: AgentDraft): AgentInput {
@@ -67,6 +75,6 @@ export function inputFrom(d: AgentDraft): AgentInput {
     permissionMode: d.permissionMode, allowedTools: parseTools(d.tools), wakeup: d.wakeup,
     heartbeatMinutes: d.wakeup === "heartbeat" ? Number(d.minutes) || 0 : Number(d.minutes) || null,
     budgetUsdMicros: dollarsToMicros(d.budget), adapter: d.cli || "claude_code", chatEnabled: d.chat, effort: d.effort || null,
-    maxRuns: /^\d+$/.test(d.maxRuns.trim()) ? Number(d.maxRuns) : null,
+    maxRuns: /^\d+$/.test(d.maxRuns.trim()) ? Number(d.maxRuns) : null, folders: foldersFrom(d.folders),
   };
 }

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
-import { addAgent, chatAgent, claudeModels, getAgent, getTeam, listClis, roleTemplate, updateAgent } from "../api";
+import { Plus, RefreshCw, X } from "lucide-react";
+import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, roleTemplate, updateAgent } from "../api";
 import { go } from "../router";
-import { draftFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
-import { CLAUDE_CODE, EFFORTS_BY_KIND, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
+import { draftFrom, foldersFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
+import { CLAUDE_CODE, EFFORTS_BY_KIND, FOLDERS_NOTE, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
 import { effortChoices, findModel, modelHint } from "../lib/models";
-import type { CliStatus, Member, ModelOption } from "../types";
+import type { AgentFolder, CliKind, CliStatus, FolderCheck, Member, ModelOption } from "../types";
 export type { AgentPreset } from "../lib/agents";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
@@ -43,6 +43,50 @@ function ModelField({ value, onChange, models, error, onRefresh }: {
           {models && <option value="__other">Other model id…</option>}
         </select>
         <button type="button" className="btn ghost sm icon-only" aria-label="Ask Claude Code again" title="Ask Claude Code again" onClick={onRefresh}><RefreshCw className="icon" /></button>
+      </div>
+    </Field>
+  );
+}
+
+/** The agent's folders: a row each (path, read or read and change, remove), checked by Gizai as you type. */
+function FoldersField({ value, onChange, kind, lead }: { value: AgentFolder[]; onChange: (v: AgentFolder[]) => void; kind: CliKind; lead: boolean }) {
+  const [checks, setChecks] = useState<FolderCheck[]>([]);
+  const filled = value.map((f, i) => (f.path.trim() ? i : -1)).filter((i) => i >= 0);
+  const key = JSON.stringify(foldersFrom(value));
+  useEffect(() => {
+    const list: AgentFolder[] = JSON.parse(key);
+    if (list.length === 0) { setChecks([]); return; }
+    let alive = true;
+    const t = setTimeout(() => { checkAgentFolders(list).then((c) => { if (alive) setChecks(c); }).catch(() => {}); }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [key]);
+  const put = (i: number, f: AgentFolder) => onChange(value.map((x, j) => (j === i ? f : x)));
+  return (
+    <Field label="Folders" wide hint={<>
+      Folders besides its card's worktree that its file tools may read, or read and change. They limit the file tools, not the commands it may run: an allowed command can still reach any folder.
+      {" "}Never /, your home folder, Gizai's data folder or folders with keys (~/.ssh, ~/.gnupg, ~/.config, …).
+      {" "}{FOLDERS_NOTE[kind]}
+      {lead && " In chat the Team Lead only reads them; read and change also lets it update that folder (update_checkout) after you say yes in the chat."}
+    </>}>
+      <div className="folder-list">
+        {value.map((f, i) => {
+          const c = filled.includes(i) ? checks[filled.indexOf(i)] : undefined;
+          return (
+            <div key={i} className="folder-row">
+              <div className="input-group">
+                <input className="input mono" aria-label={`Folder ${i + 1}`} value={f.path} placeholder="~/Herd/shared" onChange={(e) => put(i, { ...f, path: e.target.value })} />
+                <select className="select" style={{ flex: "0 0 170px" }} aria-label={`Access to folder ${i + 1}`} value={f.access}
+                  onChange={(e) => put(i, { ...f, access: e.target.value as AgentFolder["access"] })}>
+                  <option value="read">Read</option>
+                  <option value="change">Read and change</option>
+                </select>
+                <button type="button" className="btn ghost sm icon-only" aria-label={`Remove folder ${i + 1}`} title="Remove" onClick={() => onChange(value.filter((_, j) => j !== i))}><X className="icon" /></button>
+              </div>
+              {c?.error ? <span className="error">{c.error}</span> : c?.warning ? <span className="warn">{c.warning}</span> : null}
+            </div>
+          );
+        })}
+        <div><button type="button" className="btn sm" onClick={() => onChange([...value, { path: "", access: "read" }])}><Plus className="icon" />Add folder</button></div>
       </div>
     </Field>
   );
@@ -201,6 +245,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
               <textarea id="a-tools" className="textarea mono" rows={6} value={d.tools} onChange={(e) => set("tools", e.target.value)} />
               <div className="tool-sugg">{TOOL_SUGGESTIONS.filter((t) => !parseTools(d.tools).includes(t)).map((t) => <button key={t} type="button" className="label-pill" onClick={() => addTool(t)}>+ {t}</button>)}</div></Field>
           )}
+          <FoldersField value={d.folders} onChange={(v) => set("folders", v)} kind={kind} lead={d.chat} />
           <Field label="Monthly budget ($)" htmlFor="a-budget" hint={kind === "claude_code" ? "Once its runs this calendar month (UTC) cost this much, it starts no new runs" : `${cliName} doesn't report what a run costs, so its runs count as $0 here`}><input id="a-budget" className="input" inputMode="decimal" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="No limit" /></Field>
         </FormSection>
         <FormSection title="Instructions" text="Sent with every run, before the task. Must end by asking for the GIZAI_RESULT line.">

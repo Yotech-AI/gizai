@@ -11,11 +11,14 @@ use crate::AppState;
 use crate::runs::Note;
 pub use gizai_mcp::ToolDef;
 
-/// The MCP server's view of the tools for one agent (the token's owner), in one chat thread (the token's scope).
+/// The MCP server's view of the tools for one agent (the token's owner), in one chat thread or one board check (the
+/// token's scope).
 pub struct GizaiTools {
     pub st: AppState,
     pub actor: String,
     pub thread: Option<String>,
+    /// The board check run the token was minted for.
+    pub check: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
@@ -23,7 +26,7 @@ impl gizai_mcp::Tools for GizaiTools {
         catalog()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
-        call_in(&self.st, &self.actor, self.thread.as_deref(), name, args).await
+        call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), name, args).await
     }
 }
 
@@ -34,15 +37,37 @@ pub async fn call(st: &AppState, actor: &str, name: &str, args: Value) -> Result
 
 /// Runs one tool as `actor` for a chat thread (what the user said there widens `attach_file`).
 pub async fn call_in(st: &AppState, actor: &str, thread: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
+    call_scoped(st, actor, thread, None, name, args).await
+}
+
+/// Runs one tool as `actor` in the board check `run_id`: nobody named a file, and the check's rules hold.
+pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, args: Value) -> Result<Value, String> {
+    call_scoped(st, actor, None, Some(run_id), name, args).await
+}
+
+/// What a board check may not do, whatever it is asked: attach a file nobody named, or change an agent's settings
+/// (the check asks you instead).
+const NOT_IN_A_CHECK: [&str; 4] = ["attach_file", "create_agent", "update_agent", "set_agent_status"];
+
+async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
     let a = Args(match args {
         Value::Object(m) => m,
         Value::Null => Map::new(),
         _ => return Err("arguments must be an object".into()),
     });
-    let cx = Cx { st, actor, thread };
+    if check.is_some() && NOT_IN_A_CHECK.contains(&name) {
+        return Err(match name {
+            "attach_file" => "In a board check nobody named a file, so nothing can be attached. Ask the user in a chat (start_chat) instead.".into(),
+            _ => format!("{name} can't be used in a board check: never change an agent's settings there. Ask the user in a chat (start_chat) instead."),
+        });
+    }
+    let cx = Cx { st, actor, thread, check };
     match name {
         "get_overview" => read::overview(&cx),
         "read_inbox" => read::inbox(&cx),
+        "check_board" => crate::board::check_json(st),
+        "start_chat" => write::start_chat(&cx, &a),
+        "continue_agent_run" => write::continue_run(&cx, &a).await,
         "list_clients" => read::list_clients(&cx, &a),
         "get_client" => read::get_client(&cx, &a),
         "list_projects" => read::list_projects(&cx, &a),
@@ -86,6 +111,8 @@ pub(crate) struct Cx<'a> {
     pub actor: &'a str,
     /// The chat thread the call comes from, if any.
     pub thread: Option<&'a str>,
+    /// The board check run the call comes from, if any.
+    pub check: Option<&'a str>,
 }
 
 impl Cx<'_> {
@@ -185,7 +212,7 @@ fn schema(props: &[(&str, &str, &str)], required: &[&str]) -> Value {
 }
 
 fn tool(name: &str, description: &str, props: &[(&str, &str, &str)], required: &[&str]) -> ToolDef {
-    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_");
+    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_") || name == "check_board";
     ToolDef { name: name.into(), description: description.into(), input_schema: schema(props, required), read_only }
 }
 
@@ -202,7 +229,8 @@ const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("iban", "string", "IBAN"), ("payment_terms_days", "integer", "Payment terms in days"), ("notes_md", "string", "Notes (Markdown)"),
 ];
 
-const AGENT_FIELDS: [(&str, &str, &str); 11] = [
+const AGENT_FIELDS: [(&str, &str, &str); 12] = [
+    ("board_check_minutes", "integer", "Only for the agent with Chat on (the Team Lead): check the board every this many minutes (5–1440); 0 = off"),
     ("runs_on", "string", "The coding CLI it runs on, by name as Settings → Coding CLIs lists them (Claude Code, Codex, Gemini, a second account, …). Omit: Claude Code for a new agent, unchanged on update"),
     ("model", "string", "On Claude Code, a model it offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5). On Codex or Gemini, that CLI's model name. Empty = the CLI's default"),
     ("effort", "string", "How hard the model thinks. Claude Code: low, medium, high, xhigh or max. Codex: minimal, low, medium, high or xhigh. Gemini takes none. Empty = the CLI's default; higher costs more"),
@@ -224,7 +252,14 @@ fn with<const N: usize>(head: &[(&'static str, &'static str, &'static str)], res
 pub fn catalog() -> Vec<ToolDef> {
     vec![
         tool("get_overview", "A summary of the organisation: clients, active projects, tasks per column, how many items wait in the inbox, the agents and who is working now. Start here.", &[], &[]),
-        tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person) and tasks waiting for them in Review or Deploy.", &[], &[]),
+        tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person), tasks waiting for them in Review or Deploy, and the chats you started that wait for their answer.", &[], &[]),
+        tool("check_board", "What on the board needs attention now: answered cards (a person commented after a needs-a-decision hold), held cards, cards no agent will start (and why) and cards whose run stopped part-way; then per agent its cards at once, the cards it works on, its free slots and whether its pull is paused (and why), and the free \"Runs at once\".", &[], &[]),
+        tool("start_chat", "Asks the user something in a new chat that waits at the top of their Inbox: a question, or an approval you need. One waiting chat per card: when a card already has one, the message is added to that chat. Returns a link to it.",
+             &[("title", "string", "A short title, like \"GA-12: pick the export format\""), ("kind", "enum:question|approval", "question, or approval for something you want to do"),
+               ("tasks", "string[]", "The identifiers of the cards it is about, like GA-12"), ("body_md", "string", "Your first message (Markdown): what you found, what you recommend and what you need")],
+             &["title", "kind", "tasks", "body_md"]),
+        tool("continue_agent_run", "Continues the agent's latest run on a task, like the Continue button: it resumes the run's session in its worktree, for a run that stopped part-way (a limit, a failure, stopped) or one that asked for a decision that has been answered on the card since (the agent hears the comments written since). A hold on the card is cleared.",
+             &[TASK], &["task"]),
         tool("list_clients", "All clients with city, main contact and counts of projects and open tasks.", &[("status", "enum:lead|active|inactive", "Only clients with this status")], &[]),
         tool("get_client", "One client with every field, its contacts, projects and files.", &[CLIENT], &["client"]),
         tool("list_projects", "Projects with key, client, status, linked repository and task counts.", &[("client", "string", "Only this client's projects"), ("status", "enum:planned|active|paused|done|archived", "Only projects with this status")], &[]),

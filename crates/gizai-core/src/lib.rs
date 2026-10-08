@@ -15,6 +15,7 @@ pub mod files;
 pub mod runs;
 pub mod settings;
 pub mod workflow;
+pub mod board;
 pub mod chat;
 pub mod clis;
 pub mod tokens;

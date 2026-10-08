@@ -218,6 +218,10 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
                 // a person cleared it: the card gets fresh tries before it stalls again
                 cols.push(("hold_reason", V::Null));
                 cols.push(("fail_count", V::Integer(0)));
+                cols.push(("hold_at", V::Null));
+            } else {
+                // a comment after this answers it (the Team Lead's board check)
+                cols.push(("hold_at", V::Integer(ids::now_ms())));
             }
         }
         if let Some(r) = &patch.hold_reason {
@@ -242,8 +246,23 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
     })
 }
 
+/// A move by hand (the board, the Team Lead's `move_task`). A person dragging a card on hold into To do or In progress
+/// answers the hold: it comes off (with fresh tries), so the queue or the next board check starts the card. Gates move
+/// cards with `move_in` and keep their holds.
 pub fn move_to(db: &Db, actor: &str, id: &str, state_id: &str, sort_key: &str) -> Result<()> {
-    db.write(Some(actor), |w| move_in(w, actor, id, state_id, Some(sort_key)))
+    db.write(Some(actor), |w| {
+        move_in(w, actor, id, state_id, Some(sort_key))?;
+        let c = w.conn();
+        let person = actor_kind(c, actor)?.as_deref() == Some("person");
+        let (category, held): (String, bool) = c.query_row(
+            "SELECT state_category, hold IS NOT NULL FROM tasks WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        if person && held && matches!(category.as_str(), "ready" | "in_progress") {
+            c.execute("UPDATE tasks SET hold=NULL, hold_reason=NULL, hold_at=NULL, fail_count=0, updated_at=?2, version=version+1 WHERE id=?1",
+                      rusqlite::params![id, ids::now_ms()])?;
+            w.update("tasks", id, serde_json::json!({"hold": null, "released": "moved by hand"}))?;
+        }
+        Ok(())
+    })
 }
 
 /// Move inside an open write (used by the workflow gates). `sort_key` None appends to the column.

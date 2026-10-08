@@ -7,6 +7,7 @@ import { useData } from "../lib/useData";
 import { useDrawer } from "../lib/drawers";
 import { useCurrentTeam } from "../lib/team";
 import { relTime } from "../lib/format";
+import { chatLabel } from "../lib/inbox";
 import { Avatar } from "../components/Avatar";
 import { ChatThread } from "../components/chat/ChatThread";
 import { useChatLive } from "../components/chat/useChat";
@@ -60,7 +61,9 @@ export function ChatPage({ id }: { id?: string }) {
             {(threads.data ?? []).length > 0 && <div className="nav-label">Recent</div>}
             {(threads.data ?? []).map((t) => (
               <a key={t.id} className={`th${t.id === id ? " on" : ""}`} href={href({ page: "chat", id: t.id })} aria-current={t.id === id ? "page" : undefined}>
-                <span className="t">{live.some((l) => l.threadId === t.id) && <span className="pulse" />}<span className="ellipsis">{t.title}</span></span>
+                <span className="t">{live.some((l) => l.threadId === t.id) && <span className="pulse" />}
+                  {chatLabel(t) && <span className={`badge ${t.waiting ? "needs" : "outline"}`} title={t.waiting ? "The Team Lead asks you this" : "The Team Lead started this chat"}>{chatLabel(t)}</span>}
+                  <span className="ellipsis">{t.title}</span></span>
                 <span className="when">{relTime(t.updatedAt)}</span>
               </a>
             ))}

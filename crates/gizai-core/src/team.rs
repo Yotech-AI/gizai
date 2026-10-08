@@ -40,6 +40,12 @@ pub struct Member {
     pub effort: Option<String>,
     /// Cards it works on at once.
     pub max_runs: i64,
+    /// The Team Lead checks the board this often (minutes); None = off.
+    pub board_check_minutes: Option<i64>,
+    /// When it last looked at the board.
+    pub board_checked_at: Option<i64>,
+    /// Why its board check stopped (three failed checks in a row), until it is changed or resumed; None = not paused.
+    pub board_check_paused: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +86,7 @@ pub struct Team {
 
 const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g.adapter, g.instructions_md, a.handle, a.status, m.is_lead,
         g.model, g.permission_mode, g.allowed_tools_json, g.wakeup, g.heartbeat_minutes, g.budget_usd_micros, g.last_heartbeat_at, m.team_id,
-        COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1)
+        COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1), g.board_check_minutes, g.board_checked_at, g.board_check_paused
      FROM team_members m JOIN actors a ON a.id = m.actor_id LEFT JOIN agent_configs g ON g.actor_id = a.id";
 
 fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
@@ -90,7 +96,8 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
                 is_lead: r.get::<_, i64>(9)? != 0, model: r.get(10)?, permission_mode: r.get(11)?,
                 allowed_tools: tools.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
                 wakeup: r.get(13)?, heartbeat_minutes: r.get(14)?, budget_usd_micros: r.get(15)?, last_heartbeat_at: r.get(16)?,
-                chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)? })
+                chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)?,
+                board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)? })
 }
 
 /// Every agent of every team, with its team id (for the heartbeat scheduler).
@@ -231,6 +238,9 @@ fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
             return Err(Error::Invalid(format!("effort is {}, not {e}", levels.join(", "))));
         }
     }
+    if matches!(i.board_check_minutes, Some(m) if m != 0 && !(5..=1440).contains(&m)) {
+        return Err(Error::Invalid("the board check runs every 5 to 1440 minutes".into()));
+    }
     if matches!(i.max_runs, Some(n) if !(1..=10).contains(&n)) {
         return Err(Error::Invalid("an agent works on between 1 and 10 cards at once".into()));
     }
@@ -262,10 +272,10 @@ pub fn add_agent(db: &Db, actor: &str, team_id: &str, input: AgentInput) -> Resu
         )?;
         c.execute(
             "INSERT INTO agent_configs(actor_id, created_at, updated_at, adapter, model, instructions_md, permission_mode, allowed_tools_json,
-                                       wakeup, heartbeat_minutes, budget_usd_micros, effort, max_concurrent_runs)
-             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                                       wakeup, heartbeat_minutes, budget_usd_micros, effort, max_concurrent_runs, board_check_minutes)
+             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![id, now, a.adapter, a.model, instructions, a.permission_mode, a.tools_json, a.wakeup, a.heartbeat_minutes, a.budget, a.effort,
-                              input.max_runs.unwrap_or(1)],
+                              input.max_runs.unwrap_or(1), input.board_check_minutes.filter(|m| *m > 0)],
         )?;
         c.execute(
             "INSERT INTO team_members(team_id, actor_id, role_key, is_lead, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -305,9 +315,11 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
         c.execute(
             "UPDATE agent_configs SET adapter=?2, model=?3, instructions_md=COALESCE(?4, instructions_md), permission_mode=?5, allowed_tools_json=?6,
                     wakeup=?7, heartbeat_minutes=?8, budget_usd_micros=?9, updated_at=?10, effort=?11,
-                    max_concurrent_runs=COALESCE(?12, max_concurrent_runs), version=version+1 WHERE actor_id=?1",
+                    max_concurrent_runs=COALESCE(?12, max_concurrent_runs),
+                    board_check_minutes=CASE WHEN ?13 IS NULL THEN board_check_minutes WHEN ?13 > 0 THEN ?13 END,
+                    board_check_paused=NULL, board_check_failures=0, version=version+1 WHERE actor_id=?1",
             rusqlite::params![actor_id, a.adapter, a.model, instructions, a.permission_mode, a.tools_json, a.wakeup, a.heartbeat_minutes, a.budget, now, a.effort,
-                              input.max_runs],
+                              input.max_runs, input.board_check_minutes],
         )?;
         c.execute("UPDATE team_members SET role_key=?2, is_lead=?3 WHERE actor_id=?1 AND deleted_at IS NULL",
                   rusqlite::params![actor_id, a.role, (a.role == "lead") as i64])?;
@@ -317,7 +329,7 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
             None => {}
         }
         w.update("agent_configs", actor_id, serde_json::json!({"name": a.name, "role": a.role, "adapter": a.adapter, "permission_mode": a.permission_mode,
-            "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes, "model": a.model, "effort": a.effort, "max_runs": input.max_runs, "instructions_changed": instructions.is_some()}))
+            "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes, "model": a.model, "effort": a.effort, "max_runs": input.max_runs, "board_check_minutes": input.board_check_minutes, "instructions_changed": instructions.is_some()}))
     })
 }
 
@@ -483,6 +495,10 @@ pub fn set_agent_status(db: &Db, actor: &str, agent_id: &str, status: &str) -> R
             rusqlite::params![agent_id, status, ids::now_ms(), actor])?;
         if n == 0 {
             return Err(Error::NotFound(format!("agent {agent_id}")));
+        }
+        if status == "active" {
+            // resumed: a board check that paused after failures runs again
+            w.conn().execute("UPDATE agent_configs SET board_check_paused=NULL, board_check_failures=0 WHERE actor_id=?1", [agent_id])?;
         }
         w.update("actors", agent_id, serde_json::json!({"status": status}))
     })

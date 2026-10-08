@@ -522,6 +522,35 @@ fn r8_an_agent_off_the_column_or_paused_gets_nothing_new() {
 }
 
 #[test]
+fn r8_a_deleted_agent_comes_off_every_column_and_run_takes_the_next_one() {
+    let b = board();
+    let gone = b.agent("Backend Agent", "backend");
+    let fe = b.agent("Frontend Agent", "frontend");
+    let t = b.card("To do");
+    assert_eq!(b.state(&b.st("To do")).agent_ids, [gone.clone(), fe.clone()]);
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap().map(|(a, _)| a), Some(gone.clone()));
+    // deleted (the app has no delete yet: the row is marked as a delete would)
+    b.db.write(Some(&b.you), |w| Ok(w.conn().execute("UPDATE actors SET deleted_at=1 WHERE id=?1", [&gone])?)).unwrap();
+    for col in ["To do", "In progress"] {
+        assert_eq!(b.state(&b.st(col)).agent_ids, [fe.clone()], "{col}");
+    }
+    assert!(b.waiting(&gone).is_empty());
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap().map(|(a, _)| a), Some(fe));
+}
+
+#[test]
+fn r9_run_on_a_backlog_card_moves_it_to_in_progress_as_in_020() {
+    let b = board();
+    let be = b.agent("Backend Agent", "backend");
+    let t = b.card("Backlog");
+    assert!(b.waiting(&be).is_empty(), "nothing starts in Backlog by itself");
+    // Run picks the agents of the column the start moves the card to
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap().map(|(a, _)| a), Some(be.clone()));
+    assert_eq!(workflow::move_on_start(&b.db, &be, &t).unwrap(), Some(b.st("Backlog")));
+    assert_eq!(b.task(&t).state_name, "In progress");
+}
+
+#[test]
 fn r8_the_wakeup_value_changes_nothing() {
     let b = board();
     let mut agents = vec![];

@@ -99,7 +99,7 @@ export type AgentInput = {
 export type RuleInput = { kind: "label" | "column"; matchName: string; targetRole: string; priority: number };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
 export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";
-export type WorkflowState ={ id: string; name: string; category: string; ownerRole?: string | null; wipLimit?: number | null; color?: string | null; sortKey: string };
+export type WorkflowState = { id: string; name: string; category: string; ownerRole?: string | null; wipLimit?: number | null; color?: string | null; sortKey: string };
 export type RoutingRule = { id: string; kind: string; matchLabelId?: string | null; matchStateId?: string | null; targetRole?: string | null; targetActorId?: string | null; priority: number; enabled: boolean };
 export type Team = { id: string; name: string; members: Member[]; states: WorkflowState[]; labels: Label[]; rules: RoutingRule[] };
 export type AppInfo = { version: string; data_dir: string; selftest: boolean; you_id: string; start_route?: string | null; selftest_mode?: string | null; data_label?: string | null };

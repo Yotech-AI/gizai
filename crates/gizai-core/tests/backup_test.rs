@@ -1,5 +1,22 @@
 use gizai_core::db::{self, Db};
 use gizai_core::{seed, users};
+use rusqlite_migration::{M, Migrations};
+
+/// A database file as the previous version left it: the migrations up to one schema step back (0010, GA-49, links
+/// columns with a foreign key, so it can't be rolled back by dropping columns), with one person in it.
+fn previous_version(path: &std::path::Path) {
+    let all = [
+        include_str!("../migrations/0001_init.sql"), include_str!("../migrations/0002_agents.sql"), include_str!("../migrations/0003_chat.sql"),
+        include_str!("../migrations/0004_effort.sql"), include_str!("../migrations/0005_pull_requests.sql"),
+        include_str!("../migrations/0006_worktree_prepare.sql"), include_str!("../migrations/0007_card_flow.sql"),
+        include_str!("../migrations/0008_board_check.sql"), include_str!("../migrations/0009_agent_folders.sql"),
+    ];
+    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
+    let mut c = rusqlite::Connection::open(path).unwrap();
+    Migrations::new(all.iter().map(|sql| M::up(sql)).collect()).to_latest(&mut c).unwrap();
+    c.execute_batch("INSERT INTO orgs (id, created_at, updated_at, name, key) VALUES ('org', 1, 1, 'Yotech', 'YT');
+                     INSERT INTO actors (id, created_at, updated_at, org_id, kind, name, handle, status) VALUES ('you', 1, 1, 'org', 'person', 'Jeffrey', 'jeffrey', 'active');").unwrap();
+}
 
 fn people(path: &std::path::Path) -> Vec<String> {
     let c = rusqlite::Connection::open(path).unwrap();
@@ -36,16 +53,15 @@ fn only_the_newest_twenty_snapshots_are_kept() {
 fn opening_an_older_database_snapshots_it_before_upgrading() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gizai.db");
-    seed::ensure_seed(&Db::open(&path).unwrap(), "Jeffrey").unwrap();
-    // Pretend it was made by the previous version: one schema step back (0009 added the agents' folders).
-    let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch(&format!("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = {};", db::SCHEMA_VERSION - 1)).unwrap();
-    drop(c);
+    // Made by the previous version: one schema step back.
+    previous_version(&path);
     let _db = Db::open(&path).unwrap();
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(snaps.len(), 1, "{snaps:?}");
     assert!(snaps[0].starts_with(&format!("gizai-before-v{}-", db::SCHEMA_VERSION)), "{snaps:?}");
+    assert_eq!(people(&dir.path().join("backups").join(&snaps[0])), ["Jeffrey"], "the snapshot holds the old data");
+    assert_eq!(people(&path), ["Jeffrey"], "and the upgrade kept it");
     // and a database that is already current gets no snapshot
     drop(_db);
     let _again = Db::open(&path).unwrap();

@@ -371,6 +371,29 @@ fn r5_remove_state_moves_cards_keeps_them_bridges_links_and_frees_the_name() {
     assert_ne!(again, testing);
 }
 
+#[test]
+fn r5_cards_of_a_removed_column_count_as_a_drag_auto_targets_pick_them_up_manual_ones_dont() {
+    let b = board();
+    let be = b.agent("Backend Agent", "backend");
+    let ops = b.agent("DevOps Agent", "devops");
+    // A Manual Design column without agents, holding two cards nobody picks up.
+    let design = team::add_state(&b.db, &b.you, &b.team, "Design", &b.st("In progress"), "in_progress").unwrap();
+    let cards = [b.card("Design"), b.card("Design")];
+    assert!(cards.iter().all(|c| !b.waiting(&be).contains(c)));
+    // Removed into In progress (Auto, the Backend Agent on it): its agent picks them up.
+    let moved = columns::remove_state(&b.db, &b.you, &design, &b.st("In progress")).unwrap();
+    assert_eq!(moved.len(), 2);
+    assert!(cards.iter().all(|c| b.waiting(&be).contains(c)), "{:?}", b.waiting(&be));
+    // Removed into Deploy (Manual, the DevOps Agent on it): nothing starts by itself; Run takes the column's agent.
+    let parking = team::add_state(&b.db, &b.you, &b.team, "Parking", &b.st("Review"), "in_progress").unwrap();
+    let parked = b.card("Parking");
+    columns::remove_state(&b.db, &b.you, &parking, &b.st("Deploy")).unwrap();
+    assert_eq!(b.task(&parked).state_name, "Deploy");
+    assert!(!b.waiting(&ops).contains(&parked));
+    assert!(!b.waiting(&be).contains(&parked));
+    assert_eq!(workflow::run_agent(&b.db, &parked).unwrap().map(|(a, _)| a), Some(ops));
+}
+
 // ---- 6. labels ----
 
 #[test]

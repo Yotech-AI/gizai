@@ -6,6 +6,35 @@ use gizai_core::db::{self, Db};
 use gizai_core::folders::{self, Folder, Places};
 use gizai_core::model::{AgentInput, ProjectInput};
 use gizai_core::{projects, seed, team};
+use rusqlite_migration::{M, Migrations};
+
+/// A genuine schema 8 database file (GA-35's 0008_board_check ran, 0009_agent_folders didn't), built from the
+/// migrations: a newer schema can't be rolled back to it by dropping columns (0010 links columns with a foreign key).
+/// One team with Jeffrey, a Team Lead with chat and a 30-minute board check, and a Backend Agent.
+fn schema_8(path: &Path) -> rusqlite::Connection {
+    let mut c = rusqlite::Connection::open(path).unwrap();
+    Migrations::new(vec![
+        M::up(include_str!("../migrations/0001_init.sql")), M::up(include_str!("../migrations/0002_agents.sql")),
+        M::up(include_str!("../migrations/0003_chat.sql")), M::up(include_str!("../migrations/0004_effort.sql")),
+        M::up(include_str!("../migrations/0005_pull_requests.sql")), M::up(include_str!("../migrations/0006_worktree_prepare.sql")),
+        M::up(include_str!("../migrations/0007_card_flow.sql")), M::up(include_str!("../migrations/0008_board_check.sql")),
+    ]).to_latest(&mut c).unwrap();
+    c.execute_batch(r#"
+        INSERT INTO orgs (id, created_at, updated_at, name, key) VALUES ('org', 1, 1, 'Yotech', 'YT');
+        INSERT INTO actors (id, created_at, updated_at, org_id, kind, name, handle, status) VALUES
+          ('you', 1, 1, 'org', 'person', 'Jeffrey', 'jeffrey', 'active'),
+          ('lead', 1, 1, 'org', 'agent', 'Team Lead', 'lead', 'active'),
+          ('backend', 1, 1, 'org', 'agent', 'Backend Agent', 'backend', 'active');
+        INSERT INTO agent_configs (actor_id, created_at, updated_at, adapter, wakeup, chat_enabled, board_check_minutes) VALUES
+          ('lead', 1, 1, 'claude_code', 'manual', 1, 30),
+          ('backend', 1, 1, 'claude_code', 'on_assign', 0, NULL);
+        INSERT INTO teams (id, created_at, updated_at, org_id, name, lead_actor_id) VALUES ('team', 1, 1, 'org', 'Software', 'lead');
+        INSERT INTO team_members (team_id, actor_id, role_key, is_lead, created_at) VALUES
+          ('team', 'you', 'reviewer', 0, 1), ('team', 'lead', 'lead', 1, 2), ('team', 'backend', 'backend', 0, 3);
+    "#).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 8);
+    c
+}
 
 fn f(path: &str, access: &str) -> Folder {
     Folder { path: path.into(), access: access.into() }
@@ -237,19 +266,12 @@ fn places_know_the_database_folder_and_the_projects_main_checkouts() {
 fn an_older_database_gets_an_empty_folder_list_for_each_agent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gizai.db");
-    let id = {
-        let db = Db::open(&path).unwrap();
-        let s = seed::ensure_seed(&db, "Jeffrey").unwrap();
-        team::add_agent(&db, &s.you_id, &s.team_id, agent_input("Backend Agent", None)).unwrap()
-    };
-    let c = rusqlite::Connection::open(&path).unwrap();
     // Schema 8: GA-35's 0008_board_check ran, 0009_agent_folders didn't.
-    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
-    drop(c);
+    drop(schema_8(&path));
     let db = Db::open(&path).unwrap();
     assert_eq!(db.read(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)).unwrap(), db::SCHEMA_VERSION);
-    assert_eq!(db::SCHEMA_VERSION, 9);
-    assert!(team::agent(&db, &id).unwrap().folders.is_empty());
+    assert!(db::SCHEMA_VERSION >= 9, "0009 ran");
+    assert!(team::agent(&db, "backend").unwrap().folders.is_empty());
 }
 
 #[test]
@@ -257,27 +279,22 @@ fn a_schema_8_database_keeps_its_board_check_and_every_agent_gets_folders_json_e
     // GA-47: main before the merge was schema 8 (GA-35's board check); 0009 adds the folders and keeps the rest.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gizai.db");
-    let (lead, backend) = {
-        let db = Db::open(&path).unwrap();
-        let s = seed::ensure_seed(&db, "Jeffrey").unwrap();
-        let lead = team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "Team Lead".into(), role_key: "lead".into(),
-            chat_enabled: Some(true), board_check_minutes: Some(30), ..Default::default() }).unwrap();
-        (lead, team::add_agent(&db, &s.you_id, &s.team_id, agent_input("Backend Agent", None)).unwrap())
-    };
-    let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
+    let (lead, backend) = ("lead", "backend");
+    let c = schema_8(&path);
     let agents: i64 = c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0)).unwrap();
     drop(c);
     let db = Db::open(&path).unwrap();
     let (version, empty, all): (i64, i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT COUNT(*) FROM agent_configs WHERE folders_json = '[]'", [], |r| r.get(0))?,
         c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((version, empty, all), (9, agents, agents), "every agent kept, each with '[]'");
-    assert_eq!(team::agent(&db, &lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009");
-    assert!(team::agent(&db, &backend).unwrap().folders.is_empty());
+    assert_eq!((version, empty, all), (db::SCHEMA_VERSION, agents, agents), "every agent kept, each with '[]'");
+    assert_eq!(agents, 2);
+    assert_eq!(team::agent(&db, lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009 (and 0010)");
+    assert!(team::agent(&db, backend).unwrap().folders.is_empty());
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v9-") && snaps[0].ends_with(".db"), "{snaps:?}");
+    let before = format!("gizai-before-v{}-", db::SCHEMA_VERSION);
+    assert!(snaps.len() == 1 && snaps[0].starts_with(&before) && snaps[0].ends_with(".db"), "{snaps:?}");
 }
 
 #[test]

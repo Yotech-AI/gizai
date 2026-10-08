@@ -62,6 +62,10 @@ impl App {
     fn patch(&self, t: &str, patch: TaskPatch) {
         gizai_core::tasks::update(&self.st.db, &self.st.you_id, t, patch).unwrap();
     }
+    /// The card without an assignee, as cards were before GA-49 (test_task now assigns its agent).
+    fn unassign(&self, t: &str) {
+        self.patch(t, TaskPatch { assignee_id: Some(String::new()), ..Default::default() });
+    }
     fn team(&self) -> gizai_core::team::Team {
         gizai_core::team::get(&self.st.db, &gizai_core::team::list(&self.st.db).unwrap()[0].id).unwrap()
     }
@@ -70,10 +74,6 @@ impl App {
     }
     fn to(&self, t: &str, column: &str) {
         gizai_core::tasks::move_to(&self.st.db, &self.st.you_id, t, &self.state(column), "").unwrap();
-    }
-    fn add_deploy(&self) {
-        let team = self.team();
-        gizai_core::team::add_state(&self.st.db, &self.st.you_id, &team.id, "Deploy", &self.state("Review"), "deploy", None).unwrap();
     }
     fn task(&self, t: &str) -> Task { gizai_core::tasks::get(&self.st.db, t).unwrap() }
     fn column(&self, t: &str) -> String { self.task(t).state_name }
@@ -386,15 +386,15 @@ async fn a_crash_with_three_runs_under_way_fails_those_three_and_the_rest_wait_i
 }
 
 #[tokio::test]
-async fn a_heartbeat_agent_without_a_login_holds_one_card_and_the_next_heartbeat_starts_nothing() {
+async fn an_agent_set_to_heartbeat_without_a_login_holds_one_card_and_the_next_pull_starts_nothing() {
+    // GA-49: the worker heartbeat is gone and an agent's wake-up no longer matters: the queue takes its cards.
     let a = app();
     gizai_core::settings::set(&a.st.db, "claude_bin", &slow_fake(a.tmp.path(), 1.5)).unwrap();
     let cards: Vec<String> = [1, 2, 3, 4].iter().map(|p| a.card(*p, "FAKE_NOT_LOGGED_IN")).collect();
     let be = a.agent_with("Backend Agent", "backend", "heartbeat", 3, None);
-    let now = gizai_core::ids::now_ms();
-    let started = runs::heartbeat_tick(&a.st, now).await;
+    let started = runs::pull(&a.st).await;
     assert_eq!(started.len(), 3, "three runs are under way before the first one fails");
-    for done in started {
+    for (_, done) in started {
         done.await.unwrap();
     }
     until("the runs end", || runs::live(&a.st).is_empty()).await;
@@ -406,7 +406,7 @@ async fn a_heartbeat_agent_without_a_login_holds_one_card_and_the_next_heartbeat
         let t = a.task(c);
         assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 0), "card {i}");
     }
-    assert!(runs::heartbeat_tick(&a.st, now + 120_000).await.is_empty(), "the next heartbeat starts nothing");
+    assert!(runs::pull(&a.st).await.is_empty(), "the next pull starts nothing");
     assert!(a.runs_of(&cards[3]).is_empty());
 }
 
@@ -481,16 +481,16 @@ async fn agents_paused_in_settings_or_a_paused_agent_keep_the_queue_waiting_with
 }
 
 #[tokio::test]
-async fn a_crash_on_a_heartbeat_agent_fails_at_most_its_cards_at_once_and_the_next_heartbeat_starts_nothing() {
+async fn a_crash_on_an_agent_set_to_heartbeat_fails_at_most_its_cards_at_once_and_the_next_pull_starts_nothing() {
+    // GA-49: the worker heartbeat is gone and an agent's wake-up no longer matters: the queue takes its cards.
     let a = app();
     gizai_core::settings::set(&a.st.db, "claude_bin", &slow_fake(a.tmp.path(), 1.0)).unwrap();
     let cards: Vec<String> = [1, 2, 3, 4, 0, 0].iter().map(|p| a.card(*p, "FAKE_CRASH")).collect();
     let be = a.agent_with("Backend Agent", "backend", "heartbeat", 3, None);
     let lead = a.agent_with("Team Lead", "lead", "manual", 1, None);
-    let now = gizai_core::ids::now_ms();
-    let started = runs::heartbeat_tick(&a.st, now).await;
+    let started = runs::pull(&a.st).await;
     assert_eq!(started.len(), 3);
-    for done in started {
+    for (_, done) in started {
         done.await.unwrap();
     }
     until("the runs end", || runs::live(&a.st).is_empty()).await;
@@ -502,7 +502,7 @@ async fn a_crash_on_a_heartbeat_agent_fails_at_most_its_cards_at_once_and_the_ne
         assert_eq!((t.state_name.as_str(), t.fail_count, a.runs_of(c).len()), want, "card {i}");
         assert_eq!(t.hold, None, "card {i}");
     }
-    assert!(runs::heartbeat_tick(&a.st, now + 120_000).await.is_empty(), "the next heartbeat starts nothing");
+    assert!(runs::pull(&a.st).await.is_empty(), "the next pull starts nothing");
     // the Team Lead sets the agent active again: the pause ends
     gizai_lib::tools::call(&a.st, &lead, "set_agent_status", serde_json::json!({"agent": "Backend Agent", "status": "active"})).await.unwrap();
     assert!(runs::pull_paused(&a.st, &be).is_none());
@@ -536,9 +536,9 @@ async fn a_small_fix_with_testing_off_ends_in_review_and_with_testing_on_qa_star
 // ---- 3.4 and Part 3: DevOps runs and the Deploy column ----
 
 #[tokio::test]
-async fn nothing_starts_on_a_deploy_card_even_for_a_devops_agent_on_assign_or_heartbeat() {
+async fn nothing_starts_on_a_deploy_card_even_for_a_devops_agent_on_it_whatever_its_wake_up() {
+    // GA-49: Deploy is in the seed, Manual, with the DevOps Agent on it (its role's usual column).
     let a = app();
-    a.add_deploy();
     let t = a.card(1, "FAKE_HANG");
     let ops = a.agent_with("DevOps Agent", "devops", "on_assign", 3, None);
     a.agent_with("Backend Agent", "backend", "on_assign", 3, None);
@@ -547,7 +547,7 @@ async fn nothing_starts_on_a_deploy_card_even_for_a_devops_agent_on_assign_or_he
     assert_eq!(runs::dispatch(&a.st, &t).await, None, "a drag or an assignment starts nothing");
     assert!(runs::pull(&a.st).await.is_empty(), "the queue skips it");
     a.agent_with("DevOps Agent", "devops", "heartbeat", 3, None);
-    assert!(runs::heartbeat_tick(&a.st, gizai_core::ids::now_ms()).await.is_empty(), "so does a heartbeat");
+    assert!(runs::pull(&a.st).await.is_empty(), "and when its wake-up is heartbeat");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(a.runs_of(&t).is_empty());
     assert_eq!(a.column(&t), "Deploy");
@@ -556,12 +556,12 @@ async fn nothing_starts_on_a_deploy_card_even_for_a_devops_agent_on_assign_or_he
 #[tokio::test]
 async fn run_on_a_deploy_card_starts_the_devops_agent_and_the_card_stays_in_deploy() {
     let a = app();
-    a.add_deploy();
     let t = a.card(0, "FAKE_HANG");
+    a.unassign(&t);
     a.to(&t, "Deploy");
-    // without a DevOps Agent, the message says to add one
+    // without an agent on Deploy, the message says to put one on it
     let err = runs::start(&a.st, &t, None, Some(FAKE.into()), "manual").await.map(|_| ()).unwrap_err();
-    assert!(err.contains("DevOps") && err.contains("Team page"), "{err}");
+    assert!(err.contains("drag an agent onto Deploy") && err.contains("Team page"), "{err}");
     let ops = a.agent_with("DevOps Agent", "devops", "manual", 3, None);
     assert_eq!(runs::suggest(&a.st, &t).as_deref(), Some(ops.as_str()));
     let (run, done) = runs::start(&a.st, &t, None, Some(FAKE.into()), "manual").await.unwrap();
@@ -579,7 +579,6 @@ async fn run_on_a_deploy_card_starts_the_devops_agent_and_the_card_stays_in_depl
 #[tokio::test]
 async fn the_ga_40_case_a_devops_run_on_a_review_card_stays_in_review_and_deployed_ends_in_done() {
     let a = app();
-    a.add_deploy();
     let t = a.card(0, "Export");
     let ops = a.agent_with("DevOps Agent", "devops", "manual", 3, None);
     let be = a.agent("Backend Agent");
@@ -609,19 +608,22 @@ async fn the_ga_40_case_a_devops_run_on_a_review_card_stays_in_review_and_deploy
 #[tokio::test]
 async fn a_devops_run_on_a_deploy_card_that_needs_a_decision_stays_in_deploy_on_hold() {
     let a = app();
-    a.add_deploy();
-    a.agent_with("DevOps Agent", "devops", "manual", 3, None);
+    let ops = a.agent_with("DevOps Agent", "devops", "manual", 3, None);
     let t = a.card(0, "Release");
+    a.unassign(&t);
     a.to(&t, "Deploy");
     let s = runs::run_once(&a.st, &t, None, Some(fake_answering(a.tmp.path(), "needs_decision"))).await.unwrap();
     assert_eq!(s.outcome.as_deref(), Some("needs_decision"));
+    assert_eq!(gizai_core::runs::get(&a.st.db, &s.run_id).unwrap().agent_id, ops);
     let task = a.task(&t);
     assert_eq!((task.state_name.as_str(), task.hold.as_deref()), ("Deploy", Some("needs_decision")));
     // ready_for_testing (it only checked something): Deploy, no hold, no QA
     let t = a.card(0, "Check the release");
+    a.unassign(&t);
     a.to(&t, "Deploy");
     a.agent_with("QA Agent", "qa", "on_assign", 3, None);
-    runs::run_once(&a.st, &t, None, Some(FAKE.into())).await.unwrap();
+    let s = runs::run_once(&a.st, &t, None, Some(FAKE.into())).await.unwrap();
+    assert_eq!(gizai_core::runs::get(&a.st.db, &s.run_id).unwrap().agent_id, ops);
     tokio::time::sleep(Duration::from_millis(300)).await;
     let task = a.task(&t);
     assert_eq!((task.state_name.as_str(), task.hold.as_deref(), a.runs_of(&t).len()), ("Deploy", None, 1));

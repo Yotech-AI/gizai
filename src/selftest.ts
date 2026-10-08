@@ -105,13 +105,13 @@ function typeInto(el: HTMLInputElement | HTMLTextAreaElement, text: string) {
 const buttonByText = (root: ParentNode, text: string) =>
   [...root.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) as HTMLButtonElement | undefined;
 
-/** Team page: add an agent with a heartbeat through the dialog, then add the usual routing rules. */
+/** Team page: add an agent with a heartbeat through the dialog; it lands on its role's usual columns (GA-49: no routing rules). */
 function pickOption(el: HTMLSelectElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(el, value);
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-export async function teamProbe(getTeam: () => Promise<{ members: { name: string; kind: string; wakeup?: string | null; heartbeatMinutes?: number | null; instructionsMd?: string | null; model?: string | null; effort?: string | null }[]; rules?: unknown[] }>) {
+export async function teamProbe(getTeam: () => Promise<{ members: { actorId: string; name: string; kind: string; wakeup?: string | null; heartbeatMinutes?: number | null; instructionsMd?: string | null; model?: string | null; effort?: string | null }[]; states: { name: string; agentIds?: string[] }[] }>) {
   const open = await waitFor(() => buttonByText(document, "Add agent"));
   if (!open) return { ok: false, error: "no Add agent button" };
   open.click();
@@ -136,19 +136,16 @@ export async function teamProbe(getTeam: () => Promise<{ members: { name: string
   if (effortSel) pickOption(effortSel, "xhigh");
   await sleep(100);
   buttonByText(dialog, "Add agent")?.click();
-  let agent: { wakeup?: string | null; heartbeatMinutes?: number | null; instructionsMd?: string | null; model?: string | null; effort?: string | null } | undefined;
+  let agent: { actorId: string; wakeup?: string | null; heartbeatMinutes?: number | null; instructionsMd?: string | null; model?: string | null; effort?: string | null } | undefined;
   for (let i = 0; i < 30 && !agent; i++) { await sleep(100); agent = (await getTeam()).members.find((m) => m.name === "Frontend Agent" && m.kind === "agent"); }
-  // Adding an agent opens its page; the rules live on the Team page.
+  // Adding an agent opens its page. A builder lands on the team's To do and In progress columns (GA-49: no routing rules).
   const agentPage = !!(await waitFor(() => (document.querySelector(".entity-head h1")?.textContent ?? "") === "Frontend Agent" || null, 3000));
-  window.location.hash = "#/team";
-  const usual = await waitFor(() => buttonByText(document, "Add the usual rules"), 3000);
-  usual?.click();
-  let rules = 0;
-  for (let i = 0; i < 30 && rules < 3; i++) { await sleep(100); rules = (await getTeam()).rules?.length ?? 0; }
+  const id = agent?.actorId;
+  const columns = id ? (await getTeam()).states.filter((s) => s.agentIds?.includes(id)).map((s) => s.name) : [];
   const panelOpen = agentPage;
-  const ok = !!agent && agent.wakeup === "heartbeat" && agent.heartbeatMinutes === 20 && !!agent.instructionsMd?.includes("Frontend Agent") && rules === 3 && panelOpen
-    && agent.model === "opus" && agent.effort === "xhigh";
-  return { ok, agent_added: !!agent, wakeup: agent?.wakeup, minutes: agent?.heartbeatMinutes, template: !!agent?.instructionsMd?.includes("GIZAI_RESULT"), rules, agent_page: panelOpen,
+  const ok = !!agent && agent.wakeup === "heartbeat" && agent.heartbeatMinutes === 20 && !!agent.instructionsMd?.includes("Frontend Agent")
+    && columns.join(",") === "To do,In progress" && panelOpen && agent.model === "opus" && agent.effort === "xhigh";
+  return { ok, agent_added: !!agent, wakeup: agent?.wakeup, minutes: agent?.heartbeatMinutes, template: !!agent?.instructionsMd?.includes("GIZAI_RESULT"), columns, agent_page: panelOpen,
     model_list: !!modelSel, model: agent?.model, effort: agent?.effort };
 }
 

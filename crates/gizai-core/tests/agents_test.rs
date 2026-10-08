@@ -31,12 +31,12 @@ fn update_agent_keeps_instructions_unless_given_and_pausing_works() {
 }
 
 #[test]
-fn a_new_team_gets_the_six_columns_and_no_agents() {
+fn a_new_team_gets_the_seven_columns_and_no_agents() {
     let db = Db::open_in_memory().unwrap();
     let s = ensure_seed(&db, "Jeffrey").unwrap();
     let id = team::add_team(&db, &s.you_id, "Mobile team").unwrap();
     let t = team::get(&db, &id).unwrap();
-    assert_eq!(t.states.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Done"]);
+    assert_eq!(t.states.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Done"]);
     assert!(t.members.iter().all(|m| m.kind == "person"), "Jeffrey sets agents up himself");
     assert!(team::list(&db).unwrap().len() == 2);
     assert!(team::add_team(&db, &s.you_id, "  ").is_err());

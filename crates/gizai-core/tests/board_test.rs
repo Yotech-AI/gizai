@@ -3,12 +3,13 @@
 //! chats (one waiting chat per card, answered by your message, dismissed), a person dragging a held card back, and
 //! migration 0008 on a database with data.
 use gizai_core::board::{self, Context, Finding};
+use gizai_core::columns::{self, ColumnInput};
 use gizai_core::{chat, comments, db::Db, ids, model::*, projects, runs, seed::ensure_seed, tasks, team, workflow};
 
 struct B { db: Db, you: String, project: String, be: String, qa: String, lead: String, team: String }
 
-/// A Backend Agent and a QA Agent that take cards when routed to them (one at a time), a Team Lead with Chat on, the
-/// label rule backend → backend and the column rule Testing → qa.
+/// A Backend Agent and a QA Agent that take cards (one at a time) and a Team Lead with Chat on. add_agent puts them on
+/// their role's columns: the Backend Agent on To do and In progress, the QA Agent on Testing, the Team Lead on none.
 fn board_() -> B {
     let db = Db::open_in_memory().unwrap();
     let s = ensure_seed(&db, "Jeffrey").unwrap();
@@ -18,8 +19,6 @@ fn board_() -> B {
     let be = agent("Backend Agent", "backend", "on_assign");
     let qa = agent("QA Agent", "qa", "on_assign");
     let lead = agent("Team Lead", "lead", "manual");
-    team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "label".into(), match_name: "backend".into(), target_role: "backend".into(), priority: 10 }).unwrap();
-    team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "column".into(), match_name: "Testing".into(), target_role: "qa".into(), priority: 20 }).unwrap();
     B { db, you: s.you_id, project, be, qa, lead, team: s.team_id }
 }
 
@@ -32,16 +31,17 @@ impl B {
     fn state(&self, name: &str) -> String {
         self.db.read(|c| Ok(c.query_row("SELECT id FROM workflow_states WHERE name=?1", [name], |r| r.get(0))?)).unwrap()
     }
-    fn label(&self, name: &str) -> String {
-        self.db.read(|c| Ok(c.query_row("SELECT id FROM labels WHERE name=?1", [name], |r| r.get(0))?)).unwrap()
+    /// A card in `column` (labels don't route: the column's agents pick it up).
+    fn card(&self, column: &str) -> String {
+        self.card_in(&self.project, column)
     }
-    /// A card in `column`, labelled backend when `routed`.
-    fn card(&self, column: &str, routed: bool) -> String {
-        self.card_in(&self.project, column, routed)
-    }
-    fn card_in(&self, project: &str, column: &str, routed: bool) -> String {
+    fn card_in(&self, project: &str, column: &str) -> String {
         tasks::create(&self.db, &self.you, TaskInput { project_id: project.to_string(), title: format!("A card in {column}"),
-            state_id: Some(self.state(column)), label_ids: if routed { vec![self.label("backend")] } else { vec![] }, ..Default::default() }).unwrap()
+            state_id: Some(self.state(column)), ..Default::default() }).unwrap()
+    }
+    /// Takes the Backend Agent off `column`: no agent is on it, so nothing picks its cards up.
+    fn no_agents_on(&self, column: &str) {
+        columns::remove_agent(&self.db, &self.you, &self.state(column), &self.be).unwrap();
     }
     fn run(&self, agent: &str, task: &str) -> String {
         runs::create(&self.db, agent, task, "backend", "S", "/tmp", "/tmp", "gizai/x", "/tmp/r.jsonl").unwrap()
@@ -89,17 +89,17 @@ impl B {
 fn a_persons_comment_after_a_needs_decision_hold_is_an_answer_but_an_agents_comment_or_an_older_one_is_not() {
     let b = board_();
     // a person's comment from before the hold doesn't answer it
-    let old = b.card("In progress", true);
+    let old = b.card("In progress");
     comments::add(&b.db, &b.you, &old, "Use CSV please", None).unwrap();
     tick();
     b.ask(&old);
     // the agent's own comments (its summary, and one more) don't answer it either
-    let own = b.card("In progress", true);
+    let own = b.card("In progress");
     b.ask(&own);
     tick();
     comments::add(&b.db, &b.be, &own, "Still waiting for an answer", None).unwrap();
     // a person's comment after the hold does
-    let answered = b.card("In progress", true);
+    let answered = b.card("In progress");
     b.ask(&answered);
     tick();
     comments::add(&b.db, &b.you, &answered, "JSON, with a CSV export later", None).unwrap();
@@ -120,7 +120,7 @@ fn a_persons_comment_after_a_needs_decision_hold_is_an_answer_but_an_agents_comm
 #[test]
 fn a_held_card_names_its_hold_its_reason_and_its_latest_run() {
     let b = board_();
-    let t = b.card("To do", true);
+    let t = b.card("To do");
     let r = b.run(&b.be, &t);
     runs::finish(&b.db, &r, "failed", None, 0, 0, 0, Some("exit 1: rate limited")).unwrap();
     tasks::update(&b.db, &b.you, &t, TaskPatch { hold: Some("blocked".into()), hold_reason: Some("The API key is missing".into()), ..Default::default() }).unwrap();
@@ -140,13 +140,13 @@ fn a_card_in_progress_whose_run_stopped_part_way_is_a_stopped_finding() {
     let cases = [("timed_out", Some("it stopped at the 45 min limit"), "limit"), ("failed", Some("exit 1"), "failed"), ("cancelled", Some("Stopped by you"), "stopped")];
     let mut cards = vec![];
     for (status, error, _) in cases {
-        let t = b.card("In progress", true);
+        let t = b.card("In progress");
         let r = b.run(&b.be, &t);
         runs::finish(&b.db, &r, status, None, 0, 0, 0, error).unwrap();
         cards.push(t);
     }
     // a run that ended without a result
-    let nores = b.card("In progress", true);
+    let nores = b.card("In progress");
     let r = b.run(&b.be, &nores);
     runs::finish(&b.db, &r, "succeeded", None, 0, 0, 0, None).unwrap();
     workflow::apply_outcome(&b.db, &r, None).unwrap();
@@ -161,28 +161,29 @@ fn a_card_in_progress_whose_run_stopped_part_way_is_a_stopped_finding() {
     let n = b.of(&all, &nores);
     assert_eq!(n.len(), 1, "{all:?}");
     // a card with a run at work now is no finding
-    let busy = b.card("In progress", true);
+    let busy = b.card("In progress");
     b.run(&b.be, &busy);
     assert!(b.of(&b.check(), &busy).is_empty());
 }
 
 #[test]
-fn a_card_nothing_routes_or_assigned_to_a_person_is_waiting_with_why() {
+fn a_card_in_a_column_without_agents_or_assigned_to_a_person_there_is_waiting_with_why() {
     let b = board_();
-    let loose = b.card("To do", false);
-    let person = b.card("To do", false);
+    b.no_agents_on("To do");
+    let loose = b.card("To do");
+    let person = b.card("To do");
     tasks::update(&b.db, &b.you, &person, TaskPatch { assignee_id: Some(b.you.clone()), ..Default::default() }).unwrap();
     let all = b.check();
-    assert_eq!(b.of(&all, &loose), [("waiting".to_string(), "no_route".to_string())]);
-    assert_eq!(b.of(&all, &person), [("waiting".to_string(), "person".to_string())]);
+    assert_eq!(b.of(&all, &loose), [("waiting".to_string(), "no_agents".to_string())]);
+    assert_eq!(b.of(&all, &person), [("waiting".to_string(), "no_agents".to_string())]);
     let f = all.iter().find(|f| f.task_id == person).unwrap();
     assert!(f.reason.contains("Jeffrey"), "{}", f.reason);
 }
 
 #[test]
-fn a_card_whose_agent_is_paused_over_budget_manual_or_has_its_pull_paused_is_waiting_with_why() {
+fn a_card_whose_agent_is_paused_over_budget_or_has_its_pull_paused_is_waiting_with_why_and_a_manual_column_is_no_finding() {
     let b = board_();
-    let t = b.card("To do", true);
+    let t = b.card("To do");
     let now = ids::now_ms();
     let code = |cx: &Context| b.of(&b.check_with(cx), &t);
     let w = |c: &str| vec![("waiting".to_string(), c.to_string())];
@@ -196,17 +197,21 @@ fn a_card_whose_agent_is_paused_over_budget_manual_or_has_its_pull_paused_is_wai
     let mut cx = b.cx_at(now);
     cx.agents_paused = true;
     assert_eq!(code(&cx), w("agents_paused"));
-    // wake-up manual
+    // wake-up manual no longer matters (GA-49): its free slot left unused is the finding
     let mut i = b.agent_input(&b.be);
     i.wakeup = "manual".into();
     team::update_agent(&b.db, &b.you, &b.be, i).unwrap();
-    assert_eq!(code(&b.cx_at(now)), w("manual"));
+    assert_eq!(code(&b.cx_at(now + 3 * 60_000)), w("free_slot"));
+    // a Manual column: only a person's Run starts its cards, so they wait by design
+    columns::set_column(&b.db, &b.you, &b.state("To do"), ColumnInput { auto: Some(false), ..Default::default() }).unwrap();
+    assert!(code(&b.cx_at(now + 3 * 60_000)).is_empty());
+    columns::set_column(&b.db, &b.you, &b.state("To do"), ColumnInput { auto: Some(true), ..Default::default() }).unwrap();
     // over its budget: it spent $0.05 of $0.01 this month
     let mut i = b.agent_input(&b.be);
     i.wakeup = "on_assign".into();
     i.budget_usd_micros = Some(10_000);
     team::update_agent(&b.db, &b.you, &b.be, i).unwrap();
-    let other = b.card("Backlog", true);
+    let other = b.card("Backlog");
     let r = b.run(&b.be, &other);
     runs::finish(&b.db, &r, "succeeded", None, 50_000, 0, 0, None).unwrap();
     assert_eq!(code(&b.cx_at(ids::now_ms())), w("budget"));
@@ -220,7 +225,7 @@ fn a_card_whose_agent_is_paused_over_budget_manual_or_has_its_pull_paused_is_wai
 #[test]
 fn a_card_waiting_only_for_its_busy_agent_is_no_finding_but_a_free_slot_left_unused_is() {
     let b = board_();
-    let waiting = b.card("To do", true);
+    let waiting = b.card("To do");
     // just dragged in, the agent has a free slot: the queue takes it soon, no finding yet
     assert!(b.of(&b.check(), &waiting).is_empty(), "a card the queue is about to take is no finding");
     // three minutes on, the free slot is still unused
@@ -229,7 +234,7 @@ fn a_card_waiting_only_for_its_busy_agent_is_no_finding_but_a_free_slot_left_unu
     assert_eq!(b.of(&all, &waiting), [("waiting".to_string(), "free_slot".to_string())]);
     assert_eq!(all.iter().find(|f| f.task_id == waiting).unwrap().agent_id.as_deref(), Some(b.be.as_str()));
     // the agent works on another card (its one slot): the card only waits for it
-    let other = b.card("In progress", true);
+    let other = b.card("In progress");
     b.run(&b.be, &other);
     let all = b.check_with(&b.cx_at(later));
     assert!(b.of(&all, &waiting).is_empty(), "{all:?}");
@@ -239,14 +244,14 @@ fn a_card_waiting_only_for_its_busy_agent_is_no_finding_but_a_free_slot_left_unu
 #[test]
 fn runs_at_once_full_for_over_an_hour_is_a_finding_and_a_testing_card_routes_to_qa() {
     let b = board_();
-    let testing = b.card("Testing", true);
+    let testing = b.card("Testing");
     // QA is free for three minutes: a free slot left unused
     let later = ids::now_ms() + 3 * 60_000;
     let all = b.check_with(&b.cx_at(later));
     assert_eq!(b.of(&all, &testing), [("waiting".to_string(), "free_slot".to_string())]);
     assert_eq!(all.iter().find(|f| f.task_id == testing).unwrap().agent_id.as_deref(), Some(b.qa.as_str()));
     // "Runs at once" is 1 and the Backend Agent's run takes it: within the hour nothing, after it a finding
-    let other = b.card("In progress", true);
+    let other = b.card("In progress");
     b.run(&b.be, &other);
     let mut cx = b.cx_at(later);
     cx.max_concurrent = 1;
@@ -260,18 +265,18 @@ fn backlog_review_done_cancelled_cards_and_paused_or_done_projects_are_left_out(
     let b = board_();
     let mut quiet = vec![];
     for column in ["Backlog", "Review", "Done"] {
-        let t = b.card(column, false);
+        let t = b.card(column);
         tasks::update(&b.db, &b.you, &t, TaskPatch { hold: Some("blocked".into()), hold_reason: Some("x".into()), ..Default::default() }).unwrap();
         quiet.push(t);
     }
     let cancelled = b.db.read(|c| Ok(c.query_row("SELECT name FROM workflow_states WHERE category='cancelled'", [], |r| r.get::<_, String>(0)).ok())).unwrap();
     if let Some(name) = cancelled {
-        quiet.push(b.card(&name, false));
+        quiet.push(b.card(&name));
     }
     for status in ["paused", "done", "archived"] {
         let p = projects::create(&b.db, &b.you, ProjectInput { name: format!("P {status}"), key: format!("P{}", &status[..2].to_uppercase()), ..Default::default() }).unwrap();
-        let t = b.card_in(&p, "To do", false);
-        let h = b.card_in(&p, "In progress", true);
+        let t = b.card_in(&p, "To do");
+        let h = b.card_in(&p, "In progress");
         b.ask(&h);
         tick();
         comments::add(&b.db, &b.you, &h, "Go with JSON", None).unwrap();
@@ -284,8 +289,9 @@ fn backlog_review_done_cancelled_cards_and_paused_or_done_projects_are_left_out(
     for t in &quiet {
         assert!(b.of(&all, t).is_empty(), "{t}: {all:?}");
     }
-    // the same card in To do of an active project is a finding
-    let loose = b.card("To do", false);
+    // the same card in To do of an active project is a finding (with no agent on To do)
+    b.no_agents_on("To do");
+    let loose = b.card("To do");
     assert_eq!(b.of(&b.check(), &loose).len(), 1);
 }
 
@@ -294,8 +300,9 @@ fn backlog_review_done_cancelled_cards_and_paused_or_done_projects_are_left_out(
 #[test]
 fn a_finding_already_seen_comes_back_only_after_its_card_changes() {
     let b = board_();
-    let loose = b.card("To do", false);
-    let asked = b.card("In progress", true);
+    b.no_agents_on("To do");
+    let loose = b.card("To do");
+    let asked = b.card("In progress");
     b.ask(&asked);
     let all = b.check();
     assert_eq!(all.len(), 2, "{all:?}");
@@ -320,7 +327,8 @@ fn a_finding_already_seen_comes_back_only_after_its_card_changes() {
 #[test]
 fn a_failed_check_leaves_its_findings_new_and_three_in_a_row_pause_the_check_until_the_agent_changes_or_resumes() {
     let b = board_();
-    b.card("To do", false);
+    b.no_agents_on("To do");
+    b.card("To do");
     let all = b.check();
     assert_eq!(b.checked(&all, "failed"), None);
     assert_eq!(board::new_findings(&b.db, &b.lead, &all).unwrap().len(), 1, "a failed check saw nothing");
@@ -362,7 +370,7 @@ fn a_check_is_a_run_of_the_team_lead_with_no_card_and_no_chat_and_its_cost_count
     assert_eq!(runs::agent_spend_since(&b.db, &b.lead, runs::month_start_ms(ids::now_ms())).unwrap(), 123_000);
     assert!(runs::list_for_agent(&b.db, &b.lead, 10).unwrap().iter().any(|x| x.id == r));
     // finish_run only finishes checks
-    let t = b.card("To do", true);
+    let t = b.card("To do");
     let card_run = b.run(&b.be, &t);
     assert!(board::finish_run(&b.db, &card_run, "succeeded", 0, 0, 0, None, None).is_err());
 }
@@ -406,7 +414,7 @@ fn the_board_check_setting_is_off_for_a_new_agent_set_by_create_and_update_and_u
 #[test]
 fn start_lead_chat_keeps_one_waiting_chat_per_card_and_your_message_answers_it() {
     let b = board_();
-    let (t1, t2, t3) = (b.card("To do", false), b.card("To do", false), b.card("To do", false));
+    let (t1, t2, t3) = (b.card("To do"), b.card("To do"), b.card("To do"));
     let (a, new) = chat::start_lead_chat(&b.db, &b.lead, "KADE-1: which agent?", "question", &[t1.clone()], "Nothing routes KADE-1.", None).unwrap();
     assert!(new);
     let th = chat::get_thread(&b.db, &a).unwrap();
@@ -453,7 +461,7 @@ fn start_lead_chat_keeps_one_waiting_chat_per_card_and_your_message_answers_it()
 fn a_person_dragging_a_held_card_into_to_do_or_in_progress_takes_the_hold_off_but_a_gate_move_keeps_it() {
     let b = board_();
     for column in ["To do", "In progress"] {
-        let t = b.card("Testing", true);
+        let t = b.card("Testing");
         tasks::update(&b.db, &b.you, &t, TaskPatch { hold: Some("blocked".into()), hold_reason: Some("x".into()), ..Default::default() }).unwrap();
         tasks::move_to(&b.db, &b.you, &t, &b.state(column), "").unwrap();
         let task = tasks::get(&b.db, &t).unwrap();
@@ -461,18 +469,18 @@ fn a_person_dragging_a_held_card_into_to_do_or_in_progress_takes_the_hold_off_bu
     }
     // into Backlog or Review: the hold stays
     for column in ["Backlog", "Review"] {
-        let t = b.card("To do", true);
+        let t = b.card("To do");
         tasks::update(&b.db, &b.you, &t, TaskPatch { hold: Some("blocked".into()), ..Default::default() }).unwrap();
         tasks::move_to(&b.db, &b.you, &t, &b.state(column), "").unwrap();
         assert_eq!(tasks::get(&b.db, &t).unwrap().hold.as_deref(), Some("blocked"), "{column}");
     }
     // an agent's move (the Team Lead's move_task) keeps it too
-    let t = b.card("Testing", true);
+    let t = b.card("Testing");
     tasks::update(&b.db, &b.you, &t, TaskPatch { hold: Some("blocked".into()), ..Default::default() }).unwrap();
     tasks::move_to(&b.db, &b.lead, &t, &b.state("To do"), "").unwrap();
     assert_eq!(tasks::get(&b.db, &t).unwrap().hold.as_deref(), Some("blocked"));
     // a gate's move when a run ends keeps its hold: QA fails a card back to To do and asks a decision
-    let t = b.card("In progress", true);
+    let t = b.card("In progress");
     let r = b.run(&b.be, &t);
     workflow::apply_outcome(&b.db, &r, Some(&Outcome { outcome: "needs_decision".into(), summary: "Which format?".into(), issues: vec![] })).unwrap();
     let task = tasks::get(&b.db, &t).unwrap();
@@ -498,13 +506,17 @@ fn rows(c: &rusqlite::Connection, sql: &str) -> Rows {
     })).collect::<rusqlite::Result<Vec<_>>>()).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
 }
 
-/// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns and no agent folders (0009).
+/// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns, no agent folders (0009) and
+/// none of 0010's column setup (no column agents, Auto or next columns, branches; an empty routing_rules table back).
 pub fn back_to_7(c: &rusqlite::Connection) {
     let m7 = include_str!("../migrations/0007_card_flow.sql");
     let start = m7.find("CREATE TABLE runs_new (").unwrap();
     let end = start + m7[start..].find(") STRICT;").unwrap() + ") STRICT;".len();
     let runs7 = m7[start..end].replacen("CREATE TABLE runs_new (", "CREATE TABLE runs_v7 (", 1);
     assert!(!runs7.contains("board_check") && !runs7.contains("findings_json"));
+    let m1 = include_str!("../migrations/0001_init.sql");
+    let start = m1.find("CREATE TABLE routing_rules (").unwrap();
+    let rules = &m1[start..start + m1[start..].find(") STRICT;").unwrap() + ") STRICT;".len()];
     c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN;
         ALTER TABLE runs DROP COLUMN findings_json;
         {runs7}; INSERT INTO runs_v7 SELECT * FROM runs; DROP TABLE runs; ALTER TABLE runs_v7 RENAME TO runs;
@@ -515,6 +527,8 @@ pub fn back_to_7(c: &rusqlite::Connection) {
         ALTER TABLE chat_threads DROP COLUMN kind; ALTER TABLE chat_threads DROP COLUMN task_ids_json;
         ALTER TABLE chat_threads DROP COLUMN answered_at; ALTER TABLE chat_threads DROP COLUMN dismissed_at;
         ALTER TABLE agent_configs DROP COLUMN folders_json;
+        DROP TABLE column_agents; ALTER TABLE workflow_states DROP COLUMN next_state_id; ALTER TABLE workflow_states DROP COLUMN auto;
+        ALTER TABLE teams DROP COLUMN branches_json; {rules};
         COMMIT; PRAGMA user_version = 7;")).unwrap();
 }
 

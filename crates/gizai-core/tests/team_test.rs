@@ -1,15 +1,15 @@
 use gizai_core::{db::Db, seed::ensure_seed, team};
 
 #[test]
-fn team_has_members_states_labels_rules() {
+fn team_has_members_states_labels_and_no_agents_on_its_columns() {
     let db = Db::open_in_memory().unwrap();
     let s = ensure_seed(&db, "Jeffrey").unwrap();
     let t = team::get(&db, &s.team_id).unwrap();
     assert_eq!(t.members.len(), 1, "only the user");
     assert_eq!(t.members[0].kind, "person");
-    assert_eq!(t.states.len(), 6);
+    assert_eq!(t.states.len(), 7);
     assert_eq!(t.labels.len(), 4);
-    assert!(t.rules.is_empty(), "no routing rules until Jeffrey adds them");
+    assert!(t.states.iter().all(|s| s.agent_ids.is_empty()), "no agents on the columns until Jeffrey puts them there");
     assert_eq!(team::list(&db).unwrap().len(), 1);
 }
 

@@ -165,3 +165,29 @@ async fn no_run_starts_on_an_archived_card_and_a_card_with_a_live_run_is_not_arc
     assert!(!runs::working_on(&st, &card), "a refused start leaves nothing starting");
     runs::stop_all(&st, std::time::Duration::from_secs(10)).await;
 }
+
+#[tokio::test]
+async fn settings_data_still_lists_and_removes_an_archived_cards_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let card = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    runs::run_once(&st, &card, None, Some(FAKE.into())).await.unwrap();
+    let identifier = tasks::get(&st.db, &card).unwrap().identifier;
+    let wt = st.data_dir.join("worktrees").join("KADE").join(&identifier);
+    assert!(wt.is_dir(), "the run made its worktree");
+    let team = team::get(&st.db, &team::list(&st.db).unwrap()[0].id).unwrap();
+    let done = team.states.iter().find(|s| s.category == "done").unwrap().id.clone();
+    tasks::move_to(&st.db, &st.you_id, &card, &done, "").unwrap();
+    tasks::archive(&st.db, &st.you_id, &card).unwrap();
+
+    let listed: Vec<String> = gizai_lib::worktrees::list(&st).unwrap().into_iter().map(|w| w.identifier).collect();
+    assert_eq!(listed, [identifier.clone()], "Settings → Data lists the archived card's worktree");
+    let out = gizai_lib::worktrees::remove(&st, &[card.clone()]).unwrap();
+    assert!(out[0].removed, "{:?}", out[0]);
+    assert!(!wt.exists(), "its folder is gone");
+    assert!(gizai_lib::worktrees::list(&st).unwrap().is_empty());
+    let last = tasks::activity(&st.db, &card).unwrap().pop().unwrap();
+    assert!(last.diff["cleanup"].as_str().is_some_and(|s| s.contains("Settings → Data")), "{last:?}");
+    assert!(tasks::get(&st.db, &card).unwrap().archived_at.is_some(), "it stays archived");
+}

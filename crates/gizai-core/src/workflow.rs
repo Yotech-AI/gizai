@@ -147,10 +147,11 @@ pub fn next_task_for(db: &Db, agent_id: &str) -> Result<Option<String>> {
 
 /// The cards waiting for this agent, best first: the To do queue (QA: Testing). Candidates are cards assigned to it,
 /// cards in a column its role owns (column rule or the column's owner role), and To do or In progress cards whose
-/// label routes to its role; only in To do, In progress and Testing (never Review or Deploy). Held, claimed,
-/// pinned-to-someone-else and assigned-to-someone-else cards are skipped, and so is a card whose last run was stopped
-/// (by a person, or because Gizai quit): Run or Continue starts it again. Best means: priority urgent → low with none last, then cards assigned to
-/// this agent, then board order.
+/// label routes to its role; only in To do, In progress and Testing (never Review or Deploy). Held, claimed, pinned to
+/// someone else and assigned to another agent are skipped (a person's assignment is the review's: a card dragged back
+/// from Review is routed as usual), and so is a card whose last run was stopped (by a person, or because Gizai quit):
+/// Run or Continue starts it again. Best means: priority urgent → low with none last, then cards assigned to this
+/// agent, then board order.
 pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
     db.read(|c| {
         let Some((team_id, role)): Option<(String, String)> = c.query_row(
@@ -169,7 +170,8 @@ pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
                AND (t.claimed_by_run_id IS NULL OR t.lease_expires_at IS NULL OR t.lease_expires_at < ?4
                     OR NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = t.claimed_by_run_id AND r.status IN ('queued','running','waiting_approval')))
                AND (t.pinned_actor_id IS NULL OR t.pinned_actor_id = ?2)
-               AND (t.assignee_actor_id IS NULL OR t.assignee_actor_id = ?2)
+               AND (t.assignee_actor_id IS NULL OR t.assignee_actor_id = ?2
+                    OR EXISTS (SELECT 1 FROM actors x WHERE x.id = t.assignee_actor_id AND x.kind = 'person'))
                AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id AND r.status = 'cancelled'
                                AND r.created_at = (SELECT max(created_at) FROM runs WHERE task_id = t.id))
                AND (

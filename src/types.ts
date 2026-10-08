@@ -134,7 +134,9 @@ export type RunEvent =
   | { kind: "result"; is_error: boolean; subtype: string; text: string; cost_usd?: number | null; input_tokens: number; output_tokens: number; num_turns: number }
   | { kind: "other"; raw_type: string }
   /** A note from Gizai, such as a folder the run goes without. */
-  | { kind: "note"; text: string };
+  | { kind: "note"; text: string }
+  /** A tool call the CLI refused: it needed an approval nobody can give in a headless run. */
+  | { kind: "refused"; tool: string; input: string };
 export type SeqEvent = { seq: number; event: RunEvent };
 /** How a run ended, from its GIZAI_RESULT line; `deployed` is the DevOps Agent's. */
 export type RunOutcome = "ready_for_testing" | "qa_pass" | "qa_fail" | "needs_decision" | "deployed" | "no_result" | "error";
@@ -149,7 +151,11 @@ export type Run = {
   adapter?: string | null;
   /** The commit its worktree was at when it ended; null while it runs and for runs from before Gizai saved it. */
   headSha?: string | null;
+  /** The tool calls its CLI refused (Refused in this run): Claude Code reports them, other CLIs don't. */
+  refused?: Refusal[];
 };
+/** A tool call a run's CLI refused: the tool and what it asked for (the command, the file). */
+export type Refusal = { tool: string; input: string };
 /** A commit a run made: its id and the first line of its message. */
 export type Commit = { sha: string; subject: string };
 export type LiveRun = { runId: string; taskId: string; agentId: string };

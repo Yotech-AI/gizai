@@ -498,7 +498,8 @@ fn rows(c: &rusqlite::Connection, sql: &str) -> Rows {
     })).collect::<rusqlite::Result<Vec<_>>>()).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
 }
 
-/// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns and no agent folders (0009).
+/// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns, no agent folders (0009) and no
+/// chat Runs on or queue (0010).
 pub fn back_to_7(c: &rusqlite::Connection) {
     let m7 = include_str!("../migrations/0007_card_flow.sql");
     let start = m7.find("CREATE TABLE runs_new (").unwrap();
@@ -515,6 +516,7 @@ pub fn back_to_7(c: &rusqlite::Connection) {
         ALTER TABLE chat_threads DROP COLUMN kind; ALTER TABLE chat_threads DROP COLUMN task_ids_json;
         ALTER TABLE chat_threads DROP COLUMN answered_at; ALTER TABLE chat_threads DROP COLUMN dismissed_at;
         ALTER TABLE agent_configs DROP COLUMN folders_json;
+        DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json; ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli;
         COMMIT; PRAGMA user_version = 7;")).unwrap();
 }
 
@@ -565,7 +567,7 @@ fn migration_0008_keeps_every_chat_message_run_and_agent_and_existing_chats_stay
     assert_eq!((before[1].len(), before[2].len(), before[3].len()), (4, 2, 2), "2 card runs, 2 chats with an answer each");
     drop(c);
 
-    // Gizai opens it: 0008 and 0009 run.
+    // Gizai opens it: 0008, 0009 and 0010 run.
     let db = Db::open(&path).unwrap();
     let after: Vec<Rows> = db.read(|c| Ok(SNAPSHOTS.iter().map(|q| rows(c, q)).collect())).unwrap();
     for (i, q) in SNAPSHOTS.iter().enumerate() {

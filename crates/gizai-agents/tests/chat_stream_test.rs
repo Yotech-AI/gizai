@@ -1,4 +1,4 @@
-use gizai_agents::chat_stream::{ChatEvent, parse_line};
+use gizai_agents::chat_stream::{ChatEvent, UsageLimit, parse_line, usage_limit};
 use serde_json::json;
 
 fn events() -> Vec<ChatEvent> {
@@ -66,4 +66,58 @@ fn an_init_without_mcp_servers_has_no_status() {
 fn claude_codes_own_synthetic_text_is_not_an_answer() {
     let line = r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"Not logged in · Please run /login"}]}}"#;
     assert_eq!(parse_line(line), vec![ChatEvent::Other { raw_type: "synthetic".into() }]);
+}
+
+// Usage limits (GA-50). The fixture is Claude Code 2.1.289's answer when the account hit its weekly limit; the text
+// follows its own template, `You've hit your ${limit}${" · resets " + when}${" · progress saved"}`.
+
+fn limit_result() -> String {
+    let evs: Vec<ChatEvent> = include_str!("fixtures/chat-limit.jsonl").lines().flat_map(parse_line).collect();
+    assert!(matches!(evs[1], ChatEvent::Other { ref raw_type } if raw_type == "synthetic"), "the limit text isn't an answer: {evs:?}");
+    match evs.last().unwrap() {
+        ChatEvent::Result { is_error: true, text, .. } => text.clone(),
+        other => panic!("not an error result: {other:?}"),
+    }
+}
+
+#[test]
+fn the_fixtures_weekly_limit_is_a_usage_limit_with_its_reset_time() {
+    let l = usage_limit(&limit_result()).expect("a usage limit");
+    assert_eq!(l, UsageLimit { limit: "weekly limit".into(), resets: Some("Oct 9, 5pm (Europe/Amsterdam)".into()), resets_at: None });
+}
+
+#[test]
+fn every_limit_claude_code_names_is_read_in_plain_words() {
+    for (text, limit, resets) in [
+        ("You've hit your session limit · resets 3pm (Europe/Amsterdam)", "session limit", Some("3pm (Europe/Amsterdam)")),
+        ("You've hit your session limit · resets 3pm (Europe/Amsterdam) · progress saved", "session limit", Some("3pm (Europe/Amsterdam)")),
+        ("You've hit your Opus limit · resets Oct 9, 5pm (Europe/Amsterdam)", "Opus limit", Some("Oct 9, 5pm (Europe/Amsterdam)")),
+        ("You've hit your Sonnet limit · resets Oct 9, 5pm", "Sonnet limit", Some("Oct 9, 5pm")),
+        ("You've hit your limit · resets 11am (UTC)", "usage limit", Some("11am (UTC)")),
+        ("You've hit your usage limit", "usage limit", None),
+        ("5-hour limit reached ∙ resets 3pm", "session limit", Some("3pm")),
+        ("Weekly limit reached ∙ resets Oct 9, 5pm", "weekly limit", Some("Oct 9, 5pm")),
+    ] {
+        let l = usage_limit(text).unwrap_or_else(|| panic!("{text}"));
+        assert_eq!((l.limit.as_str(), l.resets.as_deref()), (limit, resets), "{text}");
+    }
+    let old = usage_limit("Claude AI usage limit reached|1751230800").unwrap();
+    assert_eq!((old.limit.as_str(), old.resets, old.resets_at), ("usage limit", None, Some(1_751_230_800_000)));
+}
+
+#[test]
+fn other_failures_and_limits_another_account_doesnt_solve_are_not_usage_limits() {
+    for text in [
+        "Not logged in · Please run /login",
+        "API Error: 500 the fake failed",
+        "You've hit your fast limit",
+        "You've hit your monthly spend limit · raise it at claude.ai/settings/usage",
+        "You've hit your org's monthly usage limit · resets Nov 1",
+        "You've hit your team's shared budget. Switch to another model",
+        "Context limit reached · /compact or /clear to continue",
+        "Fast limit reached and temporarily disabled · resets in 3m",
+        "",
+    ] {
+        assert_eq!(usage_limit(text), None, "{text}");
+    }
 }

@@ -243,12 +243,12 @@ fn an_older_database_gets_an_empty_folder_list_for_each_agent() {
         team::add_agent(&db, &s.you_id, &s.team_id, agent_input("Backend Agent", None)).unwrap()
     };
     let c = rusqlite::Connection::open(&path).unwrap();
-    // Schema 8: GA-35's 0008_board_check ran, 0009_agent_folders didn't.
-    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
+    // Schema 8: GA-35's 0008_board_check ran, 0009_agent_folders (and GA-50's 0010) didn't.
+    c.execute_batch("DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json; ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
     drop(c);
     let db = Db::open(&path).unwrap();
     assert_eq!(db.read(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)).unwrap(), db::SCHEMA_VERSION);
-    assert_eq!(db::SCHEMA_VERSION, 9);
+    assert!(db::SCHEMA_VERSION >= 9);
     assert!(team::agent(&db, &id).unwrap().folders.is_empty());
 }
 
@@ -265,19 +265,20 @@ fn a_schema_8_database_keeps_its_board_check_and_every_agent_gets_folders_json_e
         (lead, team::add_agent(&db, &s.you_id, &s.team_id, agent_input("Backend Agent", None)).unwrap())
     };
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
+    c.execute_batch("DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json; ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = 8;").unwrap();
     let agents: i64 = c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0)).unwrap();
     drop(c);
     let db = Db::open(&path).unwrap();
     let (version, empty, all): (i64, i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT COUNT(*) FROM agent_configs WHERE folders_json = '[]'", [], |r| r.get(0))?,
         c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((version, empty, all), (9, agents, agents), "every agent kept, each with '[]'");
+    assert_eq!((version, empty, all), (db::SCHEMA_VERSION, agents, agents), "every agent kept, each with '[]'");
     assert_eq!(team::agent(&db, &lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009");
     assert!(team::agent(&db, &backend).unwrap().folders.is_empty());
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v9-") && snaps[0].ends_with(".db"), "{snaps:?}");
+    let name = format!("gizai-before-v{}-", db::SCHEMA_VERSION);
+    assert!(snaps.len() == 1 && snaps[0].starts_with(&name) && snaps[0].ends_with(".db"), "{snaps:?}");
 }
 
 #[test]

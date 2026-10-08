@@ -59,6 +59,15 @@ pub(crate) fn agents_of(c: &Connection, state_id: &str) -> Result<Vec<String>> {
     Ok(st.query_map([state_id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// The names of the columns an agent is on, in board order.
+pub fn of_agent(db: &Db, agent_id: &str) -> Result<Vec<String>> {
+    db.read(|c| {
+        let mut st = c.prepare("SELECT s.name FROM column_agents ca JOIN workflow_states s ON s.id = ca.state_id
+                                WHERE ca.actor_id=?1 AND s.deleted_at IS NULL ORDER BY s.sort_key")?;
+        Ok(st.query_map([agent_id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
+    })
+}
+
 /// The first column of a category in the team, in board order: (id, name).
 pub(crate) fn first_of(c: &Connection, team_id: &str, category: &str) -> Result<Option<(String, String)>> {
     Ok(c.query_row(

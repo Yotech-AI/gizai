@@ -175,8 +175,8 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
 fn agent_json(cx: &Cx, m: &team::Member, live: &[crate::runs::LiveRun]) -> Value {
     let spent = runs::agent_spend_since(cx.db(), &m.actor_id, runs::month_start_ms(ids::now_ms())).unwrap_or(0);
     json!({
-        "id": m.actor_id, "name": m.name, "role": m.role_key, "title": m.title, "status": m.status, "wakeup": m.wakeup,
-        "heartbeat_minutes": m.heartbeat_minutes, "model": m.model, "effort": m.effort, "cards_at_once": m.max_runs, "chat": m.chat_enabled,
+        "id": m.actor_id, "name": m.name, "role": m.role_key, "title": m.title, "status": m.status,
+        "columns": gizai_core::columns::of_agent(cx.db(), &m.actor_id).unwrap_or_default(), "model": m.model, "effort": m.effort, "cards_at_once": m.max_runs, "chat": m.chat_enabled,
         "working": live.iter().any(|r| r.agent_id == m.actor_id),
         "spent_this_month_usd": usd(spent), "monthly_budget_usd": m.budget_usd_micros.map(usd),
         "board_check_minutes": m.board_check_minutes, "board_check_paused": m.board_check_paused,
@@ -223,31 +223,54 @@ pub(crate) fn list_people(cx: &Cx) -> Result<Value, String> {
     Ok(json!({"people": people}))
 }
 
-/// "A card labelled backend goes to a backend agent (priority 10)."
-pub(crate) fn rule_sentence(r: &team::RoutingRule, t: &team::Team) -> String {
-    let to = format!("goes to a {} agent (priority {})", r.target_role.as_deref().unwrap_or("?"), r.priority);
-    if r.kind == "label" {
-        let name = t.labels.iter().find(|l| Some(&l.id) == r.match_label_id.as_ref()).map(|l| l.name.as_str()).unwrap_or("(deleted label)");
-        format!("A card labelled {name} {to}")
-    } else {
-        let name = t.states.iter().find(|s| Some(&s.id) == r.match_state_id.as_ref()).map(|s| s.name.as_str()).unwrap_or("(deleted column)");
-        format!("A card that enters {name} {to}")
+/// What a column does, in one line: "Auto: Backend Agent and Frontend Agent take cards by priority and move them to In
+/// progress", "Manual: press Run on a card", "You review and merge; merged cards go to Deploy".
+pub(crate) fn column_line(s: &team::WorkflowState, t: &team::Team) -> String {
+    let next = s.next_state_id.as_ref().and_then(|n| t.states.iter().find(|x| &x.id == n)).map(|x| x.name.clone());
+    let names: Vec<String> = s.agent_ids.iter().map(|id| t.members.iter().find(|m| &m.actor_id == id).map(|m| m.name.clone()).unwrap_or_else(|| "(removed agent)".into())).collect();
+    let who = match names.len() {
+        0 => String::new(),
+        1 => names[0].clone(),
+        n => format!("{} and {}", names[..n - 1].join(", "), names[n - 1]),
+    };
+    match s.category.as_str() {
+        "backlog" => "New cards wait here; nothing starts by itself".into(),
+        "review" => match next {
+            Some(n) => format!("You review and merge; merged cards go to {n}"),
+            None => "You review and merge; merged cards go to the first Deploy column, else Done".into(),
+        },
+        "done" | "cancelled" => "Finished cards; nothing starts here".into(),
+        _ if s.auto && names.is_empty() => "Auto, but no agent is on it: put one on it, or its cards wait".into(),
+        _ if s.auto => {
+            let verb = if names.len() == 1 { "takes" } else { "take" };
+            match next {
+                Some(n) if s.category == "ready" => format!("Auto: {who} {verb} cards by priority and move them to {n}"),
+                Some(n) => format!("Auto: {who} {verb} cards by priority; done, they go to {n}"),
+                None => format!("Auto: {who} {verb} cards by priority"),
+            }
+        }
+        _ => {
+            let run = if who.is_empty() { "press Run on a card and pick an agent".to_string() } else { format!("press Run on a card to start {}", names[0]) };
+            match next {
+                Some(n) => format!("Manual: {run}; done, it goes to {n}"),
+                None => format!("Manual: {run}"),
+            }
+        }
     }
 }
 
 pub(crate) fn workflow(cx: &Cx) -> Result<Value, String> {
     let t = resolve::team_of(cx, None)?;
-    let worked_by = |s: &gizai_core::team::WorkflowState| match (s.category.as_str(), s.owner_role.as_deref()) {
-        ("deploy", _) => "you (deploy, or press Run for the DevOps Agent)",
-        (_, Some("implementer")) => "the agent whose role matches the card's label",
-        (_, Some("qa")) => "the QA agent",
-        (_, Some("human")) => "the user (review and merge)",
-        _ => "nobody (waiting)",
-    };
+    let kind = |c: &str| gizai_core::columns::KINDS.iter().find(|(_, cat)| *cat == c).map(|(k, _)| *k).unwrap_or(c).to_string();
     Ok(json!({
         "team": t.name,
-        "columns": t.states.iter().map(|s| json!({"name": s.name, "category": s.category, "worked_by": worked_by(s)})).collect::<Vec<_>>(),
+        "columns": t.states.iter().map(|s| {
+            let agents: Vec<String> = s.agent_ids.iter().filter_map(|id| t.members.iter().find(|m| &m.actor_id == id).map(|m| m.name.clone())).collect();
+            let next = s.next_state_id.as_ref().and_then(|n| t.states.iter().find(|x| &x.id == n)).map(|x| x.name.clone());
+            json!({"name": s.name, "kind": kind(&s.category), "agents": agents,
+                   "start": if gizai_core::columns::takes_agents(&s.category) { if s.auto { "auto" } else { "manual" } } else { "none" },
+                   "next": next, "what_happens": column_line(s, &t)})
+        }).collect::<Vec<_>>(),
         "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
-        "rules": t.rules.iter().map(|r| rule_sentence(r, &t)).collect::<Vec<_>>(),
     }))
 }

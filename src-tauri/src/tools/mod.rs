@@ -45,9 +45,9 @@ pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, ar
     call_scoped(st, actor, None, Some(run_id), name, args).await
 }
 
-/// What a board check may not do, whatever it is asked: attach a file nobody named, or change an agent's settings
-/// (the check asks you instead).
-const NOT_IN_A_CHECK: [&str; 4] = ["attach_file", "create_agent", "update_agent", "set_agent_status"];
+/// What a board check may not do, whatever it is asked: attach a file nobody named, change an agent's settings or set up
+/// the board's columns (the check asks you instead).
+const NOT_IN_A_CHECK: [&str; 6] = ["attach_file", "create_agent", "update_agent", "set_agent_status", "add_column", "set_column"];
 
 async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
     let a = Args(match args {
@@ -58,7 +58,7 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
     if check.is_some() && NOT_IN_A_CHECK.contains(&name) {
         return Err(match name {
             "attach_file" => "In a board check nobody named a file, so nothing can be attached. Ask the user in a chat (start_chat) instead.".into(),
-            _ => format!("{name} can't be used in a board check: never change an agent's settings there. Ask the user in a chat (start_chat) instead."),
+            _ => format!("{name} can't be used in a board check: never change an agent's settings or the columns there. Ask the user in a chat (start_chat) instead."),
         });
     }
     let cx = Cx { st, actor, thread, check };
@@ -92,8 +92,9 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         "create_agent" => write::create_agent(&cx, &a).await,
         "update_agent" => write::update_agent(&cx, &a).await,
         "set_agent_status" => write::set_agent_status(&cx, &a),
-        "add_routing_rule" => write::add_rule(&cx, &a),
         "add_column" => write::add_column(&cx, &a),
+        "set_column" => write::set_column(&cx, &a),
+        "save_label" => write::save_label(&cx, &a),
         "start_agent_run" => write::start_run(&cx, &a).await,
         "stop_agent_run" => write::stop_run(&cx, &a),
         "create_doc" => write::create_doc(&cx, &a),
@@ -122,7 +123,7 @@ impl Cx<'_> {
     pub fn changed(&self, table: &'static str) {
         (self.st.notify)(Note::RowsChanged(table));
     }
-    /// After a card changes, an agent that wakes up on assignment may start on it.
+    /// After a card changes (it landed in an Auto column, or was assigned), the agents may start on it.
     pub fn wake(&self, task_id: &str) {
         if tokio::runtime::Handle::try_current().is_err() {
             return;
@@ -229,14 +230,12 @@ const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("iban", "string", "IBAN"), ("payment_terms_days", "integer", "Payment terms in days"), ("notes_md", "string", "Notes (Markdown)"),
 ];
 
-const AGENT_FIELDS: [(&str, &str, &str); 12] = [
+const AGENT_FIELDS: [(&str, &str, &str); 10] = [
     ("board_check_minutes", "integer", "Only for the agent with Chat on (the Team Lead): check the board every this many minutes (5–1440); 0 = off"),
     ("runs_on", "string", "The coding CLI it runs on, by name as Settings → Coding CLIs lists them (Claude Code, Codex, Gemini, a second account, …). Omit: Claude Code for a new agent, unchanged on update"),
     ("model", "string", "On Claude Code, a model it offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5). On Codex or Gemini, that CLI's model name. Empty = the CLI's default"),
     ("effort", "string", "How hard the model thinks. Claude Code: low, medium, high, xhigh or max. Codex: minimal, low, medium, high or xhigh. Gemini takes none. Empty = the CLI's default; higher costs more"),
     ("instructions_md", "string", "Instructions sent with every run (Markdown). Omit on create to use the role's template; it must end by asking for the GIZAI_RESULT line"),
-    ("wakeup", "enum:manual|on_assign|heartbeat", "When it starts work by itself: manual (only Run), on_assign, or heartbeat"),
-    ("heartbeat_minutes", "integer", "With wakeup heartbeat: every how many minutes it looks for its next card (1–1440)"),
     ("cards_at_once", "integer", "How many cards it works on at the same time, each in its own git worktree (1–10, default 1)"),
     ("permission_mode", "string", "Permission mode for task runs, in its CLI's terms. Claude Code: acceptEdits (the usual), dontAsk, auto, plan or manual. Codex: workspace-write (the usual) or read-only. Gemini: auto_edit (the usual), plan or default"),
     ("allowed_tools", "string[]", "Commands it may run without asking, like Bash(npm test:*); empty = Gizai's default list"),
@@ -270,12 +269,12 @@ pub fn catalog() -> Vec<ToolDef> {
                ("text", "string", "Words in the title"), ("include_done", "boolean", "Include done and cancelled tasks"),
                ("archived", "boolean", "Only the archived tasks (archived from Done; read-only until the user restores them)"), ("limit", "integer", "At most this many (default 50)")], &[]),
         tool("get_task", "One task with its description, acceptance criteria, labels, hold, latest comments, agent runs and files. Finds an archived task by its identifier too, and says so (archived: true): it is read-only until the user restores it.", &[TASK], &["task"]),
-        tool("list_agents", "The team's agents: role, status, wake-up, model, whether they work right now, spend this month and budget.", &[], &[]),
+        tool("list_agents", "The team's agents: role, status, the columns they are on, model, whether they work right now, spend this month and budget.", &[], &[]),
         tool("get_agent", "One agent's settings, instructions and recent runs.", &[AGENT], &["agent"]),
         tool("list_docs", "A project's docs (title, version, last change).", &[PROJECT], &["project"]),
         tool("read_doc", "A doc's current text (Markdown) and version.", &[("doc", "string", "The doc's title or id"), ("project", "string", "Project key or name, when titles repeat")], &["doc"]),
         tool("list_people", "The people in Gizai (the user and colleagues), with open task counts.", &[], &[]),
-        tool("get_workflow", "The board's columns (with who works each), the labels and the routing rules that hand cards to agents.", &[], &[]),
+        tool("get_workflow", "The board's columns in order, each with its agents, Auto (its agents pick up its cards) or Manual (only Run starts one), its next column and what happens there; and the labels (tags for people: they never route).", &[], &[]),
         tool("create_client", "Adds a client.", &with(&[("name", "string", "Client name")], CLIENT_FIELDS), &["name"]),
         tool("update_client", "Changes a client. Only the fields given change; an empty string clears a field.",
              &with(&[CLIENT, ("name", "string", "New name"), ("status", "enum:lead|active|inactive", "Status")], CLIENT_FIELDS), &["client"]),
@@ -294,16 +293,16 @@ pub fn catalog() -> Vec<ToolDef> {
                ("repo_path", "string", "Absolute path of the local git repository"), ("default_branch", "string", "Main branch"),
                ("github", "string", "The repository on GitHub (https://github.com/owner/name)"),
                ("color", "string", "A colour like #7b9bff"), ("status", "enum:planned|active|paused|done|archived", "Status")], &["project"]),
-        tool("create_task", "Adds a task to a project. Labels frontend or backend let routing hand it to the matching agent.",
+        tool("create_task", "Adds a task to a project. In an Auto column the agents on that column pick it up; assign an agent to have only that agent start it. Labels are tags for people (any existing label; add one with save_label).",
              &[PROJECT, ("title", "string", "Short title"), ("description_md", "string", "What to do and why (Markdown)"),
                ("acceptance_md", "string", "Acceptance criteria, as a Markdown checklist"), ("column", "string", "Column name (default the first, Backlog)"),
                ("priority", "integer", "0 none, 1 urgent, 2 high, 3 medium, 4 low"), ("assignee", "string", "A person or agent name; \"me\" for the user"),
-               ("labels", "string[]", "Label names, like backend or bug"),
+               ("labels", "string[]", "Existing label names, like Must have or bug"),
                ("testing", "boolean", "On (default): the QA Agent tests it before Review. Off: straight to Review, for a small UI fix or bug fix")], &["project", "title"]),
         tool("update_task", "Changes a task's fields, labels, assignee or hold. Only what is given changes.",
              &[TASK, ("title", "string", "New title"), ("description_md", "string", "Description (Markdown)"), ("acceptance_md", "string", "Acceptance criteria (Markdown)"),
                ("priority", "integer", "0 none, 1 urgent, 2 high, 3 medium, 4 low"), ("assignee", "string", "A person or agent name; \"none\" to unassign"),
-               ("labels", "string[]", "The full new set of label names"), ("hold", "enum:needs_decision|blocked|stalled", "Put it on hold"),
+               ("labels", "string[]", "The full new set of existing label names"), ("hold", "enum:needs_decision|blocked|stalled", "Put it on hold"),
                ("hold_reason", "string", "Why it is on hold"), ("clear_hold", "boolean", "Take it off hold"),
                ("testing", "boolean", "On: the QA Agent tests it before Review. Off: straight to Review")], &["task"]),
         tool("move_task", "Moves a task to another column (to the bottom of that column).", &[TASK, ("column", "string", "Column name, like In progress")], &["task", "column"]),
@@ -312,16 +311,22 @@ pub fn catalog() -> Vec<ToolDef> {
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
         tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change) are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
-        tool("set_agent_status", "Pauses an agent (no heartbeats, no new runs) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
-        tool("add_routing_rule", "Adds a routing rule: a card with a label, or entering a column, goes to the first idle agent with a role.",
-             &[("kind", "enum:label|column", "Match a label or a column"), ("match", "string", "The label or column name"),
-               ("role", "string", "The role that takes the card"), ("priority", "integer", "Lower wins (default 10)")], &["kind", "match", "role"]),
-        tool("add_column", "Adds a column to the board, right after another one. A deploy column (merged, not deployed yet) is always worked by the user: no agent starts there by itself.",
+        tool("set_agent_status", "Pauses an agent (no new cards; its running cards finish) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
+        tool("add_column", "Adds a column to the board, right after another one, and optionally sets it up. Backlog, review, done and cancelled columns take no agents; an Auto column needs a next column.",
              &[("name", "string", "Column name, unique in the team"), ("after", "string", "The column it goes after, like Review"),
-               ("category", "enum:backlog|ready|in_progress|testing|review|deploy|done|cancelled", "What the column means to the gates"),
-               ("worked_by", "string", "Who works it: nobody, a role key like qa, or you (the user)")], &["name", "after", "category"]),
-        tool("start_agent_run", "Starts an agent on a task now (the given agent, else the assigned or routed one). The project needs a linked git repository.",
-             &[TASK, ("agent", "string", "Agent name; omit to use the assigned or routed agent")], &["task"]),
+               ("kind", "enum:waiting|work|testing|review|deploy|done|backlog", "waiting (like To do: starting moves a card on), work (like In progress or Design), testing, review (you review and merge), deploy, done or backlog"),
+               ("agents", "string[]", "The agents on it, by name, in order"), ("auto", "boolean", "true: its agents pick up its cards by themselves; false (default): only Run starts one"),
+               ("next", "string", "The column its cards go to next")], &["name", "after", "kind"]),
+        tool("set_column", "Sets up a column: its agents (the full list), Auto or Manual, its next column, a new name or its place. Only what is given changes. Removing a column is done by the user in the app.",
+             &[("column", "string", "The column's name"), ("agents", "string[]", "The full new list of agents on it, by name; empty takes them all off"),
+               ("auto", "boolean", "true: its agents pick up its cards by themselves; false: only Run starts one"),
+               ("next", "string", "The column its cards go to next; \"none\" for none"), ("new_name", "string", "A new name"),
+               ("after", "string", "Move it right after this column")], &["column"]),
+        tool("save_label", "Adds a label (a tag for people, like Must have; labels never route or start anything), or renames or recolours one (name it in label). Removing a label is done by the user in the app.",
+             &[("name", "string", "The label's (new) name, unique ignoring case"), ("label", "string", "An existing label's name, to rename or recolour it"),
+               ("color", "string", "A colour like #7b9bff")], &[]),
+        tool("start_agent_run", "Starts an agent on a task now, like Run: the given agent, else the agent it is assigned to, else the first agent on its column. The project needs a linked git repository.",
+             &[TASK, ("agent", "string", "Agent name; omit to use the assigned agent or the column's first agent")], &["task"]),
         tool("stop_agent_run", "Stops the agent working on a task right now.", &[TASK], &["task"]),
         tool("create_doc", "Adds a doc to a project, optionally with its first text.", &[PROJECT, ("title", "string", "Doc title"), ("body_md", "string", "Text (Markdown)")], &["project", "title"]),
         tool("write_doc", "Saves new text for a doc as a new version (the whole text, not a diff).",

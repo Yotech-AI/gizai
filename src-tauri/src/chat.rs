@@ -388,6 +388,80 @@ fn cut(s: &str, n: usize) -> String {
     }
 }
 
+/// A tool's result, at most `n` characters. A JSON result stays valid JSON when it is too long: its longest strings are
+/// shortened and its longest lists lose items from the end until it fits, and `"cut"` says it was cut. Other text is cut
+/// with an ellipsis.
+pub(crate) fn cut_result(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(s) else { return cut(s, n) };
+    const NOTE: &str = "This result was too long and was cut: ask for less (a filter, a limit or one item).";
+    let size = |v: &serde_json::Value| v.to_string().chars().count();
+    let note = |v: serde_json::Value| -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(mut m) => { m.insert("cut".into(), NOTE.into()); serde_json::Value::Object(m) }
+            other => serde_json::json!({"result": other, "cut": NOTE}),
+        }
+    };
+    v = note(v);
+    for _ in 0..400 {
+        if size(&v) <= n {
+            return v.to_string();
+        }
+        if !shrink(&mut v) {
+            break;
+        }
+    }
+    // Nothing left to shorten: the start of the text, as a string.
+    let mut keep = n.saturating_sub(NOTE.len() + 40);
+    loop {
+        let out = serde_json::json!({"cut": NOTE, "start": cut(s, keep)}).to_string();
+        if out.chars().count() <= n || keep == 0 {
+            return out;
+        }
+        keep = keep * 3 / 4;
+    }
+}
+
+/// Makes the biggest part of a JSON value smaller: its longest string loses half, or its longest list loses the second
+/// half of its items. False when nothing can shrink.
+fn shrink(v: &mut serde_json::Value) -> bool {
+    fn biggest(v: &serde_json::Value, at: String, best: &mut Option<(usize, String)>) {
+        let size = v.to_string().len();
+        let better = |best: &Option<(usize, String)>| best.as_ref().is_none_or(|(b, _)| size > *b);
+        match v {
+            serde_json::Value::String(t) if t.chars().count() > 40 && better(best) => *best = Some((size, at)),
+            serde_json::Value::Array(items) => {
+                if items.len() > 1 && better(best) {
+                    *best = Some((size, at.clone()));
+                }
+                for (i, x) in items.iter().enumerate() {
+                    biggest(x, format!("{at}/{i}"), best);
+                }
+            }
+            serde_json::Value::Object(m) => {
+                for (k, x) in m.iter().filter(|(k, _)| k.as_str() != "cut") {
+                    biggest(x, format!("{at}/{}", k.replace('~', "~0").replace('/', "~1")), best);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut best = None;
+    biggest(v, String::new(), &mut best);
+    let Some(target) = best.and_then(|(_, at)| v.pointer_mut(&at)) else { return false };
+    match target {
+        serde_json::Value::String(t) => {
+            let keep = t.chars().count() / 2;
+            *t = format!("{}…", t.chars().take(keep).collect::<String>());
+        }
+        serde_json::Value::Array(items) => items.truncate(items.len() / 2),
+        _ => return false,
+    }
+    true
+}
+
 fn set_live(st: &AppState, thread_id: &str, f: impl FnOnce(&mut LiveTurn)) {
     if let Some(l) = st.chat.live.lock().unwrap().get_mut(thread_id) {
         f(l);
@@ -514,7 +588,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
             ChatEvent::ToolResult { tool_use_id, is_error, text } => {
                 set_live(st, &thread.id, |l| l.tool = None);
                 if let Some(mid) = tool_msgs.get(&tool_use_id) {
-                    if let Ok(m) = chat::set_tool_result(&st.db, mid, &cut(&text, MAX_TOOL_RESULT), is_error) {
+                    if let Ok(m) = chat::set_tool_result(&st.db, mid, &cut_result(&text, MAX_TOOL_RESULT), is_error) {
                         emit(st, &thread.id, ChatUiEvent::Message { message: m });
                         (st.notify)(Note::RowsChanged("chat_messages"));
                     }
@@ -581,7 +655,7 @@ fn check_system_prompt(st: &AppState, agent: &Member) -> String {
          - held, no answer: answer it yourself only when it is a fact you can check (the repository, docs, other cards), and say so in a comment \
          before you release it. Scope, product choices, money, keys and passwords, deploys and deleting go to {you} in a chat (start_chat), with \
          your recommendation. Holds blocked and stalled: find the cause in the card's runs and clear the hold only when the cause is gone; otherwise ask.\n\
-         - waiting: an agent with a free slot: start it on the card (start_agent_run). Nothing routes it: add the label or agent the card \
+         - waiting: an agent with a free slot: start it on the card (start_agent_run). No agent is on its column: assign the agent the card \
          clearly calls for (update_task), otherwise ask. A paused agent, a used budget, a paused pull or a full \"Runs at once\": ask.\n\
          - stopped: a run that hit the time or tool-call limit gets one Continue (continue_agent_run), not another when that run was already a \
          Continue (trigger nudge). A run a person stopped: leave it. A failed run: a passing problem (rate limit, network) gets one more \

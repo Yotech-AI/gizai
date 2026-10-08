@@ -206,8 +206,9 @@ pub fn test_state(dir: &std::path::Path) -> AppState {
     st
 }
 
-/// A task in To do, labelled `label`, in project KADE (repo `repo`), with a "<Label> Agent" and a rule
-/// label → role. Reuses the project, agent and rule on later calls.
+/// A task in To do, labelled `label` and assigned to a "<Label> Agent" (role `label`; a new agent lands on its role's
+/// usual columns), in project KADE (repo `repo`). Labels don't route: the assignment makes that agent start it. Reuses
+/// the project and the agent on later calls.
 #[doc(hidden)]
 pub fn test_task(st: &AppState, repo: &str, label: &str) -> String {
     use gizai_core::model::*;
@@ -219,15 +220,17 @@ pub fn test_task(st: &AppState, repo: &str, label: &str) -> String {
     };
     let team_id = gizai_core::team::list(db).unwrap()[0].id.clone();
     let team = gizai_core::team::get(db, &team_id).unwrap();
-    if !team.members.iter().any(|m| m.kind == "agent" && m.role_key == label) {
-        let name = format!("{}{} Agent", label[..1].to_uppercase(), &label[1..]);
-        gizai_core::team::add_agent(db, &st.you_id, &team_id, AgentInput { name, role_key: label.into(), ..Default::default() }).unwrap();
-        gizai_core::team::add_rule(db, &st.you_id, &team_id, RuleInput { kind: "label".into(), match_name: label.into(), target_role: label.into(), priority: 10 }).unwrap();
-    }
+    let agent = match team.members.iter().find(|m| m.kind == "agent" && m.role_key == label) {
+        Some(m) => m.actor_id.clone(),
+        None => {
+            let name = format!("{}{} Agent", label[..1].to_uppercase(), &label[1..]);
+            gizai_core::team::add_agent(db, &st.you_id, &team_id, AgentInput { name, role_key: label.into(), ..Default::default() }).unwrap()
+        }
+    };
     let todo = team.states.iter().find(|s| s.category == "ready").unwrap().id.clone();
     let lbl = team.labels.iter().find(|l| l.name == label).unwrap().id.clone();
     let t = gizai_core::tasks::create(db, &st.you_id, TaskInput { project_id: project, title: "Export invoices as CSV".into(), state_id: Some(todo),
-        label_ids: vec![lbl], ..Default::default() }).unwrap();
+        label_ids: vec![lbl], assignee_id: Some(agent), ..Default::default() }).unwrap();
     t
 }
 
@@ -306,14 +309,12 @@ pub fn run() {
                     }
                 });
             }
-            // Heartbeats: once a minute, agents whose interval has passed look for their next card, and agents that wake up
-            // when a card is routed or assigned to them take cards that had to wait (the run limit was full, Gizai just started).
-            // The Team Lead checks the board when its interval has passed; only new findings start it.
+            // Once a minute the agents take cards that had to wait (the run limit was full, Gizai just started), and the
+            // Team Lead checks the board when its interval has passed; only new findings start it.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
-                    let _ = runs::heartbeat_tick(&state, gizai_core::ids::now_ms()).await;
                     let _ = runs::pull(&state).await;
                     let _ = board::tick(&state, gizai_core::ids::now_ms()).await;
                 }
@@ -333,7 +334,9 @@ pub fn run() {
             commands::doc_versions, commands::doc_version_body,
             commands::add_files, commands::list_files, commands::remove_file, commands::open_file,
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
-            commands::add_rule, commands::delete_rule, commands::rename_state, commands::add_state, commands::role_template,
+            commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,
+            commands::column_removal, commands::remove_state, commands::list_labels, commands::save_label, commands::remove_label,
+            commands::add_branch, commands::remove_branch, commands::role_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,

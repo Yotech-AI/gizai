@@ -89,3 +89,87 @@ pub fn parse_line(line: &str) -> Vec<ChatEvent> {
         other => vec![ChatEvent::Other { raw_type: other.into() }],
     }
 }
+
+/// An answer that failed because the Claude Code account hit a usage limit.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageLimit {
+    /// Which limit, in plain words: "session limit", "weekly limit", "Opus limit", "Sonnet limit" or "usage limit".
+    pub limit: String,
+    /// When it resets, as Claude Code says it ("3pm (Europe/Amsterdam)", "Oct 9, 5pm (Europe/Amsterdam)"); None when it doesn't.
+    pub resets: Option<String>,
+    /// When it resets (Unix ms), when Claude Code gives a time stamp instead ("Claude AI usage limit reached|1751230800").
+    pub resets_at: Option<i64>,
+}
+
+/// The separators Claude Code puts between the parts of a notice: "·" (2.x) and "∙" (1.x).
+const SEPARATORS: [&str; 3] = [" · ", " ∙ ", " • "];
+
+fn first_part(s: &str) -> &str {
+    let end = SEPARATORS.iter().filter_map(|sep| s.find(sep)).chain(s.find('\n')).min().unwrap_or(s.len());
+    &s[..end]
+}
+
+/// "resets 3pm (Europe/Amsterdam)" anywhere in `s`: the time, as written.
+fn resets_in(s: &str) -> Option<String> {
+    let i = s.find("resets ")?;
+    let when = first_part(&s[i + "resets ".len()..]).trim().trim_end_matches('.').trim();
+    (!when.is_empty()).then(|| when.to_string())
+}
+
+/// A limit's name in plain words, from how Claude Code names it ("session limit", "5-hour limit", "Opus weekly limit").
+fn limit_name(name: &str) -> String {
+    let n = name.to_lowercase();
+    if n.contains("session") || n.contains("5-hour") || n.contains("five-hour") {
+        "session limit".into()
+    } else if n.contains("opus") {
+        "Opus limit".into()
+    } else if n.contains("sonnet") {
+        "Sonnet limit".into()
+    } else if n.contains("weekly") || n.contains("week") {
+        "weekly limit".into()
+    } else {
+        "usage limit".into()
+    }
+}
+
+/// Claude Code's text for a subscription that hit its usage limit, which a failed answer reports as its result: what
+/// 2.1.289 writes ("You've hit your session limit · resets 3pm (Europe/Amsterdam)", likewise the weekly, Opus and Sonnet
+/// limits, " · progress saved" after it) and what older versions wrote ("Claude AI usage limit reached|1751230800",
+/// "5-hour limit reached ∙ resets 3pm", "Weekly limit reached ∙ resets Oct 9, 5pm"). None for any other text, also for
+/// spend limits, budgets and fast mode: those aren't solved by another account.
+pub fn usage_limit(text: &str) -> Option<UsageLimit> {
+    let text = text.trim();
+    // ASCII only, so its byte positions are the text's.
+    let lower = text.to_ascii_lowercase();
+    // 2.x: "You've hit your <name> · resets <when>".
+    for lead in ["you've hit your ", "you’ve hit your ", "you have hit your "] {
+        if let Some(i) = lower.find(lead) {
+            let rest = &text[i + lead.len()..];
+            let name = first_part(rest).trim().trim_end_matches('.');
+            let n = name.to_lowercase();
+            let usage = n.ends_with("limit") && !["fast", "spend", "credit", "budget", "monthly"].iter().any(|w| n.contains(w));
+            if usage {
+                return Some(UsageLimit { limit: limit_name(name), resets: resets_in(rest), resets_at: None });
+            }
+        }
+    }
+    // 1.x: "Claude AI usage limit reached|<unix seconds>".
+    if let Some(i) = lower.find("usage limit reached|") {
+        let digits: String = text[i + "usage limit reached|".len()..].chars().take_while(char::is_ascii_digit).collect();
+        let at = digits.parse::<i64>().ok().map(|n| if n < 100_000_000_000 { n * 1000 } else { n });
+        return Some(UsageLimit { limit: "usage limit".into(), resets: None, resets_at: at });
+    }
+    // 1.x after the weekly limits came: "<name> limit reached ∙ resets <when>".
+    if let Some(i) = lower.find("limit reached") {
+        let start = lower[..i].rfind(['\n', '.', '·', '∙']).map(|j| j + lower[j..].chars().next().map_or(1, char::len_utf8)).unwrap_or(0);
+        let name = text[start..i + "limit".len()].trim();
+        let n = name.to_lowercase();
+        let usage = ["usage", "session", "5-hour", "weekly", "opus", "sonnet"].iter().any(|w| n.contains(w))
+            && !["fast", "spend", "credit", "budget", "context", "monthly"].iter().any(|w| n.contains(w));
+        if usage {
+            return Some(UsageLimit { limit: limit_name(name), resets: resets_in(&text[i..]), resets_at: None });
+        }
+    }
+    None
+}

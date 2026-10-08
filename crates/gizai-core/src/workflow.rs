@@ -462,7 +462,8 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
                     g.hold = Some("needs_decision".into());
                 }
                 "qa_fail" => {
-                    if !moved_by_hand {
+                    // A card a person moved to Backlog, Done or Cancelled stays, and so does a Deploy card (merged).
+                    if !moved_by_hand && t.category != "deploy" {
                         let back = came_from(c, &task_id, &t)?;
                         if let Some((sid, name, _)) = back {
                             if sid != t.state_id {

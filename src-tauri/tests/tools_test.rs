@@ -263,7 +263,7 @@ async fn docs_can_be_created_written_and_read() {
 }
 
 #[tokio::test]
-async fn attach_file_takes_only_files_named_in_the_chat_or_inside_a_linked_repo() {
+async fn attach_file_takes_only_files_named_in_the_chat_or_inside_the_team_leads_copies_of_the_code() {
     let t = setup();
     t.project("Kade portal", "KADE");
     t.ok("create_task", json!({"project": "KADE", "title": "Export"})).await;
@@ -281,14 +281,30 @@ async fn attach_file_takes_only_files_named_in_the_chat_or_inside_a_linked_repo(
     // a file nobody named in this chat
     let e = tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": secret.display().to_string(), "task": "KADE-1"})).await.unwrap_err();
     assert!(e.contains("named in this chat"), "{e}");
-    // without a chat, only files inside a linked repository
+    // without a chat, only files inside the Team Lead's copies of the code
     assert!(t.call("attach_file", json!({"path": f.display().to_string(), "task": "KADE-1"})).await.is_err());
     let repo = t._dir.path().join("kade");
-    std::fs::create_dir_all(repo.join(".git")).unwrap();
     std::fs::create_dir_all(repo.join("docs")).unwrap();
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap().success(), "git {args:?}");
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join(".gitignore"), ".env\n").unwrap();
     std::fs::write(repo.join("docs/spec.md"), "# Spec").unwrap();
+    git(&["add", "."]);
+    git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+    std::fs::write(repo.join(".env"), "APP_KEY=secret\n").unwrap();
     t.ok("update_project", json!({"project": "KADE", "repo_path": repo.display().to_string()})).await;
-    t.ok("attach_file", json!({"path": repo.join("docs/spec.md").display().to_string(), "task": "KADE-1"})).await;
+    gizai_lib::code::startup(&t.st).await;
+    let copy = t.st.data_dir.join("code/KADE");
+    t.ok("attach_file", json!({"path": copy.join("docs/spec.md").display().to_string(), "task": "KADE-1"})).await;
+    // the linked folder (in ~/Herd) isn't one of the copies: its .env, or any of its files, only when named in the chat
+    assert!(!copy.join(".env").exists(), "the copy holds tracked files only");
+    let env = repo.join(".env");
+    let e = tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": env.display().to_string(), "task": "KADE-1"})).await.unwrap_err();
+    assert!(e.contains("inside my copies of the projects' code"), "{e}");
+    assert!(t.call("attach_file", json!({"path": repo.join("docs/spec.md").display().to_string(), "task": "KADE-1"})).await.is_err());
+    gizai_core::chat::add_message(&t.st.db, gizai_core::chat::NewMessage { thread_id: thread.clone(), role: "user".into(),
+        author_id: Some(t.st.you_id.clone()), body_md: Some(format!("Attach {} to KADE-1 too", env.display())), ..Default::default() }).unwrap();
+    tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": env.display().to_string(), "task": "KADE-1"})).await.unwrap();
     // the checks before any of that
     assert!(tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": "/no/such/file.pdf", "task": "KADE-1"})).await.is_err());
     assert!(tools::call_in(&t.st, &t.lead, Some(&thread), "attach_file", json!({"path": f.display().to_string()})).await.unwrap_err().contains("task, project or client"));

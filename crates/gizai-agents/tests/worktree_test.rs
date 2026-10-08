@@ -1,6 +1,9 @@
 use gizai_agents::worktree;
 use std::process::Command;
 
+/// The time limit a card start gives `fetch_start`.
+const MINUTE: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn git(dir: &std::path::Path, args: &[&str]) { assert!(Command::new("git").args(args).current_dir(dir).status().unwrap().success()); }
 
 fn repo(tmp: &std::path::Path) -> std::path::PathBuf {
@@ -78,7 +81,7 @@ fn a_new_card_starts_from_main_fetched_from_github_not_the_stale_local_main() {
     let (src, bare, local) = github_and_stale_clone(tmp.path());
     assert_ne!(rev(&local, "main"), rev(&bare, "main"), "the local main is behind");
     assert_eq!(worktree::remotes(&local).unwrap(), vec![("acme-labs".to_string(), bare.to_string_lossy().to_string())]);
-    let start = worktree::fetch_start(&local, Some("acme-labs"), bare.to_str().unwrap(), "main").unwrap();
+    let start = worktree::fetch_start(&local, Some("acme-labs"), bare.to_str().unwrap(), "main", MINUTE).unwrap();
     assert_eq!(start, "refs/remotes/acme-labs/main");
     let wt = worktree::ensure(&local, &tmp.path().join("wt"), "SH-1", "Wireframes", &start).unwrap();
     assert_eq!(rev(&wt.path, "HEAD"), rev(&bare, "main"));
@@ -87,7 +90,7 @@ fn a_new_card_starts_from_main_fetched_from_github_not_the_stale_local_main() {
     assert_eq!(worktree::behind(&wt.path, &start).unwrap(), 0);
     // GitHub moves on: the card's branch is now one commit behind
     push_new_commit(&src, &bare, "later on github");
-    let start = worktree::fetch_start(&local, Some("acme-labs"), bare.to_str().unwrap(), "main").unwrap();
+    let start = worktree::fetch_start(&local, Some("acme-labs"), bare.to_str().unwrap(), "main", MINUTE).unwrap();
     assert_eq!(worktree::behind(&wt.path, &start).unwrap(), 1);
 }
 
@@ -96,7 +99,7 @@ fn without_a_matching_remote_the_link_is_fetched_into_a_hidden_ref() {
     let tmp = tempfile::tempdir().unwrap();
     let (_src, bare, _local) = github_and_stale_clone(tmp.path());
     let plain = repo(&tmp.path().join("p").tap_mkdir());
-    let start = worktree::fetch_start(&plain, None, bare.to_str().unwrap(), "main").unwrap();
+    let start = worktree::fetch_start(&plain, None, bare.to_str().unwrap(), "main", MINUTE).unwrap();
     assert_eq!(start, "refs/gizai/base/main");
     assert_eq!(rev(&plain, &start), rev(&bare, "main"));
     let branches = String::from_utf8(Command::new("git").args(["branch", "-a"]).current_dir(&plain).output().unwrap().stdout).unwrap();
@@ -107,7 +110,7 @@ fn without_a_matching_remote_the_link_is_fetched_into_a_hidden_ref() {
 fn an_unreachable_repository_is_a_clear_error() {
     let tmp = tempfile::tempdir().unwrap();
     let local = repo(tmp.path());
-    let e = worktree::fetch_start(&local, None, "/nonexistent/github.git", "main").unwrap_err().to_string();
+    let e = worktree::fetch_start(&local, None, "/nonexistent/github.git", "main", MINUTE).unwrap_err().to_string();
     assert!(e.contains("Couldn't fetch main from /nonexistent/github.git"), "{e}");
 }
 

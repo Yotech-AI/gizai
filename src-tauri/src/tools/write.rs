@@ -253,6 +253,9 @@ pub(crate) fn move_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let project = t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok());
     let col = resolve::column(&resolve::team_of(cx, project.as_ref())?, &a.req("column")?)?;
+    if cx.check.is_some() && matches!(col.category.as_str(), "review" | "deploy" | "done") {
+        return Err(format!("A board check never moves a card to {}: ask the user in a chat (start_chat) instead.", col.name));
+    }
     tasks::move_to(cx.db(), cx.actor, &t.id, &col.id, "").map_err(err)?;
     task_done(cx, &t.id, "moved")
 }
@@ -310,7 +313,7 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
         allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: a.opt("wakeup").unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
-        max_runs: a.int("cards_at_once")?,
+        max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?,
     }).map_err(err)?;
     agent_result(cx, &id, "created")
 }
@@ -339,6 +342,7 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         wakeup: a.opt("wakeup").or(m.wakeup.clone()).unwrap_or_default(),
         heartbeat_minutes: a.int("heartbeat_minutes")?.or(m.heartbeat_minutes),
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
+        board_check_minutes: a.int("board_check_minutes")?,
     }).map_err(err)?;
     crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "updated")
@@ -376,13 +380,65 @@ pub(crate) fn add_rule(cx: &Cx, a: &Args) -> Result<Value, String> {
     Ok(json!({"ok": true, "done": "rule added", "rules": rules, "link": {"page": "team", "id": t.id, "label": "Routing rules"}}))
 }
 
+/// A board check never starts more runs than the agent's free slots allow ("Runs at once" is checked by every start).
+fn check_free_slot(cx: &Cx, agent_id: Option<&str>) -> Result<(), String> {
+    let Some(agent_id) = agent_id.filter(|_| cx.check.is_some()) else { return Ok(()) };
+    let m = team::agent(cx.db(), agent_id).map_err(err)?;
+    let busy = crate::runs::live(cx.st).iter().filter(|r| r.agent_id == m.actor_id).count() as i64;
+    if busy >= m.max_runs.max(1) {
+        return Err(format!("{} has no free slot ({busy} of {} cards at once): a board check doesn't start more. Leave the card waiting.", m.name, m.max_runs.max(1)));
+    }
+    Ok(())
+}
+
 pub(crate) async fn start_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let agent = match a.opt("agent") { Some(n) => Some(resolve::agent(cx, &n)?.actor_id), None => None };
+    check_free_slot(cx, agent.clone().or_else(|| crate::runs::suggest(cx.st, &t.id)).as_deref())?;
     let (run_id, _done) = crate::runs::start(cx.st, &t.id, agent, None, "manual").await?;
     let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
     Ok(json!({"ok": true, "done": "started", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
               "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
+}
+
+/// Continue on the card's latest run, like the Continue button (`runs::continue_run`).
+pub(crate) async fn continue_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
+    let t = resolve::task(cx, &a.req("task")?)?;
+    let last = gizai_core::runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().next()
+        .ok_or_else(|| format!("{} has no run to continue: start_agent_run starts one", t.identifier))?;
+    check_free_slot(cx, Some(&last.agent_id))?;
+    let (run_id, _done) = crate::runs::continue_run(cx.st, &last.id, None).await?;
+    cx.changed("tasks");
+    let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
+    Ok(json!({"ok": true, "done": "continued", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
+              "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
+}
+
+// ---- chats the Team Lead starts ----
+
+/// Asks the user in a chat that waits at the top of their Inbox (`chat::start_lead_chat`): one waiting chat per card.
+pub(crate) fn start_chat(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let title = a.req("title")?;
+    let kind = a.req("kind")?.to_lowercase();
+    let body = a.req("body_md")?;
+    let refs = a.list("tasks").unwrap_or_default();
+    if refs.is_empty() {
+        return Err("name the cards the chat is about (tasks), like [\"GA-12\"]".into());
+    }
+    let mut ids = vec![];
+    for r in &refs {
+        let t = resolve::task(cx, r)?;
+        if !ids.contains(&t.id) {
+            ids.push(t.id);
+        }
+    }
+    let (id, new) = gizai_core::chat::start_lead_chat(cx.db(), cx.actor, &title, &kind, &ids, &body, cx.check).map_err(err)?;
+    cx.changed("chat_threads");
+    cx.changed("chat_messages");
+    (cx.st.notify)(crate::runs::Note::ChatChanged);
+    let t = gizai_core::chat::get_thread(cx.db(), &id).map_err(err)?;
+    Ok(json!({"ok": true, "done": if new { "chat started" } else { "added to the chat that already waits for this card" },
+              "chat": {"id": t.id, "title": t.title, "kind": t.kind, "tasks": t.tasks}, "link": link("chat", &t.id, &t.title)}))
 }
 
 pub(crate) fn stop_run(cx: &Cx, a: &Args) -> Result<Value, String> {

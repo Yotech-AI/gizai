@@ -93,6 +93,11 @@ pub fn pull_paused(st: &AppState, agent_id: &str) -> Option<String> {
     st.runs.pull_paused.lock().unwrap().get(agent_id).cloned()
 }
 
+/// Every agent whose pull is paused, with why (the board check).
+pub fn pull_paused_all(st: &AppState) -> HashMap<String, String> {
+    st.runs.pull_paused.lock().unwrap().clone()
+}
+
 /// A person started, edited or reactivated the agent: it takes cards from the queue again.
 pub fn resume_pull(st: &AppState, agent_id: &str) {
     st.runs.pull_paused.lock().unwrap().remove(agent_id);

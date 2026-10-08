@@ -1,3 +1,4 @@
+pub mod board;
 pub mod chat;
 pub mod clis;
 mod commands;
@@ -297,12 +298,14 @@ pub fn run() {
             }
             // Heartbeats: once a minute, agents whose interval has passed look for their next card, and agents that wake up
             // when a card is routed or assigned to them take cards that had to wait (the run limit was full, Gizai just started).
+            // The Team Lead checks the board when its interval has passed; only new findings start it.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
                     let _ = runs::heartbeat_tick(&state, gizai_core::ids::now_ms()).await;
                     let _ = runs::pull(&state).await;
+                    let _ = board::tick(&state, gizai_core::ids::now_ms()).await;
                 }
             });
             Ok(())
@@ -323,6 +326,7 @@ pub fn run() {
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
+            commands::dismiss_chat,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::list_old_worktrees, commands::remove_old_worktrees,

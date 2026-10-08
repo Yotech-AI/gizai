@@ -119,6 +119,7 @@ async fn connection(st: AppState, stream: UnixStream) {
         _ => return refuse(w, "this token is not valid: the chat turn has ended or it was never issued").await,
     };
     let thread = grant.scope.get("chat").and_then(|v| v.as_str()).map(str::to_string);
-    let tools = GizaiTools { st, actor: grant.actor_id, thread };
+    let check = grant.scope.get("check").and_then(|v| v.as_str()).map(str::to_string);
+    let tools = GizaiTools { st, actor: grant.actor_id, thread, check };
     let _ = gizai_mcp::serve(reader, w, &tools).await;
 }

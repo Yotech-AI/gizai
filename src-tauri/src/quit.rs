@@ -28,7 +28,7 @@ static STOPPING: AtomicBool = AtomicBool::new(false);
 /// or one with no agents at work, quits at once.
 pub fn stop_agents_first(app: &AppHandle) -> bool {
     let st = app.state::<AppState>().inner().clone();
-    let busy = !runs::live(&st).is_empty() || !chat::live(&st).is_empty();
+    let busy = !runs::live(&st).is_empty() || !chat::live(&st).is_empty() || chat::checking(&st);
     if !busy || STOPPING.swap(true, Ordering::SeqCst) {
         return false;
     }
@@ -48,7 +48,7 @@ pub fn end_agents(st: &AppState) {
         return;
     }
     let t0 = Instant::now();
-    while (!runs::live(st).is_empty() || !chat::live(st).is_empty()) && t0.elapsed() < END_WAIT {
+    while (!runs::live(st).is_empty() || !chat::live(st).is_empty() || chat::checking(st)) && t0.elapsed() < END_WAIT {
         std::thread::sleep(Duration::from_millis(20));
     }
 }

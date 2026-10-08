@@ -1,0 +1,64 @@
+// GA-32: the Testing switch in the New task drawer and in Properties, and how a Deploy card and a deployed run show.
+// Rendered to HTML on the server, so no data loads.
+import { describe, expect, it } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { NewTaskDrawer } from "./NewTaskDrawer";
+import { Properties } from "./Properties";
+import { CATEGORIES, CATEGORY_NAMES, StatusIcon } from "./StatusIcon";
+import { badgeOf } from "../lib/runs";
+import { needsYou } from "../lib/inbox";
+import type { Run, Task, Team } from "../types";
+
+const team: Team = {
+  id: "team", name: "Software", members: [], labels: [], rules: [],
+  states: [
+    { id: "s-review", name: "Review", category: "review", ownerRole: "human", sortKey: "a4" },
+    { id: "s-deploy", name: "Deploy", category: "deploy", ownerRole: "human", sortKey: "a4V" },
+    { id: "s-done", name: "Done", category: "done", sortKey: "a5" },
+  ],
+};
+const task = (o: Partial<Task>): Task => ({
+  id: "t1", identifier: "KADE-1", projectId: "p1", title: "Fix a typo", stateId: "s-deploy", stateName: "Deploy", stateCategory: "deploy",
+  priority: 0, labels: [], bounceCount: 0, failCount: 0, sortKey: "a0", testing: true, createdAt: 0, updatedAt: 0, ...o,
+} as Task);
+
+describe("the Testing switch", () => {
+  it("is in the New task drawer's Task section, on by default, with its hint", () => {
+    const html = renderToStaticMarkup(<NewTaskDrawer onClose={() => {}} />);
+    expect(html).toMatch(/<input id="t-testing" type="checkbox" checked=""\/>Test before Review/);
+    expect(html).toContain("On: the QA Agent tests the card before Review. Turn it off for a small UI fix or a bug fix");
+    expect(html.indexOf("t-testing")).toBeLessThan(html.indexOf("Description"));
+  });
+
+  it("shows in Properties as the card has it", () => {
+    const on = renderToStaticMarkup(<Properties task={task({ testing: true })} team={team} people={[]} onError={() => {}} onClose={() => {}} />);
+    expect(on).toMatch(/Testing<\/span><label[^>]*><input type="checkbox" checked=""\/>Test before Review/);
+    const off = renderToStaticMarkup(<Properties task={task({ testing: false })} team={team} people={[]} onError={() => {}} onClose={() => {}} />);
+    expect(off).toMatch(/Testing<\/span><label[^>]*><input type="checkbox"\/>Test before Review/);
+    expect(off).toContain("Off: the card skips Testing and goes straight to Review");
+  });
+});
+
+describe("Deploy", () => {
+  it("has its own glyph and name, between Review and Done", () => {
+    expect(CATEGORY_NAMES.deploy).toBe("Deploy");
+    expect(CATEGORIES.indexOf("deploy")).toBe(CATEGORIES.indexOf("review") + 1);
+    expect(CATEGORIES.indexOf("done")).toBe(CATEGORIES.indexOf("deploy") + 1);
+    const deploy = renderToStaticMarkup(<StatusIcon category="deploy" />);
+    const todo = renderToStaticMarkup(<StatusIcon category="ready" />);
+    expect(deploy).not.toBe(todo);
+    expect(deploy).toContain("Deploy");
+  });
+
+  it("puts a Deploy card assigned to you in the inbox, like a Review card", () => {
+    expect(needsYou({ stateCategory: "deploy", assigneeId: "me", hold: null }, "me")).toBe(true);
+    expect(needsYou({ stateCategory: "deploy", assigneeId: "devops", hold: null }, "me")).toBe(false);
+    expect(needsYou({ stateCategory: "deploy", assigneeId: null, hold: "needs_decision" }, "me")).toBe(true);
+  });
+
+  it("shows a deployed run as Deployed", () => {
+    const run = { id: "r1", agentId: "a", agentName: "DevOps Agent", trigger: "manual", status: "succeeded", outcome: "deployed",
+      createdAt: 0, costUsdMicros: 0, inputTokens: 0, outputTokens: 0, logPath: "" } as Run;
+    expect(badgeOf(run)).toEqual({ cls: "ok", text: "Deployed" });
+  });
+});

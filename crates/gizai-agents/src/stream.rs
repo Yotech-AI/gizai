@@ -11,6 +11,8 @@ pub enum RunEvent {
     ToolResult { is_error: bool, preview: String },
     Result { is_error: bool, subtype: String, text: String, cost_usd: Option<f64>, input_tokens: i64, output_tokens: i64, num_turns: i64 },
     Other { raw_type: String },
+    /// A note from Gizai in the run log, such as a folder the run goes without (`cli::note_line`).
+    Note { text: String },
 }
 
 fn s(v: &Value) -> String {
@@ -90,6 +92,7 @@ pub fn parse_line(line: &str) -> Vec<RunEvent> {
                 subtype,
             }]
         }
+        "gizai_note" => vec![RunEvent::Note { text: s(&v["text"]) }],
         other => vec![RunEvent::Other { raw_type: other.into() }],
     }
 }

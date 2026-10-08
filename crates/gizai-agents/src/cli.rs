@@ -78,9 +78,43 @@ pub struct TaskRun {
     /// Folders outside the worktree the agent must be able to write: the repository's git folder, where a worktree's
     /// commits go (Codex's sandbox only lets it write the worktree).
     pub writable_dirs: Vec<String>,
+    /// The agent's own folders (agent form → Folders) that are there: see `task_exec` for what each CLI gets.
+    pub folders: Vec<RunFolder>,
 }
 
-/// The command for one task run on `cli`.
+/// One of the agent's folders for a run (absolute, as it is on disk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunFolder {
+    pub path: String,
+    /// Read and change; else read only.
+    pub change: bool,
+}
+
+/// Claude Code's deny rules that keep the read folders read only: `Edit(//<path>/**)` and `Write(//<path>/**)`. In a
+/// permission rule `//` starts an absolute path (a single `/` is relative to the settings).
+pub fn claude_read_only(folders: &[RunFolder]) -> Vec<String> {
+    folders.iter().filter(|f| !f.change)
+        .flat_map(|f| { let p = f.path.trim_end_matches('/').to_string(); ["Edit", "Write"].map(|t| format!("{t}(/{p}/**)")) })
+        .collect()
+}
+
+/// What a CLI can't be given of the agent's folders, as a note for the run log: Gemini can't keep a folder read only,
+/// so it gets only the read and change ones, and an Other CLI gets none.
+pub fn folders_left_out(kind: Kind, folders: &[RunFolder]) -> Option<String> {
+    let (left, why) = match kind {
+        Kind::Gemini => (folders.iter().filter(|f| !f.change).collect::<Vec<_>>(), "Gemini can't keep a folder read only"),
+        Kind::Other => (folders.iter().collect(), "this CLI can't be given folders"),
+        Kind::ClaudeCode | Kind::Codex => (vec![], ""),
+    };
+    let paths: Vec<&str> = left.iter().map(|f| f.path.as_str()).collect();
+    (!paths.is_empty()).then(|| format!("Left out the folder{} {}: {why}.", if paths.len() == 1 { "" } else { "s" }, paths.join(", ")))
+}
+
+/// The command for one task run on `cli`. The agent's folders:
+/// - Claude Code: `--add-dir` for each, and deny rules for `Edit` and `Write` in each read folder (`claude_read_only`);
+/// - Codex: its sandbox reads every folder anyway; a read and change folder becomes a writable root (workspace-write);
+/// - Gemini: `--include-directories` for each read and change folder; read folders are left out;
+/// - Other: none.
 pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
     match cli.kind {
         Kind::ClaudeCode => ClaudeArgs {
@@ -90,6 +124,7 @@ pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
             // for headless agents.
             disable_hooks: true, disable_skills: true, effort: run.effort.clone(), env: cli.env.clone(),
+            add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(), disallowed_tools: claude_read_only(&run.folders),
             ..Default::default()
         }.exec(),
         Kind::Codex => Exec { bin: cli.bin.clone(), args: codex_args(run), env: cli.env.clone(), stdin: run.prompt.clone() },
@@ -129,8 +164,10 @@ fn codex_args(run: &TaskRun) -> Vec<String> {
         _ => {
             a.extend(["-c".into(), r#"sandbox_mode="workspace-write""#.into()]);
             a.extend(["-c".into(), "sandbox_workspace_write.network_access=true".into()]);
-            if !run.writable_dirs.is_empty() {
-                let roots: Vec<String> = run.writable_dirs.iter().map(|d| toml_str(d)).collect();
+            // The repository's git folder, and the agent's read and change folders.
+            let roots: Vec<String> = run.writable_dirs.iter().chain(run.folders.iter().filter(|f| f.change).map(|f| &f.path))
+                .map(|d| toml_str(d)).collect();
+            if !roots.is_empty() {
                 a.extend(["-c".into(), format!("sandbox_workspace_write.writable_roots=[{}]", roots.join(","))]);
             }
         }
@@ -163,6 +200,10 @@ fn gemini_args(run: &TaskRun) -> Vec<String> {
     a.extend([if run.resume { "--resume" } else { "--session-id" }.into(), run.session_id.clone()]);
     for t in run.allowed_tools.iter().filter_map(|t| gemini_tool(t)) {
         a.push(format!("--allowed-tools={t}"));
+    }
+    // Gemini's file tools may use these folders as well as the worktree, read and write: it has no read-only folder.
+    for f in run.folders.iter().filter(|f| f.change) {
+        a.push(format!("--include-directories={}", f.path));
     }
     a.extend(["-p".into(), "Do the work described above.".into()]);
     a
@@ -231,6 +272,19 @@ fn header_kind(line: &str) -> Option<Kind> {
     (v.get("type")?.as_str()? == "gizai_cli").then(|| Kind::parse(v.get("kind")?.as_str()?)).flatten()
 }
 
+/// A line of Gizai's own in a run log (after the header, before the CLI's output): a note the Run panel shows.
+pub fn note_line(text: &str) -> String {
+    serde_json::json!({"type": "gizai_note", "text": text}).to_string()
+}
+
+fn note_of(line: &str) -> Option<RunEvent> {
+    if !line.contains("\"gizai_note\"") {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line.trim()).ok()?;
+    (v.get("type")?.as_str()? == "gizai_note").then(|| RunEvent::Note { text: text_of(&v, "text") })
+}
+
 /// A finished run's log → its events. A log without a header is Claude Code's.
 pub fn parse_log(text: &str) -> Vec<RunEvent> {
     let mut lines = text.lines().peekable();
@@ -239,7 +293,7 @@ pub fn parse_log(text: &str) -> Vec<RunEvent> {
         None => Kind::ClaudeCode,
     };
     let mut p = Parser::new(kind);
-    let mut out: Vec<RunEvent> = lines.flat_map(|l| p.line(l)).collect();
+    let mut out: Vec<RunEvent> = lines.flat_map(|l| note_of(l).map(|n| vec![n]).unwrap_or_else(|| p.line(l))).collect();
     out.extend(p.finish());
     out
 }

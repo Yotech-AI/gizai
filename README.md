@@ -58,6 +58,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Agents that start when you press Run, when a card is assigned, or on a heartbeat, on several cards at once. A start that can't work (Claude Code missing or not logged in, a wrong model, no repository) holds the card "blocked" without counting as a failed run, and that agent takes no new cards until you start or edit it (or Gizai restarts)
 - Live run output, run history with the reason each run ended and the commits it made, and Continue
 - The Team Lead chat, which manages clients, projects, tasks and agents with Gizai's own tools
+- The Team Lead's board check (agent settings → Chat → Check the board every 15 min, off until you turn it on): it looks for answered questions, held and stuck cards, and cards no agent will start. Only something new starts it: it gets agents going again (Continue or Run) and asks you what it can't decide in a chat of its own, labelled Question or Approval, at the top of your Inbox. Dragging a held card back to To do or In progress takes the hold off
 - An org chart of your team
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart

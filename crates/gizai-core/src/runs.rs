@@ -11,7 +11,8 @@ const ACTIVE: &str = "('queued','running','waiting_approval')";
 
 const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.trigger, r.status, r.outcome, r.summary_md, r.created_at,
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
-                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha, r.refused_json";
+                    r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha,
+                    COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]')";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -128,13 +129,17 @@ pub fn set_head_sha(db: &Db, run_id: &str, sha: &str) -> Result<()> {
     })
 }
 
-/// The tool calls the run's CLI refused (Refused in this run), in the order it reported them.
+/// The tool calls the run's CLI refused (Refused in this run), in the order it reported them (`run_refusals`).
 pub fn set_refused(db: &Db, run_id: &str, refused: &[Refusal]) -> Result<()> {
     db.write(None, |w| {
-        let n = w.conn().execute("UPDATE runs SET refused_json=?2 WHERE id=?1", rusqlite::params![run_id, serde_json::to_string(refused)?])?;
+        let c = w.conn();
+        let n: i64 = c.query_row("SELECT count(*) FROM runs WHERE id=?1", [run_id], |r| r.get(0))?;
         if n == 0 {
             return Err(Error::NotFound(format!("run {run_id}")));
         }
+        c.execute("INSERT INTO run_refusals(run_id, refused_json) VALUES (?1, ?2)
+                   ON CONFLICT(run_id) DO UPDATE SET refused_json = excluded.refused_json",
+                  rusqlite::params![run_id, serde_json::to_string(refused)?])?;
         Ok(())
     })
 }

@@ -65,14 +65,21 @@ pub fn create_with_trigger(db: &Db, agent_id: &str, task_id: &str, role_key: &st
     })
 }
 
-/// Records a queued chat turn of the Team Lead: no task, the thread instead.
+/// Records a queued chat turn of the Team Lead: no task, the thread instead. It runs on the agent's own CLI.
 pub fn create_chat(db: &Db, agent_id: &str, thread_id: &str, session_id: &str, cwd: &str, log_path: &str) -> Result<String> {
+    create_chat_on(db, agent_id, thread_id, None, session_id, cwd, log_path)
+}
+
+/// `create_chat` for a turn on `cli` (the chat's Runs on, a coding CLI's id), recorded as the run's adapter; None: the
+/// agent's own CLI.
+pub fn create_chat_on(db: &Db, agent_id: &str, thread_id: &str, cli: Option<&str>, session_id: &str, cwd: &str, log_path: &str) -> Result<String> {
     db.write(Some(agent_id), |w| {
         let c = w.conn();
         let now = ids::now_ms();
         let (adapter, model): (String, Option<String>) = c.query_row(
             "SELECT adapter, model FROM agent_configs WHERE actor_id=?1", [agent_id], |r| Ok((r.get(0)?, r.get(1)?)))
             .optional()?.ok_or_else(|| Error::NotFound(format!("agent {agent_id}")))?;
+        let adapter = cli.map(str::to_string).unwrap_or(adapter);
         let id = ids::new_id();
         c.execute(
             "INSERT INTO runs(id, created_at, updated_at, created_by, updated_by, org_id, agent_actor_id, chat_thread_id, trigger, role_key, adapter, model,
@@ -274,16 +281,28 @@ pub fn last_qa_issues(db: &Db, task_id: &str) -> Result<Vec<String>> {
 }
 
 /// At start-up: runs left queued or running by a previous Gizai can't be followed any more. Marks them
-/// failed ("interrupted") and releases their claims. Returns how many there were.
+/// failed ("interrupted") and releases their claims. A chat answer gets no outcome (it has none), and its chat a note
+/// that it was interrupted. Returns how many there were.
 pub fn recover_interrupted(db: &Db) -> Result<usize> {
     db.write(None, |w| {
-        let ids: Vec<String> = {
-            let mut st = w.conn().prepare(&format!("SELECT id FROM runs WHERE status IN {ACTIVE}"))?;
-            st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+        let runs: Vec<(String, String, Option<String>)> = {
+            let mut st = w.conn().prepare(&format!("SELECT id, trigger, chat_thread_id FROM runs WHERE status IN {ACTIVE} ORDER BY created_at"))?;
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?
         };
-        for id in &ids {
-            finish_in(w, id, "failed", None, 0, 0, 0, Some("interrupted"))?;
+        for (id, trigger, thread) in &runs {
+            if trigger != "chat" {
+                finish_in(w, id, "failed", None, 0, 0, 0, Some("interrupted"))?;
+                continue;
+            }
+            let now = ids::now_ms();
+            w.conn().execute("UPDATE runs SET status='failed', error='interrupted', ended_at=?2, updated_at=?2, version=version+1 WHERE id=?1",
+                             rusqlite::params![id, now])?;
+            w.update("runs", id, serde_json::json!({"status": "failed"}))?;
+            if let Some(thread) = thread {
+                crate::chat::insert_message(w, &crate::chat::NewMessage { thread_id: thread.clone(), role: "system".into(),
+                    body_md: Some(crate::chat::INTERRUPTED.into()), run_id: Some(id.clone()), ..Default::default() })?;
+            }
         }
-        Ok(ids.len())
+        Ok(runs.len())
     })
 }

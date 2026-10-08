@@ -80,6 +80,9 @@ pub struct TaskRun {
     pub writable_dirs: Vec<String>,
     /// The agent's own folders (agent form → Folders) that are there: see `task_exec` for what each CLI gets.
     pub folders: Vec<RunFolder>,
+    /// The run's temp folder (`<worktree>/.gizai-tmp`, `worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and
+    /// TEMP. None when Gizai couldn't make it.
+    pub temp_dir: Option<String>,
 }
 
 /// One of the agent's folders for a run (absolute, as it is on disk).
@@ -115,7 +118,17 @@ pub fn folders_left_out(kind: Kind, folders: &[RunFolder]) -> Option<String> {
 /// - Codex: its sandbox reads every folder anyway; a read and change folder becomes a writable root (workspace-write);
 /// - Gemini: `--include-directories` for each read and change folder; read folders are left out;
 /// - Other: none.
+///
+/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, after its own environment lines.
 pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
+    let mut exec = cli_exec(cli, run);
+    if let Some(dir) = &run.temp_dir {
+        exec.env.extend(crate::worktree::temp_env(std::path::Path::new(dir)));
+    }
+    exec
+}
+
+fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
     match cli.kind {
         Kind::ClaudeCode => ClaudeArgs {
             bin: cli.bin.clone(), prompt: run.prompt.clone(), session_id: run.session_id.clone(), resume: run.resume,

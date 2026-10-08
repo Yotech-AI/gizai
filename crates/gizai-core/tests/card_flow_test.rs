@@ -1,22 +1,16 @@
 //! GA-32, the card flow: Backlog → To do → In progress → Testing → Review → Deploy → Done. To do is a queue by priority,
-//! a start moves the card to In progress, the Testing switch, DevOps runs that never go to QA, the Deploy column (added
-//! with Add column, never routed) and its `deployed` outcome, a merge that moves the card to Deploy, and migration 0007.
+//! a start moves the card to In progress, the Testing switch, DevOps runs that never go to QA, the Deploy column (in the
+//! seed since GA-49, Manual: only Run starts its cards) and its `deployed` outcome, a merge that moves the card to Deploy,
+//! and migration 0007.
+use gizai_core::columns::{self, ColumnInput};
 use gizai_core::{db::Db, model::*, projects, pulls, runs, seed::ensure_seed, tasks, team, workflow};
 use serde_json::json;
 
 struct Board { db: Db, you: String, team: String, project: String, be: String, qa: String, ops: String }
 
-/// The default board plus a Deploy column after Review, with a Backend, a QA and a DevOps Agent, the label rule
-/// backend → backend and the column rule Testing → qa.
+/// The default board (its Deploy column after Review, Manual), with a Backend, a QA and a DevOps Agent on their role's
+/// usual columns: the Backend Agent on To do and In progress, the QA Agent on Testing, the DevOps Agent on Deploy.
 fn board() -> Board {
-    let b = bare_board();
-    let review = b.state("Review");
-    team::add_state(&b.db, &b.you, &b.team, "Deploy", &review, "deploy", None).unwrap();
-    b
-}
-
-/// Like `board`, without a Deploy column.
-fn bare_board() -> Board {
     let db = Db::open_in_memory().unwrap();
     let s = ensure_seed(&db, "Jeffrey").unwrap();
     let project = projects::create(&db, &s.you_id, ProjectInput { name: "Kade".into(), key: "KADE".into(), ..Default::default() }).unwrap();
@@ -24,14 +18,19 @@ fn bare_board() -> Board {
     for (name, role) in [("Backend Agent", "backend"), ("QA Agent", "qa"), ("DevOps Agent", "devops")] {
         ids.push(team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: name.into(), role_key: role.into(), ..Default::default() }).unwrap());
     }
-    team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "label".into(), match_name: "backend".into(), target_role: "backend".into(), priority: 10 }).unwrap();
-    team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "column".into(), match_name: "Testing".into(), target_role: "qa".into(), priority: 20 }).unwrap();
     Board { db, you: s.you_id, team: s.team_id, project, be: ids[0].clone(), qa: ids[1].clone(), ops: ids[2].clone() }
+}
+
+/// Like `board`, with its Deploy column removed (Review then links to Done).
+fn bare_board() -> Board {
+    let b = board();
+    columns::remove_state(&b.db, &b.you, &b.state("Deploy"), &b.state("Review")).unwrap();
+    b
 }
 
 impl Board {
     fn state(&self, name: &str) -> String {
-        self.db.read(|c| Ok(c.query_row("SELECT id FROM workflow_states WHERE name=?1", [name], |r| r.get(0))?)).unwrap()
+        self.db.read(|c| Ok(c.query_row("SELECT id FROM workflow_states WHERE name=?1 AND deleted_at IS NULL", [name], |r| r.get(0))?)).unwrap()
     }
     fn label(&self, name: &str) -> String {
         self.db.read(|c| Ok(c.query_row("SELECT id FROM labels WHERE name=?1", [name], |r| r.get(0))?)).unwrap()
@@ -81,7 +80,7 @@ fn the_queue_takes_cards_by_priority_with_none_last_then_assigned_then_board_ord
     let medium_assigned = b.card("To do", 3);
     b.patch(&medium_assigned, TaskPatch { assignee_id: Some(b.be.clone()), ..Default::default() });
     assert_eq!(workflow::waiting_for(&b.db, &b.be).unwrap(), [urgent.clone(), high_first.clone(), high_second.clone(), medium_assigned.clone(), medium, low, none]);
-    assert_eq!(workflow::next_task_for(&b.db, &b.be).unwrap().as_deref(), Some(urgent.as_str()), "the heartbeat and the Agent page agree");
+    assert_eq!(workflow::next_task_for(&b.db, &b.be).unwrap().as_deref(), Some(urgent.as_str()), "the queue and the Agent page agree");
     // Board order within a priority: the card at the top of the column first.
     tasks::move_to(&b.db, &b.you, &high_second, &b.state("To do"), "Zz").unwrap();
     let order = workflow::waiting_for(&b.db, &b.be).unwrap();
@@ -148,7 +147,7 @@ fn a_start_moves_a_card_from_to_do_or_backlog_to_in_progress_as_the_agent() {
 #[test]
 fn a_start_leaves_cards_in_other_columns_where_they_are() {
     let b = board();
-    team::add_state(&b.db, &b.you, &b.team, "Cancelled", &b.state("Done"), "cancelled", None).unwrap();
+    team::add_state(&b.db, &b.you, &b.team, "Cancelled", &b.state("Done"), "cancelled").unwrap();
     for column in ["In progress", "Testing", "Review", "Deploy", "Done", "Cancelled"] {
         let t = b.card(column, 0);
         assert_eq!(workflow::move_on_start(&b.db, &b.ops, &t).unwrap(), None, "{column}");
@@ -206,7 +205,8 @@ fn with_testing_on_a_finished_card_goes_to_testing_for_qa() {
     let task = b.task(&t);
     assert_eq!((task.state_name.as_str(), task.assignee_id.as_deref()), ("Testing", None));
     assert_eq!(b.implementer(&t).as_deref(), Some(b.be.as_str()));
-    assert_eq!(workflow::pick_agent(&b.db, &t).unwrap().map(|(a, _)| a).as_deref(), Some(b.qa.as_str()));
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap().map(|(a, _)| a).as_deref(), Some(b.qa.as_str()));
+    assert_eq!(workflow::waiting_for(&b.db, &b.qa).unwrap(), [t], "the QA Agent on Testing picks it up");
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn with_testing_off_a_finished_card_goes_straight_to_review_for_its_person() {
     assert_eq!((task.state_name.as_str(), task.assignee_id.as_deref(), task.assignee_kind.as_deref()),
                ("Review", Some(b.you.as_str()), Some("person")));
     assert_eq!(b.implementer(&t).as_deref(), Some(b.be.as_str()), "the agent still built it");
-    assert_eq!(workflow::pick_agent(&b.db, &t).unwrap(), None, "no QA run");
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap(), None, "no QA run");
     assert!(workflow::waiting_for(&b.db, &b.qa).unwrap().is_empty());
     let run = &runs::list_for_task(&b.db, &t).unwrap()[0];
     assert_eq!(run.outcome.as_deref(), Some("ready_for_testing"), "the outcome stays");
@@ -234,9 +234,10 @@ fn the_switch_does_not_change_qa_fail_or_a_card_dragged_into_testing() {
     let b = board();
     let t = b.card("In progress", 0);
     b.patch(&t, TaskPatch { testing: Some(false), ..Default::default() });
-    // a person drags it into Testing: QA works it as usual
+    // a person drags it into Testing: Run starts QA on it as usual (the queue skips it: its switch is off, GA-49)
     b.to(&t, "Testing");
-    assert_eq!(workflow::pick_agent(&b.db, &t).unwrap().map(|(a, _)| a).as_deref(), Some(b.qa.as_str()));
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap().map(|(a, _)| a).as_deref(), Some(b.qa.as_str()));
+    assert!(!workflow::waiting_for(&b.db, &b.qa).unwrap().contains(&t));
     b.db.read(|c| Ok(c.execute("UPDATE tasks SET implementer_actor_id=?2 WHERE id=?1", [&t, &b.be])?)).unwrap();
     let g = b.finish(&b.qa, &t, "qa", Some("qa_fail"));
     assert_eq!(g.moved_to.as_deref(), Some("In progress"));
@@ -281,7 +282,7 @@ fn a_devops_ready_for_testing_ends_in_review_for_its_person_with_testing_on_or_o
             assert_eq!((g.moved_to.as_deref(), g.hold.as_deref()), (Some("Review"), None), "{why}");
             assert_eq!((task.state_name.as_str(), task.assignee_id.as_deref()), ("Review", Some(b.you.as_str())), "{why}");
             assert_eq!(b.implementer(&t).as_deref(), Some(b.be.as_str()), "the implementer stays: {why}");
-            assert_eq!(workflow::pick_agent(&b.db, &t).unwrap(), None, "no QA run: {why}");
+            assert_eq!(workflow::run_agent(&b.db, &t).unwrap(), None, "no QA run: {why}");
             assert!(!workflow::waiting_for(&b.db, &b.qa).unwrap().contains(&t), "{why}");
             assert_eq!(runs::list_for_task(&b.db, &t).unwrap()[0].outcome.as_deref(), Some("ready_for_testing"));
             // a later qa_fail goes back to the agent that built it
@@ -295,7 +296,7 @@ fn a_devops_ready_for_testing_ends_in_review_for_its_person_with_testing_on_or_o
 #[test]
 fn a_devops_run_on_a_card_moved_to_backlog_done_or_cancelled_leaves_it_there() {
     let b = board();
-    team::add_state(&b.db, &b.you, &b.team, "Cancelled", &b.state("Done"), "cancelled", None).unwrap();
+    team::add_state(&b.db, &b.you, &b.team, "Cancelled", &b.state("Done"), "cancelled").unwrap();
     for column in ["Backlog", "Done", "Cancelled"] {
         let t = b.card("In progress", 0);
         let r = b.run(&b.ops, &t, "devops");
@@ -322,53 +323,43 @@ fn add_column_puts_it_after_the_chosen_column_with_a_unique_name() {
     let b = board();
     assert_eq!(b.columns(), ["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Done"]);
     let deploy = team::get(&b.db, &b.team).unwrap().states.into_iter().find(|s| s.name == "Deploy").unwrap();
-    assert_eq!((deploy.category.as_str(), deploy.owner_role.as_deref()), ("deploy", Some("human")), "worked by you");
+    assert_eq!((deploy.category.as_str(), deploy.auto), ("deploy", false), "Manual: only your Run starts its cards");
     // between two columns again, and after the last one
-    let staging = team::add_state(&b.db, &b.you, &b.team, "Staging", &b.state("Review"), "review", Some("human")).unwrap();
-    team::add_state(&b.db, &b.you, &b.team, "Archive", &b.state("Done"), "done", None).unwrap();
-    team::add_state(&b.db, &b.you, &b.team, "Design", &b.state("To do"), "in_progress", Some("Frontend")).unwrap();
+    let staging = team::add_state(&b.db, &b.you, &b.team, "Staging", &b.state("Review"), "review").unwrap();
+    let archive = team::add_state(&b.db, &b.you, &b.team, "Archive", &b.state("Done"), "done").unwrap();
+    let design = team::add_state(&b.db, &b.you, &b.team, "Design", &b.state("To do"), "in_progress").unwrap();
     assert_eq!(b.columns(), ["Backlog", "To do", "Design", "In progress", "Testing", "Review", "Staging", "Deploy", "Done", "Archive"]);
+    // a new column, a Deploy one too, is Manual, without agents and without a next column
+    let release = team::add_state(&b.db, &b.you, &b.team, "Release", &b.state("Deploy"), "deploy").unwrap();
     let states = team::get(&b.db, &b.team).unwrap().states;
-    assert_eq!(states.iter().find(|s| s.name == "Design").unwrap().owner_role.as_deref(), Some("frontend"));
-    assert_eq!(states.iter().find(|s| s.id == staging).unwrap().owner_role.as_deref(), Some("human"));
-    // a Deploy column is always yours, whatever role is asked for
-    let release = team::add_state(&b.db, &b.you, &b.team, "Release", &b.state("Deploy"), "deploy", Some("devops")).unwrap();
-    let states = team::get(&b.db, &b.team).unwrap().states;
-    assert_eq!(states.iter().find(|s| s.id == release).unwrap().owner_role.as_deref(), Some("human"));
+    for id in [&staging, &archive, &design, &release] {
+        let s = states.iter().find(|s| &s.id == id).unwrap();
+        assert_eq!((s.auto, s.agent_ids.len(), s.next_state_id.as_deref()), (false, 0, None), "{}", s.name);
+    }
     // refused: a name in use (any case), no name, an unknown category, a column that isn't there
-    let e = team::add_state(&b.db, &b.you, &b.team, "deploy", &b.state("Review"), "deploy", None).unwrap_err().to_string();
+    let e = team::add_state(&b.db, &b.you, &b.team, "deploy", &b.state("Review"), "deploy").unwrap_err().to_string();
     assert!(e.contains("already has a column called deploy"), "{e}");
-    assert!(team::add_state(&b.db, &b.you, &b.team, "  ", &b.state("Review"), "review", None).is_err());
-    assert!(team::add_state(&b.db, &b.you, &b.team, "Shipped", &b.state("Review"), "shipped", None).is_err());
-    assert!(team::add_state(&b.db, &b.you, &b.team, "Shipped", "no-such-column", "done", None).is_err());
+    assert!(team::add_state(&b.db, &b.you, &b.team, "  ", &b.state("Review"), "review").is_err());
+    assert!(team::add_state(&b.db, &b.you, &b.team, "Shipped", &b.state("Review"), "shipped").is_err());
+    assert!(team::add_state(&b.db, &b.you, &b.team, "Shipped", "no-such-column", "done").is_err());
     assert_eq!(b.columns().len(), 11);
-}
-
-#[test]
-fn a_column_rule_on_a_deploy_column_is_refused() {
-    let b = board();
-    let e = team::add_rule(&b.db, &b.you, &b.team, RuleInput { kind: "column".into(), match_name: "deploy".into(), target_role: "devops".into(), priority: 5 })
-        .unwrap_err().to_string();
-    assert!(e.contains("Deploy column") && e.contains("Run"), "{e}");
-    assert!(team::get(&b.db, &b.team).unwrap().rules.iter().all(|r| r.match_state_id.as_deref() != Some(b.state("Deploy").as_str())));
 }
 
 #[test]
 fn nothing_routes_or_pulls_a_deploy_card() {
     let b = board();
-    // a label rule for the DevOps Agent, a card assigned and even pinned to it
-    team::add_rule(&b.db, &b.you, &b.team, RuleInput { kind: "label".into(), match_name: "bug".into(), target_role: "devops".into(), priority: 1 }).unwrap();
+    // the DevOps Agent is on Deploy; a card with labels, assigned and even pinned to it
+    assert_eq!(team::get(&b.db, &b.team).unwrap().states.iter().find(|s| s.name == "Deploy").unwrap().agent_ids, [b.ops.clone()]);
     let t = b.card("Deploy", 1);
     tasks::set_labels(&b.db, &b.you, &t, vec![b.label("bug"), b.label("backend")]).unwrap();
     b.patch(&t, TaskPatch { assignee_id: Some(b.ops.clone()), ..Default::default() });
-    assert_eq!(workflow::pick_agent(&b.db, &t).unwrap(), None);
+    assert!(workflow::waiting_for(&b.db, &b.ops).unwrap().is_empty());
     b.patch(&t, TaskPatch { pinned_actor_id: Some(b.ops.clone()), ..Default::default() });
-    assert_eq!(workflow::pick_agent(&b.db, &t).unwrap(), None);
     for agent in [&b.ops, &b.be, &b.qa] {
         assert!(workflow::waiting_for(&b.db, agent).unwrap().is_empty());
-        assert_eq!(workflow::next_task_for(&b.db, agent).unwrap(), None, "no heartbeat starts on it");
+        assert_eq!(workflow::next_task_for(&b.db, agent).unwrap(), None, "nothing starts on it by itself");
     }
-    // the same card in To do would go to the DevOps Agent: it's the column that stops it
+    // the same card in To do (Auto) would go to the DevOps Agent: it's the column that stops it
     b.to(&t, "To do");
     assert_eq!(workflow::next_task_for(&b.db, &b.ops).unwrap().as_deref(), Some(t.as_str()));
 }
@@ -377,9 +368,14 @@ fn nothing_routes_or_pulls_a_deploy_card() {
 fn run_on_a_deploy_card_picks_the_teams_devops_agent() {
     let b = board();
     let t = b.card("Deploy", 0);
-    assert_eq!(workflow::devops_agent(&b.db, &t).unwrap().as_deref(), Some(b.ops.as_str()));
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap(), Some((b.ops.clone(), "devops".to_string())));
+    // an active one first: with the DevOps Agent paused, the next agent on Deploy
+    let bot = team::add_agent(&b.db, &b.you, &b.team, AgentInput { name: "Release bot".into(), role_key: "devops".into(), ..Default::default() }).unwrap();
     team::set_agent_status(&b.db, &b.you, &b.ops, "paused").unwrap();
-    assert_eq!(workflow::devops_agent(&b.db, &t).unwrap(), None, "only an active one");
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap(), Some((bot, "devops".to_string())), "only an active one");
+    // nobody on Deploy: nobody
+    columns::set_column(&b.db, &b.you, &b.state("Deploy"), ColumnInput { agent_ids: Some(vec![]), ..Default::default() }).unwrap();
+    assert_eq!(workflow::run_agent(&b.db, &t).unwrap(), None);
 }
 
 #[test]
@@ -428,7 +424,7 @@ fn the_other_devops_outcomes_leave_a_deploy_card_in_deploy() {
 #[test]
 fn deployed_on_a_card_outside_deploy_holds_it_or_leaves_a_card_a_person_moved() {
     let b = board();
-    team::add_state(&b.db, &b.you, &b.team, "Cancelled", &b.state("Done"), "cancelled", None).unwrap();
+    team::add_state(&b.db, &b.you, &b.team, "Cancelled", &b.state("Done"), "cancelled").unwrap();
     for column in ["Backlog", "Done", "Cancelled"] {
         let t = b.card("In progress", 0);
         let r = b.run(&b.ops, &t, "devops");
@@ -487,7 +483,7 @@ fn a_merged_pull_request_moves_a_review_card_to_deploy_and_nothing_picks_it_up()
                "the assignee stays");
     let a = tasks::activity(&b.db, &t).unwrap();
     assert!(a.iter().any(|e| e.diff == json!({"column": ["Review", "Deploy"]})), "{a:?}");
-    assert_eq!(workflow::pick_agent(&b.db, &t).unwrap(), None);
+    assert!(workflow::waiting_for(&b.db, &b.ops).unwrap().is_empty());
     assert_eq!(workflow::next_task_for(&b.db, &b.ops).unwrap(), None);
     // already in Deploy: stays
     assert_eq!(pulls::merged(&b.db, &b.you, &t, PR).unwrap(), None);
@@ -536,19 +532,23 @@ const SNAPSHOTS: [&str; 5] = [
     "SELECT id, task_id, agent_actor_id, status, outcome, summary_md, error FROM runs ORDER BY id",
     "SELECT id, task_id, run_id, body_md FROM comments ORDER BY id",
 ];
+/// SNAPSHOTS[2]: the routing rules, which 0011 (GA-49) turns into agents on columns and drops.
+const RULES: usize = 2;
+
+/// workflow_states' columns as 0001 made them (0011 added auto and next_state_id).
+const STATE_COLUMNS_V6: &str = "id, created_at, updated_at, deleted_at, version, created_by, updated_by, team_id, name, category, owner_role, wip_limit, color, sort_key";
 
 #[test]
 fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_database() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gizai.db");
-    {
-        // A database with data: cards in several columns, rules on a label and on a column, finished and failed runs.
+    let be = {
+        // A database with data: cards in several columns, finished and failed runs (the rules are added below, as schema 6
+        // had them).
         let db = Db::open(&path).unwrap();
         let s = ensure_seed(&db, "Jeffrey").unwrap();
         let p = projects::create(&db, &s.you_id, ProjectInput { name: "Kade".into(), key: "KADE".into(), ..Default::default() }).unwrap();
         let be = team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "Backend Agent".into(), role_key: "backend".into(), ..Default::default() }).unwrap();
-        team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "label".into(), match_name: "backend".into(), target_role: "backend".into(), priority: 10 }).unwrap();
-        team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "column".into(), match_name: "Testing".into(), target_role: "qa".into(), priority: 20 }).unwrap();
         for (i, column) in ["To do", "In progress", "Review"].iter().enumerate() {
             let state: String = db.read(|c| Ok(c.query_row("SELECT id FROM workflow_states WHERE name=?1", [column], |r| r.get(0))?)).unwrap();
             let t = tasks::create(&db, &s.you_id, TaskInput { project_id: p.clone(), title: format!("Card {i}"), state_id: Some(state), priority: i as i64,
@@ -562,19 +562,28 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
                 workflow::apply_outcome(&db, &r, Some(&o)).unwrap();
             }
         }
-    }
-    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, no Testing switch, none of 0008's
-    // board check columns and no agent folders (0009).
+        be
+    };
+    // Step back to schema 6 as it was: none of 0011's columns, agents on columns or branches, routing rules on a label and
+    // on a column, no Deploy column (the seed's has no place in schema 6), workflow_states and runs with 0001's CHECKs,
+    // no Testing switch, none of 0008's board check columns and no agent folders (0009).
     let c = rusqlite::Connection::open(&path).unwrap();
-    let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;
+    let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN; DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;
+        DELETE FROM workflow_states WHERE category='deploy';
+        ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;
         ALTER TABLE agent_configs DROP COLUMN board_check_minutes; ALTER TABLE agent_configs DROP COLUMN board_checked_at;
         ALTER TABLE agent_configs DROP COLUMN board_check_failures; ALTER TABLE agent_configs DROP COLUMN board_check_paused;
         ALTER TABLE chat_threads DROP COLUMN kind; ALTER TABLE chat_threads DROP COLUMN task_ids_json;
         ALTER TABLE chat_threads DROP COLUMN answered_at; ALTER TABLE chat_threads DROP COLUMN dismissed_at;");
-    for table in ["workflow_states", "runs"] {
-        sql.push_str(&format!("{}; INSERT INTO {table}_v6 SELECT * FROM {table}; DROP TABLE {table}; ALTER TABLE {table}_v6 RENAME TO {table};",
+    for (table, columns) in [("workflow_states", STATE_COLUMNS_V6), ("runs", "*")] {
+        sql.push_str(&format!("{}; INSERT INTO {table}_v6 SELECT {columns} FROM {table}; DROP TABLE {table}; ALTER TABLE {table}_v6 RENAME TO {table};",
                               table_v6(table)));
     }
+    sql.push_str(&format!("{}; ", table_v6("routing_rules").replacen("routing_rules_v6 (", "routing_rules (", 1)));
+    sql.push_str("INSERT INTO routing_rules (id, created_at, updated_at, team_id, kind, match_label_id, target_role, priority)
+                    SELECT 'rule-label', 1, 1, (SELECT id FROM teams), 'label', id, 'backend', 10 FROM labels WHERE name='backend';
+                  INSERT INTO routing_rules (id, created_at, updated_at, team_id, kind, match_state_id, target_role, priority)
+                    SELECT 'rule-column', 1, 1, team_id, 'column', id, 'qa', 20 FROM workflow_states WHERE name='Testing';");
     sql.push_str("CREATE INDEX runs_task ON runs(task_id, created_at); CREATE INDEX runs_agent_period ON runs(agent_actor_id, started_at);
                   ALTER TABLE tasks DROP COLUMN testing; ALTER TABLE agent_configs DROP COLUMN folders_json; COMMIT; PRAGMA user_version = 6;");
     c.execute_batch(&sql).unwrap();
@@ -584,12 +593,18 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert!(before[4].len() >= 2, "the summaries are comments");
     drop(c);
 
-    // Gizai opens it: 0007, 0008 and 0009 run.
+    // Gizai opens it: 0007, 0008, 0009, 0010 and 0011 run.
     let db = Db::open(&path).unwrap();
-    let after: Vec<Rows> = db.read(|c| Ok(SNAPSHOTS.iter().map(|q| rows(c, q)).collect())).unwrap();
+    let after: Vec<Option<Rows>> = db.read(|c| Ok(SNAPSHOTS.iter().enumerate().map(|(i, q)| (i != RULES).then(|| rows(c, q))).collect())).unwrap();
     for (i, q) in SNAPSHOTS.iter().enumerate() {
-        assert_eq!(after[i], before[i], "{q}");
+        if let Some(after) = &after[i] {
+            assert_eq!(after, &before[i], "{q}");
+        }
     }
+    // the rules are agents on columns now (0011): the Backend Agent works To do and In progress
+    let rules_left: i64 = db.read(|c| Ok(c.query_row("SELECT count(*) FROM sqlite_master WHERE name='routing_rules'", [], |r| r.get(0))?)).unwrap();
+    assert_eq!(rules_left, 0);
+    assert_eq!(columns::of_agent(&db, &be).unwrap(), ["To do", "In progress"]);
     let (version, fks, broken, off): (i64, i64, usize, i64) = db.read(|c| Ok((
         c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?,
@@ -604,11 +619,12 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     let bad = db.read(|c| Ok(c.execute("UPDATE tasks SET state_id='nope' WHERE identifier='KADE-1'", [])?));
     assert!(bad.is_err(), "foreign keys are enforced again");
 
-    // and the new things fit: a Deploy column, a card in it, a deployed run
+    // and the new things fit: a Deploy column (linked to Done: a new column has no next column), a card in it, a deployed run
     let team_id = team::list(&db).unwrap()[0].id.clone();
     let you: String = db.read(|c| Ok(c.query_row("SELECT id FROM actors WHERE kind='person'", [], |r| r.get(0))?)).unwrap();
-    let review: String = db.read(|c| Ok(c.query_row("SELECT id FROM workflow_states WHERE name='Review'", [], |r| r.get(0))?)).unwrap();
-    let deploy = team::add_state(&db, &you, &team_id, "Deploy", &review, "deploy", None).unwrap();
+    let state = |name: &str| -> String { db.read(|c| Ok(c.query_row("SELECT id FROM workflow_states WHERE name=?1", [name], |r| r.get(0))?)).unwrap() };
+    let deploy = team::add_state(&db, &you, &team_id, "Deploy", &state("Review"), "deploy").unwrap();
+    columns::set_column(&db, &you, &deploy, ColumnInput { next_state_id: Some(state("Done")), ..Default::default() }).unwrap();
     let ops = team::add_agent(&db, &you, &team_id, AgentInput { name: "DevOps Agent".into(), role_key: "devops".into(), ..Default::default() }).unwrap();
     let card: String = db.read(|c| Ok(c.query_row("SELECT id FROM tasks WHERE identifier='KADE-3'", [], |r| r.get(0))?)).unwrap();
     tasks::move_to(&db, &you, &card, &deploy, "").unwrap();

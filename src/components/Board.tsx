@@ -17,16 +17,14 @@ import { Archive, Plus } from "lucide-react";
 
 const CAP = 50;
 const RAIL_CATEGORIES = new Set(["backlog", "done", "cancelled"]);
-const OWNER_NOTE: Record<string, string> = {
-  implementer: "Picked up by the agent matching the label",
-  qa: "Tested by the QA agent",
-  human: "Waiting for your review",
+/** A note that follows the column: your review, else who starts its cards (its agents, or Run). */
+const noteOf = (s: WorkflowState): string | undefined => {
+  if (s.category === "review") return "Waiting for your review";
+  if (["backlog", "done", "cancelled"].includes(s.category)) return undefined;
+  const agents = s.agentIds?.length ?? 0;
+  if (s.auto) return agents ? "Picked up by the agents on this column" : "Auto, but no agent is on this column";
+  return agents ? "Manual: press Run on a card" : undefined;
 };
-/** A note that follows the column's category, before its owner's (a Deploy column is yours too, but not a review). */
-const CATEGORY_NOTE: Record<string, string> = {
-  deploy: "Merged: deploy it, or press Run for the DevOps Agent",
-};
-const noteOf = (s: WorkflowState): string | undefined => CATEGORY_NOTE[s.category] ?? (s.ownerRole ? OWNER_NOTE[s.ownerRole] : undefined);
 
 type Cols = Record<string, string[]>;
 

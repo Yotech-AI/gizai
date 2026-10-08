@@ -287,7 +287,8 @@ pub struct AgentInput {
     pub instructions_md: Option<String>,
     pub permission_mode: String,
     pub allowed_tools: Vec<String>,
-    /// "manual" | "on_assign" | "heartbeat"
+    /// The Team Lead's old wake-up ("manual" | "on_assign" | "heartbeat"). Worker agents have none: the columns they are on
+    /// decide when they start (`columns`), so it changes nothing for them.
     pub wakeup: String,
     pub heartbeat_minutes: Option<i64>,
     pub budget_usd_micros: Option<i64>,
@@ -306,7 +307,6 @@ pub struct AgentInput {
     pub folders: Option<Vec<crate::folders::Folder>>,
 }
 
-/// "When a card has label <match_name>" or "enters column <match_name>" → the first idle agent with `target_role`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RuleInput {

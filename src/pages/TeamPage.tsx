@@ -5,7 +5,7 @@ import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { relTime } from "../lib/format";
-import { ROLES, roleLabel, wakeupLabel } from "../lib/agents";
+import { wakeupLabel } from "../lib/agents";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { useDrawer } from "../lib/drawers";
 import type { Member, StateCategory, Team, WorkflowState } from "../types";
@@ -13,16 +13,16 @@ import { Avatar } from "../components/Avatar";
 import { CATEGORIES, CATEGORY_NAMES, StatusIcon } from "../components/StatusIcon";
 import { Drawer } from "../components/Drawer";
 import { Field, FormSection } from "../components/Form";
-import { RulesEditor } from "../components/RulesEditor";
 import { OrgChart } from "../components/OrgChart";
 import { useChatLive } from "../components/chat/useChat";
 
-/** Who works a column, from its owner role: "implementer" (by label), a role key, "human" (you); none = anyone. */
-function workedBy(role: string | null | undefined): string {
-  if (!role) return "Anyone";
-  if (role === "implementer") return "The agent matching the label";
-  if (role === "human") return "You";
-  return role === "lead" ? roleLabel(role) : `${roleLabel(role)} agent`;
+/** Who works a column: you in Review, else its agents, Auto or Manual. */
+function workedBy(s: WorkflowState, members: Member[]): string {
+  if (s.category === "review") return "You review and merge";
+  if (["backlog", "done", "cancelled"].includes(s.category)) return "Nobody: no agents here";
+  const names = (s.agentIds ?? []).map((id) => members.find((m) => m.actorId === id)?.name ?? "a removed agent");
+  if (s.auto) return names.length ? `Auto: ${names.join(", ")}` : "Auto, but no agent is on it";
+  return names.length ? `Manual: Run starts ${names[0]}` : "Manual: press Run and pick an agent";
 }
 
 const HINTS: Record<string, string> = {
@@ -33,7 +33,7 @@ const HINTS: Record<string, string> = {
   done: "Only people move cards here",
 };
 
-function Stage({ s, onError }: { s: WorkflowState; onError: (m: string) => void }) {
+function Stage({ s, members, onError }: { s: WorkflowState; members: Member[]; onError: (m: string) => void }) {
   const [name, setName] = useState(s.name);
   useEffect(() => setName(s.name), [s.name]);
   const save = () => { const n = name.trim(); if (!n) setName(s.name); else if (n !== s.name) renameState(s.id, n).catch((e) => { setName(s.name); onError(String(e)); }); };
@@ -43,16 +43,13 @@ function Stage({ s, onError }: { s: WorkflowState; onError: (m: string) => void 
         <input className="stage-name" aria-label={`Rename ${s.name}`} value={name} onChange={(e) => setName(e.target.value)} onBlur={save}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setName(s.name); (e.target as HTMLInputElement).blur(); } }} />
       </div>
-      <div className="by">{s.category === "deploy" ? "You (deploy, or press Run for the DevOps Agent)" : workedBy(s.ownerRole)}</div>
+      <div className="by">{workedBy(s, members)}</div>
       <div className="lim">{HINTS[s.category] ?? ""}</div>
     </div>
   );
 }
 
-/** Who usually works a new column of this type (as in the usual columns). A Deploy column is always yours. */
-const USUAL_WORKER: Partial<Record<StateCategory, string>> = { ready: "implementer", in_progress: "implementer", testing: "qa", review: "human", deploy: "human" };
-
-/** Add column: its name, the column it goes after, its type (what the column does) and who works it. */
+/** Add column: its name, the column it goes after and its type (what the column does). It starts Manual, without agents. */
 function AddColumn({ team, onAdded, onCancel }: { team: Team; onAdded: () => void; onCancel: () => void }) {
   const states = [...team.states].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
   const firstType: StateCategory = states.some((s) => s.category === "deploy") ? "ready" : "deploy";
@@ -62,16 +59,12 @@ function AddColumn({ team, onAdded, onCancel }: { team: Team; onAdded: () => voi
     return (states.find((s) => s.category === "review") ?? open[open.length - 1] ?? states[states.length - 1])?.id ?? "";
   });
   const [category, setCategory] = useState<StateCategory>(firstType);
-  const [worker, setWorker] = useState(USUAL_WORKER[firstType] ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const teamRoles = team.members.filter((m) => m.kind === "agent").map((m) => m.roleKey);
-  const roles = [...new Set([...ROLES, ...teamRoles])].filter((r) => r !== "lead");
-  const deploy = category === "deploy";
   const add = async () => {
     setBusy(true); setErr(null);
     try {
-      await addState(team.id, name.trim() || CATEGORY_NAMES[category], after, category, deploy ? "human" : worker || null);
+      await addState(team.id, name.trim() || CATEGORY_NAMES[category], after, category);
       onAdded();
     } catch (e) { setErr(String(e)); setBusy(false); }
   };
@@ -86,22 +79,9 @@ function AddColumn({ team, onAdded, onCancel }: { team: Team; onAdded: () => voi
         </select>
         <span>type</span>
         <select className="select" aria-label="Column type" value={category}
-          onChange={(e) => { const c = e.target.value as StateCategory; setCategory(c); setWorker(USUAL_WORKER[c] ?? ""); }}>
+          onChange={(e) => setCategory(e.target.value as StateCategory)}>
           {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_NAMES[c]}</option>)}
         </select>
-        <span>worked by</span>
-        {deploy ? (
-          <select className="select" aria-label="Worked by" value="human" disabled title="A Deploy column is always worked by you">
-            <option value="human">{workedBy("human")}</option>
-          </select>
-        ) : (
-          <select className="select" aria-label="Worked by" value={worker} onChange={(e) => setWorker(e.target.value)}>
-            <option value="">{workedBy(null)}</option>
-            <option value="implementer">{workedBy("implementer")}</option>
-            {roles.map((r) => <option key={r} value={r}>{workedBy(r)}</option>)}
-            <option value="human">{workedBy("human")}</option>
-          </select>
-        )}
         <span className="grow" />
         <button className="btn ghost" onClick={onCancel}>Cancel</button>
         <button className="btn primary" disabled={busy || !after} onClick={add}><Plus className="icon" />Add column</button>
@@ -196,10 +176,9 @@ export function TeamPage() {
           <section>
             <div className="section-head"><h3>Workflow</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>Click a column name to rename it</span>
               {!addingColumn && <button className="btn ghost sm" style={{ marginLeft: "auto" }} onClick={() => setAddingColumn(true)}><Plus className="icon" />Add column</button>}</div>
-            <div className="flow">{states.map((s) => <Stage key={s.id} s={s} onError={setErr} />)}</div>
+            <div className="flow">{states.map((s) => <Stage key={s.id} s={s} members={team.members} onError={setErr} />)}</div>
             {addingColumn && <AddColumn key={team.id} team={team} onAdded={() => { setAddingColumn(false); reload(); }} onCancel={() => setAddingColumn(false)} />}
           </section>
-          <RulesEditor team={team} onError={setErr} />
         </div>
       </div>
       {newTeam && <NewTeamDrawer onClose={() => setNewTeam(false)} onCreated={(id) => { setNewTeam(false); setTeamId(id); }} />}

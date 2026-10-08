@@ -112,7 +112,7 @@ async fn a_failing_setup_command_holds_the_card_blocked_and_is_not_a_failed_run(
 }
 
 #[tokio::test]
-async fn a_failing_setup_on_a_heartbeat_puts_the_card_on_hold_and_the_agent_moves_on() {
+async fn a_failing_setup_on_a_start_by_the_queue_puts_the_card_on_hold_and_the_agent_moves_on() {
     let tmp = tempfile::tempdir().unwrap();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
@@ -120,9 +120,7 @@ async fn a_failing_setup_on_a_heartbeat_puts_the_card_on_hold_and_the_agent_move
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
     set_prepare(&st, &[], true, "echo 'composer: command not found' >&2; exit 127");
     let agent = gizai_core::team::all_agents(&st.db).unwrap()[0].1.clone();
-    gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, gizai_core::model::AgentInput {
-        name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(5), ..Default::default() }).unwrap();
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await.is_empty());
+    assert!(gizai_lib::runs::pull(&st).await.is_empty());
     let t = gizai_core::tasks::get(&st.db, &task).unwrap();
     assert_eq!(t.hold.as_deref(), Some("blocked"));
     assert!(t.hold_reason.as_deref().unwrap_or("").contains("command not found"), "{:?}", t.hold_reason);
@@ -217,6 +215,10 @@ async fn settings_data_lists_and_removes_the_worktrees_of_finished_cards() {
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let ids: Vec<String> = (0..3).map(|_| gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend")).collect();
+    // Each card is started here: To do is Manual, so the queue doesn't start the next one on its own as a run ends.
+    let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
+    let todo = gizai_core::team::get(&st.db, &team_id).unwrap().states.into_iter().find(|s| s.category == "ready").unwrap().id;
+    gizai_core::columns::set_column(&st.db, &st.you_id, &todo, gizai_core::columns::ColumnInput { auto: Some(false), ..Default::default() }).unwrap();
     for t in &ids {
         gizai_lib::runs::run_once(&st, t, None, Some(FAKE.into())).await.unwrap();
     }

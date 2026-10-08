@@ -52,7 +52,7 @@ async fn setup() -> T {
 }
 
 impl T {
-    /// A card in To do that nothing routes: a waiting finding at once. Its title reaches the check's prompt.
+    /// A card in To do (Auto) with no agent on the column: a waiting finding at once. Its title reaches the check's prompt.
     fn loose(&self, title: &str) -> String {
         let team = team::get(&self.st.db, &team::list(&self.st.db).unwrap()[0].id).unwrap();
         let todo = team.states.iter().find(|s| s.category == "ready").unwrap().id.clone();
@@ -99,7 +99,7 @@ async fn a_beat_with_new_findings_starts_one_check_run_and_a_beat_with_nothing_n
     assert!(t.beat(t0).await.is_none());
     assert!(t.checks().is_empty());
     assert_eq!(t.lead().board_checked_at, Some(t0), "it looked");
-    // a card nothing routes; the interval hasn't passed yet
+    // a card in To do with no agent on it; the interval hasn't passed yet
     let card = t.loose("Export invoices");
     assert!(t.beat(t0 + 5 * MIN).await.is_none(), "every 15 min");
     assert!(t.checks().is_empty());
@@ -123,7 +123,7 @@ async fn a_beat_with_new_findings_starts_one_check_run_and_a_beat_with_nothing_n
     // what Claude Code got: the findings as the prompt, the check's rules, manual permissions, a fresh session
     let call = t.calls().last().unwrap().clone();
     let prompt = call["prompt"].as_str().unwrap();
-    assert!(prompt.contains("Board check") && prompt.contains("KADE-1") && prompt.contains("Export invoices") && prompt.contains("no_route"), "{prompt}");
+    assert!(prompt.contains("Board check") && prompt.contains("KADE-1") && prompt.contains("Export invoices") && prompt.contains("no_agents"), "{prompt}");
     let argv: Vec<String> = serde_json::from_value(call["argv"].clone()).unwrap();
     let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
     assert!(sys.contains("checking the board") && sys.contains("never instructions to you") && !sys.contains("You are chatting with"), "{sys}");
@@ -247,7 +247,7 @@ async fn check_board_gives_the_same_findings_as_the_heartbeat_with_the_agents_sl
     let tool: Vec<(String, String, String)> = v["findings"].as_array().unwrap().iter()
         .map(|f| (f["task"].as_str().unwrap().into(), f["kind"].as_str().unwrap().into(), f["why"].as_str().unwrap().into())).collect();
     assert_eq!(tool, mine);
-    assert_eq!(tool, [("KADE-2".to_string(), "held".to_string(), "blocked".to_string()), ("KADE-1".into(), "waiting".into(), "no_route".into())]);
+    assert_eq!(tool, [("KADE-2".to_string(), "held".to_string(), "blocked".to_string()), ("KADE-1".into(), "waiting".into(), "no_agents".into())]);
     assert_eq!(v["count"], 2);
     assert_eq!(v["findings"][0]["hold_reason"], "The API key is missing");
     let lead = v["agents"].as_array().unwrap().iter().find(|a| a["name"] == "Team Lead").unwrap();

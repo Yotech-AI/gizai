@@ -46,7 +46,8 @@ pub fn slots_json(st: &AppState) -> Value {
     let agents: Vec<Value> = team::all_agents(&st.db).unwrap_or_default().into_iter().map(|(_, m)| {
         let mine: Vec<String> = live.iter().filter(|r| r.agent_id == m.actor_id).map(|r| ident(&r.task_id)).collect();
         json!({
-            "name": m.name, "role": m.role_key, "status": m.status, "wakeup": m.wakeup, "cards_at_once": m.max_runs, "working_on": mine,
+            "name": m.name, "role": m.role_key, "status": m.status, "columns": gizai_core::columns::of_agent(&st.db, &m.actor_id).unwrap_or_default(),
+            "cards_at_once": m.max_runs, "working_on": mine,
             "free_slots": (m.max_runs.max(1) - mine.len() as i64).max(0), "pull_paused": crate::runs::pull_paused(st, &m.actor_id),
         })
     }).collect();

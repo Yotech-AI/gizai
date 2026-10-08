@@ -107,30 +107,22 @@ pub fn record(db: &Db, actor: Option<&str>, task_id: &str, url: &str, state: &st
     })
 }
 
-/// GitHub merged the card's pull request: records it and moves the card to its team's Deploy column (merged, not
-/// deployed yet), or to Done when the team has no Deploy column. A card that is already in Deploy, Done or Cancelled
-/// stays. Nothing starts on it: no agent picks up a Deploy card by itself. The activity says Gizai did it; `by` is the
-/// person it did it for (the card's `updated_by`). Returns the column it moved to.
+/// GitHub merged the card's pull request: records it and moves a card in Review to Review's next column (without one,
+/// to the team's first Deploy column, else Done; a card in another open column goes there too). A card that is already
+/// in Deploy, Done or Cancelled stays. On an Auto column its agents pick it up (the caller pulls the queue); on a
+/// Manual one nothing starts. The activity says Gizai did it; `by` is the person it did it for (the card's
+/// `updated_by`). Returns the column it moved to.
 pub fn merged(db: &Db, by: &str, task_id: &str, url: &str) -> Result<Option<String>> {
     db.write(None, |w| {
         let c = w.conn();
-        let (category, team): (String, String) = c
-            .query_row("SELECT s.category, s.team_id FROM tasks t JOIN workflow_states s ON s.id = t.state_id WHERE t.id=?1 AND t.deleted_at IS NULL",
-                       [task_id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .optional()?
-            .ok_or_else(|| Error::NotFound(format!("task {task_id}")))?;
+        let exists: i64 = c.query_row("SELECT count(*) FROM tasks WHERE id=?1 AND deleted_at IS NULL", [task_id], |r| r.get(0))?;
+        if exists == 0 {
+            return Err(Error::NotFound(format!("task {task_id}")));
+        }
         c.execute("UPDATE tasks SET pr_url=?2, pr_state='merged', updated_at=?3, updated_by=?4, version=version+1 WHERE id=?1",
                   rusqlite::params![task_id, url, ids::now_ms(), by])?;
         w.update("tasks", task_id, json!({"pullRequest": url, "prState": "merged"}))?;
-        if matches!(category.as_str(), "deploy" | "done" | "cancelled") {
-            return Ok(None);
-        }
-        let to: Option<(String, String)> = c
-            .query_row("SELECT id, name FROM workflow_states WHERE team_id=?1 AND category IN ('deploy','done') AND deleted_at IS NULL
-                        ORDER BY category = 'done', sort_key LIMIT 1",
-                       [&team], |r| Ok((r.get(0)?, r.get(1)?)))
-            .optional()?;
-        let Some((to_id, name)) = to else { return Ok(None) };
+        let Some((to_id, name)) = crate::workflow::merge_target(c, task_id)? else { return Ok(None) };
         tasks::move_in(w, by, task_id, &to_id, None)?;
         Ok(Some(name))
     })

@@ -219,13 +219,15 @@ async fn unknown_names_say_what_exists() {
 #[tokio::test]
 async fn create_and_update_an_agent_and_pause_it() {
     let t = setup();
-    let r = t.ok("create_agent", json!({"name": "Frontend Agent", "role": "frontend", "wakeup": "heartbeat", "heartbeat_minutes": 30, "monthly_budget_usd": 25})).await;
+    // GA-49: wake-up and heartbeat are gone from the agent tools; an agent shows the columns it is on
+    let r = t.ok("create_agent", json!({"name": "Frontend Agent", "role": "frontend", "monthly_budget_usd": 25})).await;
     assert_eq!(r["link"]["page"], "agent");
+    assert_eq!(r["agent"]["columns"], json!(["To do", "In progress"]), "a builder lands on its role's usual columns");
     t.ok("update_agent", json!({"agent": "frontend agent", "model": "sonnet"})).await;
     let a = t.ok("get_agent", json!({"agent": "Frontend Agent"})).await;
     assert_eq!(a["agent"]["model"], "sonnet");
-    assert_eq!(a["agent"]["wakeup"], "heartbeat");
-    assert_eq!(a["agent"]["heartbeat_minutes"], 30);
+    assert_eq!(a["agent"]["columns"], json!(["To do", "In progress"]));
+    assert!(a["agent"].get("wakeup").is_none() && a["agent"].get("heartbeat_minutes").is_none(), "{a}");
     assert_eq!(a["agent"]["monthly_budget_usd"], 25.0);
     assert!(a["agent"]["instructions_md"].as_str().unwrap().contains("Frontend Agent"));
     t.ok("set_agent_status", json!({"agent": "Frontend Agent", "status": "paused"})).await;
@@ -239,12 +241,16 @@ async fn create_and_update_an_agent_and_pause_it() {
 }
 
 #[tokio::test]
-async fn routing_rules_and_the_workflow_read_back() {
+async fn a_columns_setup_and_the_workflow_read_back() {
+    // GA-49: routing rules are gone; a column's agents, Auto or Manual and next column are set and read back.
     let t = setup();
-    t.ok("add_routing_rule", json!({"kind": "label", "match": "backend", "role": "backend", "priority": 10})).await;
+    t.ok("create_agent", json!({"name": "Backend Agent", "role": "backend"})).await;
+    t.ok("set_column", json!({"column": "Testing", "agents": ["Backend Agent"], "auto": false})).await;
     let w = t.ok("get_workflow", json!({})).await;
-    assert_eq!(w["columns"].as_array().unwrap().len(), 6);
-    assert!(w["rules"][0].as_str().unwrap().contains("backend"));
+    assert_eq!(w["columns"].as_array().unwrap().len(), 7);
+    let testing = w["columns"].as_array().unwrap().iter().find(|c| c["name"] == "Testing").cloned().unwrap();
+    assert_eq!((&testing["agents"], &testing["start"], &testing["next"]), (&json!(["Backend Agent"]), &json!("manual"), &json!("Review")));
+    assert!(w.get("rules").is_none(), "{w}");
 }
 
 #[tokio::test]
@@ -497,25 +503,29 @@ async fn the_testing_switch_is_set_and_shown_by_the_task_tools() {
 }
 
 #[tokio::test]
-async fn the_team_lead_adds_a_deploy_column_after_review_and_no_column_rule_for_it() {
+async fn the_team_lead_adds_a_deploy_column_after_review_and_it_comes_in_manual_without_agents() {
+    // GA-49: the seed has Deploy already; a column added from chat is Manual, with no agents and no next column, unless
+    // the tool sets it up. Routing rules are gone.
     let t = setup();
-    let r = t.ok("add_column", json!({"name": "Deploy", "after": "review", "category": "deploy", "worked_by": "qa"})).await;
-    assert_eq!(r["columns"], json!(["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Done"]));
+    let r = t.ok("add_column", json!({"name": "Release", "after": "review", "category": "deploy"})).await;
+    assert_eq!(r["columns"][5], "Release: Manual: press Run on a card and pick an agent", "{r}");
     let w = t.ok("get_workflow", json!({})).await;
-    let deploy = w["columns"].as_array().unwrap().iter().find(|c| c["name"] == "Deploy").cloned().unwrap();
-    assert_eq!(deploy["category"], "deploy");
-    assert_eq!(deploy["worked_by"], "you (deploy, or press Run for the DevOps Agent)");
+    let names = |w: &Value| w["columns"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(names(&w), ["Backlog", "To do", "In progress", "Testing", "Review", "Release", "Deploy", "Done"]);
+    let release = w["columns"].as_array().unwrap().iter().find(|c| c["name"] == "Release").cloned().unwrap();
+    assert_eq!((&release["kind"], &release["agents"], &release["start"], &release["next"]), (&json!("deploy"), &json!([]), &json!("manual"), &Value::Null));
     let team_id = team::list(&t.st.db).unwrap()[0].id.clone();
-    let state = team::get(&t.st.db, &team_id).unwrap().states.into_iter().find(|s| s.name == "Deploy").unwrap();
-    assert_eq!(state.owner_role.as_deref(), Some("human"), "a Deploy column is always yours");
-    // a name in use is refused, and so is a column rule on Deploy
+    let state = team::get(&t.st.db, &team_id).unwrap().states.into_iter().find(|s| s.name == "Release").unwrap();
+    assert_eq!((state.category.as_str(), state.auto, state.agent_ids.len(), state.next_state_id), ("deploy", false, 0, None));
+    // a name in use is refused, and there is no routing rule tool any more
     let err = t.call("add_column", json!({"name": "deploy", "after": "Done", "category": "done"})).await.unwrap_err();
     assert!(err.contains("already has a column called deploy"), "{err}");
     let err = t.call("add_routing_rule", json!({"kind": "column", "match": "Deploy", "role": "devops"})).await.unwrap_err();
-    assert!(err.contains("Deploy column"), "{err}");
-    // other columns: a role, or you
-    t.ok("add_column", json!({"name": "Staging", "after": "Review", "category": "review", "worked_by": "you"})).await;
+    assert!(err.contains("unknown tool"), "{err}");
+    // other columns: a review column for people
+    t.ok("add_column", json!({"name": "Staging", "after": "Review", "category": "review"})).await;
     let states = team::get(&t.st.db, &team_id).unwrap().states;
-    assert_eq!(states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Staging", "Deploy", "Done"]);
-    assert_eq!(states.iter().find(|s| s.name == "Staging").unwrap().owner_role.as_deref(), Some("human"));
+    assert_eq!(states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Staging", "Release", "Deploy", "Done"]);
+    let staging = states.iter().find(|s| s.name == "Staging").unwrap();
+    assert_eq!((staging.auto, staging.agent_ids.len()), (false, 0));
 }

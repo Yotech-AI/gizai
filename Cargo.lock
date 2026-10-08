@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "gizai"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "gizai-agents",
  "gizai-core",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-agents"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serde",
@@ -1325,7 +1325,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-core"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "rusqlite",
  "rusqlite_migration",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-mcp"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "serde_json",
  "tempfile",

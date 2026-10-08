@@ -157,7 +157,8 @@ pub fn plan(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: b
             return Err(format!("{what} is in progress in {name}: nothing changed. Finish or abort it first"));
         }
     }
-    let changed: Vec<String> = git(dir, &["status", "--porcelain", "--untracked-files=no"]).map_err(said)?
+    // --no-optional-locks: a check that refuses doesn't even refresh the folder's index
+    let changed: Vec<String> = git(dir, &["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"]).map_err(said)?
         .lines().filter(|l| l.len() > 3).map(|l| l[3..].to_string()).collect();
     if !changed.is_empty() {
         let shown = if changed.len() > 10 {

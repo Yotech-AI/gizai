@@ -43,6 +43,8 @@ pub struct Copies {
     folders: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
     /// Linked folders an update runs in.
     updating: Mutex<HashSet<PathBuf>>,
+    /// `FETCH_EVERY` and `TURN_WAIT`, unless a test changed them (`set_timing`).
+    timing: Mutex<Option<(Duration, Duration)>>,
 }
 
 /// What one chat has been told.
@@ -78,6 +80,16 @@ struct Last {
 impl Copies {
     fn slot(&self, key: &str) -> Arc<Slot> {
         self.slots.lock().unwrap().entry(key.to_string()).or_default().clone()
+    }
+
+    /// For tests: how long a fetch counts as fresh (else `FETCH_EVERY`), and how long a turn waits (else `TURN_WAIT`).
+    #[doc(hidden)]
+    pub fn set_timing(&self, fetch_every: Duration, turn_wait: Duration) {
+        *self.timing.lock().unwrap() = Some((fetch_every, turn_wait));
+    }
+
+    fn timing(&self) -> (Duration, Duration) {
+        self.timing.lock().unwrap().unwrap_or((FETCH_EVERY, TURN_WAIT))
     }
 }
 
@@ -140,7 +152,8 @@ pub async fn startup(st: &AppState) {
 pub async fn before_turn(st: &AppState, thread_id: &str) -> ForTurn {
     let list = projects_with_code(st);
     tidy(st, &list).await;
-    let deadline = tokio::time::Instant::now() + TURN_WAIT;
+    let wait = st.code.timing().1;
+    let deadline = tokio::time::Instant::now() + wait;
     let jobs: Vec<_> = list.iter().map(|p| tokio::spawn(refresh(st.clone(), p.clone()))).collect();
     let mut found = vec![];
     for (p, job) in list.into_iter().zip(jobs) {
@@ -166,7 +179,7 @@ pub async fn before_turn(st: &AppState, thread_id: &str) -> ForTurn {
         if at.is_some() && dir.join(".git").exists() {
             out.dirs.push(dir.display().to_string());
         }
-        said.push(copy_said(&p.key, at.as_ref(), last, *late));
+        said.push(copy_said(&p.key, at.as_ref(), last, late.then_some(wait)));
         // a chat hears about a linked folder on its first turn and when that changes, not on every turn
         match &last.folder {
             Some(Some(note)) if heard.notes.get(&p.key) != Some(note) => {
@@ -214,10 +227,11 @@ fn folder_note(key: &str, dir: &Path, default_branch: &str, s: &checkout::Status
             dir.display(), deps.join(", "), s.behind, plural(s.behind))
 }
 
-/// One copy in the turn's line: "GA 319bf0b (2026-10-07)", and why it couldn't be refreshed or made.
-fn copy_said(key: &str, at: Option<&At>, last: &Last, late: bool) -> String {
-    let why = if late {
-        Some(format!("not refreshed: still at it after {} s", TURN_WAIT.as_secs()))
+/// One copy in the turn's line: "GA 319bf0b (2026-10-07)", and why it couldn't be refreshed or made. `late`: the
+/// refresh was still running when the turn stopped waiting for it (after this long).
+fn copy_said(key: &str, at: Option<&At>, last: &Last, late: Option<Duration>) -> String {
+    let why = if let Some(waited) = late {
+        Some(format!("couldn't be refreshed: still fetching after {} s", waited.as_secs()))
     } else {
         last.failed.as_deref().or(last.fetch_failed.as_deref()).map(|w| format!("couldn't be refreshed: {}", one_line(w)))
     };
@@ -252,12 +266,15 @@ async fn refresh(st: AppState, p: Project) -> Last {
     let _busy = slot.busy.lock().await;
     let mut last = slot.last.lock().unwrap().clone();
     let fetch = match last.fetched {
-        Some(t) if t.elapsed() < FETCH_EVERY => None,
+        Some(t) if t.elapsed() < st.code.timing().0 => None,
         _ if p.repo_url.is_some() => Some(FETCH_LIMIT),
         _ => None,
     };
     let dir = dir_of(&st, &p.key);
-    match tokio::task::spawn_blocking(move || refresh_blocking(&p, &dir, fetch)).await {
+    // a folder being updated is half-way (an install removes node_modules/ first): it is looked at again next time
+    let look = p.repo_path.as_deref().map(Path::new).and_then(|r| r.canonicalize().ok())
+        .is_some_and(|r| !st.code.updating.lock().unwrap().contains(&r));
+    match tokio::task::spawn_blocking(move || refresh_blocking(&p, &dir, fetch, look)).await {
         Ok(r) => {
             if fetch.is_some() {
                 last.fetched = Some(Instant::now());
@@ -279,9 +296,9 @@ struct Refreshed {
     folder: Option<Option<String>>,
 }
 
-/// Fetches when `fetch` gives a time limit, then makes or moves the copy at `dir`, and looks at the project's linked
-/// folder (locally). A failed fetch still moves the copy to main as last fetched.
-fn refresh_blocking(p: &Project, dir: &Path, fetch: Option<Duration>) -> Refreshed {
+/// Fetches when `fetch` gives a time limit, then makes or moves the copy at `dir`, and with `look` looks at the
+/// project's linked folder (locally). A failed fetch still moves the copy to main as last fetched.
+fn refresh_blocking(p: &Project, dir: &Path, fetch: Option<Duration>, look: bool) -> Refreshed {
     let repo = PathBuf::from(p.repo_path.clone().unwrap_or_default());
     let mut fetch_failed = None;
     if let Some(limit) = fetch
@@ -291,7 +308,7 @@ fn refresh_blocking(p: &Project, dir: &Path, fetch: Option<Duration>) -> Refresh
     }
     let start = crate::git::start_point(p, &repo, None);
     let failed = start.as_ref().map_err(|e| e.to_string()).and_then(|s| copies::sync(&repo, dir, s).map_err(plain)).err();
-    let folder = start.ok().and_then(|s| checkout::status(&repo, &p.default_branch, &s).ok())
+    let folder = start.ok().filter(|_| look).and_then(|s| checkout::status(&repo, &p.default_branch, &s).ok())
         .map(|s| s.outdated().then(|| folder_note(&p.key, &repo, &p.default_branch, &s)));
     Refreshed { fetch_failed, failed, folder }
 }

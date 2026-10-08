@@ -398,12 +398,34 @@ use crate::chat;
 pub fn list_chat_threads(st: State<AppState>) -> R<Vec<gizai_core::chat::ChatThread>> { gizai_core::chat::list_threads(&st.db).map_err(e) }
 #[tauri::command]
 pub fn chat_messages(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::ChatMessage>> { gizai_core::chat::messages(&st.db, &thread_id).map_err(e) }
-/// Sends a message (in a new thread when `thread_id` is None) and starts the Team Lead's answer. Returns the thread id.
+/// Sends a message (in a new thread when `thread_id` is None, which runs on `cli` when one was picked under the text box)
+/// and starts the Team Lead's answer; while it is answering in the thread, the message is queued. Returns the thread id.
 #[tauri::command]
-pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String) -> R<String> {
-    let (id, _done) = chat::send(&st, thread_id, text, None).await?;
+pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String, cli: Option<String>) -> R<String> {
+    let (id, _done) = chat::send_on(&st, thread_id, text, cli, None).await?;
     Ok(id)
 }
+/// The chat's queued messages: they wait while the Team Lead answers.
+#[tauri::command]
+pub fn chat_queue(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::QueuedMessage>> { chat::queue(&st, &thread_id) }
+#[tauri::command]
+pub fn edit_queued_chat(st: State<AppState>, id: String, text: String) -> R<gizai_core::chat::QueuedMessage> { chat::edit_queued(&st, &id, &text) }
+#[tauri::command]
+pub fn remove_queued_chat(st: State<AppState>, id: String) -> R<()> { chat::remove_queued(&st, &id) }
+/// Send now: the chat's queued messages go together (after the answer being written, if there is one).
+#[tauri::command]
+pub async fn send_chat_queue(st: State<'_, AppState>, thread_id: String) -> R<()> { chat::send_queue(&st, &thread_id, None).await.map(|_| ()) }
+/// Runs on under the text box: the chat's next answers run on `cli` (None: on the Team Lead's Runs on).
+#[tauri::command]
+pub fn set_chat_cli(st: State<AppState>, thread_id: String, cli: Option<String>) -> R<gizai_core::chat::ChatThread> { chat::set_cli(&st, &thread_id, cli.as_deref()) }
+/// Answer on <CLI> under a usage-limit note: the chat moves to `cli` and the message goes again there.
+#[tauri::command]
+pub async fn answer_chat_on(st: State<'_, AppState>, thread_id: String, cli: String, note_id: String) -> R<()> {
+    chat::answer_on(&st, &thread_id, &cli, &note_id, None).await.map(|_| ())
+}
+/// The coding CLIs Runs on lists under the chat's text box, with why one can't run the chat.
+#[tauri::command]
+pub fn chat_clis(st: State<AppState>) -> R<Vec<chat::ChatCli>> { chat::clis(&st) }
 #[tauri::command]
 pub fn stop_chat(st: State<AppState>, thread_id: String) { chat::stop(&st, &thread_id) }
 /// Chat answers being written right now, with their text so far.

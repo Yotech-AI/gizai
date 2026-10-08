@@ -15,6 +15,7 @@ import type { DayStat, Run } from "../types";
 import { Avatar } from "../components/Avatar";
 import { MarkdownView } from "../components/MarkdownView";
 import { outcomeBadge } from "../components/RunPanel";
+import { RunHistory } from "../components/RunHistory";
 
 const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat", board_check: "Board check", nudge: "Continue" };
 const md = (ms: number) => { const d = new Date(ms); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
@@ -139,6 +140,13 @@ export function AgentPage({ id }: { id: string }) {
               {runs && runs.length === 0 && <div className="panel-row faint">No runs yet.</div>}
             </div>
           </section>
+
+          {(runs ?? []).some((r) => r.trigger === "board_check") && (
+            <section>
+              <div className="section-head"><h3>Board checks</h3></div>
+              <RunHistory runs={(runs ?? []).filter((r) => r.trigger === "board_check")} />
+            </section>
+          )}
 
           <section>
             <div className="section-head"><h3>Instructions</h3><button className="link" onClick={() => open({ kind: "agent", id })}>Edit</button></div>

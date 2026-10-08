@@ -316,3 +316,117 @@ fn new_agents_start_with_the_longer_list_and_the_two_lists_are_the_same() {
     unique.dedup();
     assert_eq!(unique.len(), rust.len(), "no rule twice");
 }
+
+// ---- QA (GA-48): an agent's own list, the other CLIs' prompts, an answered Continue, refusals before a Stop ----
+
+/// A copy of the fake `claude` whose runs end asking for a decision (needs_decision), so an answered Continue can follow.
+fn asking_claude(dir: &Path) -> String {
+    let d = dir.join("fake-asks");
+    std::fs::create_dir_all(d.join("fixtures")).unwrap();
+    let src = Path::new(FAKE_CLAUDE).parent().unwrap().join("fixtures");
+    let run = std::fs::read_to_string(src.join("run-ok.jsonl")).unwrap().replace("ready_for_testing", "needs_decision");
+    std::fs::write(d.join("fixtures/run-ok.jsonl"), run).unwrap();
+    std::fs::copy(src.join("models-init.jsonl"), d.join("fixtures/models-init.jsonl")).unwrap();
+    // copied by a child, so this process never holds a script open for writing (ETXTBSY)
+    assert!(Command::new("cp").arg(FAKE_CLAUDE).arg(d.join("fake-claude.sh")).status().unwrap().success());
+    d.join("fake-claude.sh").to_string_lossy().into_owned()
+}
+
+/// The agent's own list (not Gizai's default one) with a command the default list doesn't have.
+fn own_list() -> AgentInput {
+    AgentInput { allowed_tools: vec!["Bash(make test:*)".into(), "Bash(git status:*)".into()], ..Default::default() }
+}
+
+fn section(p: &str) -> &str {
+    &p[p.find("## How this run works").unwrap_or_else(|| panic!("no section in {p}"))..]
+}
+
+#[tokio::test]
+async fn an_answered_continue_also_ends_with_how_this_run_works_with_the_agents_own_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let cli = add_cli(&st, "Claude Code (asks)", "claude_code", &asking_claude(tmp.path()), &["FAKE_TEMP=1"]);
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    put_agent_on(&st, &cli, own_list());
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    assert_eq!(s.outcome.as_deref(), Some("needs_decision"), "{:?}", s.error);
+    gizai_core::comments::add(&st.db, &st.you_id, &task, "Use JSON, please", None).unwrap();
+    let (id, done) = gizai_lib::runs::continue_answered(&st, &s.run_id).await.unwrap();
+    done.await.unwrap();
+    let first = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    let answered = gizai_core::runs::get(&st.db, &id).unwrap();
+    let temp = temp_of(&first).display().to_string();
+    let p = prompt_of(&answered);
+    assert!(p.contains("ended asking for a decision") && p.contains("Use JSON, please"), "the answered prompt: {p}");
+    for (which, p) in [("new", prompt_of(&first)), ("answered", p.clone())] {
+        let sec = section(&p);
+        for want in ["Nobody can approve anything", "`make test`", "`git status`", &format!("`{temp}`"), "don't try other spellings"] {
+            assert!(sec.contains(want), "{which}: {want} missing in {sec}");
+        }
+        // the agent's own list, not Gizai's default one
+        for not in ["`cargo`", "`jq`", "`npm`"] {
+            assert!(!sec.contains(not), "{which}: {not} is not in the agent's list: {sec}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn codex_gemini_and_other_prompts_end_with_how_this_run_works_with_only_what_holds_for_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    for (name, kind) in [("Codex", "codex"), ("Gemini", "gemini"), ("Plain", "other")] {
+        let cli = add_cli(&st, name, kind, FAKE_CLI, &[&format!("FAKE_KIND={kind}"), "FAKE_TEMP=1"]);
+        let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+        put_agent_on(&st, &cli, own_list());
+        let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+        assert_eq!(s.status, "succeeded", "{name}: {:?}", s.error);
+        let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+        let p = prompt_of(&run);
+        let sec = section(&p);
+        let temp = temp_of(&run).display().to_string();
+        assert_eq!(p.matches("## How this run works").count(), 1, "{name}: {p}");
+        for want in ["Nobody can approve anything during this run", &format!("`{temp}`"), "never in `/tmp`", "don't try other spellings"] {
+            assert!(sec.contains(want), "{name}: {want} missing in {sec}");
+        }
+        // Claude Code's shell rules and its Write tool are Claude Code's only
+        for not in ["`$(…)`", "backticks", "`<<EOF`", "Write tool", "write this path, not `$TMPDIR`"] {
+            assert!(!sec.contains(not), "{name}: {not} in {sec}");
+        }
+        // only Gemini is given the agent's commands; Codex's sandbox decides and another CLI gets none
+        assert_eq!(sec.contains("`make test`"), kind == "gemini", "{name}: {sec}");
+    }
+}
+
+#[tokio::test]
+async fn refusals_before_a_stop_stay_on_the_run_and_get_task_returns_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    gizai_core::settings::set(&st.db, "claude_bin", &FAKE_CLAUDE.to_string()).unwrap();
+    let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
+    let lead = gizai_core::team::add_agent(&st.db, &st.you_id, &team_id, AgentInput {
+        name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true), ..Default::default() }).unwrap();
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    // Claude Code refuses four calls (a permission_denied line each), then the run is stopped before its result line
+    describe(&st, &task, "FAKE_REFUSED_THEN_HANG");
+    let (run_id, done) = gizai_lib::runs::start(&st, &task, None, None, "manual").await.unwrap();
+    use gizai_agents::stream::RunEvent;
+    let refused_so_far = || gizai_lib::runs::events_for(&st, &run_id).into_iter().filter(|e| matches!(e.event, RunEvent::Refused { .. })).count();
+    let t0 = std::time::Instant::now();
+    while refused_so_far() < 4 {
+        assert!(t0.elapsed() < Duration::from_secs(15), "the run never showed its four refusals: {}", refused_so_far());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    gizai_lib::runs::stop(&st, &run_id);
+    done.await.unwrap();
+    let run = gizai_core::runs::get(&st.db, &run_id).unwrap();
+    assert_eq!(run.status, "cancelled", "{:?}", run.error);
+    let got: Vec<(&str, &str)> = run.refused.iter().map(|r| (r.tool.as_str(), r.input.as_str())).collect();
+    assert_eq!(got, [("Bash", "cat <<EOF\nhello\nEOF"), ("Bash", "ls /tmp"), ("Bash", "git status --short > /tmp/ga48-check-b.txt"),
+        ("Write", "/tmp/ga48-check-write.txt")]);
+    assert!(run.refused.iter().all(|r| !r.reason.is_empty()), "each with Claude Code's reason: {:?}", run.refused);
+    let t = gizai_lib::tools::call(&st, &lead, "get_task", json!({"task": "KADE-1"})).await.unwrap();
+    assert_eq!(t["runs"][0]["refused"].as_array().map(Vec::len), Some(4), "{t}");
+}

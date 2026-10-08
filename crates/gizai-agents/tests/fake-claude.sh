@@ -7,6 +7,7 @@
 # with an error on stderr.
 # FAKE_COMMIT_TWICE commits twice in its working folder (the run's worktree), "First change" then "Second change",
 # and then finishes like run-ok. FAKE_REFUSED finishes like run-refused (Claude Code refusing four tool calls).
+# FAKE_REFUSED_THEN_HANG prints run-refused up to its result line, then hangs like FAKE_HANG (a run stopped part-way).
 # FAKE_TEMP=1 in its environment (a CLI's environment line, GA-48) also writes TMPDIR, TMP and TEMP, whether that
 # folder is there and the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty.
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +34,14 @@ fi
 fixture="$here/fixtures/run-ok.jsonl"
 case "$prompt" in *FAKE_REFUSED*) fixture="$here/fixtures/run-refused.jsonl" ;; esac
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
+case "$prompt" in *FAKE_REFUSED_THEN_HANG*) prompt=refusedhang ;; esac
+if [ "$prompt" = "refusedhang" ]; then
+  trap 'exit 130' INT
+  sed '$d' "$here/fixtures/run-refused.jsonl"
+  sleep 600 &
+  wait $!
+  exit 0
+fi
 if [ "$prompt" = "nologin" ]; then
   # What Claude Code 2.1.289 prints without a login: subtype "success" but is_error, and the reason as the result.
   head -n1 "$here/fixtures/run-ok.jsonl"

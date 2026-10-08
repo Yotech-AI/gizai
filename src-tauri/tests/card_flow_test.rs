@@ -31,6 +31,17 @@ fn fake_answering(dir: &Path, outcome: &str) -> String {
     d.join("fake-claude.sh").to_string_lossy().into_owned()
 }
 
+/// A fake `claude` that waits `secs` before it does what the usual one does, so several runs are under way when the
+/// first one fails.
+fn slow_fake(dir: &Path, secs: f32) -> String {
+    let path = dir.join("slow-claude.sh");
+    let script = format!("#!/usr/bin/env bash\nsleep {secs}\nexec {FAKE} \"$@\"\n");
+    // written by a child, so this process never holds the script open for writing (ETXTBSY in other tests' children)
+    assert!(std::process::Command::new("sh").args(["-c", "printf '%s' \"$1\" > \"$2\" && chmod +x \"$2\"", "sh", &script])
+        .arg(&path).status().unwrap().success());
+    path.to_string_lossy().into_owned()
+}
+
 struct App { st: AppState, repo: PathBuf, tmp: tempfile::TempDir }
 
 fn app() -> App {
@@ -129,6 +140,23 @@ async fn a_run_moves_its_to_do_or_backlog_card_to_in_progress_as_the_agent_and_t
     runs::stop(&a.st, &run);
     done.await.unwrap();
     assert_eq!(a.column(&testing), "Testing");
+}
+
+#[tokio::test]
+async fn continue_on_a_card_dragged_back_to_to_do_moves_it_to_in_progress_as_the_agent() {
+    let a = app();
+    let t = a.card(0, "FAKE_HANG");
+    let (run, done) = runs::start(&a.st, &t, None, Some(FAKE.into()), "manual").await.unwrap();
+    runs::stop(&a.st, &run);
+    done.await.unwrap();
+    a.to(&t, "To do");
+    let (_, done) = runs::continue_run(&a.st, &run, Some(FAKE.into())).await.unwrap();
+    assert_eq!(a.column(&t), "In progress", "at once, while it runs");
+    let moves: Vec<_> = gizai_core::tasks::activity(&a.st.db, &t).unwrap().into_iter()
+        .filter(|e| e.diff == serde_json::json!({"column": ["To do", "In progress"]})).collect();
+    assert_eq!(moves.iter().filter(|e| e.actor_name.as_deref() == Some("Backend Agent")).count(), 2, "Run and Continue: {moves:?}");
+    done.await.unwrap();
+    runs::stop_all(&a.st, Duration::from_secs(10)).await;
 }
 
 #[tokio::test]
@@ -290,6 +318,119 @@ async fn a_crashing_cli_with_three_cards_at_once_does_not_run_through_the_queue(
     assert!(ran.len() <= 3, "at most its cards at once fail before the pull stops; these cards ran: {ran:?}");
     let waiting = cards.iter().filter(|c| a.column(c) == "To do" && a.runs_of(c).is_empty()).count();
     assert!(waiting >= 5, "the rest wait in To do; cards that ran: {ran:?}");
+}
+
+#[tokio::test]
+async fn a_missing_login_with_three_runs_under_way_holds_one_card_and_the_others_wait_again() {
+    let a = app();
+    gizai_core::settings::set(&a.st.db, "claude_bin", &slow_fake(a.tmp.path(), 1.5)).unwrap();
+    let cards: Vec<String> = [1, 2, 3, 4, 0].iter().map(|p| a.card(*p, "FAKE_NOT_LOGGED_IN")).collect();
+    let be = a.agent_with("Backend Agent", "backend", "on_assign", 3, None);
+    let started = runs::pull(&a.st).await;
+    assert_eq!(started.len(), 3, "three runs are under way before the first one fails");
+    for (_, done) in started {
+        done.await.unwrap();
+    }
+    until("the runs end", || runs::live(&a.st).is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(runs::pull_paused(&a.st, &be).is_some());
+    let held: Vec<usize> = (0..5).filter(|i| a.task(&cards[*i]).hold.is_some()).collect();
+    assert_eq!(held.len(), 1, "one missing login holds one card; held: {held:?}");
+    let h = a.task(&cards[held[0]]);
+    assert_eq!(h.hold.as_deref(), Some("blocked"));
+    assert!(h.hold_reason.as_deref().unwrap_or("").contains("Not logged in"), "{:?}", h.hold_reason);
+    for (i, c) in cards.iter().enumerate() {
+        let t = a.task(c);
+        assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 0), "card {i}: back in To do, not a failed run");
+    }
+    let ran: Vec<usize> = (0..5).filter(|i| !a.runs_of(&cards[*i]).is_empty()).collect();
+    assert_eq!(ran, [0, 1, 2], "the three best cards were tried, once each");
+    for i in &ran {
+        let r = a.runs_of(&cards[*i]);
+        assert_eq!((r.len(), r[0].status.as_str()), (1, "failed"), "card {i}");
+    }
+    assert!(runs::pull(&a.st).await.is_empty(), "the agent takes no more cards");
+    // the person logs in and edits the agent: the cards that only went back to waiting are taken again, by priority
+    gizai_core::settings::set(&a.st.db, "claude_bin", &FAKE.to_string()).unwrap();
+    for c in &cards {
+        a.patch(c, TaskPatch { description_md: Some("FAKE_HANG".into()), ..Default::default() });
+    }
+    runs::resume_pull(&a.st, &be);
+    runs::pull(&a.st).await;
+    let best: Vec<String> = (0..5).filter(|i| !held.contains(i)).take(3).map(|i| cards[i].clone()).collect();
+    assert_eq!(a.live_cards(), sorted(best));
+    runs::stop_all(&a.st, Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+async fn a_crash_with_three_runs_under_way_fails_those_three_and_the_rest_wait_in_to_do() {
+    let a = app();
+    gizai_core::settings::set(&a.st.db, "claude_bin", &slow_fake(a.tmp.path(), 1.5)).unwrap();
+    let cards: Vec<String> = [1, 1, 2, 2, 3, 3, 4, 0].iter().map(|p| a.card(*p, "FAKE_CRASH")).collect();
+    let be = a.agent_with("Backend Agent", "backend", "on_assign", 3, None);
+    let started = runs::pull(&a.st).await;
+    assert_eq!(started.len(), 3);
+    for (_, done) in started {
+        done.await.unwrap();
+    }
+    // the pulls the runs' ends start
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert!(runs::live(&a.st).is_empty(), "nothing else started");
+    assert!(runs::pull_paused(&a.st, &be).is_some());
+    for (i, c) in cards.iter().enumerate() {
+        let t = a.task(c);
+        let want = if i < 3 { ("In progress", 1, 1) } else { ("To do", 0, 0) };
+        assert_eq!((t.state_name.as_str(), t.fail_count, a.runs_of(c).len()), want, "card {i}");
+        assert_eq!(t.hold, None, "card {i}");
+    }
+}
+
+#[tokio::test]
+async fn a_heartbeat_agent_without_a_login_holds_one_card_and_the_next_heartbeat_starts_nothing() {
+    let a = app();
+    gizai_core::settings::set(&a.st.db, "claude_bin", &slow_fake(a.tmp.path(), 1.5)).unwrap();
+    let cards: Vec<String> = [1, 2, 3, 4].iter().map(|p| a.card(*p, "FAKE_NOT_LOGGED_IN")).collect();
+    let be = a.agent_with("Backend Agent", "backend", "heartbeat", 3, None);
+    let now = gizai_core::ids::now_ms();
+    let started = runs::heartbeat_tick(&a.st, now).await;
+    assert_eq!(started.len(), 3, "three runs are under way before the first one fails");
+    for done in started {
+        done.await.unwrap();
+    }
+    until("the runs end", || runs::live(&a.st).is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(runs::pull_paused(&a.st, &be).is_some());
+    let held: Vec<usize> = (0..4).filter(|i| a.task(&cards[*i]).hold.is_some()).collect();
+    assert_eq!(held.len(), 1, "one missing login holds one card; held: {held:?}");
+    for (i, c) in cards.iter().enumerate() {
+        let t = a.task(c);
+        assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 0), "card {i}");
+    }
+    assert!(runs::heartbeat_tick(&a.st, now + 120_000).await.is_empty(), "the next heartbeat starts nothing");
+    assert!(a.runs_of(&cards[3]).is_empty());
+}
+
+#[tokio::test]
+async fn a_persons_run_without_a_login_holds_its_card_where_it_was_also_while_the_pull_is_paused() {
+    let a = app();
+    let cards: Vec<String> = [1, 2, 3].iter().map(|p| a.card(*p, "FAKE_NOT_LOGGED_IN")).collect();
+    let be = a.agent_with("Backend Agent", "backend", "on_assign", 1, None);
+    runs::pull(&a.st).await;
+    until("the run ends", || runs::live(&a.st).is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(a.task(&cards[0]).hold.as_deref(), Some("blocked"));
+    assert!(runs::pull_paused(&a.st, &be).is_some());
+    // a person's Run on a To do card, and on a Backlog card: each says what is wrong and is held where it was
+    a.to(&cards[2], "Backlog");
+    for (c, column) in [(&cards[1], "To do"), (&cards[2], "Backlog")] {
+        let s = runs::run_once(&a.st, c, Some(be.clone()), None).await.unwrap();
+        assert_eq!(s.status, "failed");
+        assert!(s.error.as_deref().unwrap_or("").contains("Not logged in"), "{:?}", s.error);
+        let t = a.task(c);
+        assert_eq!((t.state_name.as_str(), t.hold.as_deref(), t.fail_count), (column, Some("blocked"), 0));
+        assert!(t.hold_reason.as_deref().unwrap_or("").contains("Not logged in"), "{:?}", t.hold_reason);
+        assert!(runs::pull_paused(&a.st, &be).is_some(), "the agent stops taking cards again");
+    }
 }
 
 // ---- Part 2: the Testing switch ----

@@ -10,6 +10,7 @@ The prompt (stdin) decides what happens:
   FAKE_LOST_SESSION + --resume    exits 1 before init, like Claude Code when the session file is gone
   FAKE_CHAT_WAIT                  after init, writes fake-waiting and waits for a fake-go file (both next to the MCP config)
   FAKE_IGNORE_STOP (with WAIT)    ignores SIGINT and, once fake-go is there, finishes a short answer normally
+  FAKE_CHAT_SLOW                  after init, takes 3 s before it answers (the UI test queues a message meanwhile)
   FAKE_CHAT_FAIL                  after init (and the wait), ends with an error result and exits 1
   FAKE_CHAT_LIMIT                 after init (and the wait), Claude Code's usage-limit answer (fixtures/chat-limit.jsonl)
                                   and exit 1, unless FAKE_HAS_USAGE=1 is in the environment (another account)
@@ -112,6 +113,8 @@ if "FAKE_CHAT_WAIT" in prompt:
     t0 = time.time()
     while not os.path.exists(os.path.join(here, "fake-go")) and time.time() - t0 < 30:
         time.sleep(0.05)
+if "FAKE_CHAT_SLOW" in prompt:
+    time.sleep(3)
 if "FAKE_IGNORE_STOP" in prompt:
     out({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Finished just in time."}]}, "session_id": sid})
     end_mcp()

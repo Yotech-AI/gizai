@@ -6,7 +6,9 @@
 #  4. team page: adds an agent with a heartbeat through the dialog and the usual routing rules.
 #  5. agent run: Run on a task with the fake Claude Code, watch it live, Stop, Run again → card in Testing.
 #  6. chat: set up the Team Lead from the Chat page, send a message; the fake Claude Code calls Gizai's tools
-#     through the real gizai-mcp shim and socket, and the answer links the task it created.
+#     through the real gizai-mcp shim and socket, and the answer links the task it created. Then Runs on under the
+#     text box: it lists the Claude Code accounts (Codex disabled, with why) and picking Claude Code 2 saves it; while a
+#     slow answer is written, Enter queues a message, which shows as queued and goes by itself when the answer is done.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail

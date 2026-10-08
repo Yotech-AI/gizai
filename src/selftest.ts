@@ -1,5 +1,5 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
-import { listTasks } from "./api";
+import { listChatThreads, listTasks } from "./api";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -203,6 +203,55 @@ export async function chatProbe(listTitles: () => Promise<string[]>) {
   const made = (await listTitles()).includes("Chat probe task");
   const thread = window.location.hash.startsWith("#/chat/");
   const listed = !!document.querySelector(".chat-threads .th.on");
-  const ok = onTeam && name === "Team Lead" && chatOn && agentPage && !!card && reply && made && thread && listed;
-  return { ok, on_team: onTeam, name, chat_on: chatOn, agent_page: agentPage, tool_card: card?.textContent, reply, task_made: made, thread_url: thread, thread_listed: listed };
+  const first = onTeam && name === "Team Lead" && chatOn && agentPage && !!card && reply && made && thread && listed;
+  const runsOn = await runsOnAndQueueProbe();
+  const ok = first && runsOn.ok;
+  return { ok, on_team: onTeam, name, chat_on: chatOn, agent_page: agentPage, tool_card: card?.textContent, reply, task_made: made, thread_url: thread,
+    thread_listed: listed, runs_on: runsOn };
+}
+
+const enter = (el: HTMLElement) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+const composer = () => document.querySelector(".composer-box textarea") as HTMLTextAreaElement | null;
+const picker = () => document.querySelector('.composer-foot select[aria-label="Runs on"]') as HTMLSelectElement | null;
+const userSaid = (text: string) => [...document.querySelectorAll(".chat-msg.user:not(.queued)")].some((e) => (e.textContent ?? "").includes(text));
+
+/** GA-50, in a chat that has answered once: Runs on under the text box (right of the hints) lists the Claude Code
+ * accounts and shows Codex disabled with why; picking Claude Code 2 saves it on the chat. Then, while a slow answer is
+ * written, the picker is disabled and Enter queues a message, which shows as queued and goes by itself afterwards. */
+async function runsOnAndQueueProbe() {
+  // The first answer's text shows before its turn has ended: Runs on can change once it has.
+  const sel = await waitFor(() => { const p = picker(); return p && !p.disabled && !document.querySelector(".composer-box .stop-btn") ? p : null; }, 8000);
+  if (!sel) return { ok: false, error: "no usable Runs on under the text box", disabled: picker()?.disabled };
+  const hints = document.querySelector(".composer-foot .composer-hint")?.getBoundingClientRect();
+  const right = !!hints && sel.getBoundingClientRect().left > hints.right;
+  const options = [...sel.options].map((o) => ({ name: o.textContent ?? "", value: o.value, disabled: o.disabled }));
+  const onLead = sel.value === "claude_code" && !sel.disabled;
+  const cc2 = options.find((o) => o.name === "Claude Code 2" && !o.disabled);
+  const codexOff = options.some((o) => o.name.startsWith("Codex") && o.disabled && o.name.includes("the chat runs on Claude Code only"));
+  sel.focus();
+  sel.click();
+  if (cc2) pickOption(sel, cc2.value);
+  const threadId = window.location.hash.slice("#/chat/".length);
+  let saved = false;
+  for (let i = 0; i < 40 && !saved && cc2; i++) { await sleep(100); saved = (await listChatThreads()).find((t) => t.id === threadId)?.cli === cc2.value; }
+  const shows = picker()?.value === cc2?.value;
+
+  const box = composer();
+  if (!box) return { ok: false, error: "no composer" };
+  typeInto(box, "FAKE_CHAT_SLOW what is next?");
+  await sleep(50);
+  enter(box);
+  const answering = !!(await waitFor(() => document.querySelector(".composer-box .stop-btn"), 4000));
+  const locked = !!picker()?.disabled;
+  const box2 = composer();
+  if (box2) { typeInto(box2, "and one more thing"); await sleep(50); enter(box2); }
+  const queued = !!(await waitFor(() => [...document.querySelectorAll(".chat-queue .chat-msg.queued")].find((e) =>
+    (e.textContent ?? "").includes("and one more thing") && (e.textContent ?? "").includes("Queued: goes when this answer is done")) || null, 3000));
+  const notYet = !userSaid("and one more thing");
+  const went = !!(await waitFor(() => (!document.querySelector(".chat-queue") && userSaid("and one more thing") ? true : null), 15000));
+  const done = !!(await waitFor(() => (!document.querySelector(".composer-box .stop-btn") ? true : null), 10000));
+  const note = [...document.querySelectorAll(".chat-note")].some((e) => (e.textContent ?? "").includes("Now on Claude Code 2."));
+  const ok = right && onLead && !!cc2 && codexOff && saved && shows && answering && locked && queued && notYet && went && done && note;
+  return { ok, right_of_hints: right, on_lead: onLead, options, codex_disabled: codexOff, saved, shows, answering, locked_while_answering: locked,
+    queued, not_sent_yet: notYet, went_after: went, answer_done: done, switch_note: note };
 }

@@ -6,7 +6,9 @@
 # A prompt containing FAKE_HANG (e.g. from a task description) also hangs, FAKE_STUBBORN is stubborn; FAKE_CRASH exits 1
 # with an error on stderr.
 # FAKE_COMMIT_TWICE commits twice in its working folder (the run's worktree), "First change" then "Second change",
-# and then finishes like run-ok.
+# and then finishes like run-ok. FAKE_REFUSED finishes like run-refused (Claude Code refusing four tool calls).
+# FAKE_TEMP=1 in its environment (a CLI's environment line, GA-48) also writes TMPDIR, TMP and TEMP, whether that
+# folder is there and the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty.
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -18,6 +20,18 @@ esac
 prompt="$(cat)"   # the prompt comes in on stdin, like claude -p
 echo "prompt chars: ${#prompt}" >&2
 echo "argv: $*" >&2
+if [ -n "${FAKE_TEMP:-}" ]; then
+  echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2
+  if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+    echo "temp exists: yes" >&2
+    mkdir -p "$TMPDIR/scratch" && echo x > "$TMPDIR/scratch/test.db" && echo y > "$TMPDIR/left.txt"
+  else
+    echo "temp exists: no" >&2
+  fi
+  printf 'prompt>>%s<<prompt\n' "$prompt" >&2
+fi
+fixture="$here/fixtures/run-ok.jsonl"
+case "$prompt" in *FAKE_REFUSED*) fixture="$here/fixtures/run-refused.jsonl" ;; esac
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
 if [ "$prompt" = "nologin" ]; then
   # What Claude Code 2.1.289 prints without a login: subtype "success" but is_error, and the reason as the result.
@@ -50,6 +64,6 @@ fi
 while IFS= read -r line; do
   printf '%s\n' "$line"
   sleep 0.05
-done < "$here/fixtures/run-ok.jsonl"
+done < "$fixture"
 echo "fake claude done" >&2
 exit 0

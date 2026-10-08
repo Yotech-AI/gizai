@@ -248,7 +248,7 @@ fn an_older_database_gets_an_empty_folder_list_for_each_agent() {
     drop(c);
     let db = Db::open(&path).unwrap();
     assert_eq!(db.read(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)).unwrap(), db::SCHEMA_VERSION);
-    assert_eq!(db::SCHEMA_VERSION, 9);
+    assert!(db::SCHEMA_VERSION >= 9, "0009 ran (GA-48's 0010 came after it)");
     assert!(team::agent(&db, &id).unwrap().folders.is_empty());
 }
 
@@ -272,12 +272,13 @@ fn a_schema_8_database_keeps_its_board_check_and_every_agent_gets_folders_json_e
     let (version, empty, all): (i64, i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT COUNT(*) FROM agent_configs WHERE folders_json = '[]'", [], |r| r.get(0))?,
         c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((version, empty, all), (9, agents, agents), "every agent kept, each with '[]'");
+    assert_eq!((version, empty, all), (db::SCHEMA_VERSION, agents, agents), "every agent kept, each with '[]'");
     assert_eq!(team::agent(&db, &lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009");
     assert!(team::agent(&db, &backend).unwrap().folders.is_empty());
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v9-") && snaps[0].ends_with(".db"), "{snaps:?}");
+    let before = format!("gizai-before-v{}-", db::SCHEMA_VERSION);
+    assert!(snaps.len() == 1 && snaps[0].starts_with(&before) && snaps[0].ends_with(".db"), "{snaps:?}");
 }
 
 #[test]

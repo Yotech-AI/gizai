@@ -30,6 +30,11 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
   }
   const set = (k: string) => d[k] !== null && d[k] !== undefined;
   const fields = Object.keys(FIELD_NAMES).filter(set).map((k) => FIELD_NAMES[k]);
+  // The Testing switch: on, the QA Agent tests the card before Review
+  if (typeof d.testing === "boolean") {
+    if (!fields.length && !set("hold")) return d.testing ? "turned testing on" : "turned testing off";
+    fields.push("testing");
+  }
   if (set("hold")) {
     if (d.hold === "") return fields.length ? `cleared the hold and changed the ${joinWords(fields)}` : "cleared the hold";
     fields.push("hold");

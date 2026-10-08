@@ -12,7 +12,7 @@ fn link(page: &str, id: &str, label: &str) -> Value {
 
 fn task_json(t: &Task) -> Value {
     json!({"id": t.id, "identifier": t.identifier, "title": t.title, "column": t.state_name, "assignee": t.assignee_name,
-           "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold})
+           "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold, "testing": t.testing})
 }
 
 fn task_done(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
@@ -215,7 +215,7 @@ pub(crate) fn create_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     };
     let id = tasks::create(cx.db(), cx.actor, TaskInput {
         project_id: p.id.clone(), title, description_md: a.opt("description_md").unwrap_or_default(), acceptance_md: a.opt("acceptance_md"),
-        state_id, priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids,
+        state_id, priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids, testing: Some(a.flag("testing").unwrap_or(true)),
     }).map_err(err)?;
     task_done(cx, &id, "created")
 }
@@ -223,7 +223,7 @@ pub(crate) fn create_task(cx: &Cx, a: &Args) -> Result<Value, String> {
 pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let mut patch = TaskPatch { title: a.opt("title"), description_md: a.text("description_md"), acceptance_md: a.text("acceptance_md"),
-                                priority: a.int("priority")?, ..Default::default() };
+                                priority: a.int("priority")?, testing: a.flag("testing"), ..Default::default() };
     if let Some(n) = a.text("assignee") {
         patch.assignee_id = Some(if n.is_empty() || n.eq_ignore_ascii_case("none") { String::new() } else { resolve::assignee(cx, &n)? });
     }
@@ -237,7 +237,7 @@ pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     }
     let labels = a.list("labels");
     let nothing = patch.title.is_none() && patch.description_md.is_none() && patch.acceptance_md.is_none() && patch.priority.is_none()
-        && patch.assignee_id.is_none() && patch.hold.is_none() && patch.hold_reason.is_none() && labels.is_none();
+        && patch.testing.is_none() && patch.assignee_id.is_none() && patch.hold.is_none() && patch.hold_reason.is_none() && labels.is_none();
     if nothing {
         return Err("nothing to change: give a field to update".into());
     }
@@ -340,13 +340,29 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         heartbeat_minutes: a.int("heartbeat_minutes")?.or(m.heartbeat_minutes),
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
     }).map_err(err)?;
+    crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "updated")
 }
 
 pub(crate) fn set_agent_status(cx: &Cx, a: &Args) -> Result<Value, String> {
     let m = resolve::agent(cx, &a.req("agent")?)?;
     team::set_agent_status(cx.db(), cx.actor, &m.actor_id, &a.req("status")?).map_err(err)?;
+    crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "status changed")
+}
+
+pub(crate) fn add_column(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let t = resolve::team_of(cx, None)?;
+    let after = resolve::column(&t, &a.req("after")?)?;
+    let category = a.req("category")?.trim().to_lowercase().replace([' ', '-'], "_");
+    let category = match category.as_str() { "to_do" | "todo" => "ready".to_string(), _ => category };
+    let worker = a.opt("worked_by").map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty() && w != "nobody");
+    let worker = worker.map(|w| if matches!(w.as_str(), "you" | "the user" | "user" | "me") { "human".to_string() } else { w });
+    team::add_state(cx.db(), cx.actor, &t.id, &a.req("name")?, &after.id, &category, worker.as_deref()).map_err(err)?;
+    cx.changed("workflow_states");
+    let t = resolve::team_of(cx, None)?;
+    let columns: Vec<String> = t.states.iter().map(|s| s.name.clone()).collect();
+    Ok(json!({"ok": true, "done": "column added", "columns": columns, "link": {"page": "team", "id": t.id, "label": "Workflow"}}))
 }
 
 pub(crate) fn add_rule(cx: &Cx, a: &Args) -> Result<Value, String> {

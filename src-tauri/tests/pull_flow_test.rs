@@ -273,3 +273,42 @@ async fn the_github_cli_is_a_setting_and_empty_means_find_it_when_needed() {
     gizai_lib::runs::save_settings(&st, &s).unwrap();
     assert_eq!(gizai_lib::runs::get_settings(&st).gh_bin, None);
 }
+
+#[tokio::test]
+async fn with_a_deploy_column_a_merge_moves_the_card_to_deploy_and_nothing_starts_on_it() {
+    // GA-32: Deploy (merged, not deployed yet) after Review; the DevOps Agent wakes up on assign and has the card.
+    let tmp = tempfile::tempdir().unwrap();
+    let c = worked_card(tmp.path()).await;
+    let team = gizai_core::team::get(&c.st.db, &gizai_core::team::list(&c.st.db).unwrap()[0].id).unwrap();
+    let review = team.states.iter().find(|s| s.category == "review").unwrap().id.clone();
+    gizai_core::team::add_state(&c.st.db, &c.st.you_id, &team.id, "Deploy", &review, "deploy", None).unwrap();
+    let ops = gizai_core::team::add_agent(&c.st.db, &c.st.you_id, &team.id, gizai_core::model::AgentInput { name: "DevOps Agent".into(),
+        role_key: "devops".into(), wakeup: "on_assign".into(), ..Default::default() }).unwrap();
+    to_review(&c);
+    gizai_core::tasks::update(&c.st.db, &c.st.you_id, &c.task, gizai_core::model::TaskPatch { assignee_id: Some(ops.clone()), ..Default::default() }).unwrap();
+    std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
+    pulls::open(&c.st, &c.task).await.unwrap();
+    let runs_before = gizai_core::runs::list_for_task(&c.st.db, &c.task).unwrap().len();
+    list(&c.gh, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    let checked = pulls::check_all(&c.st).await;
+    assert_eq!((checked.len(), checked[0].moved_to.as_deref(), checked[0].changed), (1, Some("Deploy"), true));
+    let t = task(&c);
+    assert_eq!((t.state_name.as_str(), t.state_category.as_str(), t.pr_state.as_deref(), t.assignee_id.as_deref()),
+               ("Deploy", "deploy", Some("merged"), Some(ops.as_str())));
+    let a = gizai_core::tasks::activity(&c.st.db, &c.task).unwrap();
+    assert!(a.iter().any(|e| e.diff == json!({"column": ["Review", "Deploy"]})), "{a:?}");
+    // the rest of the merge handling is as before
+    assert!(!c.wt.exists(), "its worktree is removed");
+    assert!(!has_branch(&c.local, &c.branch), "its local branch is deleted");
+    // nothing starts on it, not even the DevOps Agent it is assigned to
+    gizai_lib::runs::dispatch(&c.st, &c.task).await;
+    gizai_lib::runs::pull(&c.st).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(gizai_lib::runs::live(&c.st).is_empty());
+    assert_eq!(gizai_core::runs::list_for_task(&c.st.db, &c.task).unwrap().len(), runs_before);
+    // Deploy: the next checks leave it alone and don't ask GitHub
+    let calls = gh_calls(&c.gh).len();
+    assert!(pulls::check_all(&c.st).await.is_empty());
+    assert_eq!(gh_calls(&c.gh).len(), calls);
+    assert_eq!(task(&c).state_name, "Deploy", "until a person drags it to Done");
+}

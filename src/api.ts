@@ -55,6 +55,10 @@ export const setAgentStatus = (actorId: string, status: "active" | "paused") => 
 export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("add_rule", { teamId, input });
 export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });
+/** A new column right after `afterId`; resolves with its id. ownerRole: null = nobody, a role key ("qa", "backend"), or "human" (you,
+ * always for a Deploy column). Fails with "this team already has a column called X" for a name in use. */
+export const addState = (teamId: string, name: string, afterId: string, category: T.StateCategory, ownerRole: string | null) =>
+  invoke<string>("add_state", { teamId, name, afterId, category, ownerRole });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
 /** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
  * CLI (a second account); other kinds of CLI have no list. */

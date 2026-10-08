@@ -85,6 +85,9 @@ export function TaskPage({ id }: { id: string }) {
   if (error) return <div className="error-banner">{error}</div>;
   if (!task) return null;
   const fail = (e: unknown) => setErr(String(e));
+  // A merge moves the card to the team's Deploy column (merged, not deployed yet), else to Done.
+  const columns = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
+  const mergeTo = (columns.find((s) => s.category === "deploy") ?? columns.find((s) => s.category === "done"))?.name;
   const saveTitle = () => {
     const t = title.trim();
     if (!t) { setTitle(task.title); return; }
@@ -132,7 +135,7 @@ export function TaskPage({ id }: { id: string }) {
               <FileDrop ownerType="task" ownerId={task.id} />
             </section>
             {team && <RunPanel task={task} team={team} />}
-            <PullPanel task={task} live={live} />
+            <PullPanel task={task} live={live} mergeTo={mergeTo} />
 
             <div className="tabs" role="tablist">
               {([["comments", MessageSquare, "Comments", comments?.length], ["activity", Activity, "Activity", undefined], ["runs", Play, "Runs", runs?.length]] as const).map(([k, I, l, n]) => (

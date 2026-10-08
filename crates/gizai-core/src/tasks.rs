@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, {desc}, t.acceptance_md, t.state_id, s.name,
     s.category, t.priority, t.assignee_actor_id, a.name, a.kind, t.hold, t.hold_reason, t.bounce_count, t.fail_count,
-    t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state
+    t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state, t.testing
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -24,7 +24,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         state_category: r.get(10)?, priority: r.get(11)?, assignee_id: r.get(12)?, assignee_name: r.get(13)?,
         assignee_kind: r.get(14)?, labels: vec![], hold: r.get(15)?, hold_reason: r.get(16)?, bounce_count: r.get(17)?,
         fail_count: r.get(18)?, sort_key: r.get(19)?, branch: r.get(20)?, created_at: r.get(21)?, updated_at: r.get(22)?,
-        pr_url: r.get(23)?, pr_state: r.get(24)?,
+        pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0,
     })
 }
 
@@ -72,12 +72,12 @@ pub fn list(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
     })
 }
 
-/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting in Review for `you`.
-/// Same rule as the UI's `needsYou`.
+/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting for `you` in Review or Deploy
+/// (merged, not deployed yet). Same rule as the UI's `needsYou`.
 pub fn needs_you(db: &Db, you_id: &str) -> Result<Vec<Task>> {
     Ok(list(db, &TaskFilter { open_only: true, ..Default::default() })?
         .into_iter()
-        .filter(|t| t.hold.is_some() || (t.state_category == "review" && t.assignee_id.as_deref() == Some(you_id)))
+        .filter(|t| t.hold.is_some() || (matches!(t.state_category.as_str(), "review" | "deploy") && t.assignee_id.as_deref() == Some(you_id)))
         .collect())
 }
 
@@ -155,12 +155,12 @@ pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
         c.execute(
             "INSERT INTO tasks(id, created_at, updated_at, created_by, updated_by, org_id, project_id, client_id, identifier, title,
                description_md, acceptance_md, state_id, state_category, owner_person_id, priority, assignee_actor_id,
-               creator_actor_id, sort_key, started_at)
+               creator_actor_id, sort_key, started_at, testing)
              VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?3, ?16,
-               CASE WHEN ?12 = 'in_progress' THEN ?2 END)",
+               CASE WHEN ?12 = 'in_progress' THEN ?2 END, ?17)",
             rusqlite::params![id, now, actor, org_id(c)?, input.project_id, client, identifier, title, input.description_md,
                               input.acceptance_md.as_ref().filter(|a| !a.trim().is_empty()), state_id, category, owner,
-                              input.priority.clamp(0, 4), assignee, sort_key],
+                              input.priority.clamp(0, 4), assignee, sort_key, input.testing.unwrap_or(true)],
         )?;
         w.insert("tasks", &id, serde_json::json!({"identifier": identifier, "title": title}))?;
         if !input.label_ids.is_empty() {
@@ -205,6 +205,9 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
         }
         if let Some(d) = &patch.due_on {
             cols.push(("due_on", opt(d)));
+        }
+        if let Some(on) = patch.testing {
+            cols.push(("testing", V::Integer(on as i64)));
         }
         if let Some(h) = &patch.hold {
             if !h.is_empty() && !["needs_decision", "stalled", "merge_conflict", "waiting_approval", "rate_limited", "blocked"].contains(&h.as_str()) {

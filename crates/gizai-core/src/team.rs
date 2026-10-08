@@ -347,9 +347,16 @@ pub fn add_rule(db: &Db, actor: &str, team_id: &str, input: RuleInput) -> Result
         let (label, state): (Option<String>, Option<String>) = match input.kind.as_str() {
             "label" => (Some(c.query_row("SELECT id FROM labels WHERE name=?1 COLLATE NOCASE AND deleted_at IS NULL", [&name], |r| r.get(0))
                 .optional()?.ok_or_else(|| Error::Invalid(format!("there is no label called {name}")))?), None),
-            "column" => (None, Some(c.query_row("SELECT id FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
-                    rusqlite::params![team_id, name], |r| r.get(0))
-                .optional()?.ok_or_else(|| Error::Invalid(format!("this team has no column called {name}")))?)),
+            "column" => {
+                let (id, category): (String, String) = c.query_row(
+                    "SELECT id, category FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
+                    rusqlite::params![team_id, name], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()?.ok_or_else(|| Error::Invalid(format!("this team has no column called {name}")))?;
+                if category == "deploy" {
+                    return Err(Error::Invalid(format!("{name} is a Deploy column: no agent starts there by itself. Press Run on a card to start the DevOps Agent")));
+                }
+                (None, Some(id))
+            }
             other => return Err(Error::Invalid(format!("a rule matches a label or a column, not {other}"))),
         };
         let now = ids::now_ms();
@@ -397,6 +404,50 @@ pub fn rename_state(db: &Db, actor: &str, state_id: &str, name: &str) -> Result<
         c.execute("UPDATE workflow_states SET name=?2, updated_at=?3, updated_by=?4, version=version+1 WHERE id=?1",
                   rusqlite::params![state_id, name, ids::now_ms(), actor])?;
         w.update("workflow_states", state_id, serde_json::json!({"name": name}))
+    })
+}
+
+/// The column categories, in board order. The gates key off them; `deploy` (merged, not deployed yet) is never routed.
+pub const CATEGORIES: [&str; 8] = ["backlog", "ready", "in_progress", "testing", "review", "deploy", "done", "cancelled"];
+
+/// Adds a column to the team's board, right after the column `after_id`. `owner_role`: who works it (None = nobody, a
+/// role, or "human" = you); a Deploy column is always worked by you. Names are unique per team. Returns its id.
+pub fn add_state(db: &Db, actor: &str, team_id: &str, name: &str, after_id: &str, category: &str, owner_role: Option<&str>) -> Result<String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(Error::Invalid("a column needs a name".into()));
+    }
+    if !CATEGORIES.contains(&category) {
+        return Err(Error::Invalid(format!("a column's category is one of {}, not {category}", CATEGORIES.join(", "))));
+    }
+    let owner = if category == "deploy" {
+        Some("human".to_string())
+    } else {
+        owner_role.map(|o| if o.trim() == "human" { "human".to_string() } else { role_key(o) }).filter(|o| !o.is_empty())
+    };
+    db.write(Some(actor), |w| {
+        let c = w.conn();
+        let after: Option<String> = c.query_row("SELECT sort_key FROM workflow_states WHERE id=?1 AND team_id=?2 AND deleted_at IS NULL",
+                                                rusqlite::params![after_id, team_id], |r| r.get(0)).optional()?;
+        let after = after.ok_or_else(|| Error::Invalid("pick the column it goes after".into()))?;
+        let clash: i64 = c.query_row("SELECT count(*) FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
+                                     rusqlite::params![team_id, name], |r| r.get(0))?;
+        if clash > 0 {
+            return Err(Error::Invalid(format!("this team already has a column called {name}")));
+        }
+        let next: Option<String> = c.query_row(
+            "SELECT min(sort_key) FROM workflow_states WHERE team_id=?1 AND sort_key > ?2 AND deleted_at IS NULL",
+            rusqlite::params![team_id, after], |r| r.get(0))?;
+        let sort_key = crate::sortkey::key_between(Some(&after), next.as_deref());
+        let now = ids::now_ms();
+        let id = ids::new_id();
+        c.execute(
+            "INSERT INTO workflow_states(id, created_at, updated_at, created_by, updated_by, team_id, name, category, owner_role, sort_key)
+             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![id, now, actor, team_id, name, category, owner, sort_key],
+        )?;
+        w.insert("workflow_states", &id, serde_json::json!({"name": name, "category": category, "owner_role": owner}))?;
+        Ok(id)
     })
 }
 

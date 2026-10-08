@@ -17,7 +17,8 @@ export function RulesEditor({ team, onError }: { team: Team; onError: (m: string
   const [match, setMatch] = useState("");
   const [role, setRole] = useState("");
   const [priority, setPriority] = useState("10");
-  const names = kind === "label" ? team.labels.map((l) => l.name) : team.states.map((s) => s.name);
+  // Nothing routes a Deploy card (only a person's Run starts an agent there), so a Deploy column takes no rule.
+  const names = kind === "label" ? team.labels.map((l) => l.name) : team.states.filter((s) => s.category !== "deploy").map((s) => s.name);
   const add = async () => {
     try { await addRule(team.id, { kind, matchName: match || names[0], targetRole: role || roles[0] || "", priority: Number(priority) || 0 }); setMatch(""); setRole(""); }
     catch (e) { onError(String(e)); }

@@ -28,6 +28,7 @@ export function Properties({ task, team, people, onError, onClose }: { task: Tas
     run(setTaskLabels(task.id, ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   };
   const row = (k: string, v: React.ReactNode) => <div className="prop-row"><span className="k">{k}</span>{v}</div>;
+  const testing = task.testing !== false; // on unless the card says off
   return (
     <aside className="props" aria-label="Properties">
       <div className="props-head">Properties<button className="btn ghost sm icon-only" aria-label="Close properties" title="Close properties (])" onClick={onClose}><X className="icon" /></button></div>
@@ -38,6 +39,8 @@ export function Properties({ task, team, people, onError, onClose }: { task: Tas
         {row("Priority", <Popover label="Priority" button={() => <span className="v editable" role="button" tabIndex={0}><PriorityIcon priority={task.priority} />{PRIORITY_NAMES[task.priority]}</span>}>
           {(close) => [1, 2, 3, 4, 0].map((p) => <button key={p} className="opt" onClick={() => { close(); run(updateTask(task.id, { priority: p })); }}><PriorityIcon priority={p} />{PRIORITY_NAMES[p]}{p === task.priority && <Check className="icon tick" />}</button>)}
         </Popover>)}
+        {row("Testing", <label className="v editable check" title={testing ? "On: the QA Agent tests the card before Review" : "Off: the card skips Testing and goes straight to Review"}>
+          <input type="checkbox" checked={testing} onChange={(e) => run(updateTask(task.id, { testing: e.target.checked }))} />Test before Review</label>)}
         {row("Labels", <Popover label="Labels" button={() => <span className={`v editable${task.labels.length ? "" : " none"}`} role="button" tabIndex={0} style={{ flexWrap: "wrap" }}>
           {task.labels.length ? task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>) : "No labels"}</span>}>
           {() => team.labels.map((l) => { const on = task.labels.some((x) => x.id === l.id); return (

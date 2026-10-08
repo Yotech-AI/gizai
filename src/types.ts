@@ -35,6 +35,8 @@ export type Task = {
   branch?: string | null;
   /** The card's pull request on GitHub, and its state as Gizai last saw it. */
   prUrl?: string | null; prState?: PullState | null;
+  /** On: the QA Agent tests the card before Review. Off: it goes straight to Review (a small fix). */
+  testing: boolean;
   createdAt: number; updatedAt: number;
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
@@ -43,11 +45,15 @@ export type PullInfo = { url: string; number?: number | null; state: PullState; 
 export type TaskInput = {
   projectId: string; title: string; descriptionMd?: string; acceptanceMd?: string | null; stateId?: string | null;
   priority?: number; assigneeId?: string | null; labelIds?: string[];
+  /** The Testing switch; left out = on. */
+  testing?: boolean;
 };
 /** Every field optional; "" clears an optional value. */
 export type TaskPatch = Partial<{
   title: string; descriptionMd: string; acceptanceMd: string; priority: number; assigneeId: string; pinnedActorId: string;
   dueOn: string; hold: string; holdReason: string;
+  /** The Testing switch. */
+  testing: boolean;
 }>;
 export type TaskFilter = { projectId?: string | null; openOnly?: boolean };
 export type Comment = { id: string; authorId: string; authorName: string; authorKind: string; bodyMd: string; runId?: string | null; createdAt: number };
@@ -91,6 +97,8 @@ export type AgentInput = {
   maxRuns?: number | null;
 };
 export type RuleInput = { kind: "label" | "column"; matchName: string; targetRole: string; priority: number };
+/** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
+export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";
 export type WorkflowState = { id: string; name: string; category: string; ownerRole?: string | null; wipLimit?: number | null; color?: string | null; sortKey: string };
 export type RoutingRule = { id: string; kind: string; matchLabelId?: string | null; matchStateId?: string | null; targetRole?: string | null; targetActorId?: string | null; priority: number; enabled: boolean };
 export type Team = { id: string; name: string; members: Member[]; states: WorkflowState[]; labels: Label[]; rules: RoutingRule[] };
@@ -109,9 +117,11 @@ export type RunEvent =
   | { kind: "result"; is_error: boolean; subtype: string; text: string; cost_usd?: number | null; input_tokens: number; output_tokens: number; num_turns: number }
   | { kind: "other"; raw_type: string };
 export type SeqEvent = { seq: number; event: RunEvent };
+/** How a run ended, from its GIZAI_RESULT line; `deployed` is the DevOps Agent's. */
+export type RunOutcome = "ready_for_testing" | "qa_pass" | "qa_fail" | "needs_decision" | "deployed" | "no_result" | "error";
 export type Run = {
   id: string; agentId: string; agentName: string; taskId?: string | null; roleKey?: string | null; trigger: string; status: string;
-  outcome?: string | null; summaryMd?: string | null; createdAt: number; startedAt?: number | null; endedAt?: number | null;
+  outcome?: RunOutcome | null; summaryMd?: string | null; createdAt: number; startedAt?: number | null; endedAt?: number | null;
   costUsdMicros: number; inputTokens: number; outputTokens: number; branch?: string | null; worktreePath?: string | null;
   sessionId?: string | null; error?: string | null; logPath: string;
   /** The commit its worktree was at when it started. */

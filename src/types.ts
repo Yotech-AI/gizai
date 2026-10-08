@@ -38,6 +38,8 @@ export type Task = {
   /** On: the QA Agent tests the card before Review. Off: it goes straight to Review (a small fix). */
   testing: boolean;
   createdAt: number; updatedAt: number;
+  /** Archived from Done: when, and who archived it. Null for a card on the board. */
+  archivedAt?: number | null; archivedBy?: string | null;
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */

@@ -13,7 +13,7 @@ import { dropKey, groupByColumn } from "../lib/board";
 import { pullBadge, pullLabel } from "../lib/pulls";
 import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
-import { Plus } from "lucide-react";
+import { Archive, Plus } from "lucide-react";
 
 const CAP = 50;
 const RAIL_CATEGORIES = new Set(["backlog", "done", "cancelled"]);
@@ -30,7 +30,11 @@ const noteOf = (s: WorkflowState): string | undefined => CATEGORY_NOTE[s.categor
 
 type Cols = Record<string, string[]>;
 
-const Card = memo(function Card({ task, onOpen, working }: { task: Task; onOpen: (id: string) => void; working?: string }) {
+const Card = memo(function Card({ task, onOpen, onArchive, working }: {
+  task: Task; onOpen: (id: string) => void; working?: string;
+  /** Cards in a Done column: the Archive button, shown on hover and focus. */
+  onArchive?: (task: Task) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
   return (
     <div ref={setNodeRef} className={"card" + (isDragging ? " dragging" : "")} data-card={task.identifier}
@@ -38,7 +42,13 @@ const Card = memo(function Card({ task, onOpen, working }: { task: Task; onOpen:
       onClick={() => onOpen(task.id)} onKeyDown={(e) => { if (e.key === "Enter") onOpen(task.id); }}>
       <div className="top"><span className="id">{task.identifier}</span>
         {task.prUrl && <span className={`badge ${pullBadge(task.prState).cls}`} title={`Pull request: ${pullBadge(task.prState).text.toLowerCase()} on GitHub`}>{pullLabel(task.prUrl)}</span>}
-        {task.hold && <span className="badge needs">On hold</span>}{task.priority > 0 && <PriorityIcon priority={task.priority} />}</div>
+        {task.hold && <span className="badge needs">On hold</span>}{task.priority > 0 && <PriorityIcon priority={task.priority} />}
+        {onArchive && (
+          // Its own pointer and key events stay here: pressing it neither starts a drag nor opens the card.
+          <button className="btn ghost sm icon-only card-archive" aria-label={`Archive ${task.identifier}`} title="Archive"
+            onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onArchive(task); }}><Archive className="icon" /></button>
+        )}</div>
       <div className="title">{task.title}</div>
       {working && <div className="working"><span className="pulse" aria-hidden />{working} is working</div>}
       {(task.labels.length > 0 || task.assigneeName) && (
@@ -51,10 +61,12 @@ const Card = memo(function Card({ task, onOpen, working }: { task: Task; onOpen:
   );
 });
 
-function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, working }: {
+function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working }: {
   state: WorkflowState; ids: string[]; byId: Map<string, Task>; rail: boolean; working: Map<string, string>;
-  onToggleRail: (id: string) => void; onOpen: (id: string) => void; onAdd?: (stateId: string) => void;
+  onToggleRail: (id: string) => void; onOpen: (id: string) => void; onAdd?: (stateId: string) => void; onArchive?: (task: Task) => void;
 }) {
+  // Only a card in Done can be archived (not Deploy, not Cancelled).
+  const archive = state.category === "done" ? onArchive : undefined;
   const { setNodeRef } = useDroppable({ id: state.id });
   const [shown, setShown] = useState(CAP);
   if (rail) {
@@ -79,7 +91,7 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, working }
       {note && <div className="col-note">{note}</div>}
       <SortableContext id={state.id} items={visible} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="col-body">
-          {visible.map((id) => { const t = byId.get(id); return t ? <Card key={id} task={t} onOpen={onOpen} working={working.get(id)} /> : null; })}
+          {visible.map((id) => { const t = byId.get(id); return t ? <Card key={id} task={t} onOpen={onOpen} onArchive={archive} working={working.get(id)} /> : null; })}
           {ids.length > shown && (
             <button className="show-more" onClick={() => setShown((s) => s + CAP)}>Show {Math.min(CAP, ids.length - shown)} more of {ids.length - shown}</button>
           )}
@@ -90,13 +102,15 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, working }
   );
 }
 
-export function Board({ tasks, states, onMove, onOpen, onAdd, working = new Map() }: {
+export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working = new Map() }: {
   tasks: Task[]; states: WorkflowState[];
   /** task id → name of the agent working on it now */
   working?: Map<string, string>;
   onMove: (taskId: string, stateId: string, sortKey: string) => void;
   onOpen: (taskId: string) => void;
   onAdd?: (stateId: string) => void;
+  /** Archive a card in a Done column (its button shows on hover and focus). */
+  onArchive?: (task: Task) => void;
 }) {
   const stateIds = states.map((s) => s.id);
   const [cols, setCols] = useState<Cols>(() => groupByColumn(tasks, stateIds));
@@ -191,7 +205,7 @@ export function Board({ tasks, states, onMove, onOpen, onAdd, working = new Map(
       onDragEnd={onDragEnd}>
       <div className="board">
         {states.map((s) => (
-          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} working={working} />
+          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} />
         ))}
       </div>
     </DndContext>

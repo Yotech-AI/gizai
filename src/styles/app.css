@@ -233,3 +233,27 @@ a.member:hover { border-color: var(--line-2); }
 .icon.spin { animation: gz-spin 1s linear infinite; }
 @keyframes gz-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .icon.spin { animation: none; } }
+
+/* ---------- archived cards: Archive on Done cards, the bin, an archived task page ---------- */
+.card .card-archive { width: 22px; height: 22px; margin: -3px -5px -3px 0; color: var(--text-3); opacity: 0; transition: opacity .12s; }
+.card:hover .card-archive, .card:focus-within .card-archive { opacity: 1; }
+.card .card-archive:hover { color: var(--text); }
+.card .card-archive:focus-visible { opacity: 1; outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (hover: none) { .card .card-archive { opacity: 1; } }
+.bin-search { width: 100%; margin-bottom: 14px; }
+.bin-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 180px) 220px; align-items: center; gap: 12px; min-height: var(--size-row);
+  padding: 0 10px; border-radius: var(--radius); color: var(--text); text-decoration: none; }
+.bin-row:hover, .bin-row:focus-visible { background: var(--hover); }
+.bin-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.bin-row .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.bin-row .proj { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-2); font-size: var(--fs-sm); }
+.bin-row .proj span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bin-row .when { overflow: hidden; color: var(--text-3); font-size: var(--fs-sm); text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .bin-row { grid-template-columns: auto minmax(0, 1fr); padding: 6px 10px; } .bin-row .proj, .bin-row .when { grid-column: 2; text-align: left; } }
+.archived-note { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius-l);
+  background: var(--raised); color: var(--text-2); font-size: var(--fs-sm); }
+.archived-note .grow { flex: 1; min-width: 200px; }
+.title-input[readonly]:hover { border-color: transparent; }
+.title-input[readonly]:focus { border-color: transparent; background: transparent; }
+.md-static { padding: 6px 0; min-height: 34px; }
+.filedrop.read-only { border-style: solid; border-color: var(--line); }

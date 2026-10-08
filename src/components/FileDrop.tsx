@@ -13,7 +13,8 @@ import type { FileOwner } from "../types";
 // Every mounted drop zone. A drop that hits no zone goes to the only zone on screen, if there is one.
 const zones = new Set<symbol>();
 
-export function FileDrop({ ownerType, ownerId, emptyText }: { ownerType: FileOwner; ownerId: string; emptyText?: string }) {
+/** `readOnly` (an archived card): the files open, but none are added or removed, and drops go elsewhere. */
+export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerType: FileOwner; ownerId: string; emptyText?: string; readOnly?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -34,6 +35,7 @@ export function FileDrop({ ownerType, ownerId, emptyText }: { ownerType: FileOwn
   addRef.current = add;
 
   useEffect(() => {
+    if (readOnly) return;
     const me = Symbol("filedrop");
     zones.add(me);
     let un: (() => void) | undefined;
@@ -48,7 +50,7 @@ export function FileDrop({ ownerType, ownerId, emptyText }: { ownerType: FileOwn
       else setHover(hit);
     }).then((f) => (alive ? (un = f) : f())).catch(() => {});
     return () => { alive = false; un?.(); zones.delete(me); };
-  }, []);
+  }, [readOnly]);
 
   const choose = async () => {
     const sel = await open({ multiple: true, directory: false, title: "Add files" });
@@ -56,7 +58,7 @@ export function FileDrop({ ownerType, ownerId, emptyText }: { ownerType: FileOwn
   };
 
   return (
-    <div ref={ref} className={`filedrop${hover ? " hover" : ""}`}>
+    <div ref={ref} className={`filedrop${hover ? " hover" : ""}${readOnly ? " read-only" : ""}`}>
       {(files ?? []).length > 0 && (
         <ul className="files">
           {(files ?? []).map((f) => (
@@ -65,17 +67,19 @@ export function FileDrop({ ownerType, ownerId, emptyText }: { ownerType: FileOwn
                 <span className="ext">{(f.name.includes(".") ? f.name.split(".").pop()! : "file").slice(0, 4).toUpperCase()}</span>
                 <span className="fname"><b>{f.name}</b><span>{formatBytes(f.sizeBytes)} · {relTime(f.createdAt)}</span></span>
               </button>
-              {confirm === f.id
+              {readOnly ? null : confirm === f.id
                 ? <button className="btn sm danger" onClick={() => { setConfirm(null); removeFile(f.id).catch((e) => setMsg(String(e))); }}>Remove?</button>
                 : <button className="btn ghost sm icon-only" aria-label={`Remove ${f.name}`} title="Remove" onClick={() => setConfirm(f.id)}><X className="icon" /></button>}
             </li>
           ))}
         </ul>
       )}
-      <div className="filedrop-bar">
-        <span className="faint">{busy ? "Adding…" : hover ? "Drop to add" : (files ?? []).length ? "Drop more files here, or" : emptyText ?? "Drop files here, or"}</span>
-        <button className="btn sm" onClick={choose} disabled={busy}><Upload className="icon" />Add files</button>
-      </div>
+      {readOnly ? (files && files.length === 0 && <span className="faint">No attachments.</span>) : (
+        <div className="filedrop-bar">
+          <span className="faint">{busy ? "Adding…" : hover ? "Drop to add" : (files ?? []).length ? "Drop more files here, or" : emptyText ?? "Drop files here, or"}</span>
+          <button className="btn sm" onClick={choose} disabled={busy}><Upload className="icon" />Add files</button>
+        </div>
+      )}
       {msg && <div style={{ color: "var(--warning)", fontSize: "var(--fs-sm)" }}>{msg}</div>}
     </div>
   );

@@ -69,7 +69,8 @@ export function useChat(threadId: string | null) {
       if (e.threadId !== current.current) return;
       if (e.kind === "delta" || e.kind === "block") {
         const c: DraftChange = e.kind === "delta" ? { kind: "delta", text: e.text, seq: e.seq } : { kind: "block", seq: e.seq };
-        heard.current = c.kind === "block" ? [c] : [...heard.current, c];
+        if (c.kind === "block") heard.current = [c];
+        else heard.current.push(c);
         setLive((d) => applyDraft(d, c));
       }
       else if (e.kind === "tool") setTool(e.name);

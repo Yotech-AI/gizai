@@ -1,7 +1,11 @@
-//! Read-only git checks for the project screen, and which remote of a repository is its GitHub repository.
+//! Read-only git checks for the project screen, which remote of a repository is its GitHub repository, and where a new
+//! card of a project starts.
+use gizai_agents::{AgentError, worktree};
+use gizai_core::model::Project;
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,4 +49,20 @@ pub fn remote_for(path: &Path, url: &str) -> Option<String> {
         .filter(|(_, u)| gizai_core::repo_url::same_repo(u, url))
         .min_by_key(|(name, _)| name != "origin")
         .map(|(name, _)| name)
+}
+
+/// How long a card start's fetch of main may take.
+pub const START_FETCH_LIMIT: Duration = Duration::from_secs(60);
+
+/// Where a new card of `project` starts, as a ref of its repository `repo`: with a GitHub link, the project's main branch
+/// from the remote that matches the link (else from the link itself, `worktree::fetch_start`), fetched first within
+/// `fetch` (None: as last fetched); without a link, the local default branch. Card starts and the Team Lead's copies
+/// (`code`) both start here, so the two can't drift apart. Blocking.
+pub fn start_point(project: &Project, repo: &Path, fetch: Option<Duration>) -> Result<String, AgentError> {
+    let Some(url) = project.repo_url.as_deref() else { return Ok(project.default_branch.clone()) };
+    let remote = remote_for(repo, url);
+    match fetch {
+        Some(limit) => worktree::fetch_start(repo, remote.as_deref(), url, &project.default_branch, limit),
+        None => Ok(worktree::start_ref(remote.as_deref(), &project.default_branch)),
+    }
 }

@@ -58,6 +58,8 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Agents that start when you press Run, when a card is assigned, or on a heartbeat, on several cards at once. A start that can't work (Claude Code missing or not logged in, a wrong model, no repository) holds the card "blocked" without counting as a failed run, and that agent takes no new cards until you start or edit it (or Gizai restarts)
 - Live run output, run history with the reason each run ended and the commits it made, and Continue
 - The Team Lead chat, which manages clients, projects, tasks and agents with Gizai's own tools
+- The Team Lead reads its own read-only copy of each active project's code (`<data dir>/code/<KEY>`, a worktree without a branch), kept at the commit a new card starts from and refreshed before each answer; your own checkouts are never passed to it
+- When a project's linked folder has dependencies behind main (`vendor/` or `node_modules/` missing, or a lock file that differs from main's), the Team Lead tells you what an update would do and, after your yes, updates it: a fast-forward to main (switching branch only if you agreed), then `composer install` or `npm ci`, never a merge, reset or the setup command
 - An org chart of your team
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart

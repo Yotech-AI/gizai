@@ -16,7 +16,7 @@ What I assume (not said):
 
 - One chat agent per organisation. The Team Lead is the agent with Chat turned on.
 - Chats are **threads**, as in Claude Desktop, so old conversations stay readable.
-- The Team Lead is a manager, not a coder. In chat it uses Gizai's tools and may *read* the linked repositories, but it doesn't edit files or run commands. Code work goes to the developer agents as tasks.
+- The Team Lead is a manager, not a coder. In chat it uses Gizai's tools and may *read* the projects' code (its own copies, §5a), but it doesn't edit files or run commands. Code work goes to the developer agents as tasks.
 - Changes the Team Lead makes are attributed to it in every activity feed ("Team Lead created KADE-14").
 
 Success looks like:
@@ -119,7 +119,7 @@ The tables `chat_threads`, `chat_messages`, `api_tokens` and `runs.chat_thread_i
    --restricted --tools Read,Glob,Grep --permission-mode manual --permission-prompts none
    --mcp-config <file> --strict-mcp-config --allowedTools mcp__gizai
    --append-system-prompt <Gizai chat prompt + the agent's instructions>
-   [--model m] [--max-budget-usd n] [--add-dir <each linked repo>]
+   [--model m] [--max-budget-usd n] [--add-dir <data dir>/code/<KEY> for each copy (§5a)]
    ```
 
    What these flags do:
@@ -146,6 +146,21 @@ The tables `chat_threads`, `chat_messages`, `api_tokens` and `runs.chat_thread_i
 
    **Start-up:** turns left running are marked interrupted by the existing recovery. Their claude process group is ended only when /proc shows it still leads its group and works in the lead folder.
 
+## 5a. The Team Lead's copies of the code (GA-44)
+
+The linked folders (`repo_path`) are Jeffrey's own checkouts. They are often on a feature branch and behind main, so the Team Lead doesn't read them. It reads its own copies instead.
+
+- **What:** for every active project with a git repository, a detached worktree (`git worktree add --detach`, no branch) at `<data dir>/code/<KEY>`. It sits at the commit a new card of the project starts from: main fetched from the remote that matches the project's GitHub link (else from the link itself), or the local default branch when there is no link. One helper, `git::start_point`, picks that commit for card starts and copies alike. A copy shares the repository's objects and holds only tracked files: no `vendor/`, `node_modules/`, `target/` or `.env`. It is not under `worktrees/` (the card worktree features don't see it) and not under `lead/` (Claude Code would load its `CLAUDE.md`).
+- **When:** before each turn, for all copies in parallel, one refresh per project at a time:
+  - fetch, unless the project was fetched (or a fetch was tried) less than a minute ago;
+  - if the commit moved, move the copy there and throw away anything changed in it; if it didn't, touch nothing.
+
+  The turn waits at most 10 seconds. A slow or failed refresh leaves the last good copy and finishes in the background. At start-up the missing copies are made in the background.
+- **Chat:** `--add-dir` gets the copies, never the linked folders. The system prompt names each copy's folder (`GA: <data dir>/code/GA`) and stays the same from turn to turn. The turn's prompt starts with one line in square brackets, which isn't saved as a chat message: the commit and date each copy shows, and which copy couldn't be refreshed and why.
+- **Clean-up:** at start-up and before each turn, the copy of a project that is no longer active, has lost its repository or now points to another repository is removed: `git worktree remove --force`, then `git worktree prune`. Nothing outside `<data dir>/code/` is removed.
+- **The linked folder:** each refresh also looks at the project's linked folder, locally and without a fetch: its branch, how many commits of main it lacks, and whether `vendor/` (for `composer.lock`) or `node_modules/` (for `package-lock.json`) is missing or its lock file differs from main's. Only dependencies that are behind make the folder outdated. The turn's line then gets a note, on a chat's first turn and again when it changes, that also says what an update would do. The Team Lead asks once, when the project comes up, and updates only after a yes in the chat (`update_checkout`, §6).
+- **The update** (`update_checkout`, chat only, the project's linked folder only) changes nothing and says why when the folder has uncommitted changes to tracked files (named), a merge or rebase in progress, is on another branch and the call doesn't ask to switch, its default branch has commits main doesn't, it isn't a checkout of the project's repository, or an update of it is already running. Otherwise it answers "started" at once and, in the background: switches to the default branch when asked (the other branch stays as it is), fast-forwards to main as last fetched (`git merge --ff-only`, without git hooks), and runs `composer install` or `npm ci` where a dependency folder was behind, without prompts and within the preparation's time limit. It never runs the project's setup command. The end is posted in the chat as a system message (old and new commit, any switch, the installs, or why it stopped with the end of the output), and the next turn's line mentions it once. An update and a card's worktree preparation from the same folder wait for each other.
+
 ## 6. The Team Lead's tools
 
 All names are served as `mcp__gizai__<name>`. References accept an id or a human name: a task by `KADE-12`, a project by key or name, a client or agent by name. A name that matches nothing, or matches more than one item, returns an error listing the candidates. Every write returns `{ok, …, link: {page, id, label}}`, so the chat can show a card that opens the item.
@@ -155,7 +170,7 @@ All names are served as `mcp__gizai__<name>`. References accept an id or a human
 | Overview | `get_overview` (counts, columns, inbox size, agents and who is working) | |
 | Inbox | `read_inbox` | |
 | Clients | `list_clients`, `get_client` (with contacts and projects) | `create_client`, `update_client`, `save_contact` |
-| Projects | `list_projects`, `get_project` (with docs and task counts per column) | `create_project` (key suggested from the name when omitted), `update_project` |
+| Projects | `list_projects`, `get_project` (with docs and task counts per column) | `create_project` (key suggested from the name when omitted), `update_project`, `update_checkout` (chat only: the linked folder to main, §5a) |
 | Tasks | `list_tasks` (project, column, assignee, label, text, done included or not), `get_task` (comments, runs, files) | `create_task`, `update_task` (fields, labels, assignee, hold), `move_task` (by column name), `comment_on_task` |
 | Agents | `list_agents`, `get_agent` | `create_agent`, `update_agent`, `set_agent_status`, `add_routing_rule` |
 | Runs | | `start_agent_run` (an agent on a task, now), `stop_agent_run` |
@@ -224,7 +239,7 @@ Updates merge: `update_project` and `update_client` read the current row and cha
   - tools act as the token's agent;
   - the shim exits with a clear stderr message when it can't connect.
 - **Tool inputs** are validated by gizai-core, as for the UI. Errors come back to Claude as `isError: true` with gizai-core's sentence, so it can correct itself.
-- **`attach_file`** copies only regular files up to 1 GB (the existing core rule). The Team Lead can only attach a path Jeffrey gave it or one it found in a linked repo.
+- **`attach_file`** copies only regular files up to 1 GB (the existing core rule). The Team Lead can only attach a path Jeffrey gave it or one inside its copies of the code (§5a). The copies hold only tracked files, so a repository's `.env` isn't among them.
 - **Instructions:** the Team Lead's appended instructions say:
   - ask before changes that touch more than five items, or anything it can't undo;
   - never invent ids: look things up first;

@@ -100,6 +100,7 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         "write_doc" => write::write_doc(&cx, &a),
         "attach_file" => write::attach_file(&cx, &a).await,
         "add_person" => write::add_person(&cx, &a),
+        "update_checkout" => write::update_checkout(&cx, &a).await,
         other => Err(format!("unknown tool {other}")),
     }
 }
@@ -327,6 +328,9 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("attach_file", "Copies a local file (absolute path, or ~/…) into Gizai and attaches it to one task, project or client.",
              &[("path", "string", "Absolute path of the file"), ("task", "string", "Task identifier"), ("project", "string", "Project key or name"), ("client", "string", "Client name")], &["path"]),
         tool("add_person", "Adds a person (a colleague or reviewer) to Gizai.", &[("name", "string", "Full name"), ("email", "string", "Email")], &["name"]),
+        tool("update_checkout", "Chat only, and only after the user said yes in this chat: updates a project's linked folder (the user's own checkout, where new cards copy vendor/ and node_modules/ from) to main as last fetched. A fast-forward, then composer install or npm ci where a lock file changed or a folder is missing; never the setup command. Changes nothing, and says why, with uncommitted changes, a merge or rebase in progress, a local main with its own commits, or another branch unless switch is true. Answers at once; the result comes as a message in this chat.",
+             &[PROJECT, ("switch", "boolean", "When the folder is on another branch: switch it to the default branch first (that branch stays as it is). Only when the user agreed to the switch"),
+               ("folder", "string", "The folder to update; only the project's linked folder is allowed (the default)")], &["project"]),
     ]
 }
 

@@ -462,6 +462,10 @@ fn open_worktree(st: &AppState, project: &Project, task: &Task, repo: &Path, sta
 async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
                           todo: worktree::Unprepared) -> Result<(), StartError> {
     let plan = Prepare { copy: project.worktree_copy.clone(), install: project.worktree_install, setup: project.worktree_setup.clone() };
+    // Not while the project's own folder is being updated from chat (`code::start_update`), and the other way round:
+    // no card copies a half-installed node_modules/.
+    let folder = crate::code::folder_lock(st, repo);
+    let _folder = folder.lock().await;
     let (main, dir) = (repo.to_path_buf(), wt.path.clone());
     let done = tokio::task::spawn_blocking(move || {
         let path = command_path();

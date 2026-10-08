@@ -7,12 +7,19 @@
 //! - At start-up and before each turn, the copies of projects that no longer get one (paused, archived, unlinked) or
 //!   that point to another repository now are removed. Nothing outside `<data dir>/code/` is ever removed.
 //! - At start-up the missing copies are made in the background, so the first answer rarely waits.
-use std::collections::HashMap;
+//!
+//! With each refresh Gizai also looks at the project's linked folder (your own checkout, where a new card's worktree
+//! copies vendor/ and node_modules/ from), locally and without a fetch (`gizai_agents::checkout::status`). When its
+//! dependencies are behind main, the turn's line gets a note: on a chat's first turn, and again when it changes. The
+//! Team Lead then offers to update the folder, and `update_checkout` does that in the background once you said yes
+//! (`start_update`); never at the same time as a card's preparation copying from the same folder (`folder_lock`).
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gizai_agents::AgentError;
+use gizai_agents::checkout;
 use gizai_agents::copies::{self, At};
 use gizai_core::model::Project;
 use gizai_core::projects;
@@ -30,6 +37,21 @@ const FETCH_LIMIT: Duration = Duration::from_secs(60);
 pub struct Copies {
     /// Project key → its copy.
     slots: Mutex<HashMap<String, Arc<Slot>>>,
+    /// Chat thread → what its turns' lines have told the Team Lead.
+    heard: Mutex<HashMap<String, Heard>>,
+    /// Linked folder (as it is on disk) → held while it is updated, or while a card's worktree is prepared from it.
+    folders: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+    /// Linked folders an update runs in.
+    updating: Mutex<HashSet<PathBuf>>,
+}
+
+/// What one chat has been told.
+#[derive(Debug, Default)]
+struct Heard {
+    /// The note about each project's linked folder it got last (project key → note).
+    notes: HashMap<String, String>,
+    /// The ends of updates started in it, still to mention in its next turn's line.
+    results: Vec<String>,
 }
 
 #[derive(Default)]
@@ -48,6 +70,9 @@ struct Last {
     fetch_failed: Option<String>,
     /// Why the copy couldn't be made or moved.
     failed: Option<String>,
+    /// How the project's linked folder stands: a note when its dependencies are behind main, None when they aren't;
+    /// unknown (not looked at, or git failed) when outer None.
+    folder: Option<Option<String>>,
 }
 
 impl Copies {
@@ -109,9 +134,10 @@ pub async fn startup(st: &AppState) {
     }
 }
 
-/// Before a chat turn: removes the copies that no longer belong, refreshes the others in parallel and waits for them at
-/// most `TURN_WAIT`.
-pub async fn before_turn(st: &AppState) -> ForTurn {
+/// Before a turn in the chat `thread_id`: removes the copies that no longer belong, refreshes the others in parallel
+/// and waits for them at most `TURN_WAIT`. The line also carries the notes about linked folders this chat hasn't had
+/// yet (or that changed), and the ends of updates started in it.
+pub async fn before_turn(st: &AppState, thread_id: &str) -> ForTurn {
     let list = projects_with_code(st);
     tidy(st, &list).await;
     let deadline = tokio::time::Instant::now() + TURN_WAIT;
@@ -132,17 +158,60 @@ pub async fn before_turn(st: &AppState) -> ForTurn {
         .await.unwrap_or_default();
     let mut out = ForTurn::default();
     let mut said = vec![];
+    let mut notes = vec![];
+    let mut heard = st.code.heard.lock().unwrap();
+    let heard = heard.entry(thread_id.to_string()).or_default();
     for ((p, last, late), at) in found.iter().zip(ats.into_iter().chain(std::iter::repeat(None))) {
         let dir = dir_of(st, &p.key);
         if at.is_some() && dir.join(".git").exists() {
             out.dirs.push(dir.display().to_string());
         }
         said.push(copy_said(&p.key, at.as_ref(), last, *late));
+        // a chat hears about a linked folder on its first turn and when that changes, not on every turn
+        match &last.folder {
+            Some(Some(note)) if heard.notes.get(&p.key) != Some(note) => {
+                notes.push(note.clone());
+                heard.notes.insert(p.key.clone(), note.clone());
+            }
+            Some(None) if heard.notes.remove(&p.key).is_some() => {
+                notes.push(format!("{}'s linked folder isn't outdated any more.", p.key));
+            }
+            _ => {}
+        }
     }
+    let mut parts = vec![];
     if !said.is_empty() {
-        out.line = format!("[Gizai: your copies of the code: {}.]", said.join("; "));
+        parts.push(format!("Your copies of the code: {}.", said.join("; ")));
+    }
+    parts.extend(notes);
+    parts.append(&mut heard.results);
+    if !parts.is_empty() {
+        out.line = format!("[Gizai: {}]", parts.join(" "));
     }
     out
+}
+
+/// The note about a linked folder whose dependencies are behind main, for the turn's line: the folder, its branch, how
+/// many commits it is behind, which dependencies are behind, and what an update would do.
+fn folder_note(key: &str, dir: &Path, default_branch: &str, s: &checkout::Status) -> String {
+    let plural = |n: u32| if n == 1 { "" } else { "s" };
+    let deps: Vec<String> = s.deps.iter().map(checkout::DepBehind::said).collect();
+    let on = match &s.branch {
+        Some(b) => format!("It is on branch {b}"),
+        None => "It has no branch checked out".to_string(),
+    };
+    let switch = match &s.branch {
+        Some(b) if b == default_branch => String::new(),
+        Some(b) => format!("switch to {default_branch} ({b} stays as it is), "),
+        None => format!("switch to {default_branch}, "),
+    };
+    let installs: Vec<&str> = s.deps.iter().map(|d| checkout::install_name(&d.folder)).collect();
+    let update = match s.moves {
+        Some(n) => format!("An update would {switch}move {default_branch} {n} commit{} and run {}.", plural(n), installs.join(" and ")),
+        None => format!("Its {default_branch} branch has commits main doesn't (or isn't there), so it can't be updated with a fast-forward."),
+    };
+    format!("{key}'s linked folder {} is outdated: {}. {on}, {} commit{} behind main. {update}",
+            dir.display(), deps.join(", "), s.behind, plural(s.behind))
 }
 
 /// One copy in the turn's line: "GA 319bf0b (2026-10-07)", and why it couldn't be refreshed or made.
@@ -162,7 +231,7 @@ fn copy_said(key: &str, at: Option<&At>, last: &Last, late: bool) -> String {
 
 /// A message for one line: its last line, at most 200 characters.
 fn one_line(s: &str) -> String {
-    let last = s.trim().lines().map(str::trim).filter(|l| !l.is_empty()).next_back().unwrap_or("unknown error");
+    let last = s.trim().lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("unknown error");
     match last.char_indices().nth(200) {
         Some((i, _)) => format!("{}…", &last[..i]),
         None => last.to_string(),
@@ -189,12 +258,13 @@ async fn refresh(st: AppState, p: Project) -> Last {
     };
     let dir = dir_of(&st, &p.key);
     match tokio::task::spawn_blocking(move || refresh_blocking(&p, &dir, fetch)).await {
-        Ok((fetch_failed, failed)) => {
+        Ok(r) => {
             if fetch.is_some() {
                 last.fetched = Some(Instant::now());
-                last.fetch_failed = fetch_failed;
+                last.fetch_failed = r.fetch_failed;
             }
-            last.failed = failed;
+            last.failed = r.failed;
+            last.folder = r.folder;
         }
         Err(e) => last.failed = Some(e.to_string()),
     }
@@ -202,9 +272,16 @@ async fn refresh(st: AppState, p: Project) -> Last {
     last
 }
 
-/// Fetches when `fetch` gives a time limit, then makes or moves the copy at `dir`. Returns why the fetch failed, and
-/// why the copy couldn't be made or moved. A failed fetch still moves the copy to main as last fetched.
-fn refresh_blocking(p: &Project, dir: &Path, fetch: Option<Duration>) -> (Option<String>, Option<String>) {
+/// What `refresh_blocking` found.
+struct Refreshed {
+    fetch_failed: Option<String>,
+    failed: Option<String>,
+    folder: Option<Option<String>>,
+}
+
+/// Fetches when `fetch` gives a time limit, then makes or moves the copy at `dir`, and looks at the project's linked
+/// folder (locally). A failed fetch still moves the copy to main as last fetched.
+fn refresh_blocking(p: &Project, dir: &Path, fetch: Option<Duration>) -> Refreshed {
     let repo = PathBuf::from(p.repo_path.clone().unwrap_or_default());
     let mut fetch_failed = None;
     if let Some(limit) = fetch
@@ -212,10 +289,11 @@ fn refresh_blocking(p: &Project, dir: &Path, fetch: Option<Duration>) -> (Option
     {
         fetch_failed = Some(plain(e));
     }
-    let failed = crate::git::start_point(p, &repo, None)
-        .and_then(|start| copies::sync(&repo, dir, &start))
-        .err().map(plain);
-    (fetch_failed, failed)
+    let start = crate::git::start_point(p, &repo, None);
+    let failed = start.as_ref().map_err(|e| e.to_string()).and_then(|s| copies::sync(&repo, dir, s).map_err(plain)).err();
+    let folder = start.ok().and_then(|s| checkout::status(&repo, &p.default_branch, &s).ok())
+        .map(|s| s.outdated().then(|| folder_note(&p.key, &repo, &p.default_branch, &s)));
+    Refreshed { fetch_failed, failed, folder }
 }
 
 /// Removes the copies in `<data dir>/code/` that no longer belong: of a project that isn't in `keep` (paused, archived,
@@ -245,5 +323,117 @@ async fn tidy(st: &AppState, keep: &[Project]) {
         if removed {
             *slot.last.lock().unwrap() = Last::default();
         }
+    }
+}
+
+/// Held while a project's linked folder `folder` is updated (`start_update`), or while a card's new worktree is prepared
+/// from it (`runs`): the two wait for each other, so no card copies a half-installed node_modules/.
+pub fn folder_lock(st: &AppState, folder: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    let key = folder.canonicalize().unwrap_or_else(|_| folder.to_path_buf());
+    st.code.folders.lock().unwrap().entry(key).or_default().clone()
+}
+
+/// No longer running when dropped.
+struct Updating {
+    st: AppState,
+    folder: PathBuf,
+}
+
+impl Drop for Updating {
+    fn drop(&mut self) {
+        self.st.code.updating.lock().unwrap().remove(&self.folder);
+    }
+}
+
+/// `update_checkout` from the chat `thread`: checks the linked folder of `project` (`checkout::plan`) and, when nothing
+/// is in the way, starts its update in the background: to main as last fetched for the copies, switching to the
+/// default branch first only with `switch`, then the installs that are needed, never the setup command. Returns what
+/// it will do; or why it changes nothing. When the update has ended its result is posted in the chat as a system
+/// message, and the chat's next turn hears it once.
+pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch: bool) -> Result<String, String> {
+    let folder = project.repo_path.clone().filter(|r| !r.trim().is_empty())
+        .ok_or_else(|| format!("{} has no linked folder", project.key))?;
+    let folder = PathBuf::from(folder);
+    let key = folder.canonicalize().unwrap_or_else(|_| folder.clone());
+    if !st.code.updating.lock().unwrap().insert(key.clone()) {
+        return Err(format!("an update of {} is already running: nothing changed", folder.display()));
+    }
+    let running = Updating { st: st.clone(), folder: key };
+    let (p, dir) = (project.clone(), folder.clone());
+    let will = tokio::task::spawn_blocking(move || plan(&p, &dir, switch)).await.map_err(|e| e.to_string())??;
+    let (st2, thread, p, dir) = (st.clone(), thread.to_string(), project.clone(), folder.clone());
+    tokio::spawn(async move {
+        let _running = running;
+        // after a card's preparation that is copying from the folder; the folder may have changed meanwhile, so the
+        // checks run again
+        let lock = folder_lock(&st2, &dir);
+        let _held = lock.lock().await;
+        let (p2, dir2) = (p.clone(), dir.clone());
+        let ended = tokio::task::spawn_blocking(move || {
+            let plan = plan(&p2, &dir2, switch).map_err(Ended::Refused)?;
+            let path = crate::runs::command_path();
+            checkout::update(&dir2, &plan, Some(path.as_os_str())).map_err(Ended::Stopped)
+        }).await.unwrap_or_else(|e| Err(Ended::Refused(e.to_string())));
+        let (message, line) = update_said(&p.key, &dir, &ended);
+        crate::chat::system(&st2, &thread, &message);
+        st2.code.heard.lock().unwrap().entry(thread.clone()).or_default().results.push(line);
+    });
+    Ok(will.said())
+}
+
+/// The checks before an update of `p`'s linked folder `dir`, against main as last fetched (`git::start_point`).
+fn plan(p: &Project, dir: &Path, switch: bool) -> Result<checkout::Plan, String> {
+    let main = crate::git::start_point(p, dir, None).map_err(plain)?;
+    checkout::plan(dir, dir, &p.default_branch, &main, switch)
+}
+
+/// Why an update didn't end well: the checks refused it when it was its turn, or a step failed.
+enum Ended {
+    Refused(String),
+    Stopped(checkout::Stopped),
+}
+
+/// The update's end: the chat's system message (with the end of the output when it stopped), and the short sentence
+/// for the next turn's line.
+fn update_said(key: &str, dir: &Path, ended: &Result<checkout::Updated, Ended>) -> (String, String) {
+    let folder = format!("{key}'s linked folder {}", dir.display());
+    match ended {
+        Ok(u) => {
+            let mut did = vec![];
+            if let Some(from) = &u.switched_from {
+                did.push(if from.is_empty() { "switched to the default branch".to_string() } else { format!("switched from {from} to the default branch") });
+            }
+            did.push(if u.from == u.to {
+                format!("stayed at {} (already main's commit)", &u.to[..u.to.len().min(7)])
+            } else {
+                format!("moved from {} to {}", &u.from[..u.from.len().min(7)], &u.to[..u.to.len().min(7)])
+            });
+            if u.installed.is_empty() {
+                did.push("ran no installs".into());
+            } else {
+                did.push(format!("ran {}", u.installed.join(" and ")));
+            }
+            let text = format!("Updated {folder}: {}.", list(&did));
+            (text.clone(), format!("The update you started ended: {text}"))
+        }
+        Err(Ended::Refused(why)) => {
+            let text = format!("The update of {folder} didn't start: {why}.");
+            (text.clone(), text)
+        }
+        Err(Ended::Stopped(s)) => {
+            let before = if s.done.is_empty() { String::new() } else { format!(" Before that it {}.", list(&s.done)) };
+            let text = format!("The update of {folder} stopped: {}.{before}", s.why);
+            let output = if s.output.trim().is_empty() { String::new() } else { format!("\n\n```\n{}\n```", s.output.trim()) };
+            (format!("{text}{output}"), text)
+        }
+    }
+}
+
+/// "a, b and c".
+fn list(parts: &[String]) -> String {
+    match parts.len() {
+        0 => String::new(),
+        1 => parts[0].clone(),
+        n => format!("{} and {}", parts[..n - 1].join(", "), parts[n - 1]),
     }
 }

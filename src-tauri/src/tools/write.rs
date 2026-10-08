@@ -458,6 +458,27 @@ fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), 
     }
 }
 
+/// Chat only: starts the update of a project's linked folder to main (`code::start_update`), after the user said yes in
+/// the chat. Only the project's linked folder can be updated; the result comes later as a system message in the chat.
+pub(crate) async fn update_checkout(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
+    let Some(thread) = cx.thread else {
+        return Err("update_checkout works only in chat, after the user said yes there".into());
+    };
+    let p = resolve::project(cx, &a.req("project")?)?;
+    let linked = p.repo_path.clone().filter(|r| !r.trim().is_empty())
+        .ok_or_else(|| format!("{} has no linked folder to update", p.key))?;
+    if let Some(f) = a.opt("folder") {
+        let real = |s: &str| std::path::Path::new(s).canonicalize().ok();
+        if real(&f).is_none() || real(&f) != real(&linked) {
+            return Err(format!("update_checkout only updates {}'s linked folder ({linked}); {f} isn't it, so nothing changed", p.key));
+        }
+    }
+    let will = crate::code::start_update(cx.st, thread, &p, a.flag("switch").unwrap_or(false)).await?;
+    Ok(json!({"ok": true, "done": "started", "folder": linked, "will": will,
+              "result": "comes as a message in this chat when the update ends",
+              "link": link("project", &p.id, &format!("{} ({})", p.name, p.key))}))
+}
+
 pub(crate) fn add_person(cx: &Cx, a: &Args) -> Result<Value, String> {
     let id = users::create(cx.db(), cx.actor, &a.req("name")?, a.opt("email").as_deref()).map_err(err)?;
     cx.changed("actors");

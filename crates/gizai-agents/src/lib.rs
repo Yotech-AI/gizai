@@ -3,6 +3,7 @@
 //! pull requests (gh), the connection to GitHub (pushes over SSH or HTTPS, gh's login), prompts and process control,
 //! and Gizai's own updates (the release check, building and installing a release). Never imports Tauri.
 pub mod chat_stream;
+pub mod checkout;
 pub mod claude;
 pub mod cli;
 pub mod connection;

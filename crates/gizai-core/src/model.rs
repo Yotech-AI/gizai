@@ -166,6 +166,9 @@ pub struct Task {
     pub testing: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Archived from Done (a soft delete): when, and the name of who archived it. None for a card on the board.
+    pub archived_at: Option<i64>,
+    pub archived_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

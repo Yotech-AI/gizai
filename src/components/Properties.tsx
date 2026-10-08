@@ -15,8 +15,15 @@ const HOLD_NAMES: Record<string, string> = {
 };
 const date = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-export function Properties({ task, team, people, onError, onClose }: { task: Task; team: Team; people: Person[]; onError: (msg: string) => void; onClose: () => void }) {
+/** `readOnly` (an archived card): the values show, but nothing can be changed. */
+export function Properties({ task, team, people, onError, onClose, readOnly }: {
+  task: Task; team: Team; people: Person[]; onError: (msg: string) => void; onClose: () => void; readOnly?: boolean;
+}) {
   const run = (p: Promise<unknown>) => p.catch((e) => onError(String(e)));
+  // A value that opens its picker, or only shows when the card is read-only.
+  const pick = (label: string, cls: string, value: React.ReactNode, menu: (close: () => void) => React.ReactNode, style?: React.CSSProperties) => readOnly
+    ? <span className={`v${cls}`} style={style}>{value}</span>
+    : <Popover label={label} button={() => <span className={`v editable${cls}`} role="button" tabIndex={0} style={style}>{value}</span>}>{menu}</Popover>;
   const agents = team.members.filter((m) => m.kind === "agent");
   const states = [...team.states].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
   const moveToColumn = async (stateId: string) => {
@@ -33,38 +40,37 @@ export function Properties({ task, team, people, onError, onClose }: { task: Tas
     <aside className="props" aria-label="Properties">
       <div className="props-head">Properties<button className="btn ghost sm icon-only" aria-label="Close properties" title="Close properties (])" onClick={onClose}><X className="icon" /></button></div>
       <div className="props-body">
-        {row("Status", <Popover label="Status" button={() => <span className="v editable" role="button" tabIndex={0}><StatusIcon category={task.stateCategory} />{task.stateName}</span>}>
-          {(close) => states.map((s) => <button key={s.id} className="opt" onClick={() => { close(); run(moveToColumn(s.id)); }}><StatusIcon category={s.category} />{s.name}{s.id === task.stateId && <Check className="icon tick" />}</button>)}
-        </Popover>)}
-        {row("Priority", <Popover label="Priority" button={() => <span className="v editable" role="button" tabIndex={0}><PriorityIcon priority={task.priority} />{PRIORITY_NAMES[task.priority]}</span>}>
-          {(close) => [1, 2, 3, 4, 0].map((p) => <button key={p} className="opt" onClick={() => { close(); run(updateTask(task.id, { priority: p })); }}><PriorityIcon priority={p} />{PRIORITY_NAMES[p]}{p === task.priority && <Check className="icon tick" />}</button>)}
-        </Popover>)}
-        {row("Testing", <label className="v editable check" title={testing ? "On: the QA Agent tests the card before Review" : "Off: the card skips Testing and goes straight to Review"}>
-          <input type="checkbox" checked={testing} onChange={(e) => run(updateTask(task.id, { testing: e.target.checked }))} />Test before Review</label>)}
-        {row("Labels", <Popover label="Labels" button={() => <span className={`v editable${task.labels.length ? "" : " none"}`} role="button" tabIndex={0} style={{ flexWrap: "wrap" }}>
-          {task.labels.length ? task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>) : "No labels"}</span>}>
-          {() => team.labels.map((l) => { const on = task.labels.some((x) => x.id === l.id); return (
-            <button key={l.id} className="opt" onClick={() => toggleLabel(l.id)}><span className="dot" style={{ width: 8, height: 8, borderRadius: "50%", background: l.color ?? "var(--text-3)" }} />{l.name}{on && <Check className="icon tick" />}</button>); })}
-        </Popover>)}
-        {row("Assignee", <Popover label="Assignee" button={() => <span className={`v editable${task.assigneeName ? "" : " none"}`} role="button" tabIndex={0}>
-          {task.assigneeName ? <><Avatar name={task.assigneeName} kind={task.assigneeKind} size="sm" />{task.assigneeName}</> : "Unassigned"}</span>}>
-          {(close) => (<>
+        {row("Status", pick("Status", "", <><StatusIcon category={task.stateCategory} />{task.stateName}</>,
+          (close) => states.map((s) => <button key={s.id} className="opt" onClick={() => { close(); run(moveToColumn(s.id)); }}><StatusIcon category={s.category} />{s.name}{s.id === task.stateId && <Check className="icon tick" />}</button>)))}
+        {row("Priority", pick("Priority", "", <><PriorityIcon priority={task.priority} />{PRIORITY_NAMES[task.priority]}</>,
+          (close) => [1, 2, 3, 4, 0].map((p) => <button key={p} className="opt" onClick={() => { close(); run(updateTask(task.id, { priority: p })); }}><PriorityIcon priority={p} />{PRIORITY_NAMES[p]}{p === task.priority && <Check className="icon tick" />}</button>)))}
+        {row("Testing", <label className={`v${readOnly ? "" : " editable"} check`} title={testing ? "On: the QA Agent tests the card before Review" : "Off: the card skips Testing and goes straight to Review"}>
+          <input type="checkbox" checked={testing} disabled={readOnly} onChange={(e) => run(updateTask(task.id, { testing: e.target.checked }))} />Test before Review</label>)}
+        {row("Labels", pick("Labels", task.labels.length ? "" : " none",
+          task.labels.length ? task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>) : "No labels",
+          () => team.labels.map((l) => { const on = task.labels.some((x) => x.id === l.id); return (
+            <button key={l.id} className="opt" onClick={() => toggleLabel(l.id)}><span className="dot" style={{ width: 8, height: 8, borderRadius: "50%", background: l.color ?? "var(--text-3)" }} />{l.name}{on && <Check className="icon tick" />}</button>); }),
+          { flexWrap: "wrap" }))}
+        {row("Assignee", pick("Assignee", task.assigneeName ? "" : " none",
+          task.assigneeName ? <><Avatar name={task.assigneeName} kind={task.assigneeKind} size="sm" />{task.assigneeName}</> : "Unassigned",
+          (close) => (<>
             <button className="opt" onClick={() => { close(); run(updateTask(task.id, { assigneeId: "" })); }}>Unassigned{!task.assigneeId && <Check className="icon tick" />}</button>
             <div className="pop-label">People</div>
             {people.map((p) => <button key={p.id} className="opt" onClick={() => { close(); run(updateTask(task.id, { assigneeId: p.id })); }}><Avatar name={p.name} size="sm" />{p.name}{task.assigneeId === p.id && <Check className="icon tick" />}</button>)}
             {agents.length > 0 && <div className="pop-label">Agents</div>}
             {agents.map((a) => <button key={a.actorId} className="opt" onClick={() => { close(); run(updateTask(task.id, { assigneeId: a.actorId })); }}><Avatar name={a.name} kind="agent" size="sm" />{a.name}{task.assigneeId === a.actorId && <Check className="icon tick" />}</button>)}
-          </>)}
-        </Popover>)}
+          </>)))}
         {row("Project", task.projectId ? <a className="v editable" href={href({ page: "project", id: task.projectId })}><span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", background: task.projectColor ?? "var(--text-3)" }} />{task.projectName}</a> : <span className="v none">None</span>)}
         {task.hold && row("Hold", <span className="v" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
           <span className="badge needs">{HOLD_NAMES[task.hold] ?? task.hold}</span>
           {task.holdReason && <span className="muted" style={{ fontSize: "var(--fs-sm)" }}>{task.holdReason}</span>}
-          <button className="btn sm" onClick={() => run(updateTask(task.id, { hold: "" }))}>Clear hold</button></span>)}
+          {!readOnly && <button className="btn sm" onClick={() => run(updateTask(task.id, { hold: "" }))}>Clear hold</button>}</span>)}
         {row("Branch", task.branch ? <span className="v"><span className="id" style={{ color: "var(--text-2)", whiteSpace: "normal", wordBreak: "break-all" }}>{task.branch}</span></span> : <span className="v none">Set when an agent starts</span>)}
         <div className="props-sep" />
         {row("Created", <span className="v" title={new Date(task.createdAt).toLocaleString("en-GB")}>{date(task.createdAt)}</span>)}
         {row("Updated", <span className="v" title={new Date(task.updatedAt).toLocaleString("en-GB")}>{relTime(task.updatedAt)}</span>)}
+        {task.archivedAt && row("Archived", <span className="v" title={new Date(task.archivedAt).toLocaleString("en-GB")}>
+          {date(task.archivedAt)}{task.archivedBy ? ` by ${task.archivedBy}` : ""}</span>)}
       </div>
     </aside>
   );

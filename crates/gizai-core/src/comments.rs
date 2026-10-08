@@ -21,7 +21,10 @@ pub fn add(db: &Db, actor: &str, task_id: &str, body_md: &str, run_id: Option<&s
     if body_md.trim().is_empty() {
         return Err(Error::Invalid("comment is empty".into()));
     }
-    db.write(Some(actor), |w| add_in(w, actor, task_id, body_md, run_id))
+    db.write(Some(actor), |w| {
+        crate::tasks::not_archived(w.conn(), task_id)?;
+        add_in(w, actor, task_id, body_md, run_id)
+    })
 }
 
 pub(crate) fn add_in(w: &crate::db::Writer, actor: &str, task_id: &str, body_md: &str, run_id: Option<&str>) -> Result<String> {

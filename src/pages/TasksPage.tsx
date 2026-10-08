@@ -1,7 +1,7 @@
 // Tasks (and the Inbox): Paperclip-style list grouped by column, or the board. The Inbox is always the list. View options are remembered on this device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, Plus, X } from "lucide-react";
-import { dismissChat, getTeam, listChatThreads, listProjects, listTasks, listUsers, moveTask } from "../api";
+import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, Plus, Trash2, X } from "lucide-react";
+import { dismissChat, getTeam, listChatThreads, listProjects, listTasks, listUsers, moveTask, restoreTask, archiveTask } from "../api";
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -13,6 +13,10 @@ import type { Task } from "../types";
 import { Board } from "../components/Board";
 import { TaskList } from "../components/TaskList";
 import { Popover } from "../components/Popover";
+import { ArchivedCards } from "../components/ArchivedCards";
+
+/** A message at the bottom right; with `undo`, an Undo button (after archiving a card). */
+type Toast = { text: string; undo?: () => void };
 
 type View = "list" | "board";
 function readPref<T>(k: string, fallback: T): T { try { const v = localStorage.getItem(k); return v === null ? fallback : (JSON.parse(v) as T); } catch { return fallback; } }
@@ -69,8 +73,9 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   useEffect(() => { if (fetched) setTasks(fetched); }, [fetched]);
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
-  const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 5000); return () => clearTimeout(t); }, [toast]);
+  const [toast, setToast] = useState<Toast | null>(null);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), toast.undo ? 8000 : 5000); return () => clearTimeout(t); }, [toast]);
+  const [bin, setBin] = useState(false);
   useEffect(() => { if (projects && filter.projectId && !projects.some((p) => p.id === filter.projectId)) setFilter({ ...filter, projectId: null }); }, [projects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -95,8 +100,22 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
     const st = states.find((s) => s.id === stateId);
     setTasks((ts) => ts.map((t) => t.id === id ? { ...t, stateId, sortKey, stateName: st?.name ?? t.stateName, stateCategory: st?.category ?? t.stateCategory } : t));
     try { await moveTask(id, stateId, sortKey); }
-    catch (e) { setTasks(before); setToast(`Couldn't move ${before.find((x) => x.id === id)?.identifier ?? "the task"}: ${e}`); }
+    catch (e) { setTasks(before); setToast({ text: `Couldn't move ${before.find((x) => x.id === id)?.identifier ?? "the task"}: ${e}` }); }
   }, [states]);
+
+  // Archive (a card in Done): it leaves the board at once; Undo in the toast restores it to the bottom of Done.
+  const onArchive = useCallback(async (t: Task) => {
+    const before = tasksRef.current;
+    setTasks((ts) => ts.filter((x) => x.id !== t.id));
+    try {
+      await archiveTask(t.id);
+      const undo = () => {
+        setToast(null);
+        restoreTask(t.id).catch((e) => setToast({ text: `Couldn't restore ${t.identifier}: ${e}` }));
+      };
+      setToast({ text: `${t.identifier} archived`, undo });
+    } catch (e) { setTasks(before); setToast({ text: `Couldn't archive ${t.identifier}: ${e}` }); }
+  }, []);
 
   const project = projects?.find((p) => p.id === filter.projectId);
   const nFilters = filterCount(filter);
@@ -143,6 +162,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         {view === "list" && <Popover label="Group" align="right" button={() => <button className="btn ghost"><Layers className="icon" />Group</button>}>
           {(close) => GROUPS.map(([k, l]) => <button key={k} className="opt" onClick={() => { setGroup(k); close(); }}>{l}{group === k && <Check className="icon tick" />}</button>)}
         </Popover>}
+        {!inbox && <button className="btn ghost icon-only" aria-label="Archived cards" title="Archived cards" onClick={() => setBin(true)}><Trash2 className="icon" /></button>}
       </div>
       {(error || teamErr) && <div className="error-banner">{error ?? teamErr}</div>}
       {noProjects ? (
@@ -157,10 +177,12 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       ) : (
         <div className="board-wrap">
           {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
-          {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={(id) => go({ page: "task", id })} onAdd={(sid) => onNewTask(sid)} working={working} />}
+          {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={(id) => go({ page: "task", id })} onAdd={(sid) => onNewTask(sid)}
+            onArchive={onArchive} working={working} />}
         </div>
       )}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {bin && <ArchivedCards projectId={filter.projectId} projectName={project?.name} onClose={() => setBin(false)} />}
+      {toast && <div className="toast" role="status">{toast.text}{toast.undo && <button className="btn sm" onClick={toast.undo}>Undo</button>}</div>}
     </>
   );
 }

@@ -301,6 +301,11 @@ pub async fn models_for(st: &AppState, cli_id: Option<&str>, refresh: bool) -> R
     Ok(list)
 }
 
+/// An agent works on the card now: a live run, or a run still getting its worktree ready.
+pub fn working_on(st: &AppState, task_id: &str) -> bool {
+    st.runs.starting.lock().unwrap().contains(task_id) || st.runs.live.lock().unwrap().values().any(|l| l.task_id == task_id)
+}
+
 pub fn live(st: &AppState) -> Vec<LiveRun> {
     st.runs.live.lock().unwrap().iter()
         .map(|(id, l)| LiveRun { run_id: id.clone(), task_id: l.task_id.clone(), agent_id: l.agent_id.clone() })
@@ -606,6 +611,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     }
     let _starting = Starting::take(st, task_id)
         .ok_or_else(|| StartError::Wait("This card's run is already starting: Gizai is getting its worktree ready".into()))?;
+    if let Ok(t) = tasks::get(&st.db, task_id) && t.archived_at.is_some() {
+        return Err(StartError::Other(format!("{} is archived: restore it first", t.identifier)));
+    }
     let max = get_settings(st).max_concurrent_runs;
     if st.runs.live.lock().unwrap().len() as u32 >= max {
         return Err(StartError::Wait(format!("{max} runs are already active; wait for one to finish or raise the limit in Settings")));

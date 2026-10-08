@@ -27,6 +27,12 @@ export const createTask = (input: T.TaskInput) => invoke<string>("create_task", 
 export const updateTask = (id: string, patch: T.TaskPatch) => invoke<void>("update_task", { id, patch });
 export const moveTask = (id: string, stateId: string, sortKey: string) => invoke<void>("move_task", { id, stateId, sortKey });
 export const setTaskLabels = (id: string, labelIds: string[]) => invoke<void>("set_task_labels", { id, labelIds });
+/** The archived cards (the bin) of one project, or of all: the most recently archived first. */
+export const listArchivedTasks = (projectId: string | null = null) => invoke<T.Task[]>("list_archived_tasks", { projectId });
+/** Archives a card in Done; fails with a plain message for another column or while an agent works on it. */
+export const archiveTask = (id: string) => invoke<void>("archive_task", { id });
+/** Puts an archived card back at the bottom of its Done column. */
+export const restoreTask = (id: string) => invoke<void>("restore_task", { id });
 export const taskActivity = (taskId: string) => invoke<T.ChangeEntry[]>("task_activity", { taskId });
 export const listComments = (taskId: string) => invoke<T.Comment[]>("list_comments", { taskId });
 export const addComment = (taskId: string, bodyMd: string) => invoke<string>("add_comment", { taskId, bodyMd });

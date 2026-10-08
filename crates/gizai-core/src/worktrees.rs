@@ -24,7 +24,8 @@ pub struct FinishedCard {
     pub finished_at: i64,
 }
 
-/// The finished cards that have a branch, of one project or of all; the most recently finished first.
+/// The finished cards that have a branch, of one project or of all; the most recently finished first. Archived cards
+/// count too (they were archived from Done), so archiving never leaves a worktree behind for good.
 pub fn finished(db: &Db, project_id: Option<&str>) -> Result<Vec<FinishedCard>> {
     db.read(|c| {
         let mut st = c.prepare(
@@ -33,7 +34,7 @@ pub fn finished(db: &Db, project_id: Option<&str>) -> Result<Vec<FinishedCard>> 
              FROM tasks t
              JOIN projects p ON p.id = t.project_id
              JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL
-             WHERE t.deleted_at IS NULL AND t.state_category IN ('done', 'cancelled')
+             WHERE t.state_category IN ('done', 'cancelled')
                AND coalesce(t.branch, '') <> '' AND coalesce(r.local_path, '') <> ''
                AND (?1 IS NULL OR p.id = ?1)
              ORDER BY coalesce(t.completed_at, t.updated_at) DESC, t.identifier")?;

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use gizai_agents::cli::{self as agent_cli, Kind, TaskRun};
+use gizai_agents::cli::{self as agent_cli, Kind, RunFolder, TaskRun};
 use gizai_agents::prepare::{self as prep, Prepare};
 use gizai_agents::process::{self, Caps, StopHandle};
 use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
@@ -706,6 +706,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         limits: Some(limits), base, project_goal_md: project.goal_md.clone().unwrap_or_default(),
     };
     let instructions = agent.instructions_md.clone().filter(|i| !i.trim().is_empty()).unwrap_or_else(|| gizai_core::seed::role_template(&role));
+    // The agent's folders (agent form → Folders): one that is missing, or refused by now, is skipped and the run log
+    // says so, as it says which ones this CLI can't be given.
+    let (folders, mut notes) = gizai_core::folders::for_run(&agent.folders, &gizai_core::folders::Places::of(&st.db));
+    let folders: Vec<RunFolder> = folders.into_iter().map(|f| RunFolder { change: f.change(), path: f.path }).collect();
+    notes.extend(agent_cli::folders_left_out(spec.kind, &folders));
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
         prompt: match &resume {
@@ -718,11 +723,16 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
+        folders,
     };
     let exec = agent_cli::task_exec(&spec, &run);
-    if spec.kind != Kind::ClaudeCode {
-        // The log says which CLI wrote it, so it can be read again after the run.
-        if let Err(e) = std::fs::write(&log_path, format!("{}\n", agent_cli::log_header(spec.kind))) {
+    // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then
+    // Gizai's notes.
+    let head: String = (spec.kind != Kind::ClaudeCode).then(|| agent_cli::log_header(spec.kind)).into_iter()
+        .chain(notes.iter().map(|n| agent_cli::note_line(n)))
+        .map(|l| format!("{l}\n")).collect();
+    if !head.is_empty() {
+        if let Err(e) = std::fs::write(&log_path, head) {
             let _ = core_runs::finish(&st.db, &run_id, "failed", None, 0, 0, 0, Some(&e.to_string()));
             return Err(StartError::Other(e.to_string()));
         }
@@ -740,8 +750,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         }
     };
     let _ = core_runs::set_running(&st.db, &run_id, handle.pid);
+    // The Run panel shows the notes first, as the log has them.
+    let noted: Vec<SeqEvent> = notes.into_iter().enumerate().map(|(i, text)| SeqEvent { seq: i as u64, event: RunEvent::Note { text } }).collect();
     st.runs.live.lock().unwrap().insert(run_id.clone(), Live {
-        task_id: task_id.to_string(), agent_id: agent_id.clone(), stop: handle.stop.clone(), events: vec![], next_seq: 0,
+        task_id: task_id.to_string(), agent_id: agent_id.clone(), stop: handle.stop.clone(), next_seq: noted.len() as u64, events: noted,
     });
     // The process runs: a card in To do (or Backlog, for a person's Run) moves to In progress, as the agent. No dispatch.
     let moved_from = match workflow::move_on_start(&st.db, &agent_id, task_id) {

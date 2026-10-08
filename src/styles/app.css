@@ -150,6 +150,8 @@ a.member:hover { border-color: var(--line-2); }
 .radios .inline { display: flex; align-items: center; gap: 8px; padding-left: 24px; color: var(--text-2); }
 .tool-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
 .tool-sugg .label-pill { font-family: var(--font-mono); }
+.folder-list { display: flex; flex-direction: column; gap: 8px; }
+.folder-row { display: flex; flex-direction: column; gap: 4px; }
 
 /* ---------- docs and versions ---------- */
 .doc-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 14px; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; }

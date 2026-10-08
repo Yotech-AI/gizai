@@ -58,6 +58,8 @@ export const addTeam = (name: string) => invoke<string>("add_team", { name });
 export const addAgent = (teamId: string, input: T.AgentInput) => invoke<string>("add_agent", { teamId, input });
 export const updateAgent = (actorId: string, input: T.AgentInput) => invoke<void>("update_agent", { actorId, input });
 export const setAgentStatus = (actorId: string, status: "active" | "paused") => invoke<void>("set_agent_status", { actorId, status });
+/** The agent form's Folders: why each one is refused, or a warning. */
+export const checkAgentFolders = (folders: T.AgentFolder[]) => invoke<T.FolderCheck[]>("check_agent_folders", { folders });
 export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("add_rule", { teamId, input });
 export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });

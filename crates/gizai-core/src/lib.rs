@@ -22,6 +22,7 @@ pub mod tokens;
 pub mod repo_url;
 pub mod pulls;
 pub mod worktrees;
+pub mod folders;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

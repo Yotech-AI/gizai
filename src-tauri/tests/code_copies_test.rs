@@ -453,3 +453,42 @@ async fn an_update_and_a_card_preparation_of_the_same_project_wait_for_each_othe
     }
     assert_eq!(git_out(&herd, &["rev-parse", "HEAD"]), to);
 }
+
+#[tokio::test]
+async fn update_checkout_leaves_the_linked_folder_alone_when_the_team_leads_folders_set_it_to_read() {
+    // GA-47: PR #21 asked whichever of GA-44 and GA-45 merged second to call lead_may_update in update_checkout.
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    let before = git_out(&herd, &["rev-parse", "HEAD"]);
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    let to = gh.push(&[("app.php", "<?php\n")], "on github");
+    code::before_turn(&st, "warm-up").await;
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update my folder").unwrap();
+    let set_folders = |path: &Path, access: &str| {
+        let m = team::agent(&st.db, &lead).unwrap();
+        team::update_agent(&st.db, &st.you_id, &lead, gizai_core::model::AgentInput { name: m.name, role_key: m.role_key,
+            folders: Some(vec![gizai_core::folders::Folder { path: path.display().to_string(), access: access.into() }]), ..Default::default() }).unwrap();
+    };
+
+    // the linked folder set to read: refused, and nothing starts
+    set_folders(&herd, "read");
+    let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE"})).await.unwrap_err();
+    assert!(e.contains("is set to read in the Team Lead's folders") && e.contains("nothing changed"), "{e}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(git_out(&herd, &["rev-parse", "HEAD"]), before, "the folder stays as it was");
+    assert!(chat::messages(&st.db, &thread).unwrap().iter().all(|m| m.role != "system"), "no update ran");
+
+    // set to read and change: the update runs as before
+    set_folders(&herd, "change");
+    let r = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE"})).await.unwrap();
+    assert_eq!(r["done"], "started", "{r}");
+    for _ in 0..200 {
+        if git_out(&herd, &["rev-parse", "HEAD"]) == to && chat::messages(&st.db, &thread).unwrap().iter().any(|m| m.role == "system") { break; }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(git_out(&herd, &["rev-parse", "HEAD"]), to);
+}

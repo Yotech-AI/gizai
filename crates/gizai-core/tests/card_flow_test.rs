@@ -563,8 +563,8 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
             }
         }
     }
-    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, no Testing switch, and none of
-    // 0008's board check columns.
+    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, no Testing switch, none of 0008's
+    // board check columns and no agent folders (0009).
     let c = rusqlite::Connection::open(&path).unwrap();
     let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;
         ALTER TABLE agent_configs DROP COLUMN board_check_minutes; ALTER TABLE agent_configs DROP COLUMN board_checked_at;
@@ -576,7 +576,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
                               table_v6(table)));
     }
     sql.push_str("CREATE INDEX runs_task ON runs(task_id, created_at); CREATE INDEX runs_agent_period ON runs(agent_actor_id, started_at);
-                  ALTER TABLE tasks DROP COLUMN testing; COMMIT; PRAGMA user_version = 6;");
+                  ALTER TABLE tasks DROP COLUMN testing; ALTER TABLE agent_configs DROP COLUMN folders_json; COMMIT; PRAGMA user_version = 6;");
     c.execute_batch(&sql).unwrap();
     assert!(c.execute("UPDATE workflow_states SET category='deploy' WHERE name='Review'", []).is_err(), "schema 6 has no deploy category");
     let before: Vec<Rows> = SNAPSHOTS.iter().map(|q| rows(&c, q)).collect();
@@ -584,7 +584,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert!(before[4].len() >= 2, "the summaries are comments");
     drop(c);
 
-    // Gizai opens it: 0007 and 0008 run.
+    // Gizai opens it: 0007, 0008 and 0009 run.
     let db = Db::open(&path).unwrap();
     let after: Vec<Rows> = db.read(|c| Ok(SNAPSHOTS.iter().map(|q| rows(c, q)).collect())).unwrap();
     for (i, q) in SNAPSHOTS.iter().enumerate() {

@@ -111,7 +111,7 @@ function pickOption(el: HTMLSelectElement, value: string) {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-export async function teamProbe(getTeam: () => Promise<{ members: { name: string; kind: string; wakeup?: string | null; heartbeatMinutes?: number | null; instructionsMd?: string | null; model?: string | null; effort?: string | null }[]; rules: unknown[] }>) {
+export async function teamProbe(getTeam: () => Promise<{ members: { name: string; kind: string; wakeup?: string | null; heartbeatMinutes?: number | null; instructionsMd?: string | null; model?: string | null; effort?: string | null }[]; rules?: unknown[] }>) {
   const open = await waitFor(() => buttonByText(document, "Add agent"));
   if (!open) return { ok: false, error: "no Add agent button" };
   open.click();
@@ -144,7 +144,7 @@ export async function teamProbe(getTeam: () => Promise<{ members: { name: string
   const usual = await waitFor(() => buttonByText(document, "Add the usual rules"), 3000);
   usual?.click();
   let rules = 0;
-  for (let i = 0; i < 30 && rules < 3; i++) { await sleep(100); rules = (await getTeam()).rules.length; }
+  for (let i = 0; i < 30 && rules < 3; i++) { await sleep(100); rules = (await getTeam()).rules?.length ?? 0; }
   const panelOpen = agentPage;
   const ok = !!agent && agent.wakeup === "heartbeat" && agent.heartbeatMinutes === 20 && !!agent.instructionsMd?.includes("Frontend Agent") && rules === 3 && panelOpen
     && agent.model === "opus" && agent.effort === "xhigh";

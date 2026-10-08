@@ -60,13 +60,32 @@ export const updateAgent = (actorId: string, input: T.AgentInput) => invoke<void
 export const setAgentStatus = (actorId: string, status: "active" | "paused") => invoke<void>("set_agent_status", { actorId, status });
 /** The agent form's Folders: why each one is refused, or a warning. */
 export const checkAgentFolders = (folders: T.AgentFolder[]) => invoke<T.FolderCheck[]>("check_agent_folders", { folders });
-export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("add_rule", { teamId, input });
-export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });
-/** A new column right after `afterId`; resolves with its id. ownerRole: null = nobody, a role key ("qa", "backend"), or "human" (you,
- * always for a Deploy column). Fails with "this team already has a column called X" for a name in use. */
-export const addState = (teamId: string, name: string, afterId: string, category: T.StateCategory, ownerRole: string | null) =>
-  invoke<string>("add_state", { teamId, name, afterId, category, ownerRole });
+/** A new column right after `afterId`, Manual and without agents; resolves with its id. `kind`: waiting (like To do), work (like In
+ * progress), testing, review, deploy, done or backlog (a category works too). Fails with "this team already has a column called X". */
+export const addState = (teamId: string, name: string, afterId: string, kind: string) =>
+  invoke<string>("add_state", { teamId, name, afterId, category: kind });
+/** Sets up a column: its agents (the full list), Auto or Manual, its next column, its name or its place (afterId). Refuses agents on
+ * Backlog, Review, Done and Cancelled, a link to itself and Auto without a next column, each with a reason. */
+export const setColumn = (stateId: string, input: T.ColumnInput) => invoke<void>("set_column", { stateId, input });
+/** Puts an agent on a column (a drag from the organisation chart, or "+ Agent"). */
+export const addColumnAgent = (stateId: string, agentId: string) => invoke<void>("add_column_agent", { stateId, agentId });
+/** Takes an agent off a column (×). */
+export const removeColumnAgent = (stateId: string, agentId: string) => invoke<void>("remove_column_agent", { stateId, agentId });
+/** What removing a column does: its cards (archived ones included), the default target, the columns relinked or unlinked, or why not. */
+export const columnRemoval = (stateId: string) => invoke<T.ColumnRemoval>("column_removal", { stateId });
+/** Removes a column; its cards move to `targetId`. */
+export const removeState = (stateId: string, targetId: string) => invoke<void>("remove_state", { stateId, targetId });
+/** Every label with its number of cards. */
+export const listLabels = () => invoke<T.LabelInfo[]>("list_labels");
+/** Creates a label (id null) or renames or recolours one; resolves with its id. Fails for a name in use, ignoring case. */
+export const saveLabel = (id: string | null, name: string, color?: string | null) => invoke<string>("save_label", { id, name, color: color ?? null });
+/** Removes a label from every card; resolves with how many cards carried it. */
+export const removeLabel = (id: string) => invoke<number>("remove_label", { id });
+/** Adds a branch to the team's organisation chart (its role key is made from the name); resolves with the branches. */
+export const addBranch = (teamId: string, name: string) => invoke<T.Branch[]>("add_branch", { teamId, name });
+/** Removes a branch without agents; resolves with the branches. */
+export const removeBranch = (teamId: string, key: string) => invoke<T.Branch[]>("remove_branch", { teamId, key });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
 /** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
  * CLI (a second account); other kinds of CLI have no list. */

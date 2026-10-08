@@ -507,7 +507,7 @@ fn rows(c: &rusqlite::Connection, sql: &str) -> Rows {
 }
 
 /// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns, no agent folders (0009) and
-/// none of 0010's column setup (no column agents, Auto or next columns, branches; an empty routing_rules table back).
+/// none of 0011's column setup (no column agents, Auto or next columns, branches; an empty routing_rules table back).
 pub fn back_to_7(c: &rusqlite::Connection) {
     let m7 = include_str!("../migrations/0007_card_flow.sql");
     let start = m7.find("CREATE TABLE runs_new (").unwrap();

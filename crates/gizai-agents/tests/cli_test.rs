@@ -314,3 +314,52 @@ fn a_finished_runs_log_is_read_with_its_clis_parser() {
     assert_eq!(evs[0], RunEvent::Text { text: "hello".into() });
     assert!(cli::parse_log("").is_empty());
 }
+
+#[test]
+fn every_cli_gets_the_runs_temp_folder_as_tmpdir_tmp_and_temp_after_its_own_environment() {
+    // GA-48: the CLI's own lines first, then the temp folder, so a CLI's TMPDIR line can't send the run back to /tmp
+    let temp = "/w/KADE-1/.gizai-tmp";
+    let want: Vec<(String, String)> = ["TMPDIR", "TMP", "TEMP"].iter().map(|k| (k.to_string(), temp.to_string())).collect();
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        let mut s = spec(kind, "");
+        s.env.push(("TMPDIR".into(), "/tmp".into()));
+        let e = cli::task_exec(&s, &TaskRun { temp_dir: Some(temp.into()), ..run() });
+        assert_eq!(&e.env[..2], &s.env[..], "{kind:?}: the CLI's own lines stay");
+        assert_eq!(&e.env[2..], &want[..], "{kind:?}");
+        // without a temp folder (Gizai couldn't make it), the environment is the CLI's own
+        assert_eq!(cli::task_exec(&s, &run()).env, s.env, "{kind:?}");
+    }
+}
+
+#[test]
+fn claude_codes_refusals_show_as_they_happen_with_their_reason_and_the_result_line_adds_only_new_ones() {
+    let lines: Vec<&str> = include_str!("fixtures/run-refused.jsonl").lines().collect();
+    let refused = |evs: &[RunEvent]| -> Vec<(String, String, String)> {
+        evs.iter().filter_map(|e| match e {
+            RunEvent::Refused { tool, input, reason } => Some((tool.clone(), input.clone(), reason.clone())),
+            _ => None,
+        }).collect()
+    };
+    let evs = feed(Kind::ClaudeCode, &lines);
+    let got = refused(&evs);
+    assert_eq!(got.iter().map(|(t, i, _)| (t.as_str(), i.as_str())).collect::<Vec<_>>(), [
+        ("Bash", "cat <<EOF\nhello\nEOF"), ("Bash", "ls /tmp"), ("Bash", "git status --short > /tmp/ga48-check-b.txt"),
+        ("Write", "/tmp/ga48-check-write.txt")]);
+    assert_eq!(got[0].2, "Heredoc with unquoted delimiter undergoes shell expansion");
+    assert_eq!(got[3].2, "Path is outside allowed working directories", "decision_reason before the message");
+    assert!(got[1].2.starts_with("ls in '/tmp' was blocked"), "only a message: {}", got[1].2);
+    // each one where it happened: right after the call that asked for it
+    let at = evs.iter().position(|e| matches!(e, RunEvent::Refused { .. })).unwrap();
+    assert!(matches!(&evs[at - 1], RunEvent::ToolUse { name, summary } if name == "Bash" && summary.contains("cat <<EOF")), "{:?}", &evs[at - 1]);
+    assert!(matches!(evs.last(), Some(RunEvent::Result { is_error: false, .. })), "{:?}", evs.last());
+
+    // stopped before its result line (Stop, a limit): the refusals so far stay
+    assert_eq!(refused(&feed(Kind::ClaudeCode, &lines[..lines.len() - 1])), got);
+    // only the result line (no permission_denied lines): every denial, without a reason
+    let only = refused(&feed(Kind::ClaudeCode, &[lines[lines.len() - 1]]));
+    assert_eq!(only.iter().map(|(t, i, r)| (t.as_str(), i.as_str(), r.as_str())).collect::<Vec<_>>(), [
+        ("Bash", "cat <<EOF\nhello\nEOF", ""), ("Bash", "ls /tmp", ""), ("Bash", "git status --short > /tmp/ga48-check-b.txt", ""),
+        ("Write", "/tmp/ga48-check-write.txt", "")]);
+    // a log read back gives the same as the live run
+    assert_eq!(refused(&cli::parse_log(include_str!("fixtures/run-refused.jsonl"))), got);
+}

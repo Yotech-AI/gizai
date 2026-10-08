@@ -9,7 +9,7 @@ use gizai_core::{projects, seed, team};
 use rusqlite_migration::{M, Migrations};
 
 /// A genuine schema 8 database file (GA-35's 0008_board_check ran, 0009_agent_folders didn't), built from the
-/// migrations: a newer schema can't be rolled back to it by dropping columns (0010 links columns with a foreign key).
+/// migrations: a newer schema can't be rolled back to it by dropping columns (0011 links columns with a foreign key).
 /// One team with Jeffrey, a Team Lead with chat and a 30-minute board check, and a Backend Agent.
 fn schema_8(path: &Path) -> rusqlite::Connection {
     let mut c = rusqlite::Connection::open(path).unwrap();
@@ -270,7 +270,7 @@ fn an_older_database_gets_an_empty_folder_list_for_each_agent() {
     drop(schema_8(&path));
     let db = Db::open(&path).unwrap();
     assert_eq!(db.read(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)).unwrap(), db::SCHEMA_VERSION);
-    assert!(db::SCHEMA_VERSION >= 9, "0009 ran");
+    assert!(db::SCHEMA_VERSION >= 9, "0009 ran (GA-48's 0010 and GA-49's 0011 came after it)");
     assert!(team::agent(&db, "backend").unwrap().folders.is_empty());
 }
 
@@ -289,7 +289,7 @@ fn a_schema_8_database_keeps_its_board_check_and_every_agent_gets_folders_json_e
         c.query_row("SELECT COUNT(*) FROM agent_configs", [], |r| r.get(0))?))).unwrap();
     assert_eq!((version, empty, all), (db::SCHEMA_VERSION, agents, agents), "every agent kept, each with '[]'");
     assert_eq!(agents, 2);
-    assert_eq!(team::agent(&db, lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009 (and 0010)");
+    assert_eq!(team::agent(&db, lead).unwrap().board_check_minutes, Some(30), "the board check survives 0009 (and 0010, 0011)");
     assert!(team::agent(&db, backend).unwrap().folders.is_empty());
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();

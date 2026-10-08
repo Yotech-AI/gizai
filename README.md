@@ -69,6 +69,20 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
 - A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)
 
+## How agent runs work
+
+Agent runs are headless: nobody is there to approve anything while one runs, so a command or tool call that needs approval is refused.
+
+- **A temp folder per card.** Each card's worktree has a `.gizai-tmp/` folder. Before every run Gizai makes it, empty, and sets `TMPDIR`, `TMP` and `TEMP` to it for every CLI. So `mktemp`, PHP's `sys_get_temp_dir()`, Node's `os.tmpdir()` and Python's `tempfile` write inside the worktree, where the agent may write. Gizai adds `/.gizai-tmp/` once to the repository's `.git/info/exclude`, which your checkout and every worktree share, so the folder never shows in `git status`; `.gitignore` is left alone. The folder is emptied when the run ends, also after Stop or a limit, and goes with the worktree.
+- **The rules in every prompt.** Every task prompt, new or continued, ends with "How this run works": nobody can approve anything, the commands the agent may run (its allowed list), the shell rules of its CLI and the temp folder's path. For Claude Code in acceptEdits mode (the default), checked against Claude Code 2.1.289:
+  - commands and file tools reach only the worktree and the agent's folders: `ls /tmp`, `ls ..`, a redirect to `/tmp` and the Write tool on `/tmp` are refused, also for an allowed command;
+  - `$(…)`, backticks, variables such as `$TMPDIR` and heredocs with an unquoted delimiter (`<<EOF`) are refused;
+  - pipes, `2>&1`, `&&` and `;` between allowed commands work, and so does a redirect to a file in the worktree.
+
+  Codex and Gemini hear only what holds for them: Codex asks for nothing and its sandbox blocks what it doesn't allow; Gemini hears its allowed commands.
+- **New agents' commands.** New agents start with the usual git, package manager and test commands, and the read-only helpers agents use in pipes: `head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`.
+- **Refused in this run.** Claude Code reports every tool call it refused, with the reason. Gizai saves them on the run: the Run panel lists them under "Refused in this run", Show output marks each one where it happened, and the Team Lead's `get_task` and `get_agent` return them for each run. Codex and Gemini don't report refusals, so their runs list none.
+
 ## Development
 
 ```sh

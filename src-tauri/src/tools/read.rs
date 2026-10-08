@@ -162,6 +162,7 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     let comments: Vec<Value> = all.into_iter().skip(skip).map(|c| json!({"author": c.author_name, "at": ymd(c.created_at), "body_md": c.body_md})).collect();
     let runs: Vec<Value> = runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().take(5).map(|r| json!({
         "agent": r.agent_name, "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "summary": r.summary_md, "error": r.error,
+        "refused": r.refused,
     })).collect();
     Ok(json!({"task": {
         "id": t.id, "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
@@ -198,6 +199,7 @@ pub(crate) fn get_agent(cx: &Cx, a: &Args) -> Result<Value, String> {
     v["instructions_md"] = json!(m.instructions_md);
     let recent: Vec<Value> = runs::list_for_agent(cx.db(), &m.actor_id, 10).map_err(err)?.into_iter().map(|r| json!({
         "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "cost_usd": usd(r.cost_usd_micros), "error": r.error,
+        "task": r.task_id.as_deref().and_then(|t| tasks::get(cx.db(), t).ok()).map(|t| t.identifier), "refused": r.refused,
     })).collect();
     Ok(json!({"agent": v, "recent_runs": recent}))
 }

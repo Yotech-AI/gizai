@@ -63,3 +63,73 @@ fn includes_the_project_goal_the_project_page_promises() {
     assert!(p[goal..].contains("Read CLAUDE.md first.") && goal < p.find("## Description").unwrap(), "{p}");
     assert!(!build(&ctx(), "R").contains("## Project goal"));
 }
+
+// GA-48: "How this run works" at the end of every task prompt.
+use gizai_agents::cli::Kind;
+use gizai_agents::prompt::{answered_prompt, rules_section, with_rules, RunRules};
+
+fn rules(kind: Kind, mode: &str) -> RunRules {
+    RunRules { kind, mode: mode.into(), allowed_tools: vec!["Bash(git status:*)".into(), "Bash(npm test)".into(), "Bash(./vendor/bin/*)".into(),
+        "WebFetch(domain:docs.rs)".into()], folders: vec!["/home/u/notes".into()], temp_dir: Some("/w/KADE-1/.gizai-tmp".into()) }
+}
+
+fn bullets(s: &str) -> usize {
+    s.lines().filter(|l| l.starts_with("- ")).count()
+}
+
+#[test]
+fn every_task_prompt_new_continued_and_answered_ends_with_how_this_run_works() {
+    let r = rules(Kind::ClaudeCode, "");
+    for p in [build(&ctx(), "You are the Backend Agent."), continue_prompt("stopped at the limit of 200 tool calls per run", None),
+              answered_prompt("Use semicolons.", None)] {
+        let full = with_rules(&p, &r);
+        assert!(full.starts_with(p.trim_end()), "the prompt comes first: {full}");
+        assert!(full.trim_end().ends_with(rules_section(&r).trim_end()), "the section comes last: {full}");
+        assert_eq!(full.matches("## How this run works").count(), 1);
+    }
+}
+
+#[test]
+fn claude_code_in_accept_edits_hears_its_commands_the_checked_shell_rules_and_the_temp_path() {
+    for mode in ["", "acceptEdits"] {
+        let s = rules_section(&rules(Kind::ClaudeCode, mode));
+        for want in ["## How this run works", "Nobody can approve anything during this run: a command or tool that needs approval is refused.",
+                     "`git status`", "`npm test` (exact)", "`./vendor/bin/*`", "Also allowed: `WebFetch(domain:docs.rs)`",
+                     "this worktree and your folders (`/home/u/notes`)", "`/tmp`", "`$(…)`", "backticks", "`$TMPDIR`", "`<<EOF`",
+                     "Pipes, `2>&1`", "Make files with the Write tool.", "`/w/KADE-1/.gizai-tmp`", "write this path, not `$TMPDIR`",
+                     "never in `/tmp`", "never committed", "don't try other spellings of it", "under what you could not check"] {
+            assert!(s.contains(want), "{mode:?}: {want} missing in {s}");
+        }
+        // checked against Claude Code 2.1.289 and false there, so left out
+        assert!(!s.contains("One plain command per Bash call"), "{s}");
+        assert!(!s.contains("redirects (`>`, `>>`, `2> file`)") && !s.to_lowercase().contains("redirects are refused"), "{s}");
+        assert!(bullets(&s) <= 12, "at most about 12 lines: {s}");
+    }
+}
+
+#[test]
+fn only_rules_that_hold_for_the_mode_and_the_cli_go_in() {
+    // bypassPermissions: no list and no shell rules (nothing is refused for them)
+    let s = rules_section(&rules(Kind::ClaudeCode, "bypassPermissions"));
+    assert!(!s.contains("The commands you may run") && !s.contains("`$(…)`"), "{s}");
+    assert!(s.contains("`/w/KADE-1/.gizai-tmp`") && s.contains("Make files with the Write tool."), "{s}");
+    // a stricter mode: the list, but none of the shell rules checked in acceptEdits, and no Write tool to make files
+    let s = rules_section(&rules(Kind::ClaudeCode, "default"));
+    assert!(s.contains("`git status`") && !s.contains("`$(…)`") && !s.contains("Write tool"), "{s}");
+    let s = rules_section(&RunRules { allowed_tools: vec!["Write".into()], ..rules(Kind::ClaudeCode, "default") });
+    assert!(s.contains("No commands are allowed for you.") && s.contains("Make files with the Write tool."), "{s}");
+    // Codex: no allowed list (its sandbox decides), no Claude Code shell rules
+    let s = rules_section(&rules(Kind::Codex, ""));
+    assert!(s.contains("Nobody can approve anything") && s.contains("`/w/KADE-1/.gizai-tmp`") && s.contains("don't try other spellings"), "{s}");
+    assert!(!s.contains("The commands you may run") && !s.contains("`$(…)`") && !s.contains("Write tool"), "{s}");
+    // Gemini: its commands (the Bash rules it is given), its own file tool
+    let s = rules_section(&rules(Kind::Gemini, ""));
+    assert!(s.contains("`git status`") && s.contains("write_file tool") && !s.contains("WebFetch") && !s.contains("`$(…)`"), "{s}");
+    assert!(!rules_section(&rules(Kind::Gemini, "yolo")).contains("The commands you may run"));
+    // another CLI: no approvals, the temp folder
+    let s = rules_section(&rules(Kind::Other, ""));
+    assert!(s.contains("Nobody can approve anything during this run.") && s.contains("`/w/KADE-1/.gizai-tmp`") && !s.contains("commands"), "{s}");
+    // without a temp folder (Gizai couldn't make it): no path, still not /tmp
+    let s = rules_section(&RunRules { temp_dir: None, ..rules(Kind::ClaudeCode, "") });
+    assert!(s.contains("Throwaway files never go in `/tmp`") && !s.contains(".gizai-tmp") && !s.contains("TMPDIR, TMP and TEMP point"), "{s}");
+}

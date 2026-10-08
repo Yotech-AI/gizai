@@ -39,10 +39,13 @@ export function roleLabel(role: string): string {
   return ROLE_LABELS[role] ?? (role ? role[0].toUpperCase() + role.slice(1) : role);
 }
 
-/** New agents start with these (same list the run manager uses for an agent without its own): commit their
- * work, run the usual package managers and test runners, read files. Edit per agent. */
+/** New agents start with these (same list the run manager uses for an agent without its own, `DEFAULT_TOOLS` in
+ * src-tauri/src/runs.rs): commit their work, run the usual package managers and test runners, read files, and the
+ * read-only helpers agents use in pipes. Edit per agent. */
 export const DEFAULT_TOOLS = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge:*)", "Bash(npm:*)",
-  "Bash(npx:*)", "Bash(composer:*)", "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)"];
+  "Bash(npx:*)", "Bash(composer:*)", "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)",
+  "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(diff:*)", "Bash(grep:*)", "Bash(jq:*)",
+  "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)"];
 
 /** How the agent form opens for a new agent from elsewhere (the Chat page's Team Lead, an empty place on the org chart). */
 export type AgentPreset = { name?: string; role?: string; chat?: boolean };

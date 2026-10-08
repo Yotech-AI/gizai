@@ -2,7 +2,7 @@ use gizai_core::db::{self, Db};
 use gizai_core::{seed, users};
 use rusqlite_migration::{M, Migrations};
 
-/// A database file as the previous version left it: the migrations up to one schema step back (0010, GA-49, links
+/// A database file as the previous version left it: the migrations up to one schema step back (0011, GA-49, links
 /// columns with a foreign key, so it can't be rolled back by dropping columns), with one person in it.
 fn previous_version(path: &std::path::Path) {
     let all = [
@@ -10,6 +10,7 @@ fn previous_version(path: &std::path::Path) {
         include_str!("../migrations/0004_effort.sql"), include_str!("../migrations/0005_pull_requests.sql"),
         include_str!("../migrations/0006_worktree_prepare.sql"), include_str!("../migrations/0007_card_flow.sql"),
         include_str!("../migrations/0008_board_check.sql"), include_str!("../migrations/0009_agent_folders.sql"),
+        include_str!("../migrations/0010_run_refusals.sql"),
     ];
     assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
     let mut c = rusqlite::Connection::open(path).unwrap();

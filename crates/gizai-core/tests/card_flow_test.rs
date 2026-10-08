@@ -532,10 +532,10 @@ const SNAPSHOTS: [&str; 5] = [
     "SELECT id, task_id, agent_actor_id, status, outcome, summary_md, error FROM runs ORDER BY id",
     "SELECT id, task_id, run_id, body_md FROM comments ORDER BY id",
 ];
-/// SNAPSHOTS[2]: the routing rules, which 0010 (GA-49) turns into agents on columns and drops.
+/// SNAPSHOTS[2]: the routing rules, which 0011 (GA-49) turns into agents on columns and drops.
 const RULES: usize = 2;
 
-/// workflow_states' columns as 0001 made them (0010 added auto and next_state_id).
+/// workflow_states' columns as 0001 made them (0011 added auto and next_state_id).
 const STATE_COLUMNS_V6: &str = "id, created_at, updated_at, deleted_at, version, created_by, updated_by, team_id, name, category, owner_role, wip_limit, color, sort_key";
 
 #[test]
@@ -564,7 +564,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
         }
         be
     };
-    // Step back to schema 6 as it was: none of 0010's columns, agents on columns or branches, routing rules on a label and
+    // Step back to schema 6 as it was: none of 0011's columns, agents on columns or branches, routing rules on a label and
     // on a column, no Deploy column (the seed's has no place in schema 6), workflow_states and runs with 0001's CHECKs,
     // no Testing switch, none of 0008's board check columns and no agent folders (0009).
     let c = rusqlite::Connection::open(&path).unwrap();
@@ -593,7 +593,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert!(before[4].len() >= 2, "the summaries are comments");
     drop(c);
 
-    // Gizai opens it: 0007, 0008, 0009 and 0010 run.
+    // Gizai opens it: 0007, 0008, 0009, 0010 and 0011 run.
     let db = Db::open(&path).unwrap();
     let after: Vec<Option<Rows>> = db.read(|c| Ok(SNAPSHOTS.iter().enumerate().map(|(i, q)| (i != RULES).then(|| rows(c, q))).collect())).unwrap();
     for (i, q) in SNAPSHOTS.iter().enumerate() {
@@ -601,7 +601,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
             assert_eq!(after, &before[i], "{q}");
         }
     }
-    // the rules are agents on columns now (0010): the Backend Agent works To do and In progress
+    // the rules are agents on columns now (0011): the Backend Agent works To do and In progress
     let rules_left: i64 = db.read(|c| Ok(c.query_row("SELECT count(*) FROM sqlite_master WHERE name='routing_rules'", [], |r| r.get(0))?)).unwrap();
     assert_eq!(rules_left, 0);
     assert_eq!(columns::of_agent(&db, &be).unwrap(), ["To do", "In progress"]);

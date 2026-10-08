@@ -1,5 +1,5 @@
-//! GA-49 QA: migration 0010 (column agents) on a genuine schema 9 database, as a v0.2.0 user has it.
-//! The database is built by running migrations 0001..0009 only (not by rolling 0010 back), filled with
+//! GA-49 QA: migration 0011 (column agents; GA-48's 0010 runs before it) on a genuine schema 9 database, as a v0.2.0 user has it.
+//! The database is built by running migrations 0001..0009 only (not by rolling 0010 and 0011 back), filled with
 //! v0.2.0-style rows using raw SQL, then opened with `Db::open` like the app does.
 use gizai_core::db::{self, Db};
 use rusqlite::Connection;
@@ -398,17 +398,17 @@ fn routing_rules_are_gone_and_schema_is_current() {
     assert!(!has_table(&c, "ga49_workers"), "the temp helper table is gone");
     let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(v, db::SCHEMA_VERSION);
-    assert_eq!(v, 10);
+    assert_eq!(v, 11);
     let branches: i64 = c.query_row("SELECT count(*) FROM teams WHERE branches_json IS NOT NULL", [], |r| r.get(0)).unwrap();
     assert_eq!(branches, 0, "teams keep the default branches (NULL)");
 }
 
 #[test]
-fn a_before_v10_backup_is_made_and_still_opens_as_schema_9() {
+fn a_before_v11_backup_is_made_and_still_opens_as_schema_9() {
     let f = migrated();
     let snaps = backup_names(&f);
     assert_eq!(snaps.len(), 1, "{snaps:?}");
-    assert!(snaps[0].starts_with("gizai-before-v10-") && snaps[0].ends_with(".db"), "{snaps:?}");
+    assert!(snaps[0].starts_with("gizai-before-v11-") && snaps[0].ends_with(".db"), "{snaps:?}");
     let b = raw(&f.backups.join(&snaps[0]));
     let v: i64 = b.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(v, 9, "the backup is the schema 9 database");
@@ -441,7 +441,7 @@ fn opening_the_migrated_database_again_changes_nothing() {
     assert_eq!(first, second, "a second open changes nothing");
     assert_eq!(backup_names(&f).len(), 1, "and makes no new backup");
     let v: i64 = raw(&f.path).query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(v, 10);
+    assert_eq!(v, 11);
 }
 
 #[test]
@@ -485,7 +485,7 @@ fn an_empty_schema_9_database_upgrades() {
     drop(c);
     drop(Db::open(&path).unwrap());
     let c = raw(&path);
-    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 10);
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), db::SCHEMA_VERSION);
     assert!(!has_table(&c, "routing_rules"));
     assert_eq!(c.query_row("SELECT count(*) FROM column_agents", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
 }

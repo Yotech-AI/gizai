@@ -48,7 +48,7 @@ fn the_catalog_has_unique_names_and_object_schemas() {
         assert_eq!(t.input_schema["type"], "object", "{}", t.name);
         assert!(t.input_schema["properties"].is_object(), "{}", t.name);
         assert!(!t.description.is_empty() && t.description.len() < 600, "{}", t.name);
-        let reads = t.name.starts_with("get_") || t.name.starts_with("list_") || t.name.starts_with("read_");
+        let reads = t.name.starts_with("get_") || t.name.starts_with("list_") || t.name.starts_with("read_") || t.name == "check_board";
         assert_eq!(t.read_only, reads, "{}", t.name);
     }
     for must in ["create_task", "read_inbox", "create_agent", "write_doc", "attach_file", "start_agent_run"] {

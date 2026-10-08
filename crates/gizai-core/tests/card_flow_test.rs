@@ -563,9 +563,14 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
             }
         }
     }
-    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, and no Testing switch.
+    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, no Testing switch, and none of
+    // 0008's board check columns.
     let c = rusqlite::Connection::open(&path).unwrap();
-    let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN;");
+    let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;
+        ALTER TABLE agent_configs DROP COLUMN board_check_minutes; ALTER TABLE agent_configs DROP COLUMN board_checked_at;
+        ALTER TABLE agent_configs DROP COLUMN board_check_failures; ALTER TABLE agent_configs DROP COLUMN board_check_paused;
+        ALTER TABLE chat_threads DROP COLUMN kind; ALTER TABLE chat_threads DROP COLUMN task_ids_json;
+        ALTER TABLE chat_threads DROP COLUMN answered_at; ALTER TABLE chat_threads DROP COLUMN dismissed_at;");
     for table in ["workflow_states", "runs"] {
         sql.push_str(&format!("{}; INSERT INTO {table}_v6 SELECT * FROM {table}; DROP TABLE {table}; ALTER TABLE {table}_v6 RENAME TO {table};",
                               table_v6(table)));
@@ -579,7 +584,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert!(before[4].len() >= 2, "the summaries are comments");
     drop(c);
 
-    // Gizai opens it: 0007 runs.
+    // Gizai opens it: 0007 and 0008 run.
     let db = Db::open(&path).unwrap();
     let after: Vec<Rows> = db.read(|c| Ok(SNAPSHOTS.iter().map(|q| rows(c, q)).collect())).unwrap();
     for (i, q) in SNAPSHOTS.iter().enumerate() {
@@ -591,7 +596,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
         rows(c, "PRAGMA foreign_key_check").len(),
         c.query_row("SELECT count(*) FROM tasks WHERE testing != 1", [], |r| r.get(0))?,
     ))).unwrap();
-    assert_eq!((version, fks, broken, off), (gizai_core::db::SCHEMA_VERSION, 1, 0, 0), "version 7, foreign keys on and intact, every card tested");
+    assert_eq!((version, fks, broken, off), (gizai_core::db::SCHEMA_VERSION, 1, 0, 0), "the current version, foreign keys on and intact, every card tested");
     assert!(tasks::list(&db, &TaskFilter::default()).unwrap().iter().all(|t| t.testing));
     let indexes = db.read(|c| Ok(rows(c, "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='runs' AND name NOT LIKE 'sqlite_%' ORDER BY name"))).unwrap();
     assert_eq!(indexes, [[Some("runs_agent_period".to_string())], [Some("runs_task".to_string())]]);

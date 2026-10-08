@@ -37,10 +37,9 @@ fn opening_an_older_database_snapshots_it_before_upgrading() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gizai.db");
     seed::ensure_seed(&Db::open(&path).unwrap(), "Jeffrey").unwrap();
-    // Pretend it was made by the previous version: one schema step back (0007 added the Testing switch; its rebuilt
-    // tables only widen a CHECK, so the older rows fit them as they are).
+    // Pretend it was made by the previous version: one schema step back (0008 added the agents' folders).
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch(&format!("ALTER TABLE tasks DROP COLUMN testing; PRAGMA user_version = {};", db::SCHEMA_VERSION - 1)).unwrap();
+    c.execute_batch(&format!("ALTER TABLE agent_configs DROP COLUMN folders_json; PRAGMA user_version = {};", db::SCHEMA_VERSION - 1)).unwrap();
     drop(c);
     let _db = Db::open(&path).unwrap();
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap()

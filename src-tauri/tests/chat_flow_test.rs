@@ -381,3 +381,29 @@ async fn a_turn_after_a_crashed_first_turn_carries_the_earlier_messages() {
     let prompt = t.calls().last().unwrap()["prompt"].as_str().unwrap().to_string();
     assert!(prompt.contains("plan the Kade portal") && prompt.ends_with("try again please"), "{prompt}");
 }
+
+#[tokio::test]
+async fn the_team_lead_gets_its_folders_in_chat_but_only_reads_them() {
+    // GA-45: its folders from the agent form, read only in chat whatever they are set to; a missing one is left out.
+    let t = setup().await;
+    let (shared, out, gone) = (t._dir.path().join("shared"), t._dir.path().join("out"), t._dir.path().join("gone"));
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let folder = |p: &std::path::Path, access: &str| gizai_core::folders::Folder { path: p.display().to_string(), access: access.into() };
+    let m = team::agent(&t.st.db, &t.lead).unwrap();
+    team::update_agent(&t.st.db, &t.st.you_id, &t.lead, AgentInput { name: m.name, role_key: m.role_key, chat_enabled: Some(true),
+        folders: Some(vec![folder(&shared, "read"), folder(&out, "change"), folder(&gone, "read")]), ..Default::default() }).unwrap();
+    t.turn(None, "hello").await;
+    let argv: Vec<String> = serde_json::from_value(t.calls()[0]["argv"].clone()).unwrap();
+    let real = |p: &std::path::Path| p.canonicalize().unwrap().display().to_string();
+    let at = argv.iter().position(|a| a == "--add-dir").expect("its folders");
+    let dirs: Vec<&String> = argv[at + 1..].iter().take_while(|a| !a.starts_with("--")).collect();
+    assert_eq!(dirs, [&real(&shared), &real(&out)], "the missing folder is left out");
+    let tools = &argv[argv.iter().position(|a| a == "--tools").unwrap() + 1];
+    assert_eq!(tools, "Read,Glob,Grep", "no tool that writes, so a read and change folder is read only too");
+    assert!(!argv.iter().any(|a| a == "--disallowedTools" || a.contains("Edit") || a.contains("Write(")), "{argv:?}");
+    let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
+    assert!(sys.contains("## Your folders") && sys.contains("you never change files in them"), "{sys}");
+    assert!(sys.contains(&format!("- {} (read)\n", real(&shared))) && sys.contains(&format!("- {} (read and change)\n", real(&out))), "{sys}");
+    assert!(!sys.contains(&gone.display().to_string()), "{sys}");
+}

@@ -563,7 +563,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
             }
         }
     }
-    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, and no Testing switch.
+    // Step back to schema 6 as it was: workflow_states and runs with 0001's CHECKs, no Testing switch and no agent folders (0008).
     let c = rusqlite::Connection::open(&path).unwrap();
     let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN;");
     for table in ["workflow_states", "runs"] {
@@ -571,7 +571,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
                               table_v6(table)));
     }
     sql.push_str("CREATE INDEX runs_task ON runs(task_id, created_at); CREATE INDEX runs_agent_period ON runs(agent_actor_id, started_at);
-                  ALTER TABLE tasks DROP COLUMN testing; COMMIT; PRAGMA user_version = 6;");
+                  ALTER TABLE tasks DROP COLUMN testing; ALTER TABLE agent_configs DROP COLUMN folders_json; COMMIT; PRAGMA user_version = 6;");
     c.execute_batch(&sql).unwrap();
     assert!(c.execute("UPDATE workflow_states SET category='deploy' WHERE name='Review'", []).is_err(), "schema 6 has no deploy category");
     let before: Vec<Rows> = SNAPSHOTS.iter().map(|q| rows(&c, q)).collect();

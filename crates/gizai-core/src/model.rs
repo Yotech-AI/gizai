@@ -295,6 +295,9 @@ pub struct AgentInput {
     pub effort: Option<String>,
     /// Cards it works on at once (1–10), each in its own worktree. None: 1 for a new agent, unchanged on update.
     pub max_runs: Option<i64>,
+    /// The folders besides its worktree its file tools may use (`folders`). None: none for a new agent, unchanged on
+    /// update. Only the agent form sets them: the Team Lead's tools always leave None.
+    pub folders: Option<Vec<crate::folders::Folder>>,
 }
 
 /// "When a card has label <match_name>" or "enters column <match_name>" → the first idle agent with `target_role`.

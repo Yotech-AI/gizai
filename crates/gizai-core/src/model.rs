@@ -348,6 +348,15 @@ pub struct Run {
     pub adapter: Option<String>,
     /// The commit its worktree was at when it ended (None while it runs, and for runs from before Gizai saved it).
     pub head_sha: Option<String>,
+    /// The tool calls its CLI refused because they needed an approval nobody could give (Claude Code reports them).
+    pub refused: Vec<Refusal>,
+}
+
+/// A tool call a headless run's CLI refused: the tool and what it asked for (the command, the file).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refusal {
+    pub tool: String,
+    pub input: String,
 }
 
 /// An agent's runs on one UTC day.

@@ -68,7 +68,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const { data: fetched, error } = useData(() => listTasks({}));
   const { data: threads, reload: reloadThreads } = useData(() => (inbox ? listChatThreads() : Promise.resolve([] as ChatThread[])), [inbox]);
   const chats = useMemo(() => (inbox ? waitingChats(threads ?? []) : []), [inbox, threads]);
-  const dismiss = (id: string) => dismissChat(id).then(reloadThreads).catch((e) => setToast(`Couldn't dismiss the chat: ${e}`));
+  const dismiss = (id: string) => dismissChat(id).then(reloadThreads).catch((e) => setToast({ text: `Couldn't dismiss the chat: ${e}` }));
   const [tasks, setTasks] = useState<Task[]>([]);
   useEffect(() => { if (fetched) setTasks(fetched); }, [fetched]);
   const tasksRef = useRef(tasks);

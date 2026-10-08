@@ -49,7 +49,7 @@ pub fn slug(title: &str, max: usize) -> String {
     tidy.chars().take(max).collect::<String>().trim_end_matches('-').to_string()
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<String, AgentError> {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> Result<String, AgentError> {
     let out = Command::new("git").arg("-C").arg(repo).args(args).output()
         .map_err(|e| AgentError::Git(format!("can't run git: {e}")))?;
     if out.status.success() {
@@ -59,8 +59,8 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, AgentError> {
     }
 }
 
-/// (path, branch) for every worktree of the repo.
-fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>, AgentError> {
+/// (path, branch) for every worktree of the repo, its main checkout first.
+pub(crate) fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>, AgentError> {
     let mut out = vec![];
     let mut cur: Option<PathBuf> = None;
     for line in git(repo, &["worktree", "list", "--porcelain"])?.lines() {
@@ -75,7 +75,7 @@ fn worktrees(repo: &Path) -> Result<Vec<(PathBuf, Option<String>)>, AgentError> 
     Ok(out)
 }
 
-fn same(a: &Path, b: &Path) -> bool {
+pub(crate) fn same(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(x), Ok(y)) => x == y,
         _ => a == b,
@@ -222,19 +222,25 @@ pub fn remotes(repo: &Path) -> Result<Vec<(String, String)>, AgentError> {
     Ok(out)
 }
 
-/// Fetches `branch` of the project's repository and returns the ref to start from: through `remote` when the
-/// repository has one for it (`refs/remotes/<remote>/<branch>`), else from `url` into a ref git's branch list
-/// doesn't show (`refs/gizai/base/<branch>`). Never asks for a password; gives up after a minute.
-pub fn fetch_start(repo: &Path, remote: Option<&str>, url: &str, branch: &str) -> Result<String, AgentError> {
-    let (from, start) = match remote {
-        Some(r) => (r, format!("refs/remotes/{r}/{branch}")),
-        None => (url, format!("refs/gizai/base/{branch}")),
-    };
+/// The ref `fetch_start` fetches `branch` into: `refs/remotes/<remote>/<branch>` through the repository's remote, else
+/// a ref git's branch list doesn't show (`refs/gizai/base/<branch>`).
+pub fn start_ref(remote: Option<&str>, branch: &str) -> String {
+    match remote {
+        Some(r) => format!("refs/remotes/{r}/{branch}"),
+        None => format!("refs/gizai/base/{branch}"),
+    }
+}
+
+/// Fetches `branch` of the project's repository and returns the ref to start from (`start_ref`): through `remote` when
+/// the repository has one for it, else from `url`. Never asks for a password; each try gives up after `limit`.
+pub fn fetch_start(repo: &Path, remote: Option<&str>, url: &str, branch: &str, limit: Duration) -> Result<String, AgentError> {
+    let from = remote.unwrap_or(url);
+    let start = start_ref(remote, branch);
     let spec = format!("+refs/heads/{branch}:{start}");
     let mut last = String::new();
     // a run starting at the same moment may hold the ref's lock: one retry
     for attempt in 0..2 {
-        match git_quiet(repo, &["fetch", "--quiet", "--no-tags", from, &spec], Duration::from_secs(60)) {
+        match git_quiet(repo, &["fetch", "--quiet", "--no-tags", from, &spec], limit) {
             Ok(_) => return Ok(start),
             Err(e) => last = e,
         }

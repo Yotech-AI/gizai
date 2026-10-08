@@ -15,3 +15,37 @@ describe("needsYou", () => {
     expect(needsYou(t({ hold: "blocked", stateCategory: "done" }), "me")).toBe(false);
   });
 });
+
+import { chatLabel, inboxCount, waitingChats } from "./inbox";
+
+const chat = (o: Partial<{ id: string; kind: string | null; waiting: boolean; updatedAt: number }>) =>
+  ({ id: "c", kind: null, waiting: false, updatedAt: 0, ...o });
+
+describe("Team Lead chats in the Inbox", () => {
+  it("lists only the Team Lead's chats that still wait for you, newest first", () => {
+    const threads = [
+      chat({ id: "mine", updatedAt: 9 }),
+      chat({ id: "old", kind: "question", waiting: true, updatedAt: 1 }),
+      chat({ id: "answered", kind: "approval", waiting: false, updatedAt: 8 }),
+      chat({ id: "new", kind: "approval", waiting: true, updatedAt: 5 }),
+    ];
+    expect(waitingChats(threads).map((t) => t.id)).toEqual(["new", "old"]);
+  });
+  it("counts the cards that need you and the waiting chats", () => {
+    const cards = [t({ hold: "needs_decision" }), t({ stateCategory: "in_progress" })];
+    const threads = [chat({ kind: "question", waiting: true }), chat({ kind: "approval", waiting: false }), chat({})];
+    expect(inboxCount(cards, threads, "me")).toBe(2);
+    expect(inboxCount([], threads, "me")).toBe(1);
+    expect(inboxCount([], [], "me")).toBe(0);
+  });
+});
+
+describe("chatLabel (Chat → Recent)", () => {
+  it("says Question or Approval while the chat waits for you, Team Lead after, nothing for your own chats", () => {
+    expect(chatLabel(chat({ kind: "question", waiting: true }))).toBe("Question");
+    expect(chatLabel(chat({ kind: "approval", waiting: true }))).toBe("Approval");
+    expect(chatLabel(chat({ kind: "approval", waiting: false }))).toBe("Team Lead");
+    expect(chatLabel(chat({ kind: "question", waiting: false }))).toBe("Team Lead");
+    expect(chatLabel(chat({}))).toBeNull();
+  });
+});

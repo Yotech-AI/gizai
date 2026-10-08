@@ -140,6 +140,8 @@ export const chatMessages = (threadId: string) => invoke<T.ChatMessage[]>("chat_
 /** Sends a message (a new thread when threadId is null) and starts the answer; resolves with the thread id. */
 export const sendChat = (threadId: string | null, text: string) => invoke<string>("send_chat", { threadId, text });
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
+/** × on a Team Lead chat in the Inbox: it no longer waits for you. */
+export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
 export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));

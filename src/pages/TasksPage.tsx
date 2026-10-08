@@ -1,11 +1,13 @@
 // Tasks (and the Inbox): Paperclip-style list grouped by column, or the board. The Inbox is always the list. View options are remembered on this device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, Plus, Trash2, X } from "lucide-react";
-import { archiveTask, getTeam, listProjects, listTasks, listUsers, moveTask, restoreTask } from "../api";
-import { go } from "../router";
+import { dismissChat, getTeam, listChatThreads, listProjects, listTasks, listUsers, moveTask, restoreTask, archiveTask } from "../api";
+import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
-import { needsYou } from "../lib/inbox";
+import { chatLabel, needsYou, waitingChats } from "../lib/inbox";
+import { relTime } from "../lib/format";
+import type { ChatThread } from "../types";
 import { filterCount, filterTasks, groupTasks, sortTasks, type Filter, type GroupBy, type SortBy } from "../lib/taskView";
 import type { Task } from "../types";
 import { Board } from "../components/Board";
@@ -24,7 +26,26 @@ function usePref<T>(k: string, fallback: T): [T, (v: T) => void] {
   return [v, (n: T) => { setV(n); writePref(k, n); }];
 }
 
-const SORTS: [SortBy, string][] = [["updated", "Last updated"], ["priority", "Priority"], ["title", "Title"], ["id", "ID"], ["manual", "Board order"]];
+/** The top of the Inbox: the chats the Team Lead started that wait for you. A click opens the chat; × dismisses it. */
+function LeadChats({ chats, onDismiss }: { chats: ChatThread[]; onDismiss: (id: string) => void }) {
+  return (
+    <section className="lead-chats" aria-label="From the Team Lead">
+      <div className="section-head"><h3>From the Team Lead</h3><span className="faint">{chats.length}</span></div>
+      <div className="panel">
+        {chats.map((c) => (
+          <div key={c.id} className="panel-row lead-chat">
+            <a className="grow ellipsis" href={href({ page: "chat", id: c.id })}><span className="badge needs">{chatLabel(c)}</span> {c.title}</a>
+            {(c.tasks ?? []).map((t) => <span key={t} className="id">{t}</span>)}
+            <span className="faint">{relTime(c.updatedAt)}</span>
+            <button className="btn ghost sm icon-only" aria-label={`Dismiss ${c.title}`} title="Dismiss" onClick={() => onDismiss(c.id)}><X className="icon" /></button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+const SORTS: [SortBy, string][] =[["updated", "Last updated"], ["priority", "Priority"], ["title", "Title"], ["id", "ID"], ["manual", "Board order"]];
 const GROUPS: [GroupBy, string][] = [["status", "Column"], ["assignee", "Assignee"], ["project", "Project"], ["priority", "Priority"], ["none", "No grouping"]];
 
 export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: View; onNewTask: (stateId?: string) => void; inboxFor?: string }) {
@@ -45,6 +66,9 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const { data: projects } = useData(() => listProjects());
   const { data: people } = useData(() => listUsers());
   const { data: fetched, error } = useData(() => listTasks({}));
+  const { data: threads, reload: reloadThreads } = useData(() => (inbox ? listChatThreads() : Promise.resolve([] as ChatThread[])), [inbox]);
+  const chats = useMemo(() => (inbox ? waitingChats(threads ?? []) : []), [inbox, threads]);
+  const dismiss = (id: string) => dismissChat(id).then(reloadThreads).catch((e) => setToast(`Couldn't dismiss the chat: ${e}`));
   const [tasks, setTasks] = useState<Task[]>([]);
   useEffect(() => { if (fetched) setTasks(fetched); }, [fetched]);
   const tasksRef = useRef(tasks);
@@ -103,7 +127,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       <div className="topbar">
         <div className="crumbs">
           {project && <><a href={`#/project/${project.id}`}>{project.name}</a><span className="sep">/</span></>}
-          <b>{inbox ? "Inbox" : "Tasks"}</b><span className="faint">{fetched ? shown.length : ""}</span>
+          <b>{inbox ? "Inbox" : "Tasks"}</b><span className="faint">{fetched ? shown.length + chats.length : ""}</span>
         </div>
       </div>
       <div className="toolbar">
@@ -145,12 +169,14 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <div className="content"><div className="page-pad"><div className="empty"><b>No projects yet.</b><span>Tasks live in a project. Create one, then press N to add a task.</span><button className="btn primary" onClick={() => go({ page: "projects" })}>Go to Projects</button></div></div></div>
       ) : !team || !fetched ? null : view === "list" ? (
         <div className="content">
+          {chats.length > 0 && <div className="page-pad lead-chats-pad"><LeadChats chats={chats} onDismiss={dismiss} /></div>}
           <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
-            empty={inbox ? <div className="empty"><b>Nothing needs you.</b><span>Cards on hold and cards waiting for your review or deploy show up here.</span></div>
+            empty={inbox ? (chats.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, and the Team Lead's questions show up here.</span></div>)
               : <div className="empty"><b>No tasks here.</b><span>{nFilters ? "Nothing matches these filters." : "Press N to add one."}</span></div>} />
         </div>
       ) : (
         <div className="board-wrap">
+          {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
           {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={(id) => go({ page: "task", id })} onAdd={(sid) => onNewTask(sid)}
             onArchive={onArchive} working={working} />}
         </div>

@@ -51,9 +51,17 @@ pub(crate) fn overview(cx: &Cx) -> Result<Value, String> {
             "key": p.key, "name": p.name, "client": p.client_name, "open_tasks": p.open_tasks, "repo": p.repo_path.is_some()})).collect::<Vec<_>>(),
         "tasks_by_column": by_column,
         "inbox": tasks::needs_you(db, &cx.st.you_id).map_err(err)?.len(),
+        "team_lead_chats": lead_chats(cx)?,
         "agents": agents,
         "runs_working_now": live.len(),
     }))
+}
+
+/// The chats the Team Lead started that wait for the user's answer, newest first.
+fn lead_chats(cx: &Cx) -> Result<Vec<Value>, String> {
+    Ok(gizai_core::chat::waiting_lead_chats(cx.db()).map_err(err)?.into_iter().map(|t| json!({
+        "title": t.title, "kind": t.kind, "tasks": t.tasks, "since": ymd(t.updated_at),
+    })).collect())
 }
 
 pub(crate) fn inbox(cx: &Cx) -> Result<Value, String> {
@@ -62,7 +70,7 @@ pub(crate) fn inbox(cx: &Cx) -> Result<Value, String> {
         "why": if t.hold.is_some() { "on hold" } else { "waiting for your review" },
         "hold": t.hold, "reason": t.hold_reason, "assignee": t.assignee_name,
     })).collect();
-    Ok(json!({"count": items.len(), "items": items}))
+    Ok(json!({"count": items.len(), "items": items, "team_lead_chats": lead_chats(cx)?}))
 }
 
 pub(crate) fn list_clients(cx: &Cx, a: &Args) -> Result<Value, String> {
@@ -171,6 +179,7 @@ fn agent_json(cx: &Cx, m: &team::Member, live: &[crate::runs::LiveRun]) -> Value
         "heartbeat_minutes": m.heartbeat_minutes, "model": m.model, "effort": m.effort, "cards_at_once": m.max_runs, "chat": m.chat_enabled,
         "working": live.iter().any(|r| r.agent_id == m.actor_id),
         "spent_this_month_usd": usd(spent), "monthly_budget_usd": m.budget_usd_micros.map(usd),
+        "board_check_minutes": m.board_check_minutes, "board_check_paused": m.board_check_paused,
     })
 }
 

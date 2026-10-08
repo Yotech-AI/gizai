@@ -73,7 +73,7 @@ function RunRow({ r }: { r: Run }) {
             {r.headSha && <><dt>Ended at commit</dt><dd className="mono">{r.headSha.slice(0, 9)}</dd></>}
             {commitsError && <><dt>Commits</dt><dd>{commitsError}</dd></>}
             {r.worktreePath && <><dt>Worktree</dt><dd className="mono">{r.worktreePath}</dd></>}
-            {r.worktreePath && r.sessionId && (!r.adapter || r.adapter === "claude_code") && <><dt>Continue by hand</dt><dd className="mono">{resumeCommand(r.worktreePath, r.sessionId)}</dd></>}
+            {r.worktreePath && r.sessionId && (!r.adapter || r.adapter === "claude_code") && r.trigger !== "board_check" && <><dt>Continue by hand</dt><dd className="mono">{resumeCommand(r.worktreePath, r.sessionId)}</dd></>}
           </dl>
           {events && events.length > 0 && (
             <button className="link" onClick={() => setAll((a) => !a)}>{all ? "Hide output" : `Show the whole output (${events.length} steps)`}</button>

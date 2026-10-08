@@ -70,6 +70,11 @@ export type Member = {
   effort?: string | null;
   /** Cards it works on at once (1 when absent). */
   maxRuns?: number;
+  /** The Team Lead checks the board this often (minutes); null = off. */
+  boardCheckMinutes?: number | null;
+  boardCheckedAt?: number | null;
+  /** Why its board check stopped (three failed checks in a row); null = not paused. */
+  boardCheckPaused?: string | null;
 };
 /** A coding CLI agents run on (Settings → Coding CLIs); "claude_code" is the built-in Claude Code. */
 export type CliKind = "claude_code" | "codex" | "gemini" | "other";
@@ -97,6 +102,8 @@ export type AgentInput = {
   effort?: string | null;
   /** Cards it works on at once (1–10); null leaves it unchanged on update. */
   maxRuns?: number | null;
+  /** The Team Lead's board check every this many minutes (5–1440), 0 = off; null leaves it unchanged on update. */
+  boardCheckMinutes?: number | null;
 };
 export type RuleInput = { kind: "label" | "column"; matchName: string; targetRole: string; priority: number };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
@@ -211,7 +218,14 @@ export type DayStat = { dayStart: number; succeeded: number; failed: number; oth
 
 // ---- chat with the Team Lead ----
 export type ChatThread = { id: string; agentId: string; title: string; sessionId?: string | null; createdAt: number; updatedAt: number;
-  costUsdMicros: number; inputTokens: number; outputTokens: number };
+  costUsdMicros: number; inputTokens: number; outputTokens: number;
+  /** A chat the Team Lead started during a board check: question | approval; null = your own chat. */
+  kind?: "question" | "approval" | null;
+  /** The identifiers of the cards a Team Lead chat is about. */
+  tasks?: string[];
+  answeredAt?: number | null; dismissedAt?: number | null;
+  /** A Team Lead chat that still waits for you (it is in the Inbox). */
+  waiting?: boolean };
 /** role: user | agent | tool | system. Tool messages carry `tool` = {id, input, result?, isError?}. */
 export type ChatMessage = { id: string; threadId: string; role: string; authorId?: string | null; authorName?: string | null;
   bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number };

@@ -407,6 +407,13 @@ pub fn chat_live(st: State<AppState>) -> Vec<chat::ChatStatus> { chat::live(&st)
 /// The agent that answers on the Chat page, if any.
 #[tauri::command]
 pub fn chat_agent(st: State<AppState>) -> R<Option<team::Member>> { team::chat_agent(&st.db).map_err(e) }
+/// × on a Team Lead chat in the Inbox: it no longer waits for you (it stays in Chat → Recent).
+#[tauri::command]
+pub fn dismiss_chat(app: AppHandle, st: State<AppState>, thread_id: String) -> R<()> {
+    gizai_core::chat::dismiss(&st.db, &st.you_id, &thread_id).map_err(e)?;
+    changed(&app, "chat_threads");
+    Ok(())
+}
 
 // ---- pull requests on GitHub ----
 /// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.

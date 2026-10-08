@@ -61,8 +61,9 @@ async fn stopping_a_run_cancels_it_without_moving_or_penalising_the_card() {
     gizai_lib::runs::stop(&st, &run_id);
     let s = done.await.unwrap();
     assert_eq!(s.status, "cancelled");
+    // The start moved it to In progress; a run that ends without a result leaves it there (GA-32).
     let t = gizai_core::tasks::get(&st.db, &task).unwrap();
-    assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 0));
+    assert_eq!((t.state_name.as_str(), t.fail_count), ("In progress", 0));
     assert!(gizai_lib::runs::live(&st).is_empty());
 }
 
@@ -115,7 +116,7 @@ async fn a_crashing_claude_shows_its_error_and_counts_as_a_failed_run() {
     assert_eq!(s.status, "failed");
     assert!(s.error.as_deref().unwrap().contains("unknown option '--frobnicate'"), "{:?}", s.error);
     let t = gizai_core::tasks::get(&st.db, &task).unwrap();
-    assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 1));
+    assert_eq!((t.state_name.as_str(), t.fail_count), ("In progress", 1), "moved at the start, and stays after a failed run");
 }
 
 #[tokio::test]
@@ -201,7 +202,7 @@ async fn a_run_stopped_by_quitting_says_gizai_quit_and_leaves_no_process() {
     assert_eq!((s.status.as_str(), s.error.as_deref()), QUIT);
     let ((status, error), card) = recorded(&st, &task);
     assert_eq!((status.as_str(), error.as_deref()), QUIT);
-    assert_eq!(card, ("To do".to_string(), 0), "not a failure");
+    assert_eq!(card, ("In progress".to_string(), 0), "not a failure");
     assert_eq!(gizai_lib::runs::STOPPED_BY_QUIT, "Stopped because Gizai quit.");
     assert!(group_gone(pid, Duration::from_secs(1)).await, "no agent process left");
 }
@@ -219,7 +220,7 @@ async fn as_gizai_exits_kill_all_ends_a_stubborn_run_at_once() {
     assert_eq!((s.status.as_str(), s.error.as_deref()), QUIT);
     let ((status, error), card) = recorded(&st, &task);
     assert_eq!((status.as_str(), error.as_deref()), QUIT);
-    assert_eq!(card, ("To do".to_string(), 0));
+    assert_eq!(card, ("In progress".to_string(), 0));
     assert!(gizai_lib::runs::live(&st).is_empty());
     assert!(group_gone(pid, Duration::from_secs(1)).await, "no agent process left");
 }
@@ -236,7 +237,7 @@ async fn a_run_whose_agent_ends_while_gizai_quits_was_stopped_by_the_quit_not_fa
     assert_eq!((s.status.as_str(), s.error.as_deref(), s.outcome.as_deref()), ("cancelled", Some("Stopped because Gizai quit."), None));
     let ((status, error), card) = recorded(&st, &task);
     assert_eq!((status.as_str(), error.as_deref()), QUIT);
-    assert_eq!(card, ("To do".to_string(), 0), "not a failure");
+    assert_eq!(card, ("In progress".to_string(), 0), "not a failure");
     assert!(group_gone(pid, Duration::from_secs(1)).await);
 }
 
@@ -282,17 +283,29 @@ async fn a_card_that_cannot_start_in_the_background_goes_on_hold_with_the_reason
 }
 
 #[tokio::test]
-async fn a_missing_claude_does_not_put_cards_on_hold() {
+async fn a_missing_claude_holds_one_card_without_counting_a_failure_and_leaves_the_others_waiting() {
+    // GA-32 (was: a missing Claude Code doesn't put cards on hold). A start that can't work holds the card it tried,
+    // "blocked" with the reason, where it was; the agent then stops taking cards, so the next card isn't held too.
     let tmp = tempfile::tempdir().unwrap();
     let st = gizai_lib::test_state(tmp.path());
     gizai_core::settings::set(&st.db, "claude_bin", &"/nonexistent/claude".to_string()).unwrap();
     let repo = git_repo(tmp.path());
-    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let first = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let second = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
     let agent = gizai_core::team::all_agents(&st.db).unwrap()[0].1.clone();
     gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, gizai_core::model::AgentInput {
-        name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(5), ..Default::default() }).unwrap();
-    let _ = gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await;
-    assert_eq!(gizai_core::tasks::get(&st.db, &task).unwrap().hold, None);
+        name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(1), max_runs: Some(3),
+        ..Default::default() }).unwrap();
+    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await.is_empty());
+    let t = gizai_core::tasks::get(&st.db, &first).unwrap();
+    assert_eq!((t.state_name.as_str(), t.hold.as_deref(), t.fail_count), ("To do", Some("blocked"), 0));
+    assert!(t.hold_reason.as_deref().unwrap_or("").contains("Claude Code not found"), "{:?}", t.hold_reason);
+    let other = gizai_core::tasks::get(&st.db, &second).unwrap();
+    assert_eq!((other.state_name.as_str(), other.hold.as_deref(), other.fail_count), ("To do", None, 0), "the next card isn't held too");
+    assert!(gizai_lib::runs::pull_paused(&st, &agent.actor_id).is_some(), "the agent stops taking cards");
+    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms() + 120_000).await.is_empty(), "not on the next heartbeat either");
+    assert_eq!(gizai_core::tasks::get(&st.db, &second).unwrap().hold, None);
+    assert!(gizai_core::runs::list_for_task(&st.db, &second).unwrap().is_empty());
 }
 
 #[tokio::test]

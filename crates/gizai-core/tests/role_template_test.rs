@@ -29,7 +29,10 @@ fn design_and_devops_have_templates() {
     assert!(d.contains("Allowed outcomes: ready_for_testing, needs_decision."));
     let o = role_template("devops");
     assert!(o.starts_with("You are the DevOps Agent"));
-    assert!(o.contains("Never deploy"));
+    // Started by hand: it deploys a card in Deploy (deployed), and its other jobs go to Review, never to QA.
+    assert!(o.contains("Allowed outcomes: deployed, ready_for_testing, needs_decision."), "{o}");
+    assert!(o.contains("never to QA"), "{o}");
+    assert!(!o.contains("Never deploy"), "{o}");
 }
 
 #[test]

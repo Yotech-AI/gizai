@@ -433,6 +433,81 @@ async fn a_persons_run_without_a_login_holds_its_card_where_it_was_also_while_th
     }
 }
 
+#[tokio::test]
+async fn a_card_dragged_into_to_do_while_its_agent_is_paused_waits_unheld_until_the_team_lead_fixes_the_agent() {
+    let a = app();
+    let first = a.card(2, "FAKE_HANG");
+    let be = a.agent_with("Backend Agent", "backend", "on_assign", 3, Some("opuss"));
+    let lead = a.agent_with("Team Lead", "lead", "manual", 1, None);
+    assert!(runs::pull(&a.st).await.is_empty());
+    assert_eq!(a.task(&first).hold.as_deref(), Some("blocked"));
+    assert!(runs::pull_paused(&a.st, &be).is_some());
+    // an urgent card dragged in now (a drag wakes the queue) only waits: no run, no hold, no failure
+    let fresh = a.card(1, "FAKE_HANG");
+    assert_eq!(runs::dispatch(&a.st, &fresh).await, None);
+    let t = a.task(&fresh);
+    assert_eq!((t.state_name.as_str(), t.hold.as_deref(), t.fail_count), ("To do", None, 0));
+    assert!(a.runs_of(&fresh).is_empty());
+    // the Team Lead fixes the model from chat: the pause ends and the next pull (at most a minute) takes the waiting card
+    gizai_lib::tools::call(&a.st, &lead, "update_agent", serde_json::json!({"agent": "Backend Agent", "model": "opus"})).await.unwrap();
+    assert!(runs::pull_paused(&a.st, &be).is_none());
+    runs::pull(&a.st).await;
+    assert_eq!(a.live_cards(), [fresh.clone()], "the held card stays held");
+    assert_eq!(a.column(&fresh), "In progress");
+    assert_eq!((a.column(&first).as_str(), a.task(&first).hold.as_deref()), ("To do", Some("blocked")));
+    runs::stop_all(&a.st, Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+async fn agents_paused_in_settings_or_a_paused_agent_keep_the_queue_waiting_without_holds() {
+    let a = app();
+    let cards: Vec<String> = [1, 2].iter().map(|p| a.card(*p, "FAKE_HANG")).collect();
+    let be = a.agent_with("Backend Agent", "backend", "on_assign", 3, None);
+    gizai_core::settings::set(&a.st.db, "agents_paused", &true).unwrap();
+    assert_eq!(runs::dispatch(&a.st, &cards[0]).await, None);
+    assert!(runs::pull(&a.st).await.is_empty());
+    gizai_core::settings::set(&a.st.db, "agents_paused", &false).unwrap();
+    gizai_core::team::set_agent_status(&a.st.db, &a.st.you_id, &be, "paused").unwrap();
+    assert!(runs::pull(&a.st).await.is_empty());
+    for c in &cards {
+        let t = a.task(c);
+        assert_eq!((t.state_name.as_str(), t.hold.as_deref(), t.fail_count, a.runs_of(c).len()), ("To do", None, 0, 0));
+    }
+    assert!(runs::pull_paused(&a.st, &be).is_none(), "only waiting: the agent's pull isn't paused");
+    gizai_core::team::set_agent_status(&a.st.db, &a.st.you_id, &be, "active").unwrap();
+    runs::pull(&a.st).await;
+    assert_eq!(a.live_cards(), sorted(cards.clone()));
+    runs::stop_all(&a.st, Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+async fn a_crash_on_a_heartbeat_agent_fails_at_most_its_cards_at_once_and_the_next_heartbeat_starts_nothing() {
+    let a = app();
+    gizai_core::settings::set(&a.st.db, "claude_bin", &slow_fake(a.tmp.path(), 1.0)).unwrap();
+    let cards: Vec<String> = [1, 2, 3, 4, 0, 0].iter().map(|p| a.card(*p, "FAKE_CRASH")).collect();
+    let be = a.agent_with("Backend Agent", "backend", "heartbeat", 3, None);
+    let lead = a.agent_with("Team Lead", "lead", "manual", 1, None);
+    let now = gizai_core::ids::now_ms();
+    let started = runs::heartbeat_tick(&a.st, now).await;
+    assert_eq!(started.len(), 3);
+    for done in started {
+        done.await.unwrap();
+    }
+    until("the runs end", || runs::live(&a.st).is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(runs::pull_paused(&a.st, &be).is_some());
+    for (i, c) in cards.iter().enumerate() {
+        let t = a.task(c);
+        let want = if i < 3 { ("In progress", 1, 1) } else { ("To do", 0, 0) };
+        assert_eq!((t.state_name.as_str(), t.fail_count, a.runs_of(c).len()), want, "card {i}");
+        assert_eq!(t.hold, None, "card {i}");
+    }
+    assert!(runs::heartbeat_tick(&a.st, now + 120_000).await.is_empty(), "the next heartbeat starts nothing");
+    // the Team Lead sets the agent active again: the pause ends
+    gizai_lib::tools::call(&a.st, &lead, "set_agent_status", serde_json::json!({"agent": "Backend Agent", "status": "active"})).await.unwrap();
+    assert!(runs::pull_paused(&a.st, &be).is_none());
+}
+
 // ---- Part 2: the Testing switch ----
 
 #[tokio::test]

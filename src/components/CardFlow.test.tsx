@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NewTaskDrawer } from "./NewTaskDrawer";
 import { Properties } from "./Properties";
+import { Board } from "./Board";
 import { CATEGORIES, CATEGORY_NAMES, StatusIcon } from "./StatusIcon";
 import { badgeOf } from "../lib/runs";
 import { needsYou } from "../lib/inbox";
@@ -48,6 +49,19 @@ describe("Deploy", () => {
     const todo = renderToStaticMarkup(<StatusIcon category="ready" />);
     expect(deploy).not.toBe(todo);
     expect(deploy).toContain("Deploy");
+  });
+
+  it("shows on the board between Review and Done with its own note, not 'Waiting for your review'", () => {
+    const html = renderToStaticMarkup(<Board tasks={[task({})]} states={team.states} onMove={() => {}} onOpen={() => {}} />);
+    const at = (name: string) => html.indexOf(`data-col="${name}"`);
+    expect(at("Review")).toBeGreaterThanOrEqual(0);
+    expect(at("Review")).toBeLessThan(at("Deploy"));
+    expect(at("Deploy")).toBeLessThan(at("Done"));
+    const deployCol = html.slice(at("Deploy"), at("Done"));
+    expect(deployCol).toContain('<div class="col-note">Merged: deploy it, or press Run for the DevOps Agent</div>');
+    expect(deployCol).not.toContain("Waiting for your review");
+    expect(deployCol).toContain("Fix a typo");
+    expect(html.slice(at("Review"), at("Deploy"))).toContain("Waiting for your review");
   });
 
   it("puts a Deploy card assigned to you in the inbox, like a Review card", () => {

@@ -1,13 +1,15 @@
-//! The Software-team workflow: who picks a card up (routing), what a run's verdict does to the card
-//! (gates), and what an agent should work on next (the To do queue and heartbeats). Nothing routes a card in
-//! Review or Deploy. Agents never move a card to Done, except the DevOps Agent's `deployed` on a Deploy card (a person
-//! pressed Run on it).
+//! The Software-team workflow: who picks a card up (its column: the agents on it, Auto or Manual), what a run's verdict
+//! does to the card (the gates, through the column's next column), and what an agent should work on next (the queue).
+//! Labels never route. A card assigned to an agent is started only by that agent. Nothing starts by itself in a Manual
+//! column; only a person's Run does.
+use std::collections::HashSet;
+
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, Writer};
 use crate::model::Outcome;
-use crate::{Error, Result, comments, ids, runs, tasks};
+use crate::{Error, Result, columns, comments, ids, runs, tasks};
 
 /// "1. Pin overlaps" / "2) x" / "3.Bad" → the text without its list marker; "404 on /login" and
 /// "3.5 s slow" keep their numbers.
@@ -37,36 +39,54 @@ pub struct GateResult {
 struct TaskRow {
     team_id: String,
     state_id: String,
+    column: String,
     category: String,
-    hold: Option<String>,
+    /// Its column is Auto.
+    auto: bool,
+    /// Its column's next column.
+    next: Option<String>,
     pinned: Option<String>,
     implementer: Option<String>,
+    /// Its assignee when that is an agent.
+    agent_assignee: Option<String>,
+    /// Its assignee when that is a person.
+    person_assignee: Option<String>,
     owner_person: Option<String>,
     created_by: Option<String>,
     bounce_count: i64,
     fail_count: i64,
-    /// The Testing switch: off sends a finished card straight to Review.
+    /// The Testing switch: off, the card skips Testing columns.
     testing: bool,
 }
 
 fn task_row(c: &Connection, task_id: &str) -> Result<TaskRow> {
     c.query_row(
-        "SELECT s.team_id, t.state_id, s.category, t.hold, t.pinned_actor_id, t.implementer_actor_id, t.owner_person_id, t.created_by,
-                t.bounce_count, t.fail_count, t.testing
-         FROM tasks t JOIN workflow_states s ON s.id = t.state_id WHERE t.id=?1 AND t.deleted_at IS NULL",
+        "SELECT s.team_id, t.state_id, s.name, s.category, s.auto, s.next_state_id, t.pinned_actor_id, t.implementer_actor_id,
+                CASE WHEN x.kind = 'agent' THEN x.id END, CASE WHEN x.kind = 'person' THEN x.id END,
+                t.owner_person_id, t.created_by, t.bounce_count, t.fail_count, t.testing
+         FROM tasks t JOIN workflow_states s ON s.id = t.state_id
+         LEFT JOIN actors x ON x.id = t.assignee_actor_id AND x.deleted_at IS NULL
+         WHERE t.id=?1 AND t.deleted_at IS NULL",
         [task_id],
-        |r| Ok(TaskRow { team_id: r.get(0)?, state_id: r.get(1)?, category: r.get(2)?, hold: r.get(3)?, pinned: r.get(4)?,
-                         implementer: r.get(5)?, owner_person: r.get(6)?, created_by: r.get(7)?, bounce_count: r.get(8)?, fail_count: r.get(9)?,
-                         testing: r.get::<_, i64>(10)? != 0 }),
+        |r| Ok(TaskRow { team_id: r.get(0)?, state_id: r.get(1)?, column: r.get(2)?, category: r.get(3)?, auto: r.get::<_, i64>(4)? != 0,
+                         next: r.get(5)?, pinned: r.get(6)?, implementer: r.get(7)?, agent_assignee: r.get(8)?,
+                         person_assignee: r.get(9)?, owner_person: r.get(10)?, created_by: r.get(11)?, bounce_count: r.get(12)?,
+                         fail_count: r.get(13)?, testing: r.get::<_, i64>(14)? != 0 }),
     ).optional()?.ok_or_else(|| Error::NotFound(format!("task {task_id}")))
 }
 
-/// The agent's role in the team, if it is an active agent member.
-fn agent_role(c: &Connection, team_id: &str, actor_id: &str) -> Result<Option<String>> {
+/// The agent's role in its team, if it is an agent that isn't archived or deleted.
+fn role_of(c: &Connection, actor_id: &str) -> Result<Option<String>> {
     Ok(c.query_row(
         "SELECT m.role_key FROM team_members m JOIN actors a ON a.id = m.actor_id
-         WHERE m.team_id=?1 AND m.actor_id=?2 AND m.deleted_at IS NULL AND a.kind='agent' AND a.status='active' AND a.deleted_at IS NULL",
-        rusqlite::params![team_id, actor_id], |r| r.get(0)).optional()?)
+         WHERE m.actor_id=?1 AND m.deleted_at IS NULL AND a.kind='agent' AND a.status <> 'archived' AND a.deleted_at IS NULL
+         ORDER BY m.created_at LIMIT 1",
+        [actor_id], |r| r.get(0)).optional()?)
+}
+
+fn is_active(c: &Connection, actor_id: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT count(*) FROM actors WHERE id=?1 AND kind='agent' AND status='active' AND deleted_at IS NULL",
+                   [actor_id], |r| r.get::<_, i64>(0))? > 0)
 }
 
 fn is_idle(c: &Connection, actor_id: &str) -> Result<bool> {
@@ -76,67 +96,53 @@ fn is_idle(c: &Connection, actor_id: &str) -> Result<bool> {
     Ok(busy < max.max(1))
 }
 
-/// The role a card goes to now. Review, Deploy, Done, Backlog and Cancelled cards go to nobody (Review is the human
-/// gate; in Deploy only a person's Run starts an agent). Otherwise a column rule on its column wins; in To do and In progress the label rule with the lowest
-/// priority number comes next; in Testing the column's owner role (qa). Label rules never send a Testing card
-/// back to its builder.
-fn routed_role(c: &Connection, task_id: &str, t: &TaskRow) -> Result<Option<String>> {
-    if !matches!(t.category.as_str(), "ready" | "in_progress" | "testing") {
-        return Ok(None);
-    }
-    if let Some(role) = c.query_row(
-        "SELECT target_role FROM routing_rules WHERE team_id=?1 AND kind='column' AND match_state_id=?2 AND enabled=1 AND deleted_at IS NULL
-           AND target_role IS NOT NULL ORDER BY priority, created_at LIMIT 1",
-        rusqlite::params![t.team_id, t.state_id], |r| r.get::<_, String>(0)).optional()? {
-        return Ok(Some(role));
-    }
-    if t.category == "testing" {
-        let owner: Option<String> = c.query_row("SELECT owner_role FROM workflow_states WHERE id=?1", [&t.state_id], |r| r.get(0))?;
-        return Ok(owner.filter(|o| o != "implementer" && o != "human"));
-    }
-    Ok(c.query_row(
-        "SELECT r.target_role FROM routing_rules r JOIN task_labels tl ON tl.label_id = r.match_label_id AND tl.task_id=?2
-         WHERE r.team_id=?1 AND r.kind='label' AND r.enabled=1 AND r.deleted_at IS NULL AND r.target_role IS NOT NULL
-         ORDER BY r.priority, r.created_at LIMIT 1",
-        rusqlite::params![t.team_id, task_id], |r| r.get::<_, String>(0)).optional()?)
-}
-
-/// Who should work this card now: (agent, role). A pin wins; then the routed role, where a card that came
-/// back to In progress goes to the agent that built it; otherwise the first idle agent with that role.
-/// None when the card is on hold, nothing routes it, or every matching agent is busy.
-pub fn pick_agent(db: &Db, task_id: &str) -> Result<Option<(String, String)>> {
-    db.read(|c| {
-        let t = task_row(c, task_id)?;
-        if t.hold.is_some() || matches!(t.category.as_str(), "done" | "cancelled" | "backlog" | "review" | "deploy") {
-            return Ok(None);
-        }
-        if let Some(pin) = &t.pinned {
-            return Ok(agent_role(c, &t.team_id, pin)?.map(|role| (pin.clone(), role)));
-        }
-        let Some(role) = routed_role(c, task_id, &t)? else { return Ok(None) };
-        if t.category == "in_progress" {
-            if let Some(imp) = &t.implementer {
-                if agent_role(c, &t.team_id, imp)?.is_some() && is_idle(c, imp)? {
-                    return Ok(Some((imp.clone(), role)));
-                }
-            }
-        }
-        let mut st = c.prepare(
-            "SELECT m.actor_id FROM team_members m JOIN actors a ON a.id = m.actor_id
-             WHERE m.team_id=?1 AND m.role_key=?2 AND m.deleted_at IS NULL AND a.kind='agent' AND a.status='active' AND a.deleted_at IS NULL
-             ORDER BY m.created_at, a.name")?;
-        let candidates = st.query_map(rusqlite::params![t.team_id, role], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        for a in candidates {
-            if is_idle(c, &a)? {
-                return Ok(Some((a, role)));
-            }
-        }
-        Ok(None)
+/// The column a start moves a card to: a To do-type column's next column; from Backlog (a person's Run), the team's
+/// first In progress column, as 0.2.0 did. None: the card stays.
+fn start_target(c: &Connection, state_id: &str) -> Result<Option<String>> {
+    let Ok(col) = columns::col(c, state_id) else { return Ok(None) };
+    Ok(match col.category.as_str() {
+        "ready" => col.next,
+        "backlog" => columns::first_of(c, &col.team_id, "in_progress")?.map(|(id, _)| id),
+        _ => None,
     })
 }
 
-/// The card this agent should work on next (heartbeats, the Agent page), if it is idle: the first of
-/// `waiting_for`.
+/// Who Run starts on a card when the person picks nobody: the agent it is pinned or assigned to, else the first agent on
+/// its column (an idle, active one first). A Backlog card has no agents of its own: the agents of the column Run moves
+/// it to. None: nobody (the message says to put an agent on the column).
+pub fn run_agent(db: &Db, task_id: &str) -> Result<Option<(String, String)>> {
+    db.read(|c| {
+        let t = task_row(c, task_id)?;
+        for a in t.pinned.iter().chain(t.agent_assignee.iter()) {
+            if let Some(role) = role_of(c, a)? {
+                return Ok(Some((a.clone(), role)));
+            }
+        }
+        let mut agents = columns::agents_of(c, &t.state_id)?;
+        if agents.is_empty() && t.category == "backlog" && let Some(to) = start_target(c, &t.state_id)? {
+            agents = columns::agents_of(c, &to)?;
+        }
+        let mut best: Option<String> = None;
+        for a in &agents {
+            if is_active(c, a)? && is_idle(c, a)? {
+                best = Some(a.clone());
+                break;
+            }
+        }
+        let best = best.or_else(|| agents.first().cloned());
+        Ok(match best {
+            Some(a) => role_of(c, &a)?.map(|role| (a, role)),
+            None => None,
+        })
+    })
+}
+
+/// The name of a card's column (for messages).
+pub fn column_name(db: &Db, task_id: &str) -> Result<String> {
+    db.read(|c| Ok(task_row(c, task_id)?.column))
+}
+
+/// The card this agent should work on next (the Agent page), if it is idle: the first of `waiting_for`.
 pub fn next_task_for(db: &Db, agent_id: &str) -> Result<Option<String>> {
     let idle = db.read(|c| is_idle(c, agent_id))?;
     if !idle {
@@ -145,120 +151,83 @@ pub fn next_task_for(db: &Db, agent_id: &str) -> Result<Option<String>> {
     Ok(waiting_for(db, agent_id)?.into_iter().next())
 }
 
-/// The cards waiting for this agent, best first: the To do queue (QA: Testing). Candidates are cards assigned to it,
-/// cards in a column its role owns (column rule or the column's owner role), and To do or In progress cards whose
-/// label routes to its role; only in To do, In progress and Testing (never Review or Deploy). Held, claimed, pinned to
-/// someone else and assigned to another agent are skipped (a person's assignment is the review's: a card dragged back
-/// from Review is routed as usual), and so is a card whose last run was stopped (by a person, or because Gizai quit):
-/// Run or Continue starts it again. Best means: priority urgent → low with none last, then cards assigned to this
-/// agent, then board order.
+/// The cards this active agent may start now, best first (the queue). Only cards in Auto columns: those assigned or
+/// pinned to it, wherever they are, and the cards of the columns it is on that aren't assigned or pinned to another
+/// agent (a person as assignee doesn't block). Held, claimed and paused-project cards are skipped, and so is a card
+/// whose last run was stopped (by a person, or because Gizai quit: Run or Continue starts it again) and a card with
+/// its Testing switch off in a Testing column. Best means: priority urgent → low with none last, then cards assigned to
+/// this agent, then column and card order.
 pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
     db.read(|c| {
-        let Some((team_id, role)): Option<(String, String)> = c.query_row(
-            "SELECT m.team_id, m.role_key FROM team_members m JOIN actors a ON a.id = m.actor_id
-             WHERE m.actor_id=?1 AND m.deleted_at IS NULL AND a.kind='agent' AND a.status='active' AND a.deleted_at IS NULL
-             ORDER BY m.created_at LIMIT 1",
-            [agent_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()? else { return Ok(vec![]) };
-        let now = ids::now_ms();
+        if !is_active(c, agent_id)? {
+            return Ok(vec![]);
+        }
         let mut st = c.prepare(
-            "SELECT t.id, CASE WHEN t.assignee_actor_id = ?2 THEN 0 ELSE 1 END AS rank
-             FROM tasks t JOIN workflow_states s ON s.id = t.state_id
+            "SELECT t.id FROM tasks t JOIN workflow_states s ON s.id = t.state_id
              LEFT JOIN projects p ON p.id = t.project_id
-             WHERE s.team_id = ?1 AND t.deleted_at IS NULL AND t.hold IS NULL
-               AND s.category IN ('ready','in_progress','testing')
+             LEFT JOIN actors x ON x.id = t.assignee_actor_id AND x.deleted_at IS NULL
+             WHERE t.deleted_at IS NULL AND t.hold IS NULL AND s.deleted_at IS NULL AND s.auto = 1
+               AND s.category NOT IN ('backlog','review','done','cancelled')
+               AND NOT (s.category = 'testing' AND t.testing = 0)
                AND (p.id IS NULL OR p.status NOT IN ('archived','done','paused'))
-               AND (t.claimed_by_run_id IS NULL OR t.lease_expires_at IS NULL OR t.lease_expires_at < ?4
+               AND (t.claimed_by_run_id IS NULL OR t.lease_expires_at IS NULL OR t.lease_expires_at < ?2
                     OR NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = t.claimed_by_run_id AND r.status IN ('queued','running','waiting_approval')))
-               AND (t.pinned_actor_id IS NULL OR t.pinned_actor_id = ?2)
-               AND (t.assignee_actor_id IS NULL OR t.assignee_actor_id = ?2
-                    OR EXISTS (SELECT 1 FROM actors x WHERE x.id = t.assignee_actor_id AND x.kind = 'person'))
                AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id AND r.status = 'cancelled'
                                AND r.created_at = (SELECT max(created_at) FROM runs WHERE task_id = t.id))
                AND (
-                 t.assignee_actor_id = ?2 OR t.pinned_actor_id = ?2
-                 OR s.owner_role = ?3
-                 OR EXISTS (SELECT 1 FROM routing_rules r WHERE r.team_id = ?1 AND r.kind='column' AND r.match_state_id = s.id
-                            AND r.target_role = ?3 AND r.enabled=1 AND r.deleted_at IS NULL)
-                 OR (s.category IN ('ready','in_progress') AND EXISTS (
-                      SELECT 1 FROM routing_rules r JOIN task_labels tl ON tl.label_id = r.match_label_id AND tl.task_id = t.id
-                      WHERE r.team_id = ?1 AND r.kind='label' AND r.target_role = ?3 AND r.enabled=1 AND r.deleted_at IS NULL))
+                 t.pinned_actor_id = ?1
+                 OR (t.pinned_actor_id IS NULL AND x.kind = 'agent' AND x.id = ?1)
+                 OR (t.pinned_actor_id IS NULL AND (x.id IS NULL OR x.kind = 'person')
+                     AND EXISTS (SELECT 1 FROM column_agents ca WHERE ca.state_id = s.id AND ca.actor_id = ?1))
                )
-             ORDER BY CASE WHEN t.priority BETWEEN 1 AND 4 THEN t.priority ELSE 5 END, rank, s.sort_key, t.sort_key, t.created_at")?;
-        let ids = st.query_map(rusqlite::params![team_id, agent_id, role, now], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        // Same answer as routing would give: skip cards that route to another role or are pinned elsewhere.
-        let mut out = vec![];
-        for id in ids {
-            let t = task_row(c, &id)?;
-            let routed = routed_role(c, &id, &t)?;
-            let assigned_here = c.query_row("SELECT assignee_actor_id = ?2 OR pinned_actor_id = ?2 FROM tasks WHERE id=?1",
-                rusqlite::params![id, agent_id], |r| r.get::<_, Option<bool>>(0))?.unwrap_or(false);
-            if assigned_here || routed.as_deref() == Some(role.as_str()) {
-                out.push(id);
-            }
-        }
-        Ok(out)
+             ORDER BY CASE WHEN t.priority BETWEEN 1 AND 4 THEN t.priority ELSE 5 END,
+                      CASE WHEN t.assignee_actor_id = ?1 OR t.pinned_actor_id = ?1 THEN 0 ELSE 1 END, s.sort_key, t.sort_key, t.created_at")?;
+        Ok(st.query_map(rusqlite::params![agent_id, ids::now_ms()], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
     })
 }
 
-/// Who would start a card (the board check): its routed role, the agents that could take it (the pinned agent, else the
-/// assigned agent, else the agents with the routed role, its builder first in In progress; paused ones included, so
-/// the check can say why the card waits) and the person it is assigned to, if any.
+/// Who would start a card (the board check): the agents that could take it (the pinned agent, else the agent it is
+/// assigned to, else the agents on its column when that is Auto, its builder first; paused ones included, so the check
+/// can say why the card waits), the person it is assigned to, if any, and its column.
 pub(crate) struct Route {
-    pub role: Option<String>,
     pub agents: Vec<String>,
     pub person: Option<String>,
+    pub column: String,
+    /// Its column is Auto.
+    pub auto: bool,
+    /// Its Testing switch is off and it is in a Testing column: no QA run starts.
+    pub testing_off: bool,
 }
 
 pub(crate) fn route(c: &Connection, task_id: &str) -> Result<Route> {
     let t = task_row(c, task_id)?;
-    let assignee: Option<(String, String)> = c.query_row(
-        "SELECT a.id, a.kind FROM tasks t JOIN actors a ON a.id = t.assignee_actor_id WHERE t.id=?1 AND a.deleted_at IS NULL",
-        [task_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-    let person = assignee.as_ref().filter(|(_, k)| k == "person").map(|(id, _)| id.clone());
-    let role = routed_role(c, task_id, &t)?;
-    if let Some(pin) = t.pinned.clone() {
-        return Ok(Route { role, agents: vec![pin], person });
+    let base = Route { agents: vec![], person: t.person_assignee.clone(), column: t.column.clone(), auto: t.auto,
+                       testing_off: t.category == "testing" && !t.testing };
+    if let Some(a) = t.pinned.clone().or(t.agent_assignee.clone()) {
+        return Ok(Route { agents: vec![a], ..base });
     }
-    if let Some((a, _)) = assignee.filter(|(_, k)| k == "agent") {
-        return Ok(Route { role, agents: vec![a], person });
+    if !t.auto {
+        return Ok(base);
     }
-    let Some(r) = role.clone() else { return Ok(Route { role, agents: vec![], person }) };
-    let mut st = c.prepare(
-        "SELECT m.actor_id FROM team_members m JOIN actors a ON a.id = m.actor_id
-         WHERE m.team_id=?1 AND m.role_key=?2 AND m.deleted_at IS NULL AND a.kind='agent' AND a.status<>'archived' AND a.deleted_at IS NULL
-         ORDER BY m.created_at, a.name")?;
-    let mut agents = st.query_map(rusqlite::params![t.team_id, r], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    if t.category == "in_progress" && let Some(i) = t.implementer.as_ref().and_then(|imp| agents.iter().position(|a| a == imp)) {
+    let mut agents = columns::agents_of(c, &t.state_id)?;
+    if let Some(i) = t.implementer.as_ref().and_then(|imp| agents.iter().position(|a| a == imp)) {
         let imp = agents.remove(i);
         agents.insert(0, imp);
     }
-    Ok(Route { role, agents, person })
+    Ok(Route { agents, ..base })
 }
 
-/// Run on a Deploy card without a chosen agent: the first active agent with the devops role in the card's team.
-pub fn devops_agent(db: &Db, task_id: &str) -> Result<Option<String>> {
-    db.read(|c| {
-        let t = task_row(c, task_id)?;
-        Ok(c.query_row(
-            "SELECT m.actor_id FROM team_members m JOIN actors a ON a.id = m.actor_id
-             WHERE m.team_id=?1 AND m.role_key='devops' AND m.deleted_at IS NULL AND a.kind='agent' AND a.status='active' AND a.deleted_at IS NULL
-             ORDER BY m.created_at, a.name LIMIT 1",
-            [&t.team_id], |r| r.get(0)).optional()?)
-    })
-}
-
-/// A run has really started on the card: a card in To do (or Backlog, when a person pressed Run on it) moves to the end
-/// of its team's In progress column, as the agent. Cards in other columns stay put (Testing for QA, Deploy for a
-/// person's Run). Returns the column it came from, so a run that can't start working can put it back.
+/// A run has really started on the card: a card in a To do-type column moves to that column's next column at once (from
+/// Backlog, when a person pressed Run on it, to the first In progress column), as the agent. Cards in other columns
+/// stay while the agent works. Returns the column it came from, so a run that can't start working can put it back.
 pub fn move_on_start(db: &Db, agent_id: &str, task_id: &str) -> Result<Option<String>> {
     db.write(Some(agent_id), |w| {
         let t = task_row(w.conn(), task_id)?;
-        if !matches!(t.category.as_str(), "ready" | "backlog") {
+        let Some(to) = start_target(w.conn(), &t.state_id)? else { return Ok(None) };
+        if to == t.state_id {
             return Ok(None);
         }
-        let Some((sid, _)) = column_of(w.conn(), &t.team_id, "in_progress")? else { return Ok(None) };
-        tasks::move_in(w, agent_id, task_id, &sid, None)?;
+        tasks::move_in(w, agent_id, task_id, &to, None)?;
         Ok(Some(t.state_id))
     })
 }
@@ -268,7 +237,7 @@ pub fn move_on_start(db: &Db, agent_id: &str, task_id: &str) -> Result<Option<St
 pub fn put_back(db: &Db, agent_id: &str, task_id: &str, state_id: &str) -> Result<()> {
     db.write(Some(agent_id), |w| {
         let t = task_row(w.conn(), task_id)?;
-        if t.category == "in_progress" && t.state_id != state_id {
+        if t.state_id != state_id && start_target(w.conn(), state_id)?.as_deref() == Some(t.state_id.as_str()) {
             tasks::move_in(w, agent_id, task_id, state_id, None)?;
         }
         Ok(())
@@ -300,10 +269,61 @@ fn unstarted(db: &Db, run_id: &str, hold: Option<&str>) -> Result<()> {
     })
 }
 
-fn column_of(c: &Connection, team_id: &str, category: &str) -> Result<Option<(String, String)>> {
-    Ok(c.query_row(
-        "SELECT id, name FROM workflow_states WHERE team_id=?1 AND category=?2 AND deleted_at IS NULL ORDER BY sort_key LIMIT 1",
-        rusqlite::params![team_id, category], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
+/// A column's (id, name, category), if it isn't removed.
+fn column_info(c: &Connection, state_id: &str) -> Result<Option<(String, String, String)>> {
+    Ok(c.query_row("SELECT id, name, category FROM workflow_states WHERE id=?1 AND deleted_at IS NULL", [state_id],
+                   |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?)
+}
+
+/// Where a done answer sends a card: its column's next column, past Testing columns when its Testing switch is off.
+fn onward(c: &Connection, t: &TaskRow) -> Result<Option<(String, String, String)>> {
+    let mut next = t.next.clone();
+    let mut seen = HashSet::new();
+    while let Some(id) = next {
+        if !seen.insert(id.clone()) {
+            return Ok(None);
+        }
+        let Some((name, category, after)): Option<(String, String, Option<String>)> = c.query_row(
+            "SELECT name, category, next_state_id FROM workflow_states WHERE id=?1 AND deleted_at IS NULL", [&id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()? else { return Ok(None) };
+        if category == "testing" && !t.testing {
+            next = after;
+            continue;
+        }
+        return Ok(Some((id, name, category)));
+    }
+    Ok(None)
+}
+
+/// The column a card that failed its test goes back to: the column it came from (the column before in its history,
+/// when that is a column agents work), else the first column linked to this one, else the first In progress column.
+fn came_from(c: &Connection, task_id: &str, t: &TaskRow) -> Result<Option<(String, String, String)>> {
+    let mut st = c.prepare("SELECT diff_json FROM changes WHERE table_name='tasks' AND row_id=?1 AND diff_json LIKE '%\"column\":%' ORDER BY seq DESC")?;
+    let diffs = st.query_map([task_id], |r| r.get::<_, Option<String>>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for d in diffs.into_iter().flatten() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&d) else { continue };
+        let Some([from, to]) = v.get("column").and_then(|x| x.as_array()).and_then(|a| <&[serde_json::Value; 2]>::try_from(a.as_slice()).ok()) else { continue };
+        if to.as_str() != Some(t.column.as_str()) {
+            continue;
+        }
+        let from: Option<(String, String, String)> = c.query_row(
+            "SELECT id, name, category FROM workflow_states WHERE team_id=?1 AND name=?2 AND deleted_at IS NULL AND id<>?3",
+            rusqlite::params![t.team_id, from.as_str().unwrap_or_default(), t.state_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
+        if let Some(f) = from.filter(|f| columns::takes_agents(&f.2)) {
+            return Ok(Some(f));
+        }
+        break;
+    }
+    let linked: Option<(String, String, String)> = c.query_row(
+        "SELECT id, name, category FROM workflow_states WHERE team_id=?1 AND next_state_id=?2 AND deleted_at IS NULL AND id<>?2 ORDER BY sort_key LIMIT 1",
+        rusqlite::params![t.team_id, t.state_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
+    if linked.is_some() {
+        return Ok(linked);
+    }
+    Ok(match columns::first_of(c, &t.team_id, "in_progress")? {
+        Some((id, _)) => column_info(c, &id)?,
+        None => None,
+    })
 }
 
 fn allowed(role: &str, outcome: &str) -> bool {
@@ -336,11 +356,19 @@ fn set_fields(w: &Writer, task_id: &str, sql_set: &str, params: &[&dyn rusqlite:
     w.update("tasks", task_id, diff)
 }
 
-/// Applies a finished run's verdict to its card, posts the agent's summary as a comment, records the
-/// outcome on the run and releases the card's claim. Cards a person moved to Backlog, Done or Cancelled
-/// while the agent worked stay where they are, and so does a card in Deploy (only `deployed` moves it, to Done).
-/// `ready_for_testing` sends the card to Testing, or straight to Review with its Testing switch off; a DevOps run
-/// never sends a card to QA (Review instead) and doesn't make the DevOps Agent the card's implementer.
+/// Applies a finished run's verdict to its card, posts the agent's summary as a comment, records the outcome on the run
+/// and releases the card's claim. The card's column decides where it goes:
+/// - the role's done answer (`ready_for_testing` for builders, `qa_pass` for QA, `deployed` for DevOps on a Deploy card)
+///   moves it to its column's next column, past Testing columns when its Testing switch is off; without a next column
+///   it stays. A card a run moves into Review is assigned to the person who reviews; one it moves elsewhere loses its
+///   agent assignee, so the next column's agents pick it up.
+/// - `qa_fail` sends it back to the column it came from, to the agent that built it; three bounces hold it.
+/// - `needs_decision` holds it where it is.
+/// Cards a person moved to Backlog, Done or Cancelled while the agent worked stay where they are, and a Deploy card
+/// moves only on `deployed`. GA-32's DevOps rules hold: a DevOps run never sends a card to QA (`ready_for_testing`
+/// outside Deploy ends in Review) and doesn't make the DevOps Agent the card's implementer, and `deployed` outside a
+/// Deploy column holds the card. A builder's `ready_for_testing` on a card in Testing leaves it there for QA, and on a
+/// card in Review it goes to Testing (with the switch on), as in 0.2.0.
 pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result<GateResult> {
     let run = runs::get(db, run_id)?;
     let task_id = run.task_id.clone().ok_or_else(|| Error::Invalid("this run has no task".into()))?;
@@ -375,16 +403,27 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
         }
 
         let moved_by_hand = matches!(t.category.as_str(), "backlog" | "done" | "cancelled");
-        let stays = moved_by_hand || t.category == "deploy";
-        let move_to = |category: &str, g: &mut GateResult| -> Result<()> {
-            if stays { return Ok(()); }
-            if let Some((sid, name)) = column_of(c, &t.team_id, category)? {
-                if sid != t.state_id {
-                    tasks::move_in(w, &agent, &task_id, &sid, None)?;
-                }
-                g.moved_to = Some(name);
+        // Moves the card to `to` (None: it stays), as the agent: into Review it is assigned to the person who reviews,
+        // elsewhere it loses its agent assignee. `implementer` makes the agent the card's builder.
+        let go = |to: Option<(String, String, String)>, implementer: bool, g: &mut GateResult| -> Result<()> {
+            if implementer {
+                set_fields(w, &task_id, "implementer_actor_id=?2", &[&agent], serde_json::json!({"implementer": agent}))?;
             }
+            let Some((sid, name, category)) = to else { return Ok(()) };
+            if sid != t.state_id {
+                tasks::move_in(w, &agent, &task_id, &sid, None)?;
+            }
+            if category == "review" {
+                let you = reviewer(c, &t)?;
+                set_fields(w, &task_id, "assignee_actor_id=?2", &[&you], serde_json::json!({"assigneeId": you}))?;
+            } else if sid != t.state_id && t.agent_assignee.is_some() {
+                set_fields(w, &task_id, "assignee_actor_id=NULL", &[], serde_json::json!({"assigneeId": null}))?;
+            }
+            g.moved_to = Some(name);
             Ok(())
+        };
+        let first_review = || -> Result<Option<(String, String, String)>> {
+            Ok(columns::first_of(c, &t.team_id, "review")?.map(|(id, name)| (id, name, "review".to_string())))
         };
 
         match outcome {
@@ -394,42 +433,28 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
                 g.hold = Some("needs_decision".into());
             }
             Some(o) => match o.outcome.as_str() {
+                "ready_for_testing" | "qa_pass" if moved_by_hand || t.category == "deploy" => {}
                 // A DevOps run (merge conflicts, a release, …) never goes to QA: the card waits in Review for its person.
-                "ready_for_testing" if role == "devops" => {
-                    move_to("review", &mut g)?;
-                    if !stays {
-                        let you = reviewer(c, &t)?;
-                        set_fields(w, &task_id, "assignee_actor_id=?2", &[&you], serde_json::json!({"assigneeId": you}))?;
+                "ready_for_testing" if role == "devops" => go(first_review()?, false, &mut g)?,
+                // A builder on a card in Testing: QA tests it there.
+                "ready_for_testing" if t.category == "testing" && t.testing => {
+                    go(None, true, &mut g)?;
+                    if t.agent_assignee.is_some() {
+                        set_fields(w, &task_id, "assignee_actor_id=NULL", &[], serde_json::json!({"assigneeId": null}))?;
                     }
                 }
-                "ready_for_testing" if !t.testing => {
-                    move_to("review", &mut g)?;
-                    if !stays {
-                        let you = reviewer(c, &t)?;
-                        set_fields(w, &task_id, "implementer_actor_id=?2, assignee_actor_id=?3", &[&agent, &you],
-                                   serde_json::json!({"implementer": agent, "assigneeId": you}))?;
+                // A builder on a card in Review (Run by a person): QA tests it again, or it stays for your review.
+                "ready_for_testing" if t.category == "review" => {
+                    let testing = if t.testing { columns::first_of(c, &t.team_id, "testing")?.map(|(id, name)| (id, name, "testing".to_string())) } else { None };
+                    match testing {
+                        Some(to) => go(Some(to), true, &mut g)?,
+                        None => go(Some((t.state_id.clone(), t.column.clone(), t.category.clone())), true, &mut g)?,
                     }
                 }
-                "ready_for_testing" => {
-                    move_to("testing", &mut g)?;
-                    if !stays {
-                        set_fields(w, &task_id, "implementer_actor_id=?2, assignee_actor_id=NULL", &[&agent], serde_json::json!({"implementer": agent}))?;
-                    }
-                }
-                "qa_pass" => {
-                    move_to("review", &mut g)?;
-                    if !stays {
-                        let you = reviewer(c, &t)?;
-                        set_fields(w, &task_id, "assignee_actor_id=?2", &[&you], serde_json::json!({"assigneeId": you}))?;
-                    }
-                }
-                // Released or deployed: a person pressed Run on the Deploy card, so the agent may move it to Done.
-                "deployed" if t.category == "deploy" => {
-                    if let Some((sid, name)) = column_of(c, &t.team_id, "done")? {
-                        tasks::move_in(w, &agent, &task_id, &sid, None)?;
-                        g.moved_to = Some(name);
-                    }
-                }
+                "ready_for_testing" => go(onward(c, &t)?, true, &mut g)?,
+                "qa_pass" => go(onward(c, &t)?, false, &mut g)?,
+                // Released or deployed on a Deploy card (a person pressed Run on it, or its column is Auto): on to its next column.
+                "deployed" if t.category == "deploy" => go(onward(c, &t)?, false, &mut g)?,
                 "deployed" if moved_by_hand => {}
                 "deployed" => {
                     // Otherwise the agent assigned to the card would pick it up again and deploy twice.
@@ -437,7 +462,15 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
                     g.hold = Some("needs_decision".into());
                 }
                 "qa_fail" => {
-                    move_to("in_progress", &mut g)?;
+                    if !moved_by_hand {
+                        let back = came_from(c, &task_id, &t)?;
+                        if let Some((sid, name, _)) = back {
+                            if sid != t.state_id {
+                                tasks::move_in(w, &agent, &task_id, &sid, None)?;
+                            }
+                            g.moved_to = Some(name);
+                        }
+                    }
                     let bounces = t.bounce_count + 1;
                     set_fields(w, &task_id, "bounce_count=?2, assignee_actor_id=COALESCE(implementer_actor_id, assignee_actor_id)", &[&bounces],
                                serde_json::json!({"bounceCount": bounces}))?;
@@ -468,4 +501,19 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
         }
         Ok(g)
     })
+}
+
+/// A merged pull request: the column a card in Review goes to (Review's next column; without one, the team's first
+/// Deploy column, else Done, as in 0.2.0) and a card elsewhere goes to (the first Deploy column, else Done). Cards in
+/// Deploy, Done or Cancelled stay.
+pub(crate) fn merge_target(c: &Connection, task_id: &str) -> Result<Option<(String, String)>> {
+    let t = task_row(c, task_id)?;
+    if matches!(t.category.as_str(), "deploy" | "done" | "cancelled") {
+        return Ok(None);
+    }
+    if t.category == "review" && let Some(next) = t.next.as_deref() && let Some((id, name, _)) = column_info(c, next)? {
+        return Ok(Some((id, name)));
+    }
+    Ok(c.query_row("SELECT id, name FROM workflow_states WHERE team_id=?1 AND category IN ('deploy','done') AND deleted_at IS NULL
+                    ORDER BY category = 'done', sort_key LIMIT 1", [&t.team_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
 }

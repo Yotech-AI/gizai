@@ -1,6 +1,7 @@
-//! Teams: members (people and agents with a role), board columns and routing rules.
+//! Teams: members (people and agents with a role), board columns (who works them: `columns`) and the organisation
+//! chart's branches.
 use crate::db::Db;
-use crate::model::{AgentInput, Label, RuleInput};
+use crate::model::{AgentInput, Label};
 use crate::{Error, Result, ids, util};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -56,23 +57,35 @@ pub struct WorkflowState {
     pub id: String,
     pub name: String,
     pub category: String,
-    pub owner_role: Option<String>,
     pub wip_limit: Option<i64>,
     pub color: Option<String>,
     pub sort_key: String,
+    /// Auto: the agents on it pick up its cards by themselves. Manual: only Run starts one.
+    pub auto: bool,
+    /// The column its cards go to next (a run's done answer, a start in To do, a merge from Review).
+    pub next_state_id: Option<String>,
+    /// The agents on it, in order.
+    pub agent_ids: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A branch of the organisation chart: its agents are the team's agents with one of its roles.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct RoutingRule {
-    pub id: String,
-    pub kind: String,
-    pub match_label_id: Option<String>,
-    pub match_state_id: Option<String>,
-    pub target_role: Option<String>,
-    pub target_actor_id: Option<String>,
-    pub priority: i64,
-    pub enabled: bool,
+pub struct Branch {
+    pub key: String,
+    pub name: String,
+    pub roles: Vec<String>,
+}
+
+/// The branches a team starts with, Design first.
+pub fn default_branches() -> Vec<Branch> {
+    let b = |key: &str, name: &str, roles: &[&str]| Branch { key: key.into(), name: name.into(), roles: roles.iter().map(|r| r.to_string()).collect() };
+    vec![
+        b("design", "Design", &["design", "designer", "ux"]),
+        b("dev", "Development", &["frontend", "backend", "fullstack", "mobile"]),
+        b("qa", "Quality", &["qa", "tester"]),
+        b("ops", "Operations", &["devops", "ops", "release"]),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,7 +96,8 @@ pub struct Team {
     pub members: Vec<Member>,
     pub states: Vec<WorkflowState>,
     pub labels: Vec<Label>,
-    pub rules: Vec<RoutingRule>,
+    /// The organisation chart's branches, in order.
+    pub branches: Vec<Branch>,
 }
 
 const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g.adapter, g.instructions_md, a.handle, a.status, m.is_lead,
@@ -149,34 +163,81 @@ pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Team> {
          ORDER BY a.kind DESC, a.name COLLATE NOCASE"))?;
     let members = st.query_map([id], member_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut st = c.prepare(
-        "SELECT id, name, category, owner_role, wip_limit, color, sort_key FROM workflow_states
+        "SELECT id, name, category, wip_limit, color, sort_key, auto, next_state_id FROM workflow_states
          WHERE team_id = ?1 AND deleted_at IS NULL ORDER BY sort_key",
     )?;
-    let states = st
+    let mut states = st
         .query_map([id], |r| {
-            Ok(WorkflowState { id: r.get(0)?, name: r.get(1)?, category: r.get(2)?, owner_role: r.get(3)?,
-                               wip_limit: r.get(4)?, color: r.get(5)?, sort_key: r.get(6)? })
+            Ok(WorkflowState { id: r.get(0)?, name: r.get(1)?, category: r.get(2)?, wip_limit: r.get(3)?, color: r.get(4)?,
+                               sort_key: r.get(5)?, auto: r.get::<_, i64>(6)? != 0, next_state_id: r.get(7)?, agent_ids: vec![] })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    for s in &mut states {
+        s.agent_ids = crate::columns::agents_of(c, &s.id)?;
+    }
     let mut st = c.prepare("SELECT id, name, color FROM labels WHERE deleted_at IS NULL ORDER BY name")?;
     let labels = st
         .query_map([], |r| Ok(Label { id: r.get(0)?, name: r.get(1)?, color: r.get(2)? }))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut st = c.prepare(
-        "SELECT id, kind, match_label_id, match_state_id, target_role, target_actor_id, priority, enabled FROM routing_rules
-         WHERE team_id = ?1 AND deleted_at IS NULL ORDER BY priority, created_at",
-    )?;
-    let rules = st
-        .query_map([id], |r| {
-            Ok(RoutingRule { id: r.get(0)?, kind: r.get(1)?, match_label_id: r.get(2)?, match_state_id: r.get(3)?,
-                             target_role: r.get(4)?, target_actor_id: r.get(5)?, priority: r.get(6)?,
-                             enabled: r.get::<_, i64>(7)? != 0 })
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(Team { id: id.to_string(), name, members, states, labels, rules })
+    let branches = branches_in(c, id)?;
+    Ok(Team { id: id.to_string(), name, members, states, labels, branches })
 }
 
-// ---- agents, rules, columns ----
+fn branches_in(c: &Connection, team_id: &str) -> Result<Vec<Branch>> {
+    let saved: Option<String> = c.query_row("SELECT branches_json FROM teams WHERE id=?1", [team_id], |r| r.get(0)).optional()?.flatten();
+    Ok(saved.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_else(default_branches))
+}
+
+fn save_branches(w: &crate::db::Writer, actor: &str, team_id: &str, branches: &[Branch]) -> Result<()> {
+    w.conn().execute("UPDATE teams SET branches_json=?2, updated_at=?3, updated_by=?4, version=version+1 WHERE id=?1",
+                     rusqlite::params![team_id, serde_json::to_string(branches)?, ids::now_ms(), actor])?;
+    w.update("teams", team_id, serde_json::json!({"branches": branches.iter().map(|b| b.name.clone()).collect::<Vec<_>>()}))
+}
+
+/// Adds a branch to the team's organisation chart, at the end. Its role key is made from its name ("Docs" → docs);
+/// its agents start from the general role text and count as builders. A name or role another branch has is refused.
+pub fn add_branch(db: &Db, actor: &str, team_id: &str, name: &str) -> Result<Vec<Branch>> {
+    let name = name.trim().to_string();
+    let key = role_key(&name);
+    if key.is_empty() || key.len() > 32 {
+        return Err(Error::Invalid("give the branch a name (at most 32 characters), like Docs or Security".into()));
+    }
+    if ["lead", "reviewer"].contains(&key.as_str()) {
+        return Err(Error::Invalid(format!("{name} is taken: the Team Lead and the reviewer sit above the branches")));
+    }
+    db.write(Some(actor), |w| {
+        let mut branches = branches_in(w.conn(), team_id)?;
+        if branches.iter().any(|b| b.name.eq_ignore_ascii_case(&name) || b.key == key || b.roles.contains(&key)) {
+            return Err(Error::Invalid(format!("the organisation chart already has a {name} branch")));
+        }
+        branches.push(Branch { key: key.clone(), name: name.clone(), roles: vec![key.clone()] });
+        save_branches(w, actor, team_id, &branches)?;
+        Ok(branches)
+    })
+}
+
+/// Removes a branch from the team's organisation chart, only while none of the team's agents has one of its roles.
+pub fn remove_branch(db: &Db, actor: &str, team_id: &str, key: &str) -> Result<Vec<Branch>> {
+    db.write(Some(actor), |w| {
+        let c = w.conn();
+        let mut branches = branches_in(c, team_id)?;
+        let i = branches.iter().position(|b| b.key == key).ok_or_else(|| Error::NotFound(format!("branch {key}")))?;
+        let roles = serde_json::to_string(&branches[i].roles)?;
+        let agents: i64 = c.query_row(
+            "SELECT count(*) FROM team_members m JOIN actors a ON a.id = m.actor_id
+             WHERE m.team_id=?1 AND m.deleted_at IS NULL AND a.kind='agent' AND a.deleted_at IS NULL AND a.status <> 'archived'
+               AND m.role_key IN (SELECT value FROM json_each(?2))",
+            rusqlite::params![team_id, roles], |r| r.get(0))?;
+        if agents > 0 {
+            return Err(Error::Invalid(format!("{} still has {agents} agent{}: move or remove them first", branches[i].name, if agents == 1 { "" } else { "s" })));
+        }
+        branches.remove(i);
+        save_branches(w, actor, team_id, &branches)?;
+        Ok(branches)
+    })
+}
+
+// ---- agents and columns ----
 
 /// The roles the agent form offers (any other key is allowed too).
 pub const ROLES: [&str; 6] = ["lead", "frontend", "backend", "design", "qa", "devops"];
@@ -295,6 +356,7 @@ pub fn add_agent(db: &Db, actor: &str, team_id: &str, input: AgentInput) -> Resu
         w.insert("actors", &id, serde_json::json!({"kind": "agent", "name": a.name, "handle": handle}))?;
         w.insert("agent_configs", &id, serde_json::json!({"adapter": a.adapter, "role": a.role, "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes}))?;
         w.insert("team_members", &format!("{team_id}:{id}"), serde_json::json!({"role_key": a.role}))?;
+        crate::columns::place_new_agent(w, team_id, &id, &a.role)?;
         if input.chat_enabled == Some(true) {
             set_chat_in(w, &id, now)?;
         }
@@ -360,55 +422,6 @@ fn set_chat_in(w: &crate::db::Writer, agent_id: &str, now: i64) -> Result<()> {
     w.update("agent_configs", agent_id, serde_json::json!({"chat_enabled": true}))
 }
 
-pub fn add_rule(db: &Db, actor: &str, team_id: &str, input: RuleInput) -> Result<String> {
-    let target = role_key(&input.target_role);
-    if target.is_empty() {
-        return Err(Error::Invalid("pick the role the rule sends cards to".into()));
-    }
-    let name = input.match_name.trim().to_string();
-    db.write(Some(actor), |w| {
-        let c = w.conn();
-        let (label, state): (Option<String>, Option<String>) = match input.kind.as_str() {
-            "label" => (Some(c.query_row("SELECT id FROM labels WHERE name=?1 COLLATE NOCASE AND deleted_at IS NULL", [&name], |r| r.get(0))
-                .optional()?.ok_or_else(|| Error::Invalid(format!("there is no label called {name}")))?), None),
-            "column" => {
-                let (id, category): (String, String) = c.query_row(
-                    "SELECT id, category FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
-                    rusqlite::params![team_id, name], |r| Ok((r.get(0)?, r.get(1)?)))
-                    .optional()?.ok_or_else(|| Error::Invalid(format!("this team has no column called {name}")))?;
-                if category == "deploy" {
-                    return Err(Error::Invalid(format!("{name} is a Deploy column: no agent starts there by itself. Press Run on a card to start the DevOps Agent")));
-                }
-                (None, Some(id))
-            }
-            other => return Err(Error::Invalid(format!("a rule matches a label or a column, not {other}"))),
-        };
-        let now = ids::now_ms();
-        let id = ids::new_id();
-        c.execute(
-            "INSERT INTO routing_rules(id, created_at, updated_at, created_by, updated_by, team_id, kind, match_label_id, match_state_id, target_role, priority)
-             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            rusqlite::params![id, now, actor, team_id, input.kind, label, state, target, input.priority],
-        )?;
-        w.insert("routing_rules", &id, serde_json::json!({"kind": input.kind, "match": name, "target_role": target, "priority": input.priority}))?;
-        Ok(id)
-    })
-}
-
-pub fn delete_rule(db: &Db, actor: &str, rule_id: &str) -> Result<()> {
-    db.write(Some(actor), |w| {
-        let now = ids::now_ms();
-        let n = w.conn().execute(
-            "UPDATE routing_rules SET deleted_at=?2, updated_at=?2, updated_by=?3, version=version+1 WHERE id=?1 AND deleted_at IS NULL",
-            rusqlite::params![rule_id, now, actor],
-        )?;
-        if n == 0 {
-            return Err(Error::NotFound(format!("rule {rule_id}")));
-        }
-        w.delete("routing_rules", rule_id)
-    })
-}
-
 /// Column names are free; the gates key off the column's category, so renaming is always safe.
 pub fn rename_state(db: &Db, actor: &str, state_id: &str, name: &str) -> Result<()> {
     let name = name.trim().to_string();
@@ -431,51 +444,16 @@ pub fn rename_state(db: &Db, actor: &str, state_id: &str, name: &str) -> Result<
     })
 }
 
-/// The column categories, in board order. The gates key off them; `deploy` (merged, not deployed yet) is never routed.
+/// The column categories, in board order. The gates key off them; `deploy` is merged, not deployed yet.
 pub const CATEGORIES: [&str; 8] = ["backlog", "ready", "in_progress", "testing", "review", "deploy", "done", "cancelled"];
 
-/// Adds a column to the team's board, right after the column `after_id`. `owner_role`: who works it (None = nobody, a
-/// role, or "human" = you); a Deploy column is always worked by you. Names are unique per team. Returns its id.
-pub fn add_state(db: &Db, actor: &str, team_id: &str, name: &str, after_id: &str, category: &str, owner_role: Option<&str>) -> Result<String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err(Error::Invalid("a column needs a name".into()));
-    }
-    if !CATEGORIES.contains(&category) {
-        return Err(Error::Invalid(format!("a column's category is one of {}, not {category}", CATEGORIES.join(", "))));
-    }
-    let owner = if category == "deploy" {
-        Some("human".to_string())
-    } else {
-        owner_role.map(|o| if o.trim() == "human" { "human".to_string() } else { role_key(o) }).filter(|o| !o.is_empty())
-    };
-    db.write(Some(actor), |w| {
-        let c = w.conn();
-        let after: Option<String> = c.query_row("SELECT sort_key FROM workflow_states WHERE id=?1 AND team_id=?2 AND deleted_at IS NULL",
-                                                rusqlite::params![after_id, team_id], |r| r.get(0)).optional()?;
-        let after = after.ok_or_else(|| Error::Invalid("pick the column it goes after".into()))?;
-        let clash: i64 = c.query_row("SELECT count(*) FROM workflow_states WHERE team_id=?1 AND name=?2 COLLATE NOCASE AND deleted_at IS NULL",
-                                     rusqlite::params![team_id, name], |r| r.get(0))?;
-        if clash > 0 {
-            return Err(Error::Invalid(format!("this team already has a column called {name}")));
-        }
-        let next: Option<String> = c.query_row(
-            "SELECT min(sort_key) FROM workflow_states WHERE team_id=?1 AND sort_key > ?2 AND deleted_at IS NULL",
-            rusqlite::params![team_id, after], |r| r.get(0))?;
-        let sort_key = crate::sortkey::key_between(Some(&after), next.as_deref());
-        let now = ids::now_ms();
-        let id = ids::new_id();
-        c.execute(
-            "INSERT INTO workflow_states(id, created_at, updated_at, created_by, updated_by, team_id, name, category, owner_role, sort_key)
-             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![id, now, actor, team_id, name, category, owner, sort_key],
-        )?;
-        w.insert("workflow_states", &id, serde_json::json!({"name": name, "category": category, "owner_role": owner}))?;
-        Ok(id)
-    })
+/// Adds a column to the team's board, right after the column `after_id`, Manual and without agents or a next column:
+/// the person drags it into place and sets it up (`columns::set_column`). Names are unique per team. Returns its id.
+pub fn add_state(db: &Db, actor: &str, team_id: &str, name: &str, after_id: &str, category: &str) -> Result<String> {
+    db.write(Some(actor), |w| crate::columns::add_in(w, actor, team_id, name, after_id, category))
 }
 
-/// A new team with the six default columns and `actor` as its reviewer. No agents: Jeffrey adds them.
+/// A new team with the seven default columns (linked, To do, In progress and Testing on Auto) and `actor` as its reviewer. No agents: Jeffrey adds them.
 pub fn add_team(db: &Db, actor: &str, name: &str) -> Result<String> {
     let name = name.trim().to_string();
     if name.is_empty() {

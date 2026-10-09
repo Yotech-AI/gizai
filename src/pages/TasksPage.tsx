@@ -8,6 +8,7 @@ import { useLiveRuns } from "../lib/useLiveRuns";
 import { PENDING_MS } from "../lib/usePending";
 import { asksToRun, chatLabel, needsYou, waitingChats } from "../lib/inbox";
 import { relTime } from "../lib/format";
+import { modKey } from "../lib/keys";
 import type { ChatThread } from "../types";
 import { filterCount, filterTasks, groupTasks, sortTasks, type Filter, type GroupBy, type SortBy } from "../lib/taskView";
 import type { Task } from "../types";
@@ -171,8 +172,8 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <input className="input search-input" type="search" aria-label="Search tasks" placeholder="Search ID or title" value={filter.text ?? ""} onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
         <span className="spacer" />
         {!inbox && <div className="seg" role="group" aria-label="View">
-          <button aria-pressed={view === "board"} aria-label="Board" title="Board (Ctrl+B)" onClick={() => setView("board")}><Columns3 className="icon" /></button>
-          <button aria-pressed={view === "list"} aria-label="List" title="List (Ctrl+B)" onClick={() => setView("list")}><List className="icon" /></button>
+          <button aria-pressed={view === "board"} aria-label="Board" title={`Board (${modKey()}+B)`} onClick={() => setView("board")}><Columns3 className="icon" /></button>
+          <button aria-pressed={view === "list"} aria-label="List" title={`List (${modKey()}+B)`} onClick={() => setView("list")}><List className="icon" /></button>
         </div>}
         <Popover label="Filters" align="right" button={() => <button className={`btn ghost${nFilters ? " on" : ""}`}><ListFilter className="icon" />{nFilters ? `Filters: ${nFilters}` : "Filters"}</button>}>
           {() => (<>

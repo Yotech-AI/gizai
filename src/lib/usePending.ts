@@ -35,7 +35,7 @@ export function usePending<K extends string>(done: (key: K, value: unknown) => b
     if (current.current) return;
     const n = current.current = ++clicks.current;
     setState({ key, n, scope, returned: false });
-    call().then((value) => setState((s) => (s?.n === n ? { ...s, returned: true, value } : s)),
+    Promise.resolve().then(call).then((value) => setState((s) => (s?.n === n ? { ...s, returned: true, value } : s)),
       (e) => { end(n); onError(e); });
   };
   return { busy, act };

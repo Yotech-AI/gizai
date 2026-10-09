@@ -93,6 +93,13 @@ pub struct Project {
     pub budget_hours: Option<f64>,
     pub open_tasks: i64,
     pub done_tasks: i64,
+    /// AI usage: the API cost of the runs on the project's cards this month (UTC, like the budgets), an estimate at API
+    /// prices, not a bill (`usage`).
+    #[serde(default)]
+    pub ai_cost_usd_micros: i64,
+    /// Of those runs, the ones with tokens but no cost (a CLI that reports none): their cost is unknown.
+    #[serde(default)]
+    pub ai_unknown_cost_runs: i64,
     pub updated_at: i64,
     /// How a new worktree is prepared before an agent starts in it: these paths (files or folders) are copied from the
     /// main checkout with `cp --reflink=auto`…

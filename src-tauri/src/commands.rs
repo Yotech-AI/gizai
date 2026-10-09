@@ -459,6 +459,13 @@ pub fn agent_runs(st: State<AppState>, id: String, limit: i64) -> R<Vec<Run>> { 
 #[tauri::command]
 pub fn agent_next_task(st: State<AppState>, id: String) -> R<Option<String>> { gizai_core::workflow::next_task_for(&st.db, &id).map_err(e) }
 
+/// The Usage page: the tokens and API cost of the runs and chat turns in `period` (today, 7d, 30d or month), in total, per
+/// day, per agent and per project.
+#[tauri::command]
+pub fn usage_summary(st: State<AppState>, period: String) -> R<gizai_core::usage::Usage> {
+    gizai_core::usage::for_period(&st.db, &period, gizai_core::ids::now_ms()).map_err(e)
+}
+
 // ---- chat with the Team Lead ----
 use crate::chat;
 

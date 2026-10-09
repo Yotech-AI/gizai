@@ -345,11 +345,11 @@ pub fn account_dir(cli: &Cli, home: &str, inherited: &dyn Fn(&str) -> Option<Str
     Some(set.map(PathBuf::from).unwrap_or_else(|| Path::new(home).join(default)))
 }
 
-/// `path` with the home folder as `~`.
+/// `path` with the home folder as `~` (`~/.codex`; on Windows `~\.codex`).
 fn tilde(path: &Path, home: &str) -> String {
     match path.strip_prefix(home) {
         Ok(rest) if !home.is_empty() && rest.as_os_str().is_empty() => "~".into(),
-        Ok(rest) if !home.is_empty() => format!("~/{}", rest.display()),
+        Ok(rest) if !home.is_empty() => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
         _ => path.display().to_string(),
     }
 }

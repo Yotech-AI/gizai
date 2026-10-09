@@ -179,7 +179,7 @@ fn target(st: &AppState, s: &McpServer, min_valid: Duration) -> Result<Target, S
         return Err(format!("{}'s value for {n} isn't in the keychain: enter it again in Settings → MCP servers", s.name));
     }
     let transport = Transport::parse(&s.transport).unwrap_or(Transport::Stdio);
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = gizai_core::clis::home();
     let t = Target {
         transport, command: gizai_core::clis::expand_home(&s.command, &home), args: s.args.clone(), env, cwd: None,
         url: s.url.clone(), headers,
@@ -351,7 +351,7 @@ pub struct Pick {
 /// Each Claude Code in Settings → Coding CLIs with its config file: the built-in one (Gizai's own CLAUDE_CONFIG_DIR, else
 /// `~/.claude.json`) and the accounts with their own CLAUDE_CONFIG_DIR.
 fn claude_configs(st: &AppState) -> Result<Vec<(gizai_core::clis::Cli, std::path::PathBuf)>, String> {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = gizai_core::clis::home();
     let mut out = vec![];
     for cli in gizai_core::clis::list(&st.db).map_err(|e| e.to_string())?.into_iter().filter(|c| c.kind == "claude_code") {
         let dir = gizai_core::clis::env_pairs(&cli, &home).into_iter().find(|(k, _)| k == "CLAUDE_CONFIG_DIR").map(|(_, v)| v)

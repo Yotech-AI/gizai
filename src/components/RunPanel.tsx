@@ -7,7 +7,7 @@ import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { usePending } from "../lib/usePending";
 import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, resumeCommand, runReason } from "../lib/runs";
-import { relTime } from "../lib/format";
+import { relTime, textEnd } from "../lib/format";
 import type { Refusal, Run, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
 import { BusyButton } from "./BusyButton";
@@ -125,7 +125,10 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
     );
   }
 
-  const holdLine = `This card is on hold${task.holdReason ? ` (${task.holdReason.replace(/\.$/, "")})` : ""}. Clear the hold to run an agent.`;
+  // A long hold reason (usually the agent's whole summary, which the comments show) shows its end, about two lines; hover shows all.
+  const reasonEnd = task.holdReason ? textEnd(task.holdReason, 160) : null;
+  const holdLine = `This card is on hold${task.holdReason ? ` (${(reasonEnd ?? task.holdReason).replace(/\.$/, "")})` : ""}. Clear the hold to run an agent.`;
+  const holdTitle = reasonEnd ? task.holdReason ?? undefined : undefined;
   const icon = !run ? null : run.status === "succeeded" && run.outcome !== "no_result" ? <Check className="icon" style={{ color: "var(--success)" }} />
     : run.status === "cancelled" ? <X className="icon" style={{ color: "var(--text-3)" }} /> : <CircleAlert className="icon" style={{ color: "var(--danger)" }} />;
   return (
@@ -137,9 +140,9 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
       </div>
       <div className="run-summary">
         {agents.length === 0 ? <span className="muted">No agents yet. Add them on the <a href="#/team">Team</a> page; then Run starts one on this card.</span>
-          : !run ? <span className="muted">{task.hold ? holdLine : "No agent has worked on this card yet. Run starts the agent chosen here (or the card's agent, else the first agent on its column) in its own git worktree."}</span>
+          : !run ? <span className="muted" title={task.hold ? holdTitle : undefined}>{task.hold ? holdLine : "No agent has worked on this card yet. Run starts the agent chosen here (or the card's agent, else the first agent on its column) in its own git worktree."}</span>
           : <>
-            {task.hold && <div className="muted" style={{ marginBottom: 6 }}>{holdLine}</div>}
+            {task.hold && <div className="muted" style={{ marginBottom: 6 }} title={holdTitle}>{holdLine}</div>}
             {run.summaryMd ? <MarkdownView md={run.summaryMd} /> : <span className="run-reason">{runReason(run) ?? "No summary."}</span>}
             {run.summaryMd && run.error && <div className="warn" style={{ color: "var(--warning)", fontSize: "var(--fs-sm)" }}>{run.error}</div>}
             {!!run.refused?.length && <Refused list={run.refused} />}

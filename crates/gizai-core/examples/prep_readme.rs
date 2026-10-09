@@ -40,7 +40,7 @@ fn main() {
     let thread = chat::create_thread(&db, &s.you_id, &lead, "What needs my attention today?").unwrap();
     let say = |role: &str, author: &str, body: Option<&str>, tool: Option<(&str, serde_json::Value)>| {
         chat::add_message(&db, NewMessage { thread_id: thread.clone(), role: role.into(), author_id: Some(author.into()), body_md: body.map(Into::into),
-            run_id: None, tool_name: tool.as_ref().map(|(n, _)| format!("mcp__gizai__{n}")), tool: tool.map(|(_, v)| v), meta: None }).unwrap();
+            run_id: None, tool_name: tool.as_ref().map(|(n, _)| format!("mcp__gizai__{n}")), tool: tool.map(|(_, v)| v), meta: None, ..Default::default() }).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
     say("user", &s.you_id, Some("What needs my attention today?"), None);

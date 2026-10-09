@@ -6,7 +6,12 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::db::{Db, Writer};
+use crate::files::{self, Blob};
+use crate::model::FileRow;
 use crate::{Error, Result, ids, util};
+
+/// The files of a chat message, and of a queued one (under the id it keeps when it goes), belong to a `chat_message`.
+const FILE_OWNER: &str = "chat_message";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +69,8 @@ pub struct ChatMessage {
     /// For some system notes, what the Chat page offers with them: `{kind: "switch", cli, cliName}` where the chat moved to
     /// another coding CLI, `{kind: "limit", cli, cliName, limit, resets?, messageIds}` where an answer hit a usage limit.
     pub meta: Option<Value>,
+    /// The files you added to the message (the + button or a drop on the Chat page), in the order they were added.
+    pub files: Vec<FileRow>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,6 +83,10 @@ pub struct NewMessage {
     pub tool_name: Option<String>,
     pub tool: Option<Value>,
     pub meta: Option<Value>,
+    /// Its id; None: a new one. A queued message keeps its id when it goes, and with it its files.
+    pub id: Option<String>,
+    /// Files stored already (`files::store`) that the message carries.
+    pub files: Vec<Blob>,
 }
 
 /// Cost (µ$) and tokens.
@@ -352,19 +363,44 @@ fn msg_row(r: &rusqlite::Row) -> rusqlite::Result<ChatMessage> {
     let (tool, meta): (Option<String>, Option<String>) = (r.get(8)?, r.get(10)?);
     Ok(ChatMessage { id: r.get(0)?, thread_id: r.get(1)?, role: r.get(2)?, author_id: r.get(3)?, author_name: r.get(4)?, body_md: r.get(5)?,
                      run_id: r.get(6)?, tool_name: r.get(7)?, tool: tool.and_then(|t| serde_json::from_str(&t).ok()), created_at: r.get(9)?,
-                     meta: meta.and_then(|t| serde_json::from_str(&t).ok()) })
+                     meta: meta.and_then(|t| serde_json::from_str(&t).ok()), files: vec![] })
 }
 
-/// In the order they were written.
+/// In the order they were written, each with its files.
 pub fn messages(db: &Db, thread_id: &str) -> Result<Vec<ChatMessage>> {
     db.read(|c| {
         let mut st = c.prepare(&format!("{MSG_SELECT} WHERE m.thread_id=?1 AND m.deleted_at IS NULL ORDER BY m.rowid"))?;
-        Ok(st.query_map([thread_id], msg_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut msgs = st.query_map([thread_id], msg_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        // One look for the whole chat: most messages carry no files.
+        let mut by_message: std::collections::HashMap<String, Vec<FileRow>> = std::collections::HashMap::new();
+        let mut fs = c.prepare(&format!(
+            "SELECT owner_id, {} FROM files WHERE owner_type = ?1 AND deleted_at IS NULL
+               AND owner_id IN (SELECT id FROM chat_messages WHERE thread_id = ?2) ORDER BY created_at, rowid", files::ROW_COLS))?;
+        for found in fs.query_map([FILE_OWNER, thread_id], |r| {
+            let owner: String = r.get(0)?;
+            Ok((owner, FileRow { id: r.get(1)?, name: r.get(2)?, mime: r.get(3)?, size_bytes: r.get(4)?, sha256: r.get(5)?, created_at: r.get(6)? }))
+        })? {
+            let (owner, f) = found?;
+            by_message.entry(owner).or_default().push(f);
+        }
+        for m in &mut msgs {
+            if let Some(f) = by_message.remove(&m.id) {
+                m.files = f;
+            }
+        }
+        Ok(msgs)
     })
 }
 
+/// The files you added to your messages in a chat (sent ones, not those still queued), oldest first.
+pub fn thread_files(db: &Db, thread_id: &str) -> Result<Vec<FileRow>> {
+    Ok(messages(db, thread_id)?.into_iter().filter(|m| m.role == "user").flat_map(|m| m.files).collect())
+}
+
 fn get_message(c: &rusqlite::Connection, id: &str) -> Result<ChatMessage> {
-    c.query_row(&format!("{MSG_SELECT} WHERE m.id=?1"), [id], msg_row).optional()?.ok_or_else(|| Error::NotFound(format!("message {id}")))
+    let mut m = c.query_row(&format!("{MSG_SELECT} WHERE m.id=?1"), [id], msg_row).optional()?.ok_or_else(|| Error::NotFound(format!("message {id}")))?;
+    m.files = files::of_owner(c, FILE_OWNER, id)?;
+    Ok(m)
 }
 
 /// One message, deleted ones included.
@@ -387,7 +423,7 @@ pub(crate) fn insert_message(w: &Writer, m: &NewMessage) -> Result<String> {
     }
     let c = w.conn();
     let now = ids::now_ms();
-    let id = ids::new_id();
+    let id = m.id.clone().unwrap_or_else(ids::new_id);
     let n = c.execute("UPDATE chat_threads SET updated_at=?2 WHERE id=?1 AND deleted_at IS NULL", rusqlite::params![m.thread_id, now])?;
     if n == 0 {
         return Err(Error::NotFound(format!("chat {}", m.thread_id)));
@@ -403,6 +439,9 @@ pub(crate) fn insert_message(w: &Writer, m: &NewMessage) -> Result<String> {
                           m.meta.as_ref().map(Value::to_string)],
     )?;
     w.insert("chat_messages", &id, serde_json::json!({"thread": m.thread_id, "role": m.role}))?;
+    for b in &m.files {
+        files::insert(w, m.author_id.as_deref(), FILE_OWNER, &id, b)?;
+    }
     Ok(id)
 }
 
@@ -565,18 +604,31 @@ pub struct QueuedMessage {
     /// It waits for Send now (the answer before it was stopped or failed, or Gizai restarted); otherwise it goes by
     /// itself when the answer that is being written is done.
     pub held: bool,
+    /// The files added to it; they go with it.
+    pub files: Vec<FileRow>,
 }
 
 const QUEUE_SELECT: &str = "SELECT id, thread_id, body_md, created_at, updated_at, held_at FROM chat_queue";
 
 fn queued_row(r: &rusqlite::Row) -> rusqlite::Result<QueuedMessage> {
     Ok(QueuedMessage { id: r.get(0)?, thread_id: r.get(1)?, body_md: r.get(2)?, created_at: r.get(3)?, updated_at: r.get(4)?,
-                       held: r.get::<_, Option<i64>>(5)?.is_some() })
+                       held: r.get::<_, Option<i64>>(5)?.is_some(), files: vec![] })
+}
+
+/// A queued message with its files.
+fn get_queued(c: &rusqlite::Connection, id: &str) -> Result<QueuedMessage> {
+    let mut q = c.query_row(&format!("{QUEUE_SELECT} WHERE id=?1"), [id], queued_row)?;
+    q.files = files::of_owner(c, FILE_OWNER, id)?;
+    Ok(q)
 }
 
 fn queue_in(c: &rusqlite::Connection, thread_id: &str) -> Result<Vec<QueuedMessage>> {
     let mut st = c.prepare(&format!("{QUEUE_SELECT} WHERE thread_id=?1 ORDER BY rowid"))?;
-    Ok(st.query_map([thread_id], queued_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut items = st.query_map([thread_id], queued_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    for q in &mut items {
+        q.files = files::of_owner(c, FILE_OWNER, &q.id)?;
+    }
+    Ok(items)
 }
 
 /// The chat's queued messages, in the order they were written.
@@ -584,9 +636,10 @@ pub fn queue(db: &Db, thread_id: &str) -> Result<Vec<QueuedMessage>> {
     db.read(|c| queue_in(c, thread_id))
 }
 
-fn queue_text(text: &str) -> Result<String> {
+/// A message's text, trimmed; it may be empty only when the message carries files.
+fn queue_text(text: &str, has_files: bool) -> Result<String> {
     let text = text.trim();
-    if text.is_empty() {
+    if text.is_empty() && !has_files {
         return Err(Error::Invalid("type a message first".into()));
     }
     Ok(text.to_string())
@@ -594,7 +647,12 @@ fn queue_text(text: &str) -> Result<String> {
 
 /// Queues a message while the Team Lead answers: it goes when the answer is done.
 pub fn enqueue(db: &Db, you: &str, thread_id: &str, text: &str) -> Result<QueuedMessage> {
-    let text = queue_text(text)?;
+    enqueue_with_files(db, you, thread_id, text, &[])
+}
+
+/// `enqueue` for a message that carries files (stored already, `files::store`): they wait with it and go with it.
+pub fn enqueue_with_files(db: &Db, you: &str, thread_id: &str, text: &str, blobs: &[Blob]) -> Result<QueuedMessage> {
+    let text = queue_text(text, !blobs.is_empty())?;
     db.write(Some(you), |w| {
         let c = w.conn();
         get_thread_in(c, thread_id)?;
@@ -602,7 +660,11 @@ pub fn enqueue(db: &Db, you: &str, thread_id: &str, text: &str) -> Result<Queued
         c.execute("INSERT INTO chat_queue(id, created_at, updated_at, thread_id, author_actor_id, body_md) VALUES (?1, ?2, ?2, ?3, ?4, ?5)",
                   rusqlite::params![id, now, thread_id, you, text])?;
         w.insert("chat_queue", &id, serde_json::json!({"thread": thread_id}))?;
-        Ok(c.query_row(&format!("{QUEUE_SELECT} WHERE id=?1"), [&id], queued_row)?)
+        // Under the id the message keeps when it goes (`send_queued`), so they need no change then.
+        for b in blobs {
+            files::insert(w, Some(you), FILE_OWNER, &id, b)?;
+        }
+        get_queued(w.conn(), &id)
     })
 }
 
@@ -611,9 +673,10 @@ fn get_thread_in(c: &rusqlite::Connection, id: &str) -> Result<()> {
         .ok_or_else(|| Error::NotFound(format!("chat {id}")))
 }
 
-/// Changes a queued message's text, until it goes.
+/// Changes a queued message's text, until it goes. Its files stay; with files, the text may be empty.
 pub fn edit_queued(db: &Db, you: &str, id: &str, text: &str) -> Result<QueuedMessage> {
-    let text = queue_text(text)?;
+    let has_files = !db.read(|c| files::of_owner(c, FILE_OWNER, id))?.is_empty();
+    let text = queue_text(text, has_files)?;
     db.write(Some(you), |w| {
         let c = w.conn();
         let n = c.execute("UPDATE chat_queue SET body_md=?2, updated_at=?3 WHERE id=?1", rusqlite::params![id, text, ids::now_ms()])?;
@@ -621,18 +684,25 @@ pub fn edit_queued(db: &Db, you: &str, id: &str, text: &str) -> Result<QueuedMes
             return Err(Error::Invalid("that message has gone already, so it can't be changed".into()));
         }
         w.update("chat_queue", id, serde_json::json!({"edited": true}))?;
-        Ok(c.query_row(&format!("{QUEUE_SELECT} WHERE id=?1"), [id], queued_row)?)
+        get_queued(c, id)
     })
 }
 
-/// Removes a queued message, until it goes.
+/// Removes a queued message, with its files, until it goes.
 pub fn remove_queued(db: &Db, you: &str, id: &str) -> Result<()> {
     db.write(Some(you), |w| {
         let n = w.conn().execute("DELETE FROM chat_queue WHERE id=?1", [id])?;
         if n == 0 {
             return Err(Error::Invalid("that message has gone already".into()));
         }
-        w.delete("chat_queue", id)
+        w.delete("chat_queue", id)?;
+        let now = ids::now_ms();
+        for f in files::of_owner(w.conn(), FILE_OWNER, id)? {
+            w.conn().execute("UPDATE files SET deleted_at=?2, updated_at=?2, updated_by=?3, version=version+1 WHERE id=?1 AND deleted_at IS NULL",
+                             rusqlite::params![f.id, now, you])?;
+            w.delete("files", &f.id)?;
+        }
+        Ok(())
     })
 }
 
@@ -658,8 +728,8 @@ pub fn queue_ready(db: &Db, thread_id: &str) -> Result<bool> {
 }
 
 /// The queued messages go: they leave the queue and become your messages in the chat, each its own, in the order they
-/// were written, in one write. `all`: the waiting ones too (Send now), else only those that go by themselves. Returns
-/// them as saved; none when nothing was queued.
+/// were written, in one write. Each keeps its id, and so its files. `all`: the waiting ones too (Send now), else only
+/// those that go by themselves. Returns them as saved; none when nothing was queued.
 pub fn send_queued(db: &Db, thread_id: &str, all: bool) -> Result<Vec<ChatMessage>> {
     db.write(None, |w| {
         let items: Vec<(QueuedMessage, Option<String>)> = {
@@ -674,7 +744,7 @@ pub fn send_queued(db: &Db, thread_id: &str, all: bool) -> Result<Vec<ChatMessag
             w.conn().execute("DELETE FROM chat_queue WHERE id=?1", [&q.id])?;
             w.delete("chat_queue", &q.id)?;
             let id = insert_message(w, &NewMessage { thread_id: thread_id.into(), role: "user".into(), author_id: author, body_md: Some(q.body_md),
-                                                     ..Default::default() })?;
+                                                     id: Some(q.id), ..Default::default() })?;
             out.push(get_message(w.conn(), &id)?);
         }
         Ok(out)

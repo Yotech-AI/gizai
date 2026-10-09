@@ -489,11 +489,47 @@ pub fn search_chat_threads(st: State<AppState>, query: String) -> R<Vec<gizai_co
 #[tauri::command]
 pub fn chat_messages(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::ChatMessage>> { gizai_core::chat::messages(&st.db, &thread_id).map_err(e) }
 /// Sends a message (in a new thread when `thread_id` is None, which runs on `cli` when one was picked under the text box)
-/// and starts the Team Lead's answer; while it is answering in the thread, the message is queued. Returns the thread id.
+/// with the `files` added to it (paths; the text may be empty then) and starts the Team Lead's answer; while it is
+/// answering in the thread, the message is queued with its files. Returns the thread id.
 #[tauri::command]
-pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String, cli: Option<String>) -> R<String> {
-    let (id, _done) = chat::send_on(&st, thread_id, text, cli, None).await?;
+pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String, cli: Option<String>, files: Option<Vec<String>>) -> R<String> {
+    let (id, _done) = chat::send_with_files(&st, thread_id, text, cli, files.unwrap_or_default(), None).await?;
     Ok(id)
+}
+/// Files picked or dropped for a chat message: the paths that can be added, and one plain sentence for each that can't
+/// (a folder, larger than 1 GB, or it can't be read).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileCheck {
+    pub ok: Vec<String>,
+    pub failed: Vec<String>,
+}
+#[tauri::command]
+pub async fn check_files(paths: Vec<String>) -> R<FileCheck> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = FileCheck { ok: vec![], failed: vec![] };
+        for p in paths {
+            match files::check_path(std::path::Path::new(&p)) {
+                Ok(_) => out.ok.push(p),
+                Err(err) => out.failed.push(err.to_string()),
+            }
+        }
+        out
+    }).await.map_err(|err| err.to_string())
+}
+/// The id of the item a gizai: link names, for its page: a task by id or identifier (GA-12), a project by id or key (GA);
+/// other kinds name their id already. Fails when it is gone.
+#[tauri::command]
+pub fn item_id(st: State<AppState>, kind: String, key: String) -> R<String> {
+    match kind.as_str() {
+        "task" => tasks::get(&st.db, &key).map(|t| t.id).or_else(|_| tasks::id_of(&st.db, &key)).map_err(e),
+        "project" => match projects::get(&st.db, &key) {
+            Ok(p) => Ok(p.id),
+            Err(_) => projects::list(&st.db).map_err(e)?.into_iter().find(|p| p.key.eq_ignore_ascii_case(&key)).map(|p| p.id)
+                .ok_or_else(|| format!("No project with the key {key}")),
+        },
+        _ => Ok(key),
+    }
 }
 /// The chat's queued messages: they wait while the Team Lead answers.
 #[tauri::command]

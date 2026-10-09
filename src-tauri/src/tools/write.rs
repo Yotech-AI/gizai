@@ -571,9 +571,10 @@ pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
     Ok(json!({"ok": true, "file": {"id": f.id, "name": f.name, "size_bytes": f.size_bytes}, "link": l}))
 }
 
-/// Spec §8: the Team Lead attaches only a file the user named in this chat, or one inside its copies of the projects'
-/// code (`code`), never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked
-/// files, so a repository's .env isn't among them.
+/// Spec §8: the Team Lead attaches only a file the user named in this chat, one the user added to a message in this chat
+/// (its copy in the Team Lead's folder, `chat::lead_file_path`), or one inside its copies of the projects' code (`code`),
+/// never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked files, so a
+/// repository's .env isn't among them.
 fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), String> {
     let real = path.canonicalize().map_err(|_| format!("can't read {raw}"))?;
     let in_copy = crate::code::dirs(cx.st).iter()
@@ -588,10 +589,15 @@ fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), 
             .filter_map(|m| m.body_md.as_deref())
             .any(|b| b.contains(raw) || b.contains(&*real.to_string_lossy()) || b.contains(&*path.to_string_lossy()))
     });
-    if named {
+    let added = cx.thread.is_some_and(|t| {
+        gizai_core::chat::thread_files(cx.db(), t).unwrap_or_default().iter()
+            .filter_map(|f| crate::chat::lead_file_path(cx.st, f).canonicalize().ok())
+            .any(|p| p == real)
+    });
+    if named || added {
         Ok(())
     } else {
-        Err(format!("I can only attach a file you named in this chat or one inside my copies of the projects' code; {raw} is neither. Ask the user to give the path."))
+        Err(format!("I can only attach a file you named in this chat, one you added to a message here, or one inside my copies of the projects' code; {raw} is none of these. Ask the user to give the path."))
     }
 }
 

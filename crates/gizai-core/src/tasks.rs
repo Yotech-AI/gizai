@@ -101,6 +101,15 @@ pub fn get(db: &Db, id: &str) -> Result<Task> {
     db.read(|c| get_in(c, id))
 }
 
+/// A card's id from its identifier (GA-12, case ignored), archived cards included.
+pub fn id_of(db: &Db, identifier: &str) -> Result<String> {
+    db.read(|c| {
+        c.query_row("SELECT id FROM tasks WHERE identifier = ?1 COLLATE NOCASE", [identifier.trim()], |r| r.get(0))
+            .optional()?
+            .ok_or_else(|| Error::NotFound(format!("task {identifier}")))
+    })
+}
+
 pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Task> {
     let mut t = c
         .query_row(&format!("{} WHERE t.id = ?1", select(true)), [id], row)

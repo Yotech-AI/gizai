@@ -61,7 +61,9 @@ export type AgentDraft = { name: string; role: string; model: string; instructio
   /** Folders besides its worktree, as typed (rows with an empty path are dropped on save). */
   folders: AgentFolder[];
   /** Its MCP servers switched on or off, with the tools switched off of each (Tools; saved apart from the rest). */
-  mcp: AgentServer[] };
+  mcp: AgentServer[];
+  /** Use memory: its runs get a Memory section and its learned lines are kept. */
+  memory: boolean };
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
@@ -72,6 +74,7 @@ export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
     boardCheck: !!m?.boardCheckMinutes, boardMinutes: String(m?.boardCheckMinutes ?? 15),
     folders: (m?.folders ?? []).map((f) => ({ path: f.path, access: f.access })),
     mcp: (m?.tools?.mcp ?? []).map((s) => ({ serverId: s.serverId, on: s.on, toolsOff: [...s.toolsOff] })),
+    memory: m?.useMemory !== false,
   };
 }
 
@@ -90,5 +93,6 @@ export function inputFrom(d: AgentDraft): AgentInput {
     // The board check belongs to the agent with Chat on: off with Chat.
     boardCheckMinutes: d.chat && d.boardCheck ? Number(d.boardMinutes) || 0 : 0,
     folders: foldersFrom(d.folders),
+    useMemory: d.memory,
   };
 }

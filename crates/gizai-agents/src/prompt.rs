@@ -96,6 +96,16 @@ any conflicts.", b.behind, b.from));
     p.trim_end().to_string() + "\n"
 }
 
+/// `prompt` (a new run's, from `build_from`) with the Memory section (GA-19) after the task: the notes from Gizai's Memory
+/// that `gizai_core::memory::prompt_block` chose for this run, starting `## Memory`. A section of its own, apart from
+/// "How this run works" (`with_rules`), and plain text, so every CLI gets it the same. Unchanged when `memory` is empty.
+pub fn with_memory(prompt: &str, memory: &str) -> String {
+    if memory.trim().is_empty() {
+        return prompt.to_string();
+    }
+    format!("{}\n\n{}\n", prompt.trim_end(), memory.trim())
+}
+
 fn limits_section(l: RunLimits) -> String {
     format!("\n\n## Limits of this run\n\nGizai stops this run after {} tool calls or {} minutes, whichever comes first. \
 Commit your work on this branch as you go. If the task won't fit, stop before the limit: commit what you have and end with \

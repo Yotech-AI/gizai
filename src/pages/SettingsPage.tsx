@@ -6,6 +6,7 @@ import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
 import { McpSettings } from "../components/McpSettings";
+import { MemorySetting } from "../components/MemorySetting";
 import { OldWorktrees } from "../components/OldWorktrees";
 import { QuitSettings } from "../components/QuitSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
@@ -82,6 +83,7 @@ export function SettingsPage() {
             <Field label="Tool calls per run" htmlFor="s-calls" hint="20 to 2000. Every file read, edit and command is one."><input id="s-calls" className="input" type="number" min={20} max={2000} value={s.maxRunToolCalls} onChange={(e) => setS({ ...s, maxRunToolCalls: Number(e.target.value) })} /></Field>
             <Field label="Pause all agents" wide hint={s.agentsPaused ? "Paused: no automatic starts from Auto columns. Run still works by hand." : "The agents on Auto columns take their cards by themselves."}>
               <label className="check"><input type="checkbox" checked={s.agentsPaused} onChange={(e) => { const next = { ...s, agentsPaused: e.target.checked }; setS(next); save(next); }} />Pause all agents</label></Field>
+            <MemorySetting say={say} />
           </FormSection>
           <FormSection title="Data" text="Everything Gizai stores lives in this folder on this computer.">
             <Field label="Data folder" wide><span className="mono">{s.dataDir}</span></Field>

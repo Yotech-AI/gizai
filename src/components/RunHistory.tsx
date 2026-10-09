@@ -73,6 +73,10 @@ function RunRow({ r }: { r: Run }) {
             {r.headSha && <><dt>Ended at commit</dt><dd className="mono">{r.headSha.slice(0, 9)}</dd></>}
             {commitsError && <><dt>Commits</dt><dd>{commitsError}</dd></>}
             {r.worktreePath && <><dt>Worktree</dt><dd className="mono">{r.worktreePath}</dd></>}
+            {r.memory && r.memory.length > 0 && <><dt>Memory</dt><dd>{r.memory.map((n) => (
+              <div key={n.path}><span className="mono">{n.path}</span>{" "}
+                <span className="faint">· {n.shown < n.chars ? `${n.shown} of ${n.chars} characters (cut)` : `${n.chars} characters`}</span></div>
+            ))}</dd></>}
             {r.worktreePath && r.sessionId && (!r.adapter || r.adapter === "claude_code") && r.trigger !== "board_check" && <><dt>Continue by hand</dt><dd className="mono">{resumeCommand(r.worktreePath, r.sessionId)}</dd></>}
           </dl>
           {events && events.length > 0 && (

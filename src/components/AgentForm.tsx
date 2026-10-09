@@ -241,6 +241,12 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
             </span>
           </Field>
         </FormSection>
+        <FormSection title="Memory" text="Notes Gizai keeps for its agents: decisions, preferences and gotchas. Each agent has its own folder in Memory.">
+          <Field label="Memory" wide htmlFor="a-memory"
+            hint="On: its runs get its own notes and the team's notes on the card's project, client and role, and what it learned on a card is added to its notes. Settings → Runs turns memory off for every agent.">
+            <label className="check"><input id="a-memory" type="checkbox" checked={d.memory} onChange={(e) => set("memory", e.target.checked)} /> Use memory</label>
+          </Field>
+        </FormSection>
         <FormSection title="Work" text={isNew
           ? "The columns it is on decide when it works (Team → Workflow). A new agent goes on its role's usual columns: builders on To do and In progress, QA on Testing, DevOps on Deploy, the Team Lead on none."
           : "The columns it is on decide when it works (Team → Workflow): on an Auto column it takes cards by itself, on a Manual one Run starts it."}>

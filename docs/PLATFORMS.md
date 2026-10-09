@@ -1,0 +1,87 @@
+# Gizai on Linux, macOS and Windows
+
+Gizai is built for Linux first. This is the audit for GA-51: every place where Gizai assumed Linux, and what it does on macOS (Apple Silicon) and Windows 11 instead. Linux keeps doing exactly what it did: every change for the other two is behind `cfg(target_os = …)`, `cfg(unix)` or `cfg(windows)`.
+
+The decisions (Jeffrey, 9 Oct 2026):
+
+1. **Windows:** Gizai runs the coding CLIs installed on Windows itself: native `.exe` files and npm `.cmd` shims. Never CLIs inside WSL.
+2. **Signing:** none for now. No Apple Developer account and no Windows certificate until Gizai has paid features.
+3. **macOS:** Apple Silicon only (`aarch64-apple-darwin`). No Intel or universal build.
+4. **Install and updates:** built from source on the command line on every system, as on Linux. No installers, no binaries in releases, no Tauri updater.
+
+## Every Linux-only spot
+
+| Area | Where | Linux (unchanged) | macOS | Windows |
+|---|---|---|---|---|
+| Data folder | `data_dir` in `src-tauri/src/lib.rs`, the `--help` text in `main.rs` | `$XDG_DATA_HOME/gizai`, else `~/.local/share/gizai` | `~/Library/Application Support/Gizai` | `%APPDATA%\Gizai` (`HOME` isn't set on Windows) |
+| | | `GIZAI_DATA_DIR` overrides the data folder on every system. | | |
+| One Gizai per data folder | `lock_data_dir` in `lib.rs` | `flock` on `<data>/gizai.lock` | the same | std's `File::try_lock` (`LockFileEx`) on the same file |
+| Bringing the open window forward | the single-instance plugin in `lib.rs` | a D-Bus name per data folder | the plugin keys by app identifier; the data folder lock keeps one Gizai per data folder | the same as macOS |
+| Your name on a first start | `display_name` in `lib.rs` | `$USER` | `$USER` | `%USERNAME%` |
+| Gizai's tools for the Team Lead | `src-tauri/src/mcp.rs`, `crates/gizai-mcp/src/bin/gizai-mcp.rs` | a Unix socket in `$XDG_RUNTIME_DIR/gizai` (0700 folder, 0600 socket, the peer's uid checked) | the same socket; `XDG_RUNTIME_DIR` isn't set there, so it is `<data>/mcp.sock`, well under macOS's 104-byte limit (a longer path falls back to `$TMPDIR/gizai-<uid>/`) | a named pipe `\\.\pipe\gizai-…` per data folder that only the current user can open: a DACL with only the user's SID, remote clients refused, Gizai owns the first instance, and the client's user is checked again |
+| | | The per-turn token in the shim's first line stays on every system. | | |
+| Stopping agents | `crates/gizai-agents/src/process.rs` (runs and chat turns), `prepare.rs`, `update.rs`, `mcp_client.rs` (MCP servers) | each program in its own process group; Stop sends SIGINT, SIGTERM after 5 s, SIGKILL after 10 s; what the run left in its group is ended afterwards | the same | each program in a Job Object of its own that kills everything in it when Gizai closes it (`KILL_ON_JOB_CLOSE`), so nothing outlives Gizai, even after a crash. Stop ends the job (`TerminateJobObject`). |
+| | | Windows has no signal that a window app without a console can send a console program, so there is no gentle step there. Claude Code and Codex write their session as they go, so Continue still works after a Stop. | | |
+| A run a previous Gizai left running | `end_orphan_group` in `process.rs` | `/proc/<pid>/stat` and `/proc/<pid>/cwd` prove the pid still leads its group in the run's worktree | there is no `/proc`: `getpgid` and `proc_pidinfo` (the process's working folder) check the same | nothing to do: the previous Gizai's jobs ended its agents when it exited |
+| Exit codes | `process.rs` | `signal-N` when a signal ended the CLI | the same | Windows has no signals: the exit code |
+| Quitting on signals | `src-tauri/src/quit.rs` | SIGTERM, SIGINT and SIGHUP quit like Quit Gizai completely; `end_web_content` ends WebKitGTK's page process | the same signals; Cmd+Q quits through the same path; no WebKitGTK | Ctrl+C, Ctrl+Break and closing the console (a run from a terminal) quit the same way; logging off and shutting down reach a window app as `WM_ENDSESSION`, and the agents end with Gizai through their Job Objects in any case |
+| Private files | `chat.rs`, `runs.rs` and `mcp_run.rs` (MCP configs with tokens), `secrets.rs` (the file keychain for tests) | written as 0600 | the same | no Unix modes: the files are in your own profile (`%APPDATA%\Gizai`), whose inherited ACL lets only you, SYSTEM and Administrators read them |
+| The keychain | `secrets.rs` (the keyring crate) | Secret Service | the login keychain (`apple-native`) | Credential Manager (`windows-native`) |
+| | | Before this card keyring had only its Linux store, so macOS and Windows would have kept MCP sign-ins and the Bitbucket login in memory only. | | |
+| Worktrees' disk use | `disk_use` in `src-tauri/src/worktrees.rs` | blocks, as `du` counts them (`MetadataExt::blocks`) | the same | file sizes (Windows has no block count in std) |
+| Local time in backup names | `local_offset_secs` in `crates/gizai-core/src/db.rs` | `localtime_r` and `tm_gmtoff` | the same | the time zone from Windows |
+| Programs Gizai starts | every `Command::new` (git, gh, curl, ssh, the CLIs, MCP servers) | as they are | as they are | through `gizai_agents::os::command`: no console window opens, and npm `.cmd` shims run (see below) |
+| Shell commands | `prepare.rs` (a worktree's prepare commands), `connection.rs` (your `GIT_SSH_COMMAND`) | `bash -c`, `sh -c` | the same | Git Bash (`os::git_bash`): `CLAUDE_CODE_GIT_BASH_PATH`, else the one next to `git`, else Git for Windows' usual folders. Never `C:\Windows\System32\bash.exe`, which starts WSL. |
+| Finding programs | `runs.rs` (`executable`, `find_claude`, `command_path`), `clis.rs` (`resolve_program`), `pulls.rs` (gh) | an execute bit; `bash -lc` adds your login shell's PATH | the login shell's PATH is read once at start (`shell_path.rs`), see below | `PATHEXT` (`.exe`, `.cmd`, …); no login shell |
+| Your home folder | `clis.rs`, `limits.rs`, `mcp_servers.rs`, `pulls.rs`, `runs.rs`, `tools/write.rs`, `gizai-core/src/folders.rs` | `$HOME` | `$HOME` | `%USERPROFILE%` (std's `home_dir`) |
+| Folders (GA-45) | `crates/gizai-core/src/folders.rs`, `crates/gizai-agents/src/cli.rs` | the refused folders (`~/.ssh`, `~/.config`, `~/.claude` …), Claude Code's deny rules `Edit(//home/me/x/**)` | the same, plus `~/Library/Keychains` and Gizai's data in `~/Library/Application Support/Gizai` | `%USERPROFILE%\.ssh` and the other key folders, `AppData\Roaming` (Gizai's data, gh's and git's logins) and `AppData\Local\Microsoft`; drive letters and both slashes; Claude Code's rules in its POSIX form: `C:\Users\me\x` is `Edit(//c/Users/me/x/**)` |
+| Updating from inside Gizai | `crates/gizai-agents/src/update.rs`, `src-tauri/src/update.rs` | the release's `install.sh --build-only`, then `--skip-build`, at `nice 10`; the restart waits for Gizai's pid in `/proc` in a `setsid` session | the same `install.sh`; the restart waits with `kill -0` (no `/proc`; `setsid(2)` itself exists) | the release's `install.ps1 -BuildOnly`, then `-SkipBuild`, at below-normal priority; the restart is a hidden PowerShell that waits for Gizai's pid (`Wait-Process`), then starts the new `gizai.exe` |
+| Installing | `install.sh` | as today | `install.sh` with macOS's bash 3.2 and BSD tools, plus a `Gizai.app` so Gizai starts from the Dock and Finder | `install.ps1` (new) |
+| Installers and bundles | `tauri.conf.json` bundles `deb` and `appimage` | unchanged; the build is `--no-bundle` | only the `.app` bundle `install.sh` makes on your Mac; nothing to download (decided) | none (decided) |
+| Tray | `tray` in `lib.rs` | needs libayatana-appindicator | the menu bar icon as a template image | the icon in the notification area |
+| Closing the window | the `CloseRequested` handler in `lib.rs` | hides it; Gizai keeps running in the tray | the same; Cmd+W hides, Cmd+Q quits, the Dock icon brings it back (`RunEvent::Reopen`) | the same |
+| Notifications | `src-tauri/src/notifications.rs` (notify-rust) | a click opens the card or chat (the default action) | the Notification Center; macOS asks for permission the first time; a notification only informs | toasts, which need the app's identity: Gizai sets its AppUserModelID (`ai.gizai.app`) at start, and `install.ps1` makes a Start menu shortcut that carries it |
+| Shortcuts | the hints in the UI | Ctrl | Cmd (the handlers already took both) | Ctrl |
+| Tests and scripts | `scripts/*.sh` (headless UI tests in `cage`), the tests' fake CLIs (`*.sh`, `*.py`) | as they are | `cargo test` and `npm test` in CI | `cargo test` and `npm test` in CI; tests that need a Unix shell or signals are Unix only |
+| CI | none before this card | `.github/workflows/ci.yml` builds and tests on every pull request | macOS 14 (Apple Silicon) | Windows (latest) |
+
+## Reaching the coding CLIs
+
+**macOS.** An app started from the Dock or Finder gets a short PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so `claude`, `codex`, `gemini`, `gh` and `npx` in `/opt/homebrew/bin`, `~/.local/bin` or an nvm folder aren't found. At start Gizai runs your login shell once (`$SHELL -l -i -c`, at most 5 seconds) and adds the folders on its PATH to Gizai's own, before anything else starts, so every CLI and every command a run starts finds them. Full paths in Settings → Coding CLIs stay the fallback.
+
+**Linux.** A launch from the app launcher has the same gap, and Gizai already covered it before this card: `runs::command_path` adds your login shell's PATH (`bash -lc`) for the CLI list, each run's CLI and a worktree's prepare commands, and Claude Code and gh are looked for with `bash -lc` too. Unchanged.
+
+**Windows.** CLIs come as `.exe` files (Claude Code's native installer in `%USERPROFILE%\.local\bin`, Codex, gh, git) or as npm `.cmd` shims in `%APPDATA%\npm` (Gemini, an npm-installed Claude Code or Codex). Rust's `Command` only adds `.exe` to a bare name, so Gizai looks a name up itself with `PATHEXT` (`gizai_agents::os::find_in`). An npm shim runs as `node <the shim's script>`, the way the shim itself would, so arguments with spaces and quotes reach the CLI unchanged; any other `.cmd` or `.bat` goes through Rust's own batch-file quoting (the fix for CVE-2024-24576), which refuses an argument it can't pass safely. Settings → Coding CLIs shows the file found (`claude.exe`, `gemini.cmd`). Programs start without a console window. WSL isn't used.
+
+**Git Bash.** Claude Code on Windows runs its Bash tool through Git for Windows: it uses `CLAUDE_CODE_GIT_BASH_PATH`, or finds `bash.exe` from where `git` is installed. The agents' `Bash(...)` rules assume a POSIX shell, which Git Bash is. When Claude Code is found but Git Bash isn't, Settings → Coding CLIs says so. A worktree's prepare commands run in the same Git Bash.
+
+**Codex's sandbox.** GA-3 runs Codex with `--sandbox workspace-write`. Codex's sandbox on Windows works differently from Linux's Landlock and macOS's Seatbelt: check the installed version's `codex --help` and `codex sandbox --help` on Windows before relying on it (see the check list).
+
+**Second accounts.** `CLAUDE_CONFIG_DIR` and `CODEX_HOME` work the same everywhere. The defaults are `~/.claude` and `~/.codex`, which is `%USERPROFILE%\.claude` and `%USERPROFILE%\.codex` on Windows. `~` and `$HOME` in a CLI's environment lines expand to your home folder on every system.
+
+## Install, update and CI
+
+- **Install from source (decided).** Linux and macOS: `install.sh`. Windows: `install.ps1`. The README lists what each system needs first and the commands.
+- **Updates (decided).** Gizai fetches the release's tag and builds it from source with that system's install script, as on Linux. No Tauri updater, no signed update files.
+- **No signing (decided).** A build made on your own machine isn't a download, so Gatekeeper and SmartScreen have nothing to quarantine. The README says what to do if they still warn.
+- **CI.** `.github/workflows/ci.yml` builds Gizai on Linux, macOS (Apple Silicon) and Windows on every pull request, and runs `cargo test --workspace` and `npm test` on each. Releases stay as they are: no binaries attached.
+
+## Check list per system
+
+For Jeffrey, on an Apple Silicon Mac and on a Windows 11 PC, with the README's commands:
+
+1. Install from source. The install ends without errors and says where Gizai is.
+2. First start: from the Dock (macOS) or the Start menu (Windows). The window opens, the data is in `~/Library/Application Support/Gizai` or `%APPDATA%\Gizai`, and starting Gizai again brings the same window forward.
+3. Settings → Coding CLIs shows Claude Code, Codex and Gemini as found, with the file each one is (`/opt/homebrew/bin/claude`, `C:\Users\you\AppData\Roaming\npm\gemini.cmd`). On Windows without Git for Windows, Claude Code says it needs Git Bash.
+4. A chat answer from the Team Lead that uses Gizai's tools (for example "list my projects").
+5. A task run with Claude Code that finishes a card: its worktree, commits and push.
+6. Stop on a run that started a dev server: the run and the server end (Task Manager or Activity Monitor shows neither).
+7. Quit Gizai completely with an agent at work: it is recorded as stopped because Gizai quit, and nothing it started keeps running.
+8. The tray: the menu bar icon (macOS) or the notification-area icon (Windows) with Open Gizai and Quit Gizai completely; closing the window hides it.
+9. A notification when a card needs you (macOS asks for permission the first time).
+10. An update to the next release from inside Gizai, then the restart into the new version.
+
+## Follow-ups
+
+- GA-55's browser (Chrome DevTools MCP through `npx`) stops on Windows through the same Job Objects once both cards are merged (the Master Chief's note: a card of its own).
+- Signing and downloadable installers, when Gizai has paid features.

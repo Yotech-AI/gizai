@@ -56,6 +56,14 @@ describe("agent drafts", () => {
     expect(input).not.toHaveProperty("heartbeatMinutes");
     expect(inputFrom(draftFrom(null))).not.toHaveProperty("wakeup");
   });
+  it("use memory unless the agent has it off, and send the switch back (GA-19)", () => {
+    expect(draftFrom(null).memory).toBe(true);
+    expect(inputFrom(draftFrom(null)).useMemory).toBe(true);
+    const m = { actorId: "a", name: "Backend Agent", kind: "agent", roleKey: "backend", handle: "b", status: "active", isLead: false, allowedTools: [], chatEnabled: false };
+    expect(draftFrom(m).memory).toBe(true);
+    expect(draftFrom({ ...m, useMemory: false }).memory).toBe(false);
+    expect(inputFrom({ ...draftFrom(m), memory: false }).useMemory).toBe(false);
+  });
   it("keep an agent's chat setting and send it back", () => {
     const m = { actorId: "a", name: "Backend Agent", kind: "agent", roleKey: "backend", handle: "b", status: "active", isLead: false, allowedTools: [], chatEnabled: false };
     expect(draftFrom(m).chat).toBe(false);

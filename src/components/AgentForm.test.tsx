@@ -72,9 +72,11 @@ describe("the agent form with GA-39's Tools and GA-53's columns", () => {
     return html.slice(at, next < 0 ? undefined : next);
   };
 
-  it("has Agent, Chat, Work, Permissions, Tools and Instructions, and no Wake-up or heartbeat, opened from an empty spot", () => {
+  it("has Agent, Chat, Memory (GA-19), Work, Permissions, Tools and Instructions, and no Wake-up or heartbeat, opened from an empty spot", () => {
     const html = renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ role: "backend" }} onClose={() => {}} />);
-    expect(sections(html)).toEqual(["Agent", "Chat", "Work", "Permissions", "Tools", "Instructions"]);
+    expect(sections(html)).toEqual(["Agent", "Chat", "Memory", "Work", "Permissions", "Tools", "Instructions"]);
+    // Use memory, on for a new agent
+    expect(section(html, "Memory")).toContain('<input id="a-memory" type="checkbox" checked=""/> Use memory');
     expect(html).not.toContain("Wakes up");
     expect(html).not.toContain("Wake-up");
     expect(html).not.toMatch(/heartbeat/i);
@@ -87,7 +89,7 @@ describe("the agent form with GA-39's Tools and GA-53's columns", () => {
 
   it("keeps the Team Lead's board check in Chat, with Tools further down", () => {
     const html = renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ name: "Team Lead", role: "lead", chat: true }} onClose={() => {}} />);
-    expect(sections(html)).toEqual(["Agent", "Chat", "Work", "Permissions", "Tools", "Instructions"]);
+    expect(sections(html)).toEqual(["Agent", "Chat", "Memory", "Work", "Permissions", "Tools", "Instructions"]);
     expect(section(html, "Chat")).toContain('aria-label="Board check minutes"');
     expect(html.indexOf("Board check")).toBeLessThan(html.indexOf("<h3>Tools</h3>"));
     expect(html).not.toMatch(/heartbeat/i);

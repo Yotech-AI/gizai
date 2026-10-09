@@ -92,8 +92,14 @@ fn copy(st: &AppState, key: &str) -> PathBuf {
     st.data_dir.join("code").join(key)
 }
 
+/// Whether `git worktree list` in `repo` shows `dir`. git gives the real path, which on macOS differs for a temp folder
+/// (/var/folders/… is /private/var/folders/…).
 fn listed(repo: &Path, dir: &Path) -> bool {
-    git_out(repo, &["worktree", "list", "--porcelain"]).lines().any(|l| l == format!("worktree {}", dir.display()))
+    let real = dir.canonicalize().ok()
+        .or_else(|| Some(dir.parent()?.canonicalize().ok()?.join(dir.file_name()?)))
+        .unwrap_or_else(|| dir.to_path_buf());
+    git_out(repo, &["worktree", "list", "--porcelain"]).lines()
+        .any(|l| l == format!("worktree {}", dir.display()) || l == format!("worktree {}", real.display()))
 }
 
 fn mtimes(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
@@ -310,6 +316,11 @@ async fn settings_data_doesnt_list_the_copies_and_a_new_card_never_takes_one_ove
     let herd = gh.herd(tmp.path(), "herd");
     let task = gizai_lib::test_task(&st, herd.to_str().unwrap(), "backend");
     set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    // the card's worktree installs nothing: the run is what counts here, and composer isn't on every system (macOS CI)
+    let p = project(&st, "KADE");
+    projects::update(&st.db, &st.you_id, &p.id, ProjectInput { name: p.name.clone(), key: p.key.clone(), status: Some("active".into()),
+        repo_path: p.repo_path.clone(), repo_url: Some(gh.url().into()), default_branch: Some("main".into()),
+        worktree_install: Some(false), ..Default::default() }).unwrap();
     code::startup(&st).await;
     let dir = copy(&st, "KADE");
     let at = git_out(&dir, &["rev-parse", "HEAD"]);

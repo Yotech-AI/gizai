@@ -145,11 +145,19 @@ fn wait_pid(path: &Path) -> u32 {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn alive(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(s) => s.rsplit_once(')').and_then(|(_, rest)| rest.split_whitespace().next()).is_some_and(|st| st != "Z" && st != "X"),
         Err(_) => false,
     }
+}
+
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(not(target_os = "linux"))]
+fn alive(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().chars().next()).is_some_and(|st| st != 'Z')
 }
 
 fn add_agent(t: &T, name: &str, role: &str) -> String {

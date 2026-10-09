@@ -7,7 +7,12 @@
 # It writes its own PID to server.pid and the helper's to helper.pid in the folder given as $1.
 dir="$1"
 mode="${2:-int}"
-setsid sleep 600 </dev/null >/dev/null 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid sleep 600 </dev/null >/dev/null 2>&1 &
+else
+  # macOS has no setsid command: perl's POSIX::setsid does the same, then becomes the sleep
+  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 600 </dev/null >/dev/null 2>&1 &
+fi
 helper=$!
 echo "$helper" > "$dir/helper.pid.tmp" && mv "$dir/helper.pid.tmp" "$dir/helper.pid"
 end_helper() {

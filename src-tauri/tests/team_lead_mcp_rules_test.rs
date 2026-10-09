@@ -452,11 +452,19 @@ async fn an_answer_with_only_gizais_own_tools_can_act() {
 
 // ---- quitting ends the MCP servers a chat answer started ----
 
+#[cfg(target_os = "linux")]
 fn ended(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Err(_) => true,
         Ok(s) => s.rfind(')').and_then(|i| s[i + 1..].split_whitespace().next().map(|st| st == "Z" || st == "X")).unwrap_or(true),
     }
+}
+
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(not(target_os = "linux"))]
+fn ended(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().chars().next()).is_none_or(|st| st == 'Z')
 }
 
 /// Kills (SIGKILL) whatever of the PIDs our fakes wrote still runs, checked by its command line, on drop.

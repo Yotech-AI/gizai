@@ -97,4 +97,5 @@ jobs:
       # Gizai and its helpers on their own first, so a test that doesn't build still shows whether the app itself does.
       - run: cargo build --workspace
 
-      - run: cargo test --workspace
+      # Every test binary, also after one fails, so one run shows all the failures on a system.
+      - run: cargo test --workspace --no-fail-fast

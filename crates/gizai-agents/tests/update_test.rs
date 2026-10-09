@@ -420,11 +420,19 @@ fn the_build_gets_the_path_it_is_given() {
     assert_eq!(std::fs::read_to_string(marks.join("path")).unwrap().trim(), format!("path={path}"));
 }
 
+#[cfg(target_os = "linux")]
 fn gone(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Err(_) => true,
         Ok(s) => s.rsplit_once(") ").is_some_and(|(_, rest)| rest.starts_with('Z') || rest.starts_with('X')),
     }
+}
+
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(not(target_os = "linux"))]
+fn gone(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().chars().next()).is_none_or(|st| st == 'Z')
 }
 
 #[test]

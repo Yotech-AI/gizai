@@ -11,6 +11,7 @@ use gizai_agents::os::{self, End};
 use gizai_agents::process::{Caps, RunHandle, spawn};
 use gizai_agents::stream::RunEvent;
 
+#[cfg_attr(unix, allow(dead_code))]
 const FAKE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake-claude-node.cjs");
 
 /// npm's own `.cmd` shims (its cmd-shim, npm 11), for a package's node script (Gemini) and for a program of its own
@@ -28,8 +29,9 @@ fn node() -> PathBuf {
     os::find_in("node", &std::env::var_os("PATH").unwrap_or_default()).expect("node on PATH")
 }
 
-/// The fake CLI installed in `dir` as npm would: on Windows `claude.cmd`, npm's shim for a script in node_modules; on
-/// Linux and macOS a program `claude` that runs the script with node.
+/// The fake CLI installed in `dir` as npm would: on Windows `claude.cmd`, npm's shim for a script in node_modules. On
+/// Linux and macOS the committed program tests/fake-claude-node.sh, which runs the script with node: a script written
+/// here and started at once can fail with "Text file busy" when another test forks meanwhile.
 fn install_fake(dir: &Path) -> PathBuf {
     std::fs::create_dir_all(dir).unwrap();
     #[cfg(windows)]
@@ -44,8 +46,8 @@ fn install_fake(dir: &Path) -> PathBuf {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let bin = dir.join("claude");
-        std::fs::write(&bin, format!("#!/bin/sh\nexec '{}' '{FAKE}' \"$@\"\n", node().display())).unwrap();
+        let bin = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake-claude-node.sh"));
+        // committed with 755; set again in case a checkout lost it (no write, so it can't make the file busy)
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         bin
     }

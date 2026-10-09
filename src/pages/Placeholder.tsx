@@ -2,7 +2,7 @@ import type { Route } from "../router";
 import type { AppInfo } from "../types";
 
 const TITLES: Record<Route["page"], string> = {
-  chat: "Chat", inbox: "Inbox", tasks: "Tasks", board: "Board", task: "Task", projects: "Projects", project: "Project", clients: "Clients",
+  chat: "Chat", chats: "Chat archive", inbox: "Inbox", tasks: "Tasks", board: "Board", task: "Task", projects: "Projects", project: "Project", clients: "Clients",
   client: "Client", doc: "Doc", team: "Team", agent: "Agent", users: "Users", settings: "Settings", usage: "Usage",
 };
 

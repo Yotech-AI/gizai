@@ -184,7 +184,12 @@ export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> 
   listen<{ table: string }>("rows-changed", (e) => cb(e.payload.table));
 
 // ---- chat with the Team Lead ----
-export const listChatThreads = () => invoke<T.ChatThread[]>("list_chat_threads");
+/** The chats, newest activity first: the `limit` newest (Chat → Recent), or all of them. */
+export const listChatThreads = (limit?: number) => invoke<T.ChatThread[]>("list_chat_threads", { limit: limit ?? null });
+/** One chat, also one older than those in Recent (opened from the Archive). */
+export const getChatThread = (threadId: string) => invoke<T.ChatThread>("get_chat_thread", { threadId });
+/** Chat → Archive: the chats whose title or messages (yours and the Team Lead's) hold `query`, newest first; all for "". */
+export const searchChatThreads = (query: string) => invoke<T.ChatHit[]>("search_chat_threads", { query });
 export const chatMessages = (threadId: string) => invoke<T.ChatMessage[]>("chat_messages", { threadId });
 /** Sends a message (a new thread when threadId is null) and starts the answer; resolves with the thread id. */
 /** Sends a message (queued while the Team Lead answers in the chat); a new chat runs on `cli` when one was picked. */

@@ -316,10 +316,13 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         check_model(cx, a.opt("model").as_deref(), a.opt("effort").as_deref()).await?;
     }
     let team_id = resolve::team_of(cx, None)?.id;
+    let (name, role) = (a.req("name")?, a.req("role")?);
+    // No list given: its role's, as the agent form starts it.
+    let allowed_tools = a.list("allowed_tools").filter(|l| !l.is_empty()).unwrap_or_else(|| gizai_core::seed::role_tools(&team::role_key(&role)));
     let id = team::add_agent(cx.db(), cx.actor, &team_id, AgentInput {
-        name: a.req("name")?, role_key: a.req("role")?, title: a.opt("title"), adapter: cli.map(|c| c.id).unwrap_or_default(), model: a.opt("model"),
+        name, role_key: role, title: a.opt("title"), adapter: cli.map(|c| c.id).unwrap_or_default(), model: a.opt("model"),
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
-        allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: String::new(),
+        allowed_tools, wakeup: String::new(),
         heartbeat_minutes: None, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
         max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;

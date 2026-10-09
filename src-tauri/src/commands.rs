@@ -369,6 +369,9 @@ pub fn rename_state(app: AppHandle, st: State<AppState>, state_id: String, name:
 /// The starting instructions for a role, to prefill the agent form.
 #[tauri::command]
 pub fn role_template(role: String) -> String { gizai_core::seed::role_template(&team::role_key(&role)) }
+/// The allowed commands a role starts with, to prefill the agent form.
+#[tauri::command]
+pub fn role_tools(role: String) -> Vec<String> { gizai_core::seed::role_tools(&team::role_key(&role)) }
 
 // ---- agent runs ----
 use crate::runs;

@@ -344,11 +344,12 @@ fn stamp(c: &Connection, task_id: &str, lead: Option<&str>) -> Result<(i64, i64)
 /// The card's latest run and its agent's id.
 fn last_run(c: &Connection, task_id: &str) -> Result<Option<(LastRun, String)>> {
     Ok(c.query_row(
-        "SELECT r.id, a.name, r.status, r.outcome, r.error, r.ended_at, r.agent_actor_id, r.trigger FROM runs r JOIN actors a ON a.id = r.agent_actor_id
+        "SELECT r.id, a.name, r.status, r.outcome, r.error, r.ended_at, r.agent_actor_id, r.trigger, r.nudged FROM runs r
+         JOIN actors a ON a.id = r.agent_actor_id
          WHERE r.task_id=?1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1",
         [task_id],
-        |r| Ok((LastRun { id: r.get(0)?, agent: r.get(1)?, status: r.get(2)?, trigger: r.get(7)?, outcome: r.get(3)?, error: r.get(4)?,
-                          ended_at: r.get(5)? }, r.get(6)?)),
+        |r| Ok((LastRun { id: r.get(0)?, agent: r.get(1)?, status: r.get(2)?, trigger: runs::reported_trigger(r.get(7)?, r.get::<_, i64>(8)? != 0),
+                          outcome: r.get(3)?, error: r.get(4)?, ended_at: r.get(5)? }, r.get(6)?)),
     ).optional()?)
 }
 

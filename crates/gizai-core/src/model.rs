@@ -365,8 +365,9 @@ pub struct Run {
     pub head_sha: Option<String>,
     /// The tool calls its CLI refused because they needed an approval nobody could give (Claude Code reports them).
     pub refused: Vec<Refusal>,
-    /// Gizai's own nudge: it continued, by itself, a run that ended without a result (trigger `result_nudge` since GA-31;
-    /// before, `nudge` like a Continue). A person's or the Team Lead's Continue is a `nudge`, and not nudged.
+    /// Gizai's own nudge: it continued, by itself, a run that ended without a result. Its `trigger` reads `result_nudge`
+    /// (GA-31; stored as `nudge` with this flag, see `runs::RESULT_NUDGE`). A person's or the Team Lead's Continue reads
+    /// `nudge`, and is not nudged.
     #[serde(default)]
     pub nudged: bool,
     /// "Run this for me" (GA-31): the commands its `needs_decision` result asks the user to run for it, exactly as the agent

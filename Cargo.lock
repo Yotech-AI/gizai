@@ -1433,6 +1433,7 @@ dependencies = [
 name = "gizai-core"
 version = "0.3.0"
 dependencies = [
+ "libc",
  "rusqlite",
  "rusqlite_migration",
  "serde",

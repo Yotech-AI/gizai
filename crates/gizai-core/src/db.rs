@@ -37,8 +37,10 @@ fn migrations() -> Migrations<'static> {
 /// Snapshots kept per folder; older ones are removed.
 const KEEP_SNAPSHOTS: usize = 20;
 
-/// "20261007-091502-123" (UTC) for a snapshot's name: sorts like time, reads like a date.
-fn stamp(ms: i64) -> String {
+/// "20261007-111502-123" for a snapshot's name, in local time (the TZ variable, else the system's time zone): reads like
+/// a date on your clock, and sorts like time (except in the hour a clock goes back).
+pub fn stamp(ms: i64) -> String {
+    let ms = ms + local_offset_secs(ms) * 1000;
     let days = ms.div_euclid(86_400_000);
     let rem = ms.rem_euclid(86_400_000);
     let z = days + 719_468;
@@ -51,6 +53,22 @@ fn stamp(ms: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
     format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}-{:03}", rem / 3_600_000, rem / 60_000 % 60, rem / 1000 % 60, rem % 1000)
+}
+
+unsafe extern "C" {
+    /// POSIX: the C library reads TZ again (the libc crate has no binding for it on Linux).
+    fn tzset();
+}
+
+/// How far local time is ahead of UTC at `ms`, in seconds (summer time included); 0 when the C library can't say.
+fn local_offset_secs(ms: i64) -> i64 {
+    let t = ms.div_euclid(1000) as libc::time_t;
+    // SAFETY: tzset only updates the C library's time zone; localtime_r writes nothing but `tm`, which is ours.
+    unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        tzset();
+        if libc::localtime_r(&t, &mut tm).is_null() { 0 } else { tm.tm_gmtoff as i64 }
+    }
 }
 
 /// A complete, consistent copy of the database at `src` (`VACUUM INTO`, safe while Gizai has it open) as

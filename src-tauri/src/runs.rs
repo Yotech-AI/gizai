@@ -14,7 +14,7 @@ use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
 use gizai_agents::stream::RunEvent;
 use gizai_agents::{outcome, worktree};
 use gizai_core::model::{Outcome, Project, Refusal, Task, TaskPatch};
-use gizai_core::{comments, ids, projects, runs as core_runs, settings, tasks, team, workflow};
+use gizai_core::{comments, housekeeping, ids, projects, runs as core_runs, settings, tasks, team, workflow};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -316,14 +316,23 @@ pub fn live(st: &AppState) -> Vec<LiveRun> {
         .collect()
 }
 
-/// The run's events: from memory while it is live, else re-read from its log.
+/// The run's events: from memory while it is live, else re-read from its log. When housekeeping removed the log (the
+/// run ended more than 30 days ago), a note says so.
 pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     if let Some(l) = st.runs.live.lock().unwrap().get(run_id) {
         return l.events.clone();
     }
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
-    let text = std::fs::read_to_string(&run.log_path).unwrap_or_default();
-    agent_cli::parse_log(&text).into_iter().enumerate().map(|(i, event)| SeqEvent { seq: i as u64, event }).collect()
+    let events = match std::fs::read_to_string(&run.log_path) {
+        Ok(text) => agent_cli::parse_log(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+            && run.ended_at.unwrap_or(run.created_at) < ids::now_ms() - housekeeping::KEEP_LOGS_MS => {
+            vec![RunEvent::Note { text: format!("Gizai keeps run logs for {} days, so this run's output is gone. Its summary, cost and commits stay.",
+                                                housekeeping::KEEP_LOG_DAYS) }]
+        }
+        Err(_) => vec![],
+    };
+    events.into_iter().enumerate().map(|(i, event)| SeqEvent { seq: i as u64, event }).collect()
 }
 
 pub fn stop(st: &AppState, run_id: &str) {

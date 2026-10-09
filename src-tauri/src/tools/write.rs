@@ -166,19 +166,9 @@ pub(crate) fn save_contact(cx: &Cx, a: &Args) -> Result<Value, String> {
 pub(crate) fn create_project(cx: &Cx, a: &Args) -> Result<Value, String> {
     let name = a.req("name")?;
     let repo_path = a.opt("repo_path").map(|r| checked_repo(&r)).transpose()?;
-    let taken: Vec<String> = projects::list(cx.db()).map_err(err)?.into_iter().map(|p| p.key).collect();
     let key = match a.opt("key") {
         Some(k) => k.to_uppercase(),
-        None => {
-            let base = projects::suggest_key(&name);
-            let mut k = base.clone();
-            let mut n = 2;
-            while taken.contains(&k) {
-                k = format!("{}{n}", &base[..base.len().min(5)]);
-                n += 1;
-            }
-            k
-        }
+        None => projects::unused_key(cx.db(), &name).map_err(err)?,
     };
     let client_id = match a.opt("client") { Some(c) => Some(resolve::client(cx, &c)?.id), None => None };
     let id = projects::create(cx.db(), cx.actor, ProjectInput {

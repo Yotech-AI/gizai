@@ -62,3 +62,14 @@ pub fn revoke(db: &Db, token: &str) -> Result<()> {
         Ok(())
     })
 }
+
+/// A token that expired or was revoked stays this long, to look into a turn that went wrong; then `prune` removes it.
+pub const KEEP_DEAD_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Removes the tokens that expired or were revoked more than `KEEP_DEAD_MS` before `now_ms`: nothing can use them any
+/// more. Valid tokens and recently dead ones stay. Returns how many went.
+pub fn prune(db: &Db, now_ms: i64) -> Result<usize> {
+    db.write(None, |w| {
+        Ok(w.conn().execute("DELETE FROM api_tokens WHERE revoked_at < ?1 OR expires_at < ?1", [now_ms - KEEP_DEAD_MS])?)
+    })
+}

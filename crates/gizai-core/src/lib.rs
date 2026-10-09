@@ -26,6 +26,7 @@ pub mod folders;
 pub mod columns;
 pub mod labels;
 pub mod mcp_servers;
+pub mod housekeeping;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

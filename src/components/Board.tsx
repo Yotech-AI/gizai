@@ -11,6 +11,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { Member, Task, WorkflowState } from "../types";
 import { dropKey, groupByColumn } from "../lib/board";
 import { boardNote } from "../lib/columns";
+import { hostName } from "../lib/provider";
 import { pullBadge, pullLabel } from "../lib/pulls";
 import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
@@ -32,7 +33,7 @@ const Card = memo(function Card({ task, onOpen, onArchive, working }: {
       style={{ transform: CSS.Transform.toString(transform), transition }} {...attributes} {...listeners}
       onClick={() => onOpen(task.id)} onKeyDown={(e) => { if (e.key === "Enter") onOpen(task.id); }}>
       <div className="top"><span className="id">{task.identifier}</span>
-        {task.prUrl && <span className={`badge ${pullBadge(task.prState).cls}`} title={`Pull request: ${pullBadge(task.prState).text.toLowerCase()} on GitHub`}>{pullLabel(task.prUrl)}</span>}
+        {task.prUrl && <span className={`badge ${pullBadge(task.prState).cls}`} title={`Pull request: ${pullBadge(task.prState).text.toLowerCase()} on ${hostName(task.prUrl)}`}>{pullLabel(task.prUrl)}</span>}
         {task.hold && <span className="badge needs">On hold</span>}{task.priority > 0 && <PriorityIcon priority={task.priority} />}
         {onArchive && (
           // Its own pointer and key events stay here: pressing it neither starts a drag nor opens the card.

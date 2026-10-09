@@ -4,6 +4,7 @@ import { FileText, ListTodo, Pencil, Plus } from "lucide-react";
 import { checkRepo, getProject, listDocs, type RepoCheck } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
+import { linkLabel } from "../lib/provider";
 import { relTime } from "../lib/format";
 import { useDrawer } from "../lib/drawers";
 import { FileDrop } from "../components/FileDrop";
@@ -57,7 +58,7 @@ export function ProjectPage({ id }: { id: string }) {
               <section><div className="section-head"><h3>Repository</h3></div>
                 <div className="panel kv">
                   <span className="k">Local path</span><span className="mono" style={{ wordBreak: "break-all" }}>{p.repoPath ?? <span className="faint">Not linked</span>}</span>
-                  <span className="k">GitHub</span><span className="mono" style={{ wordBreak: "break-all" }}>{p.repoUrl
+                  <span className="k">{linkLabel(p.repoUrl)}</span><span className="mono" style={{ wordBreak: "break-all" }}>{p.repoUrl
                     ? <a href={p.repoUrl} onClick={(e) => { e.preventDefault(); openUrl(p.repoUrl!).catch(() => {}); }}>{p.repoUrl.replace(/^https:\/\//, "")}</a>
                     : <span className="faint">Not linked: cards start from the local branch</span>}</span>
                   <span className="k">Main branch</span><span className="mono">{p.defaultBranch}</span>

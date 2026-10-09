@@ -185,6 +185,28 @@ fn what_a_cli_cant_take_of_the_web_switches_is_disabled_with_the_reason() {
     assert!(search.is_some() && fetch.is_some() && domains.is_some());
 }
 
+#[test]
+fn a_run_leaves_web_and_built_in_tools_with_a_switch_out_of_the_allowed_commands_and_keeps_the_rest() {
+    // only the switches give these: an allowed commands entry for them is left out of a run
+    for t in ["WebSearch", "WebFetch", "WebFetch(domain:evil.example)", " WebFetch (domain:docs.rs)", "FancyNewTool", "FancyNewTool(x)",
+              "Skill", "SlashCommand", "AskUserQuestion", "SendMessage", "CronCreate", "EnterWorktree", "websearch", "bash(git status:*)"] {
+        assert!(tool_catalog::only_by_switch(t), "{t} is left out");
+    }
+    // commands, the CLI's always-on tools, what the permission mode gives and MCP tools stay
+    for t in ["Bash(git status:*)", "Bash(npm test:*)", "Bash", "Read", "Read(//srv/docs/**)", "Glob", "Grep", "Edit", "Edit(//srv/docs/**)",
+              "Write", "NotebookEdit", "ExitPlanMode", "TodoWrite", "Task", "mcp__otus__get_card", "mcp__chrome-devtools", "bad name!"] {
+        assert!(!tool_catalog::only_by_switch(t), "{t} stays");
+    }
+}
+
+#[test]
+fn only_a_cli_that_searches_the_web_whatever_the_switches_counts_as_on_the_web_in_every_run() {
+    assert!(tool_catalog::web_in_every_run(Kind::Gemini), "google_web_search is always on");
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Other] {
+        assert!(!tool_catalog::web_in_every_run(kind), "{kind:?}: its web tools come from the switches");
+    }
+}
+
 // ---- what Claude Code reports ----
 
 #[test]

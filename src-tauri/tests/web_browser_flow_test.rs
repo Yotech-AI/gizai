@@ -656,6 +656,121 @@ async fn the_team_lead_cant_give_an_agent_web_tools_through_its_allowed_commands
             "a run got web or built-in tools the user never switched on, through the Team Lead's allowed_tools: {allowed:?}");
 }
 
+/// update_agent and create_agent take only commands (`Bash(…)`) in allowed_tools: any other entry is refused, and nothing
+/// changes; a list of commands, or none (the role's list), still works.
+#[tokio::test]
+async fn the_team_leads_allowed_tools_take_only_commands_and_anything_else_changes_nothing() {
+    let t = lead_setup();
+    let st = &t.st;
+    let lead = t.lead.as_str();
+    let call = |name: &'static str, args: Value| async move { tools::call_in(st, lead, None, name, args).await };
+    let before = gizai_core::team::agent(&st.db, &t.backend).unwrap().allowed_tools;
+    let agents = gizai_core::team::all_agents(&st.db).unwrap().len();
+    for bad in ["WebSearch", "WebFetch", "WebFetch(domain:evil.example)", "FancyNewTool", "Skill", "Read", "Read(//home/**)", "Edit(//etc/**)",
+                "mcp__chrome-devtools", "mcp__otus__get_card", "bash(git status:*)", "Bash()", "Bash( )", "Bash(git status:*"] {
+        let list = json!(["Bash(git status:*)", bad]);
+        let e = call("update_agent", json!({"agent": "Backend Agent", "allowed_tools": list.clone()})).await.unwrap_err();
+        assert!(e.contains("allowed_tools takes only commands") && e.contains(bad) && e.contains("Nothing changed"), "update_agent {bad}: {e}");
+        assert_eq!(gizai_core::team::agent(&st.db, &t.backend).unwrap().allowed_tools, before, "{bad}: the list is as it was");
+        let e = call("create_agent", json!({"name": "Web QA", "role": "qa", "allowed_tools": list})).await.unwrap_err();
+        assert!(e.contains("allowed_tools takes only commands"), "create_agent {bad}: {e}");
+    }
+    assert_eq!(gizai_core::team::all_agents(&st.db).unwrap().len(), agents, "no agent was added");
+    // any command is still refused with its own reason
+    let e = call("update_agent", json!({"agent": "Backend Agent", "allowed_tools": ["Bash"]})).await.unwrap_err();
+    assert!(e.contains("can't be allowed to run any command"), "{e}");
+    // commands only: saved
+    call("update_agent", json!({"agent": "Backend Agent", "allowed_tools": ["Bash(git status:*)", " Bash(npm test:*) "]})).await.unwrap();
+    assert!(gizai_core::team::agent(&st.db, &t.backend).unwrap().allowed_tools.iter().any(|a| a.contains("npm test")));
+    // no list: the role's, which is commands only, so a run leaves nothing of it out
+    call("create_agent", json!({"name": "Web QA", "role": "qa"})).await.unwrap();
+    for role in ["lead", "backend", "frontend", "qa", "devops", "design"] {
+        let left: Vec<String> = gizai_core::seed::role_tools(role).into_iter().filter(|t| gizai_agents::tool_catalog::only_by_switch(t)).collect();
+        assert!(left.is_empty(), "{role}: {left:?}");
+    }
+}
+
+/// A run takes web search, fetching pages and the CLI's other tools only from their switches: an allowed commands entry
+/// for them (an old list, or a person typing in the form) is left out with a note, the rest of the list stays, and the
+/// switches still give their own tools, once.
+#[tokio::test]
+async fn a_run_leaves_web_and_built_in_tools_out_of_the_allowed_commands_and_the_switches_still_give_them() {
+    let t = run_setup(None);
+    let typed = ["Bash(git status:*)", "Bash(npm test:*)", "Read(//srv/docs/**)", "Edit", "mcp__otus__get_card", "WebSearch",
+                 "WebFetch(domain:evil.example)", "FancyNewTool", "Skill", "AskUserQuestion"];
+    let left_out = ["WebSearch", "WebFetch(domain:evil.example)", "FancyNewTool", "Skill", "AskUserQuestion"];
+    let (_, agent) = gizai_core::team::all_agents(&t.st.db).unwrap().into_iter().find(|(_, m)| m.actor_id == t.agent).unwrap();
+    gizai_core::team::update_agent(&t.st.db, &t.st.you_id, &t.agent, AgentInput { name: agent.name.clone(), role_key: "backend".into(),
+        adapter: t.cli.clone(), allowed_tools: typed.map(String::from).to_vec(), ..Default::default() }).unwrap();
+
+    let g = t.run().await;
+    let allowed = g.allowed();
+    for kept in ["Bash(git status:*)", "Bash(npm test:*)", "Read(//srv/docs/**)", "Edit", "mcp__otus__get_card"] {
+        assert!(allowed.iter().any(|a| a == kept), "{kept} stays: {allowed:?}");
+    }
+    for l in left_out {
+        assert!(!allowed.iter().any(|a| a == l), "{l} is left out: {allowed:?}");
+    }
+    assert!(web_tools(&allowed).is_empty(), "{allowed:?}");
+    assert!(!g.prompt.contains(UNTRUSTED), "nothing from the web is on");
+    assert!(!g.prompt.contains("FancyNewTool") && !g.prompt.contains("evil.example"), "the prompt's commands are the run's: {}", g.prompt);
+    let n = notes(&t.st, &g.run_id);
+    let note = n.iter().find(|x| x.starts_with("Left out of")).unwrap_or_else(|| panic!("no note: {n:?}"));
+    for l in left_out {
+        assert!(note.contains(l), "{l} named in {note}");
+    }
+    assert!(!note.contains("Bash(") && !note.contains("mcp__"), "{note}");
+
+    // the switches give their own tools, once each; the typed domain list stays out
+    app_mcp::save_cli_tools(&t.st, &t.agent, CliTools { web_search: true, builtin: vec!["FancyNewTool".into()], ..Default::default() }).unwrap();
+    let g = t.run().await;
+    let allowed = g.allowed();
+    assert_eq!(web_tools(&allowed), ["WebSearch"], "{allowed:?}");
+    assert_eq!(allowed.iter().filter(|a| *a == "FancyNewTool").count(), 1, "{allowed:?}");
+    assert!(!allowed.iter().any(|a| a == "Skill" || a == "AskUserQuestion"), "{allowed:?}");
+    assert_eq!(g.prompt.matches(UNTRUSTED).count(), 1);
+    never_a_real_browser(&g.argv, g.config.as_ref());
+}
+
+/// Gemini's line about web content holds for a continued run too, once, and only Gemini gets it with every switch off.
+#[tokio::test]
+async fn a_continued_gemini_run_says_web_content_is_data_once_and_codex_with_search_off_doesnt() {
+    fakes();
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    gizai_core::settings::set(&st.db, "claude_bin", &FAKE_RUN.to_string()).unwrap();
+    gizai_core::settings::set(&st.db, "agents_paused", &true).unwrap();
+    gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let prompt_of = |run_id: &str| {
+        let run = gizai_core::runs::get(&st.db, run_id).unwrap();
+        let stderr = read(&Path::new(&run.log_path).with_extension("stderr.log"));
+        stderr.split("prompt>>").nth(1).and_then(|p| p.split("<<prompt").next()).unwrap_or_else(|| panic!("no prompt in {stderr}")).to_string()
+    };
+
+    let codex = add_cli(&st, "Codex", "codex", FAKE_CLI, &["FAKE_KIND=codex".into(), "FAKE_TEMP=1".into()]);
+    put_agent_on(&st, &codex);
+    let s = gizai_lib::runs::run_once(&st, &gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend"), None, None).await.unwrap();
+    assert_eq!(s.status, "succeeded", "{:?}", s.error);
+    assert!(!prompt_of(&s.run_id).contains(UNTRUSTED), "Codex with web search off reaches no web content");
+
+    let gemini = add_cli(&st, "Gemini", "gemini", FAKE_CLI, &["FAKE_KIND=gemini".into(), "FAKE_TEMP=1".into()]);
+    put_agent_on(&st, &gemini);
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    // the fake ends without a result line, so the run can be continued
+    gizai_core::tasks::update(&st.db, &st.you_id, &task, TaskPatch { description_md: Some("FAKE_NO_RESULT".into()), ..Default::default() }).unwrap();
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    assert_eq!(prompt_of(&s.run_id).matches(UNTRUSTED).count(), 1, "a fresh Gemini run");
+    let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    assert_eq!((run.status.as_str(), run.outcome.as_deref()), ("succeeded", Some("no_result")), "the fake ended without a result");
+    let (id, done) = gizai_lib::runs::continue_run(&st, &s.run_id, None).await.unwrap();
+    let c = tokio::time::timeout(Duration::from_secs(30), done).await.expect("continued run ended").unwrap();
+    assert_eq!(c.status, "succeeded", "{:?}", c.error);
+    let run = gizai_core::runs::get(&st.db, &id).unwrap();
+    assert!(read(&Path::new(&run.log_path).with_extension("stderr.log")).contains("--resume"), "a continued run");
+    assert_eq!(prompt_of(&id).matches(UNTRUSTED).count(), 1, "a continued Gemini run");
+}
+
 // ---- Stop, the tool cap and quitting end the browser ----
 
 fn stat(pid: u32) -> Option<(char, u32)> {

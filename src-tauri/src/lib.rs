@@ -10,6 +10,7 @@ pub mod github;
 pub mod limits;
 pub mod mcp;
 pub mod mcp_servers;
+pub mod memory;
 pub mod notifications;
 pub mod pulls;
 mod quit;
@@ -196,6 +197,10 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     } else {
         gizai_core::seed::ensure_seed(&db, &display_name())
     }.map_err(|e| e.to_string())?;
+    // Memory (GA-19): agents made before it get their own folder, Agents/<name>/, with a Notes note.
+    if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
+        eprintln!("gizai: making the agents' memory folders failed: {e}");
+    }
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
@@ -461,7 +466,7 @@ pub fn run() {
             commands::list_archived_tasks, commands::archive_task, commands::restore_task,
             commands::list_teams, commands::get_team, commands::check_repo,
             commands::list_docs, commands::get_doc, commands::create_doc, commands::save_doc, commands::rename_doc,
-            commands::doc_versions, commands::doc_version_body,
+            commands::doc_versions, commands::doc_version_body, commands::agent_notes, commands::memory_enabled, commands::set_memory_enabled,
             commands::add_files, commands::list_files, commands::remove_file, commands::open_file,
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
             commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,

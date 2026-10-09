@@ -258,6 +258,12 @@ pub struct Doc {
     pub body_md: String,
     pub current_version: i64,
     pub updated_at: i64,
+    /// `doc` (a project's), or `memory` for a memory note (`memory`).
+    #[serde(default)]
+    pub kind: String,
+    /// A memory note's folder and title, like `Team Lead/Notes`.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +326,9 @@ pub struct AgentInput {
     /// The folders besides its worktree its file tools may use (`folders`). None: none for a new agent, unchanged on
     /// update. Only the agent form sets them: the Team Lead's tools always leave None.
     pub folders: Option<Vec<crate::folders::Folder>>,
+    /// Memory (GA-19): its runs get a Memory section and its `learned` lines are kept. None: on for a new agent,
+    /// unchanged on update.
+    pub use_memory: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -374,6 +383,9 @@ pub struct Run {
     /// wrote them (`run_for_me` on its result line); empty for any other run.
     #[serde(default)]
     pub run_for_me: Vec<String>,
+    /// Memory (GA-19): the notes its prompt was given, with their size and how much it showed; empty without memory.
+    #[serde(default)]
+    pub memory: Vec<crate::memory::Given>,
 }
 
 /// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI

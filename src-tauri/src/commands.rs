@@ -195,6 +195,38 @@ pub fn rename_doc(app: AppHandle, st: State<AppState>, id: String, title: String
     changed(&app, "docs");
     Ok(())
 }
+
+// ---- memory (GA-19; the Memory page is GA-68) ----
+/// An agent's own notes in Memory: the Team Lead's `Team Lead/Notes` (made the first time), another agent's
+/// `Agents/<name>/Notes`; None when it has none.
+#[tauri::command]
+pub fn agent_notes(app: AppHandle, st: State<AppState>, agent_id: String) -> R<Option<gizai_core::memory::Note>> {
+    use gizai_core::memory::{self, Who};
+    let agent = gizai_core::team::agent(&st.db, &agent_id).map_err(e)?;
+    let you = Who::Person(st.you_id.clone());
+    if agent.is_lead || agent.chat_enabled {
+        let you_name = gizai_core::users::list(&st.db).ok().and_then(|l| l.into_iter().find(|p| p.id == st.you_id)).map(|p| p.name)
+            .unwrap_or_else(|| "the user".into());
+        let made = memory::find(&st.db, &memory::lead_notes_path()).map_err(e)?.is_none();
+        let id = memory::ensure_lead_notes(&st.db, &agent_id, &you_name).map_err(e)?;
+        if made {
+            changed(&app, "docs");
+        }
+        return memory::get(&st.db, &you, &id).map(Some).map_err(e);
+    }
+    Ok(memory::list(&st.db, &you).map_err(e)?.into_iter()
+        .find(|n| n.owner_id.as_deref() == Some(agent_id.as_str()) && n.title().eq_ignore_ascii_case(memory::NOTES)))
+}
+/// Memory for every agent (Settings → Runs): on unless switched off.
+#[tauri::command]
+pub fn memory_enabled(st: State<AppState>) -> bool { gizai_core::memory::enabled(&st.db) }
+#[tauri::command]
+pub fn set_memory_enabled(app: AppHandle, st: State<AppState>, on: bool) -> R<()> {
+    gizai_core::memory::set_enabled(&st.db, on).map_err(e)?;
+    changed(&app, "settings");
+    Ok(())
+}
+
 #[tauri::command]
 pub fn doc_versions(st: State<AppState>, id: String) -> R<Vec<DocVersion>> { docs::versions(&st.db, &id).map_err(e) }
 #[tauri::command]

@@ -66,8 +66,13 @@ export function DocPage({ id }: { id: string }) {
     <>
       <div className="topbar">
         <div className="crumbs">
-          <a href={href({ page: "projects" })}>Projects</a><span className="sep">/</span>
-          {project && <><a href={href({ page: "project", id: project.id })}>{project.name}</a><span className="sep">/</span></>}
+          {doc.kind === "memory" ? (
+            // A memory note (GA-19): Memory, its folders, its title. The Memory page itself comes with GA-68.
+            <>{["Memory", ...(doc.path ?? "").split("/").slice(0, -1)].map((f, i) => <span key={i}><span>{f}</span><span className="sep">/</span></span>)}</>
+          ) : (
+            <><a href={href({ page: "projects" })}>Projects</a><span className="sep">/</span>
+              {project && <><a href={href({ page: "project", id: project.id })}>{project.name}</a><span className="sep">/</span></>}</>
+          )}
           <b>{doc.title}</b>
         </div>
         <div className="actions"><span className={status === "saved" ? "faint" : "muted"} role="status">{statusText}</span>

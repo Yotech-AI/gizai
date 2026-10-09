@@ -84,6 +84,8 @@ export type Member = {
   folders?: AgentFolder[];
   /** Its MCP servers switched on or off, with the tools switched off of each (agent form → Tools). */
   tools?: AgentTools;
+  /** Its runs get a Memory section and its learned lines are kept (on when absent). */
+  useMemory?: boolean;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -119,6 +121,8 @@ export type AgentInput = {
   boardCheckMinutes?: number | null;
   /** Its folders; null/absent leaves them unchanged on update (none for a new agent). */
   folders?: AgentFolder[] | null;
+  /** Memory for its runs; null/absent: on for a new agent, unchanged on update. */
+  useMemory?: boolean | null;
 };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
 export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";
@@ -140,7 +144,9 @@ export type ColumnRemoval = { cards: number; archived: number; defaultTarget?: s
 /** A label with the number of cards that carry it. */
 export type LabelInfo = { id: string; name: string; color?: string | null; cards: number };
 export type AppInfo = { version: string; data_dir: string; selftest: boolean; you_id: string; start_route?: string | null; selftest_mode?: string | null; data_label?: string | null };
-export type Doc = { id: string; projectId?: string | null; title: string; bodyMd: string; currentVersion: number; updatedAt: number };
+export type Doc = { id: string; projectId?: string | null; title: string; bodyMd: string; currentVersion: number; updatedAt: number;
+  /** "memory" for a memory note (GA-19), with its path like "Team Lead/Notes"; "doc" for a project's. */
+  kind?: string; path?: string | null };
 export type DocVersion = { version: number; authorName?: string | null; createdAt: number };
 export type FileRow = { id: string; name: string; mime?: string | null; sizeBytes: number; sha256: string; createdAt: number };
 export type FileOwner = "client" | "project" | "task" | "comment" | "doc";
@@ -179,7 +185,14 @@ export type Run = {
   nudged?: boolean;
   /** Run this for me: the commands its needs_decision result asks you to run for it. */
   runForMe?: string[];
+  /** The memory notes its prompt was given (GA-19). */
+  memory?: GivenNote[];
 };
+/** A memory note a run's prompt was given: its path, its length and how much of it the prompt showed (less when cut). */
+export type GivenNote = { path: string; chars: number; shown: number };
+/** A note in Gizai's Memory (GA-19): a doc of kind memory, with a path like "Team Lead/Notes". */
+export type MemoryNote = { id: string; path: string; scope: "shared" | "agent"; ownerId?: string | null; bodyMd: string; currentVersion: number;
+  updatedAt: number; updatedBy?: string | null; chars: number };
 /** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
 export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */

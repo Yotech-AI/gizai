@@ -48,6 +48,11 @@ export const saveDoc = (id: string, bodyMd: string, baseVersion: number) => invo
 export const renameDoc = (id: string, title: string) => invoke<void>("rename_doc", { id, title });
 export const docVersions = (id: string) => invoke<T.DocVersion[]>("doc_versions", { id });
 export const docVersionBody = (id: string, version: number) => invoke<string>("doc_version_body", { id, version });
+/** An agent's own notes in Memory (the Team Lead's Team Lead/Notes is made the first time); null when it has none. */
+export const agentNotes = (agentId: string) => invoke<T.MemoryNote | null>("agent_notes", { agentId });
+/** Memory for every agent (Settings → Runs). */
+export const memoryEnabled = () => invoke<boolean>("memory_enabled");
+export const setMemoryEnabled = (on: boolean) => invoke<void>("set_memory_enabled", { on });
 
 export const addFiles = (ownerType: T.FileOwner, ownerId: string, paths: string[]) => invoke<T.AddFilesResult>("add_files", { ownerType, ownerId, paths });
 export const listFiles = (ownerType: T.FileOwner, ownerId: string) => invoke<T.FileRow[]>("list_files", { ownerType, ownerId });

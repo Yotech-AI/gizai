@@ -57,6 +57,13 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
             return Err("an agent's MCP servers and their tools can't be switched from chat: only the user does that, in the agent form → Tools".into());
         }
     }
+    // Web search, fetching pages, the browser and the CLI's built-in tools: the same, only the user (agent form → Tools).
+    for k in ["web_search", "web_fetch", "fetch_domains", "web", "browser", "insecure_certs", "builtin_tools", "builtin", "cli_tools"] {
+        if a.0.get(k).is_some_and(|v| !v.is_null()) {
+            return Err("an agent's web search, fetching pages, browser and built-in tools can't be switched from chat: only the user does that, \
+                        in the agent form → Tools. Nothing changed.".into());
+        }
+    }
     // The folders an agent may read or change: only the user sets them, in the agent form.
     if a.0.get("folders").is_some_and(|v| !v.is_null()) {
         return Err("an agent's folders can't be changed from chat: the user sets them in the agent form (Team page → the agent → Permissions → Folders). Nothing changed.".into());

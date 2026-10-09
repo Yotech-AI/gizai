@@ -857,6 +857,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             notes.push(format!("{} runs on {}: MCP servers work on Claude Code for now, so this run goes without them.", agent.name, cli.name));
         }
     }
+    // The agent's Web switches and the CLI's built-in tools it has on (agent form → Tools), as far as its CLI takes them.
+    let (web, web_notes) = web_for_run(&agent, spec.kind, &cli.name);
+    notes.extend(web_notes);
+    if spec.kind == Kind::ClaudeCode {
+        allowed_tools.extend(agent.cli_tools.builtin.iter().filter(|t| gizai_agents::tool_catalog::switchable(spec.kind, t)).cloned());
+    }
+    // Content from outside (an MCP server's answers, web pages, search results, the browser) is data: the prompt says so.
+    let untrusted = mcp_config.is_some() || web.search || web.fetch;
     let note = resume.as_ref().and_then(|r| r.note.as_ref()).map(|n| prompt::Note { from: n.by_name.clone(), text: n.text.clone() });
     let base_prompt = prompt::with_rules(&match &resume {
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
@@ -866,8 +874,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     }, &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
-        prompt: if mcp_config.is_some() { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
-        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused,
+        prompt: if untrusted { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
+        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
@@ -929,6 +937,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let kind = spec.kind;
     let dir = wt.path.clone();
     let (run_agent, run_config) = (agent_id.clone(), mcp_config.clone());
+    let (seen_log, seen_cli) = (log_path.clone(), cli.id.clone());
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
@@ -976,6 +985,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         if let Some(p) = &run_config {
             let _ = std::fs::remove_file(p);
         }
+        // The tools Claude Code's init line named: the agent's "seen in the last run" (agent form → Tools → Built-in tools).
+        if kind == Kind::ClaudeCode {
+            crate::mcp_servers::record_seen_tools(&st2, &run_agent, &seen_cli, &seen_log);
+        }
         if let Err(e) = worktree::empty_temp(&dir) {
             eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");
         }
@@ -991,6 +1004,26 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued, refused }, &cli_name).await
     });
     Ok((run_id, done))
+}
+
+/// The Web switches a run of `agent` on a CLI of `kind` gets, and a note for each it can't take (agent form → Tools → Web).
+pub(crate) fn web_for_run(agent: &team::Member, kind: Kind, cli_name: &str) -> (agent_cli::WebTools, Vec<String>) {
+    let t = &agent.cli_tools;
+    let (search, fetch, domains) = gizai_agents::tool_catalog::web_support(kind);
+    let mut notes = vec![];
+    // Gemini searches the web by its own policy whatever the switch says (the form shows that): no note for it.
+    let search_on = t.web_search && search.is_none();
+    if t.web_search && kind != Kind::Gemini && let Some(why) = search {
+        notes.push(format!("{} runs on {cli_name}, so this run goes without web search: {why}", agent.name));
+    }
+    // A domain list a CLI can't keep to leaves fetching out, rather than letting it fetch any page.
+    let why_not_fetch = fetch.or(if t.fetch_domains.is_empty() { None } else { domains });
+    let fetch_on = t.web_fetch && why_not_fetch.is_none();
+    if t.web_fetch && let Some(why) = why_not_fetch {
+        notes.push(format!("{} runs on {cli_name}, so this run goes without fetching pages: {why}", agent.name));
+    }
+    let web = agent_cli::WebTools { search: search_on, fetch: fetch_on, fetch_domains: if fetch_on { t.fetch_domains.clone() } else { vec![] } };
+    (web, notes)
 }
 
 /// The repository's shared git folder for a worktree (where its commits go), as an absolute path.

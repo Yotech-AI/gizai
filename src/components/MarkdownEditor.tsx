@@ -250,11 +250,13 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
 
   // The item picker: open while the cursor is in an `@…` (unless Escape closed that one), with the items asked for when it opens.
   const [pick, setPick] = useState<Pick | null>(null);
-  const [selected, setSelected] = useState(0);
+  const [chosen, setSelected] = useState(0);
   const [items, setItems] = useState<PickItem[] | null>(null);
   const [itemsError, setItemsError] = useState<string | null>(null);
   const dismissed = useRef<number | null>(null);
   const rows = useMemo(() => (pick ? pickRows(pick.query, items ?? []) : []), [pick?.query, items]);
+  // The list can get shorter under the selection (the items arrive): it stays on a row.
+  const selected = Math.min(chosen, Math.max(0, rows.length - 1));
   // A search that finds nothing closes it, so Enter and Escape do what they did: `@name` stays a plain mention.
   const open = !!pick && (rows.length > 0 || items === null || !!itemsError);
   const pk = useRef({ open, rows, selected });
@@ -336,9 +338,9 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
       }),
     });
     function move(by: number) {
-      const { open, rows } = pk.current;
+      const { open, rows, selected } = pk.current;
       if (!open) return false;
-      if (rows.length) setSelected((s) => (s + by + rows.length) % rows.length);
+      if (rows.length) setSelected((selected + by + rows.length) % rows.length);
       return true;
     }
     function choose(v: EditorView) {

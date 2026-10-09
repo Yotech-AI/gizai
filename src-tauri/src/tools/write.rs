@@ -31,6 +31,11 @@ fn keep(a: &Args, k: &str, current: &Option<String>) -> Option<String> {
     }
 }
 
+/// The argument a project's repository link is in: `repository`, or `github`, its old name.
+fn repository_arg(a: &Args) -> &'static str {
+    if a.text("repository").is_some() { "repository" } else { "github" }
+}
+
 // ---- guards: what the chat may not do, whatever it is asked ----
 
 /// The Team Lead reads text other people and agents wrote, so it can't hand an agent unlimited powers: no
@@ -178,7 +183,7 @@ pub(crate) fn create_project(cx: &Cx, a: &Args) -> Result<Value, String> {
     let client_id = match a.opt("client") { Some(c) => Some(resolve::client(cx, &c)?.id), None => None };
     let id = projects::create(cx.db(), cx.actor, ProjectInput {
         client_id, name, key, status: a.opt("status"), goal_md: a.opt("goal_md"), repo_path,
-        default_branch: a.opt("default_branch"), color: a.opt("color"), repo_url: a.opt("github"), ..Default::default()
+        default_branch: a.opt("default_branch"), color: a.opt("color"), repo_url: a.opt(repository_arg(a)), ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &id).map_err(err)?;
@@ -203,12 +208,13 @@ pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         status: a.opt("status").or(Some(cur.status.clone())), goal_md: keep(a, "goal_md", &cur.goal_md),
         repo_path, default_branch: a.opt("default_branch").or(Some(cur.default_branch.clone())),
         color: keep(a, "color", &cur.color), budget_amount_minor: cur.budget_amount_minor, budget_hours: cur.budget_hours,
-        repo_url: keep(a, "github", &cur.repo_url), ..Default::default()
+        repo_url: keep(a, repository_arg(a), &cur.repo_url), ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &cur.id).map_err(err)?;
     let label = format!("{} ({})", p.name, p.key);
-    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path, "github": p.repo_url}, "link": link("project", &p.id, &label)}))
+    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path,
+              "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref())}, "link": link("project", &p.id, &label)}))
 }
 
 // ---- tasks ----

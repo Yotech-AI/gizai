@@ -545,6 +545,22 @@ pub async fn github_login_wait(st: State<'_, AppState>) -> R<Option<String>> {
 #[tauri::command]
 pub fn github_login_cancel(st: State<AppState>) { crate::github::login_cancel(&st) }
 
+// ---- Settings → Bitbucket ----
+/// Whether Gizai can use Bitbucket: the login in the keychain (email and API token) and the account it belongs to.
+#[tauri::command]
+pub async fn bitbucket_status(st: State<'_, AppState>) -> R<crate::bitbucket::BitbucketStatus> { Ok(crate::bitbucket::status(&st).await) }
+/// Saves your Atlassian email and API token in the keychain, once Bitbucket has accepted them.
+#[tauri::command]
+pub async fn bitbucket_save_login(st: State<'_, AppState>, email: String, token: String) -> R<crate::bitbucket::BitbucketStatus> {
+    crate::bitbucket::save_login(&st, email, token).await
+}
+/// Removes the Bitbucket login from the keychain.
+#[tauri::command]
+pub async fn bitbucket_remove_login(st: State<'_, AppState>) -> R<crate::bitbucket::BitbucketStatus> { crate::bitbucket::remove_login(&st).await }
+/// Check connection: the token's account, ssh to Bitbucket, and whether you can push to each project with a Bitbucket link.
+#[tauri::command]
+pub async fn bitbucket_check(st: State<'_, AppState>) -> R<crate::github::ConnectionCheck> { Ok(crate::bitbucket::check(&st).await) }
+
 // ---- worktrees of finished cards (Settings → Data) ----
 /// The worktrees of Done and Cancelled cards, with their disk use.
 #[tauri::command]

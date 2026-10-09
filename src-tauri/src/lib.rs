@@ -1,3 +1,4 @@
+pub mod bitbucket;
 pub mod board;
 pub mod chat;
 pub mod clis;
@@ -361,6 +362,7 @@ pub fn run() {
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
+            commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
             commands::list_old_worktrees, commands::remove_old_worktrees,
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,

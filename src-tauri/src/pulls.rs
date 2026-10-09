@@ -1,7 +1,8 @@
-//! Review on GitHub. Open pull request (a card in Review) pushes the card's branch over SSH with your keys, or over
-//! HTTPS with gh's login (Settings → GitHub → Push over), and opens its pull request with your GitHub CLI (gh). The PR
-//! check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet: every
-//! two minutes, when a run moves a card to Review, and when you open such a card. A merge on GitHub moves its card to
+//! Review on GitHub or Bitbucket. Open pull request (a card in Review) pushes the card's branch and opens its pull
+//! request: on GitHub over SSH with your keys, or over HTTPS with gh's login (Settings → GitHub → Push over), with your
+//! GitHub CLI (gh); on Bitbucket over SSH with your keys, with Bitbucket's API and your login (Settings → Bitbucket).
+//! The PR check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet:
+//! every two minutes, when a run moves a card to Review, and when you open such a card. A merge moves its card to
 //! Deploy (Done for a team without a Deploy column), where nothing starts by itself, and removes its worktree. Usable
 //! without a Tauri app (tests): the UI hears about changes through `AppState::notify`.
 use std::collections::{HashMap, HashSet};
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use gizai_agents::bitbucket::{self, Login};
 use gizai_agents::connection::PushOver;
 use gizai_agents::github::{self, PullRequest};
 use gizai_agents::{AgentError, worktree};
@@ -20,11 +22,50 @@ use serde::Serialize;
 use crate::AppState;
 use crate::runs::Note;
 
-/// How often the PR check asks GitHub.
+/// How often the PR check asks GitHub and Bitbucket.
 pub const CHECK_EVERY: Duration = Duration::from_secs(120);
 
-/// The longest card text a pull request description takes (GitHub's limit is 65,536 characters).
+/// The longest card text a pull request description takes (GitHub's limit is 65,536 characters; Bitbucket takes more).
 const MAX_BODY: usize = 60_000;
+
+/// What reaches a card's pull requests: your GitHub CLI, or Bitbucket's API with your login.
+#[derive(Clone)]
+enum Via {
+    GitHub(PathBuf),
+    Bitbucket(Login),
+}
+
+impl Via {
+    /// The pull requests from the card's branch, in any state, newest first.
+    fn pulls_for_branch(&self, card: &PrCard) -> Result<Vec<PullRequest>, String> {
+        match self {
+            Via::GitHub(gh) => github::pulls_for_branch(gh, Path::new(&card.repo_path), &card.repo, &card.branch),
+            Via::Bitbucket(login) => bitbucket::pulls_for_branch(login, &card.repo, &card.branch),
+        }
+    }
+
+    /// Opens a pull request from the card's branch into the project's main branch; returns its link.
+    fn create_pull(&self, card: &PrCard, title: &str, body: &str) -> Result<String, String> {
+        match self {
+            Via::GitHub(gh) => github::create_pull(gh, Path::new(&card.repo_path), &card.repo, &card.branch, &card.default_branch, title, body),
+            Via::Bitbucket(login) => bitbucket::create_pull(login, &card.repo, &card.branch, &card.default_branch, title, body),
+        }
+    }
+}
+
+/// What reaches `card`'s pull requests: gh for a GitHub card, your Bitbucket login for a Bitbucket one.
+async fn via(st: &AppState, card: &PrCard) -> Result<Via, String> {
+    match card.provider.as_str() {
+        "bitbucket" => bitbucket_login(st).await.map(Via::Bitbucket),
+        _ => gh(st).await.map(Via::GitHub),
+    }
+}
+
+/// Your Bitbucket login from the keychain, off the async threads (the keychain may ask its service).
+async fn bitbucket_login(st: &AppState) -> Result<Login, String> {
+    let st = st.clone();
+    tokio::task::spawn_blocking(move || crate::bitbucket::login(&st)).await.map_err(|e| e.to_string())?
+}
 
 #[derive(Default)]
 pub struct PullChecks {
@@ -147,11 +188,11 @@ fn is_live(st: &AppState, task_id: &str) -> bool {
     crate::runs::live(st).iter().any(|r| r.task_id == task_id)
 }
 
-/// Open pull request, for a card in Review: pushes the card's branch to GitHub (through your remote for the project's
-/// GitHub link, else to the link itself) over SSH with your keys or over HTTPS with gh's login, as Settings → GitHub
-/// says, then opens a pull request into the project's main branch with gh, titled and described after the card. A
-/// branch that already has an open pull request (an agent opened one) keeps it, and the push adds any new commits to
-/// it. A failed push records nothing.
+/// Open pull request, for a card in Review: pushes the card's branch (through your remote for the project's link, else
+/// to the link itself), to GitHub over SSH with your keys or over HTTPS with gh's login as Settings → GitHub says, to
+/// Bitbucket over SSH with your keys; then opens a pull request into the project's main branch (with gh, or Bitbucket's
+/// API and your login), titled and described after the card. A branch that already has an open pull request (an agent
+/// opened one) keeps it, and the push adds any new commits to it. A failed push records nothing.
 pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
     let card = pulls::card(&st.db, task_id).map_err(|e| e.to_string())?;
     if card.category != "review" {
@@ -160,12 +201,16 @@ pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
     if is_live(st, task_id) {
         return Err(format!("An agent is working on {}: open the pull request when its run has ended", card.identifier));
     }
-    let gh = gh(st).await?;
+    let via = via(st, &card).await?;
     let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
     let _busy = Busy::take(st, task_id).ok_or_else(|| format!("Gizai is already busy with {}'s pull request", card.identifier))?;
     let (title, body) = (format!("{}: {}", task.identifier, task.title), body(&task));
-    let (c, over) = (card.clone(), crate::github::push_over(st, &gh));
-    let (info, created) = tokio::task::spawn_blocking(move || open_blocking(&gh, &c, &title, &body, &over)).await.map_err(|e| e.to_string())??;
+    let over = match &via {
+        Via::GitHub(gh) => crate::github::push_over(st, gh),
+        Via::Bitbucket(_) => PushOver::Bitbucket,
+    };
+    let c = card.clone();
+    let (info, created) = tokio::task::spawn_blocking(move || open_blocking(&via, &c, &title, &body, &over)).await.map_err(|e| e.to_string())??;
     // one an agent opened earlier is noted as seen by Gizai, not as opened by you
     pulls::record(&st.db, created.then_some(st.you_id.as_str()), task_id, &info.url, &info.state, created).map_err(|e| e.to_string())?;
     (st.notify)(Note::RowsChanged("tasks"));
@@ -173,7 +218,7 @@ pub async fn open(st: &AppState, task_id: &str) -> Result<PullInfo, String> {
 }
 
 /// Pushes and opens (or keeps the open pull request); returns it, and whether Gizai opened it now.
-fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str, over: &PushOver) -> Result<(PullInfo, bool), String> {
+fn open_blocking(via: &Via, card: &PrCard, title: &str, body: &str, over: &PushOver) -> Result<(PullInfo, bool), String> {
     let repo = Path::new(&card.repo_path);
     if worktree::rev_parse(repo, &format!("refs/heads/{}", card.branch)).is_err() {
         return Err(format!("{}'s branch {} isn't in {} any more", card.identifier, card.branch, card.repo_path));
@@ -181,10 +226,10 @@ fn open_blocking(gh: &Path, card: &PrCard, title: &str, body: &str, over: &PushO
     // the same place a run fetches main from
     let to = crate::git::remote_for(repo, &card.repo_url).unwrap_or_else(|| card.repo_url.clone());
     worktree::push_branch_over(repo, &to, &card.branch, over).map_err(plain)?;
-    let open = github::pulls_for_branch(gh, repo, &card.repo, &card.branch)?.into_iter().find(|p| p.state == "OPEN");
+    let open = via.pulls_for_branch(card)?.into_iter().find(|p| p.state == "OPEN");
     let (url, state, created) = match open {
         Some(p) => (p.url.clone(), p.state().to_string(), false),
-        None => (github::create_pull(gh, repo, &card.repo, &card.branch, &card.default_branch, title, body)?, "open".to_string(), true),
+        None => (via.create_pull(card, title, body)?, "open".to_string(), true),
     };
     let left_out = worktree::worktree_of(repo, &card.branch).ok().flatten()
         .and_then(|wt| worktree::uncommitted(&wt).ok())
@@ -214,17 +259,18 @@ fn body(t: &Task) -> String {
     b
 }
 
-/// Check now (the page of a card the PR check follows): asks GitHub about the card's pull request at once, so one an
-/// agent opened shows straight away and a merge moves the card. Returns the card's pull request, if it has one.
+/// Check now (the page of a card the PR check follows): asks GitHub or Bitbucket about the card's pull request at once,
+/// so one an agent opened shows straight away and a merge moves the card. Returns the card's pull request, if it has
+/// one.
 pub async fn check(st: &AppState, task_id: &str) -> Result<Option<PullInfo>, String> {
     let card = pulls::card(&st.db, task_id).map_err(|e| e.to_string())?;
     if !card.followed() || is_live(st, task_id) {
         return Ok(known(&card));
     }
-    let gh = gh(st).await?;
+    let via = via(st, &card).await?;
     let Some(_busy) = Busy::take(st, task_id) else { return Ok(known(&card)) };
     let (st2, c) = (st.clone(), card.clone());
-    let checked = tokio::task::spawn_blocking(move || check_blocking(&st2, &gh, &c)).await.map_err(|e| e.to_string())??;
+    let checked = tokio::task::spawn_blocking(move || check_blocking(&st2, &via, &c)).await.map_err(|e| e.to_string())??;
     forget_error(st, task_id);
     if checked.changed {
         (st.notify)(Note::RowsChanged("tasks"));
@@ -233,7 +279,7 @@ pub async fn check(st: &AppState, task_id: &str) -> Result<Option<PullInfo>, Str
 }
 
 /// Checks the card's pull request in the background (a run just moved the card to Review). Nothing for a card
-/// without a GitHub link or branch.
+/// without a GitHub or Bitbucket link, or without a branch.
 pub fn check_soon(st: &AppState, task_id: &str) {
     if pulls::card(&st.db, task_id).is_err() {
         return;
@@ -247,21 +293,38 @@ pub fn check_soon(st: &AppState, task_id: &str) {
 }
 
 /// One round of the PR check: every card it follows (`PrCard::followed`) that no agent is working on. Without such
-/// cards it never starts gh.
+/// cards it never starts gh or asks Bitbucket. gh is found only for GitHub cards and the Bitbucket login read only for
+/// Bitbucket ones, once a round; without it, that side's cards wait for the next round (the log says why, once).
 pub async fn check_all(st: &AppState) -> Vec<Checked> {
     let cards: Vec<PrCard> = pulls::to_check(&st.db).unwrap_or_default().into_iter().filter(|c| !is_live(st, &c.task_id)).collect();
     if cards.is_empty() {
         return vec![];
     }
-    let gh = match gh(st).await {
-        Ok(g) => { forget_error(st, ""); g }
-        Err(e) => { log_once(st, "", &format!("the pull request check can't run: {e}")); return vec![]; }
-    };
+    // per provider: what reaches its pull requests this round (None: nothing does)
+    let mut reach: HashMap<String, Option<Via>> = HashMap::new();
     let mut out = vec![];
     for card in cards {
+        let via = match reach.get(&card.provider) {
+            Some(via) => via.clone(),
+            None => {
+                let via = match card.provider.as_str() {
+                    "bitbucket" => match bitbucket_login(st).await {
+                        Ok(login) => { forget_error(st, "bitbucket"); Some(Via::Bitbucket(login)) }
+                        Err(e) => { log_once(st, "bitbucket", &format!("the pull request check can't follow Bitbucket's pull requests: {e}")); None }
+                    },
+                    _ => match gh(st).await {
+                        Ok(g) => { forget_error(st, ""); Some(Via::GitHub(g)) }
+                        Err(e) => { log_once(st, "", &format!("the pull request check can't run: {e}")); None }
+                    },
+                };
+                reach.insert(card.provider.clone(), via.clone());
+                via
+            }
+        };
+        let Some(via) = via else { continue };
         let Some(_busy) = Busy::take(st, &card.task_id) else { continue };
-        let (st2, gh2, c) = (st.clone(), gh.clone(), card.clone());
-        match tokio::task::spawn_blocking(move || check_blocking(&st2, &gh2, &c)).await {
+        let (st2, c) = (st.clone(), card.clone());
+        match tokio::task::spawn_blocking(move || check_blocking(&st2, &via, &c)).await {
             Ok(Ok(checked)) => {
                 forget_error(st, &card.task_id);
                 if checked.changed {
@@ -281,14 +344,13 @@ pub async fn check_all(st: &AppState) -> Vec<Checked> {
     out
 }
 
-/// Asks GitHub for the card's pull requests and brings the card up to date with the one to show (an open one first,
-/// else the one Gizai follows, else the newest). A merge moves a Review card to Review's next column (`pulls::merged`) and
-/// cleans up, once: when Gizai
-/// followed that pull request, or when it has the branch's latest commit (so a card reopened after an earlier merge
-/// stays where it is).
-fn check_blocking(st: &AppState, gh: &Path, card: &PrCard) -> Result<Checked, String> {
+/// Asks GitHub or Bitbucket for the card's pull requests and brings the card up to date with the one to show (an open
+/// one first, else the one Gizai follows, else the newest). A merge moves a Review card to Review's next column
+/// (`pulls::merged`) and cleans up, once: when Gizai followed that pull request, or when it has the branch's latest
+/// commit (so a card reopened after an earlier merge stays where it is).
+fn check_blocking(st: &AppState, via: &Via, card: &PrCard) -> Result<Checked, String> {
     let repo = Path::new(&card.repo_path);
-    let prs = github::pulls_for_branch(gh, repo, &card.repo, &card.branch)?;
+    let prs = via.pulls_for_branch(card)?;
     let followed = card.pr_url.as_deref().and_then(|u| prs.iter().find(|p| p.url == u));
     let mut out = Checked { task_id: card.task_id.clone(), pull: known(card), moved_to: None, changed: false };
     let Some(pr) = prs.iter().find(|p| p.state == "OPEN").or(followed).or(prs.first()) else { return Ok(out) };

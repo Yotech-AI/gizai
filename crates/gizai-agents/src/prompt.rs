@@ -13,7 +13,8 @@ pub struct TaskContext {
     pub qa_issues: Vec<String>,
     /// Where Gizai will stop the run; told to the agent so it saves its work in time.
     pub limits: Option<RunLimits>,
-    /// The project's main branch fetched for this run (from GitHub), when it has a link.
+    /// The project's main branch fetched for this run (from GitHub, Bitbucket or another git URL: see `build_from`), when
+    /// it has a link.
     pub base: Option<BaseInfo>,
     /// The project's goal (Markdown), read with every task.
     pub project_goal_md: String,
@@ -49,7 +50,14 @@ fn strip_list_marker(s: &str) -> &str {
 }
 
 
+/// The prompt for a run of a project on GitHub (`build_from` names where its main branch came from).
 pub fn build(task: &TaskContext, role_instructions: &str) -> String {
+    build_from(task, role_instructions, "GitHub")
+}
+
+/// The prompt for a run, its main branch (`TaskContext::base`) just fetched from `fetched_from`: "GitHub", "Bitbucket",
+/// or "the project's repository" for another git URL.
+pub fn build_from(task: &TaskContext, role_instructions: &str, fetched_from: &str) -> String {
     let mut p = String::new();
     p.push_str(role_instructions.trim_end());
     p.push_str(&format!("\n\n# Task {}: {}\n\n", task.identifier, task.title));
@@ -75,7 +83,7 @@ pub fn build(task: &TaskContext, role_instructions: &str) -> String {
         }
     }
     if let Some(b) = &task.base {
-        p.push_str(&format!("\n\n## Your branch\n\nThe main branch is {}, just fetched from GitHub.", b.from));
+        p.push_str(&format!("\n\n## Your branch\n\nThe main branch is {}, just fetched from {fetched_from}.", b.from));
         if b.behind > 0 {
             p.push_str(&format!(" It has {} commits your branch doesn't have yet. Merge {} into your branch before you finish, and resolve \
 any conflicts.", b.behind, b.from));

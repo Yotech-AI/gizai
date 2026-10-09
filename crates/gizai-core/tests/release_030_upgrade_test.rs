@@ -3,6 +3,7 @@
 //! agents) and GA-50's 0012 (a chat's Runs on and its queue) run together here. ga49_migration_test covers the board on
 //! the same path; this covers the chats and the runs. The database is built by running migrations 0001..0009 only (not
 //! by rolling 0010..0012 back), filled with v0.2.0-style rows using raw SQL, then opened with `Db::open` like the app does.
+//! Since GA-59 the same step also runs 0013 (Bitbucket links), so it ends at schema 13.
 use gizai_core::chat;
 use gizai_core::db::{self, Db};
 use gizai_core::model::Refusal;
@@ -105,12 +106,12 @@ fn a_v020_database_with_chats_upgrades_to_schema_12_in_one_step() {
     let f = v9_db();
     let db = Db::open(&f.path).unwrap();
     let (v, broken) = db.read(|c| Ok((version(c), broken_keys(c)))).unwrap();
-    assert_eq!((v, broken), (db::SCHEMA_VERSION, 0), "schema 12, foreign keys intact");
-    assert_eq!(db::SCHEMA_VERSION, 12, "v0.3.0 ships schema 12; a new migration needs its own release check");
+    assert_eq!((v, broken), (db::SCHEMA_VERSION, 0), "the current schema, foreign keys intact");
+    assert_eq!(db::SCHEMA_VERSION, 13, "v0.3.0 ships schema 12 and GA-59 adds 0013; a new migration needs its own release check");
 
     let names = backup_names(&f.backups);
     assert_eq!(names.len(), 1, "{names:?}");
-    assert!(names[0].starts_with("gizai-before-v12-") && names[0].ends_with(".db"), "{names:?}");
+    assert!(names[0].starts_with("gizai-before-v13-") && names[0].ends_with(".db"), "{names:?}");
     let old = Connection::open(f.backups.join(&names[0])).unwrap();
     let (old_v, old_threads, old_messages): (i64, i64, i64) = (version(&old),
         old.query_row("SELECT count(*) FROM chat_threads", [], |r| r.get(0)).unwrap(),

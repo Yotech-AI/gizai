@@ -85,7 +85,8 @@ pub struct Project {
     pub color: Option<String>,
     pub goal_md: Option<String>,
     pub repo_path: Option<String>,
-    /// The repository on GitHub (https://github.com/owner/name) or another git URL; new cards start from its branch.
+    /// The repository on GitHub (https://github.com/owner/name), on Bitbucket (https://bitbucket.org/workspace/repository)
+    /// or another git URL; new cards start from its branch.
     pub repo_url: Option<String>,
     pub default_branch: String,
     pub team_id: Option<String>,

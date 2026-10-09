@@ -11,7 +11,8 @@ You need:
 - Linux with WebKitGTK 4.1;
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once). Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs); the Team Lead chat needs Claude Code;
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
-- optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in.
+- optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in;
+- or, for a project on Bitbucket Cloud, an SSH key on your Bitbucket account and an API token with the scopes `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket` (Atlassian account → Security → API tokens), saved with your Atlassian email in Settings → Bitbucket. Gizai keeps them in your keychain.
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -49,12 +50,13 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Agents for each role (frontend, backend, design, QA, DevOps), with their own model, effort and allowed commands
 - Folders per agent besides its worktree, each set to read or read and change (agent form → Permissions). They limit the agent's file tools, not the commands it runs; `/`, your home folder, Gizai's data and folders with keys are refused
 - Each agent runs on the coding CLI you pick: Claude Code, Codex, Gemini, any other CLI (its output is read as text), or a second account of one with its own environment (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Settings → Coding CLIs adds them, or finds the ones installed
-- A git worktree and branch for every card, started from main on GitHub when the project is linked
+- A git worktree and branch for every card, started from main on GitHub or Bitbucket when the project is linked
 - Worktrees that start warm: per project, paths copied from your checkout (`cp --reflink=auto`), missing dependencies installed (`composer install`, `npm ci`) and a setup command; a new card takes over a finished card's worktree, and Settings → Data removes old ones
 - A card flow: Backlog → To do → In progress → Testing → Review → Deploy → Done, set up on the Team page (Team → Workflow). Each column holds the agents that work its cards, is Auto (its agents pick up its cards by priority as they have room) or Manual (only Run starts one), and links to the column its cards go to next. Add your own columns (a Design column with a design agent, linked to Review), drag them into any order, or remove one
 - The column decides, labels don't: starting a card in To do moves it to To do's next column, and an agent's done answer moves it on (In progress → Testing → your Review). A card assigned to an agent is started only by that agent; a failed test sends a card back to the column it came from, to its builder. A card with Testing off skips Testing columns, and a DevOps run never sends a card to QA
 - Labels are tags for people, such as Must have and Could have: create, rename, recolour and remove them on the Team page
 - Review on GitHub: Open pull request pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh; a merge on GitHub moves the card to Review's next column (Deploy; Done for a team without a Deploy column) and removes its worktree
+- Review on Bitbucket Cloud works the same way: the push goes over SSH with your keys, the pull request through Bitbucket's API with your email and API token; declined and superseded pull requests show as closed
 - Archive a card in Done: it leaves the board and every list, and keeps its ID, comments, runs and branch. The bin on the Tasks page lists archived cards, and Restore puts one back in Done
 - Deploy: Manual by default, so no agent starts there by itself. Press Run for the agent on the column (its `deployed` moves the card to Deploy's next column, Done), or deploy it yourself and drag the card to Done
 - Settings → GitHub: whether gh is found and logged in, how pushes go, Check connection for every linked project, and Log in with GitHub; Gizai never stores a token or password

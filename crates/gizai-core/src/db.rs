@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -31,7 +31,24 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0010_run_refusals.sql")),
         M::up(include_str!("../migrations/0011_column_agents.sql")),
         M::up(include_str!("../migrations/0012_chat_runs_on.sql")),
+        M::up_with_hook(include_str!("../migrations/0013_bitbucket.sql"), bitbucket_links),
     ])
+}
+
+/// 0013: a Bitbucket link saved before Gizai knew Bitbucket (as a plain git URL, perhaps a page link git can't fetch
+/// from) gets its tidy form and provider, as saving it now would give it. Other links stay as they are.
+fn bitbucket_links(tx: &Transaction) -> rusqlite_migration::HookResult {
+    let rows: Vec<(String, String)> = {
+        let mut st = tx.prepare("SELECT id, remote_url FROM repos WHERE provider = 'git' AND remote_url LIKE '%bitbucket.org%'")?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+    };
+    for (id, url) in rows {
+        if let Ok(Some(link)) = crate::repo_url::normalize(&url) && link.provider == "bitbucket" {
+            tx.execute("UPDATE repos SET remote_url=?2, provider='bitbucket', owner=?3, name=?4 WHERE id=?1",
+                       rusqlite::params![id, link.url, link.owner, link.name])?;
+        }
+    }
+    Ok(())
 }
 
 /// Snapshots kept per folder; older ones are removed.

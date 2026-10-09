@@ -522,6 +522,15 @@ fn hold_card(st: &AppState, actor: &str, task_id: &str, reason: &str) {
     }
 }
 
+/// Where the project's main branch is fetched from, as the run prompt says it: "GitHub", "Bitbucket", or "the project's
+/// repository" for another git URL.
+fn fetched_from(project: &Project) -> &'static str {
+    project.repo_url.as_deref()
+        .and_then(|u| gizai_core::repo_url::normalize(u).ok().flatten())
+        .and_then(|l| gizai_core::repo_url::provider_name(&l.provider))
+        .unwrap_or("the project's repository")
+}
+
 /// The card's worktree: its own when it has one; else a finished card's worktree of the same project, taken over so
 /// its build stays warm (`worktree::reuse`, see `worktrees::reusable`); else a new one. A new or taken-over worktree is
 /// noted as still to prepare.
@@ -643,8 +652,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| StartError::Card(e.to_string()))?;
     let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
         .ok_or_else(|| StartError::Card(format!("Link a git repository to {} first (project page → Edit)", project.name)))?;
-    // With a GitHub link, a card starts from the main branch just fetched from GitHub, and a card that already has
-    // a branch hears how far that main has moved on.
+    // With a link (GitHub, Bitbucket or another git URL), a card starts from the main branch just fetched from it, and
+    // a card that already has a branch hears how far that main has moved on.
     let start = {
         let (p, dir) = (project.clone(), PathBuf::from(&repo));
         tokio::task::spawn_blocking(move || crate::git::start_point(&p, &dir, Some(crate::git::START_FETCH_LIMIT)))
@@ -759,7 +768,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
         Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
         Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
-        None => prompt::build(&ctx, &instructions),
+        None => prompt::build_from(&ctx, &instructions, fetched_from(&project)),
     }, &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),

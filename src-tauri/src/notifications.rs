@@ -176,8 +176,11 @@ pub fn inbox(db: &Db, you_id: &str) -> Result<Vec<Item>, String> {
         });
     }
     for c in chat::waiting_lead_chats(db).map_err(|e| e.to_string())? {
-        let what = if c.kind.as_deref() == Some("approval") { "Approval" } else { "Question" };
-        let body = if c.tasks.is_empty() { what.to_string() } else { format!("{what} about {}", c.tasks.join(", ")) };
+        let what = if c.kind.as_deref() == Some("approval") { "Approval for" } else { "Question about" };
+        let body = match c.tasks.is_empty() {
+            true => what.split(' ').next().unwrap_or_default().to_string(),
+            false => format!("{what} {}", c.tasks.join(", ")),
+        };
         items.push(Item {
             key: format!("chat:{}", c.id),
             notice: Notice { kind: Kind::LeadAsks, title: format!("The Team Lead asks: {}", c.title), body, route: format!("#/chat/{}", c.id) },
@@ -308,6 +311,7 @@ fn window_away(app: &AppHandle) -> bool {
 }
 
 /// A click on a notification: the window shows, on the card or the chat.
+#[cfg(all(unix, not(target_os = "macos")))]
 fn open(app: &AppHandle, route: &str) {
     crate::show_main(app);
     if let (Some(w), Ok(hash)) = (app.get_webview_window("main"), serde_json::to_string(route)) {

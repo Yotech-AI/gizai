@@ -25,11 +25,11 @@ export function cardAgents(teams: Team[]): CardAgent[] {
 export function runsAtOnceWarning(runsAtOnce: number, agents: CardAgent[]): string | null {
   const total = agents.reduce((n, a) => n + a.cardsAtOnce, 0);
   if (!Number.isInteger(runsAtOnce) || runsAtOnce < 1 || runsAtOnce >= total) return null;
-  const each = agents.map((a) => `${a.name} ${a.cardsAtOnce}`).join(", ");
+  const each = agents.map((a) => `${a.cardsAtOnce} for ${a.name}`).join(", ");
   const fix = total <= 20
     ? `Set Runs at once to ${total}, or lower an agent's Cards at once on the Team page.`
     : "Runs at once goes up to 20, so lower some agents' Cards at once on the Team page.";
-  return `Your active agents can work on ${total} cards at once together (${each}), but only ${runsAtOnce} may run at once, so some of them can't use all their slots. ${fix}`;
+  return `Your active agents can work on ${total} cards at once together (${each}), but Runs at once is ${runsAtOnce}, so some of them can't use all their slots. ${fix}`;
 }
 
 /** The warning by Quit Gizai completely: what stops, and how many runs and chat answers it stops when some are at work. */

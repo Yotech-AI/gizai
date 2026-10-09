@@ -130,7 +130,7 @@ export default function App() {
         <Sidebar youId={info?.you_id ?? ""} dataLabel={info?.data_label} dataDir={info?.data_dir} route={route} onSearch={() => setPalette(true)} onNewTask={() => newTask()} />
         <main className="main">
           {error && <div className="error-banner">{error}</div>}
-          {route.page === "chat" ? <ChatPage id={route.id} />
+          {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
             : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
             : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
             : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} />

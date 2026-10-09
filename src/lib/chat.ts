@@ -97,6 +97,65 @@ export function withSnapshot(snap: LiveDraft, heard: DraftChange[]): LiveDraft {
   return heard.filter((c) => c.seq > snap.seq).sort((a, b) => a.seq - b.seq).reduce(applyDraft, snap);
 }
 
+/** Chat → Recent shows this many chats, the newest activity first; the Archive (#/chats) lists them all. */
+export const RECENT_MAX = 30;
+
+/** Runs of spaces and line breaks as one space, trimmed. */
+const oneLine = (s: string) => s.split(/\s+/).filter(Boolean).join(" ");
+
+/** The Archive's search as a pattern: the words as typed, case ignored, every character literal. Null for an empty one. */
+function searchPattern(query: string, flags: string): RegExp | null {
+  const q = oneLine(query);
+  return q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags) : null;
+}
+
+/** Markdown without its marks, for a line of preview: links and images keep their text; heading, quote and list marks, bold
+ *  and code marks go. */
+function plain(md: string): string {
+  return md.replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, "$1").replace(/^[ \t]*(?:#{1,6}|>|[-*+]|\d+[.)])[ \t]+/gm, "").replace(/\*\*|__|`/g, "");
+}
+
+/** A search result's piece of a message: one line of at most about `max` characters around the first match of `query`, cut
+ *  on words, with … where text was left out, and without Markdown's marks unless the match is in them (a link's address).
+ *  Without a match, the message's start. */
+export function snippet(body: string, query: string, max = 140): string {
+  const re = searchPattern(query, "i");
+  const bare = oneLine(plain(body));
+  const text = !re || re.test(bare) || !re.test(oneLine(body)) ? bare : oneLine(body);
+  if (text.length <= max) return text;
+  const m = re?.exec(text);
+  const at = m?.index ?? 0;
+  const end = at + (m?.[0].length ?? 0);
+  // A third of the room before the match, so it reads in context; near the end, more of what comes before.
+  let from = Math.max(0, Math.min(at - Math.floor(Math.max(0, max - (end - at)) / 3), text.length - max));
+  let to = from + max;
+  const space = text.indexOf(" ", from);
+  if (from > 0 && space >= 0 && space < at) from = space + 1;
+  const last = text.lastIndexOf(" ", to);
+  if (to < text.length && last >= end) to = last;
+  return `${from > 0 ? "…" : ""}${text.slice(from, to)}${to < text.length ? "…" : ""}`;
+}
+
+/** `text` in parts, the matches of `query` (case ignored) marked, to highlight them. */
+export function highlight(text: string, query: string): { text: string; hit: boolean }[] {
+  const re = searchPattern(query, "gi");
+  const parts: { text: string; hit: boolean }[] = [];
+  let at = 0;
+  for (const m of re ? text.matchAll(re) : []) {
+    const i = m.index ?? 0;
+    if (i > at) parts.push({ text: text.slice(at, i), hit: false });
+    parts.push({ text: m[0], hit: true });
+    at = i + m[0].length;
+  }
+  if (at < text.length || parts.length === 0) parts.push({ text: text.slice(at), hit: false });
+  return parts;
+}
+
+/** Who wrote a message the Archive found: you, or the Team Lead (by its name). */
+export function hitAuthor(m: Pick<ChatMessage, "role" | "authorName">): string {
+  return m.role === "user" ? "You" : m.authorName || "Team Lead";
+}
+
 /** The coding CLI a chat runs on: its own pick while that is still in Settings, else the Team Lead's Runs on. */
 export function chatRunsOn(chatCli: string | null | undefined, leadCli: string | null | undefined, clis: { id: string }[] | null): string {
   if (chatCli && (!clis || clis.some((c) => c.id === chatCli))) return chatCli;

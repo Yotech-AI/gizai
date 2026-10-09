@@ -240,7 +240,10 @@ a.member:hover { border-color: var(--line-2); }
 
 /* chat page layout */
 .chat { display: grid; grid-template-columns: 260px minmax(0, 1fr); flex: 1; min-height: 0; }
-.chat-threads { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; overflow: auto; border-right: 1px solid var(--line); background: var(--side); }
+.chat-threads { display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-right: 1px solid var(--line); background: var(--side); }
+/* Recent scrolls; Archive stays at the bottom of the column, under it */
+.chat-threads-list { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; padding: 10px 8px; overflow: auto; }
+.chat-threads-foot { flex: none; padding: 6px 8px; border-top: 1px solid var(--line); }
 .chat-threads .nav-label { margin-top: 8px; }
 .chat-threads .th { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-radius: var(--radius); color: var(--text-2); text-decoration: none; }
 .chat-threads .th:hover { background: var(--hover); color: var(--text); }
@@ -260,6 +263,21 @@ a.member:hover { border-color: var(--line-2); }
 .chat-composer { border-top: 1px solid var(--line); background: var(--bg); }
 .chat-composer .chat-col { padding-top: 12px; padding-bottom: 14px; }
 @media (max-width: 1100px) { .chat { grid-template-columns: 220px minmax(0, 1fr); } }
+/* Chat → Archive (#/chats): the search on top, every chat under it; a row's snippet shows where the search matched */
+.archive-head { border-bottom: 1px solid var(--line); background: var(--bg); }
+.archive-head .chat-col { padding-top: 14px; padding-bottom: 14px; }
+.archive-search { width: 100%; }
+.archive-list { display: flex; flex-direction: column; gap: 2px; }
+.archive-row { display: flex; flex-direction: column; gap: 4px; padding: 9px 12px; border-radius: var(--radius); color: var(--text); text-decoration: none; }
+.archive-row:hover, .archive-row:focus-visible { background: var(--hover); }
+.archive-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.archive-row .top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.archive-row .top .badge { flex: none; }
+.archive-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.archive-row .when { flex: none; color: var(--text-3); font-size: var(--fs-sm); }
+.archive-row .snippet { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
+.archive-row .snippet .who { color: var(--text); font-weight: 600; }
+.archive-row mark { border-radius: 3px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .org-panel { padding: 6px 0; background: var(--bg); }
 /* Branch names with × (shown on hover or focus; off while the branch has agents), Add branch, a dragged agent card. */
 .org-dept-name { display: inline-flex; align-items: center; gap: 2px; }

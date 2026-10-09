@@ -180,6 +180,10 @@ pub struct Task {
     /// Archived from Done (a soft delete): when, and the name of who archived it. None for a card on the board.
     pub archived_at: Option<i64>,
     pub archived_by: Option<String>,
+    /// "Run this for me" (GA-31): while the card is on hold, the commands its latest run asks you to run for the agent
+    /// (`Run::run_for_me`); Done, continue resumes that run. Empty otherwise.
+    #[serde(default)]
+    pub run_for_me: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -361,10 +365,14 @@ pub struct Run {
     pub head_sha: Option<String>,
     /// The tool calls its CLI refused because they needed an approval nobody could give (Claude Code reports them).
     pub refused: Vec<Refusal>,
-    /// Gizai's own nudge: it continued, by itself, a run that ended without a result (trigger `nudge`). A person's
-    /// Continue is a `nudge` too, but not nudged.
+    /// Gizai's own nudge: it continued, by itself, a run that ended without a result (trigger `result_nudge` since GA-31;
+    /// before, `nudge` like a Continue). A person's or the Team Lead's Continue is a `nudge`, and not nudged.
     #[serde(default)]
     pub nudged: bool,
+    /// "Run this for me" (GA-31): the commands its `needs_decision` result asks the user to run for it, exactly as the agent
+    /// wrote them (`run_for_me` on its result line); empty for any other run.
+    #[serde(default)]
+    pub run_for_me: Vec<String>,
 }
 
 /// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI

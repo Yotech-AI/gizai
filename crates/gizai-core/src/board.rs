@@ -43,7 +43,8 @@ pub struct LastRun {
     pub id: String,
     pub agent: String,
     pub status: String,
-    /// What started it: `nudge` is a Continue.
+    /// What started it: `nudge` is a Continue (a person's or the Team Lead's), `result_nudge` Gizai's own nudge after a
+    /// run ended without its result line.
     pub trigger: String,
     pub outcome: Option<String>,
     pub error: Option<String>,
@@ -77,6 +78,10 @@ pub struct Finding {
     pub last_run: Option<LastRun>,
     /// The card's last change not made by the Team Lead (`changes.seq`).
     pub stamp: i64,
+    /// Held: the commands its last run asks the user to run ("Run this for me", GA-31; `Task::run_for_me`). The user
+    /// runs them and presses Done, continue in the Inbox.
+    #[serde(default)]
+    pub run_for_me: Vec<String>,
 }
 
 impl Finding {
@@ -118,6 +123,7 @@ struct Card {
     hold_reason: Option<String>,
     hold_at: i64,
     created_at: i64,
+    run_for_me: Vec<String>,
 }
 
 fn usd(micros: i64) -> String {
@@ -163,14 +169,16 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
         let runs_full = cx.max_concurrent > 0 && all >= cx.max_concurrent;
 
         let mut st = c.prepare(
-            "SELECT t.id, t.identifier, t.title, s.name, s.category, t.hold, t.hold_reason, COALESCE(t.hold_at, t.updated_at), t.created_at
+            "SELECT t.id, t.identifier, t.title, s.name, s.category, t.hold, t.hold_reason, COALESCE(t.hold_at, t.updated_at), t.created_at,
+                    CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
+                      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
              FROM tasks t JOIN workflow_states s ON s.id = t.state_id LEFT JOIN projects p ON p.id = t.project_id
              WHERE t.deleted_at IS NULL AND s.category IN ('ready','in_progress','testing')
                AND (p.id IS NULL OR (p.deleted_at IS NULL AND p.status NOT IN ('archived','done','paused')))
              ORDER BY s.sort_key, t.sort_key, t.created_at")?;
         let cards = st.query_map([], |r| Ok(Card {
             id: r.get(0)?, identifier: r.get(1)?, title: r.get(2)?, column: r.get(3)?, category: r.get(4)?, hold: r.get(5)?,
-            hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?,
+            hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?),
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut out = vec![];
@@ -186,7 +194,7 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                 kind: kind.into(), code: code.into(), task_id: card.id.clone(), task: card.identifier.clone(), title: card.title.clone(),
                 column: card.column.clone(), since, agent_id: agent.as_ref().map(|a| a.0.clone()), agent: agent.map(|a| a.1), reason,
                 hold: card.hold.clone(), hold_reason: card.hold_reason.clone(), answer: None,
-                last_run: last.as_ref().map(|(r, _)| r.clone()), stamp,
+                last_run: last.as_ref().map(|(r, _)| r.clone()), stamp, run_for_me: card.run_for_me.clone(),
             };
             let last_agent = last.as_ref().map(|(r, a)| (a.clone(), r.agent.clone()));
 

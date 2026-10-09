@@ -466,14 +466,20 @@ pub(crate) async fn start_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
 }
 
 /// Continue on the card's latest run, like the Continue button (`runs::continue_run`); a run that ended asking for a
-/// decision continues too, with what was written on the card since (`runs::continue_answered`).
+/// decision continues too, with what was written on the card since (`runs::continue_answered`). A `note` goes to the
+/// agent with it and on the card as the Team Lead's comment (`runs::continue_answered_with_note`, GA-31).
 pub(crate) async fn continue_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let last = gizai_core::runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().next()
         .ok_or_else(|| format!("{} has no run to continue: start_agent_run starts one", t.identifier))?;
     check_free_slot(cx, Some(&last.agent_id))?;
-    let (run_id, _done) = crate::runs::continue_answered(cx.st, &last.id).await?;
+    let note = a.opt("note").filter(|n| !n.trim().is_empty());
+    let noted = note.is_some();
+    let (run_id, _done) = crate::runs::continue_answered_with_note(cx.st, &last.id, cx.actor, note).await?;
     cx.changed("tasks");
+    if noted {
+        cx.changed("comments");
+    }
     let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
     Ok(json!({"ok": true, "done": "continued", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
               "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))

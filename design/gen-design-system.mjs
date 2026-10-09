@@ -1,5 +1,7 @@
-// Builds the Gizai design system files under ./project from tokens.json, the hand-written README.md and
-// components/bundle.css, Lucide's own icon data (lucide-react 0.577, ISC) and the app's font files.
+// Builds the Gizai design system files under ./project from tokens.json, the hand-written README.md, the app's
+// src/styles/components.css (as components/bundle.css), Lucide's own icon data (lucide-react 0.577, ISC) and the app's font
+// files. Settings → Appearance's font choices and text sizes come from src/lib/appearance.ts and appearance.css.
+// usage: node design/gen-design-system.mjs
 import fs from "node:fs";
 import path from "node:path";
 
@@ -13,7 +15,8 @@ const ICONS = ["square-pen", "inbox", "list-todo", "building-2", "folder-kanban"
   "terminal", "crown", "monitor", "server", "flask-conical", "bot", "chevron-down", "chevron-right", "external-link", "ellipsis",
   "heading", "bold", "italic", "text-quote", "code", "link", "list-ordered", "list-checks", "minus", "table", "copy", "clock", "tag",
   "user", "message-square", "activity", "upload", "sun", "moon", "check", "trash-2", "pencil", "circle-alert", "layout-dashboard",
-  "messages-square", "palette", "container", "arrow-up", "info"];
+  "messages-square", "palette", "container", "arrow-up", "info", "chart-column", "step-forward", "bell", "plug", "sliders-horizontal",
+  "git-pull-request", "mail"];
 
 const nodes = {};
 for (const name of ICONS) {
@@ -86,29 +89,33 @@ Use icon segments with an \`aria-label\` (and \`aria-pressed\`) for views, short
 
 C.Sidebar = {
   group: "Navigation", height: 700,
-  readme: `The sidebar is the app's spine: the organisation, quick actions, work areas, projects, the team's agents and company pages.
+  readme: `The sidebar is the app's spine: quick actions, work areas, projects and the team's agents, with the company pages at its foot. There is no rail and no organisation tile: the sidebar is the left edge of the window.
 
-- The organisation tile lives in the rail to its left (initials on \`accent\`, a "+" below for more later).
-- Order: New task (N), Search (Ctrl K), Inbox with a \`needs\` count; WORK (Chat, Tasks, Clients, Projects; Chat shows a teal "working" tag while the Team Lead answers); PROJECTS with colour dots and a "+"; AGENTS of the current team with a role icon and a teal "1 live" tag while working; COMPANY (Team, Users, Settings).
-- Section labels use \`t-nav-label\` in capitals and \`text-3\`; items are 32px with a 16px icon in \`text-3\` that brightens on hover.
+- Order: New task (N), Search (Ctrl K), Inbox with a \`needs\` count; WORK (Chat, Tasks, Clients, Projects; Chat shows a teal "working" tag while the Team Lead answers); PROJECTS with colour dots and a "+"; AGENTS of the team with a role icon, a teal "1 live" tag while working or a faint "paused".
+- The foot stays in place while the rest scrolls: the update notice when a newer Gizai is out, COMPANY (Usage, Team, Users, Settings), and a dashed "Test data" tag when Gizai runs on a data folder of its own.
+- Section labels use \`t-nav-label\` in capitals and \`text-3\`; items are 32px with a 16px icon in \`text-3\` that brightens on hover. Items grow with the Interface size (Settings → Appearance), labels and icons don't.
 - The current page gets \`selected\`; nothing else is highlighted.
-- Background \`side\`, dimmer than the canvas, with a \`line\` border on the right.
+- Background \`side\`, dimmer than the canvas, with a \`line\` border on the right; \`size-side\` wide, a little wider at larger Interface sizes.
 
 The consumer supplies the route, the counts and the lists of projects and agents.`,
-  preview: `<div style="display:flex;height:668px"><nav style="width:56px;flex:none;display:flex;flex-direction:column;align-items:center;padding:12px 0;background:var(--rail);border-right:1px solid var(--line)"><span class="org-tile" style="width:36px;height:36px;border-radius:var(--radius-l)">GZ</span></nav><aside class="side" style="height:auto">
-<a class="nav-item">${ic("square-pen")}New task<span class="meta"><span class="kbd">N</span></span></a>
-<a class="nav-item">${ic("search")}Search<span class="meta"><span class="kbd">Ctrl K</span></span></a>
-<a class="nav-item">${ic("inbox")}Inbox<span class="meta"><span class="count alert">2</span></span></a>
+  preview: `<div style="display:flex;height:668px"><aside class="side" style="height:auto">
+<div class="side-main">
+<a class="nav-item">${ic("square-pen")}<span>New task</span><span class="meta"><span class="kbd">N</span></span></a>
+<a class="nav-item">${ic("search")}<span>Search</span><span class="meta"><span class="kbd">Ctrl K</span></span></a>
+<a class="nav-item">${ic("inbox")}<span>Inbox</span><span class="meta"><span class="count alert">2</span></span></a>
 <div class="nav-section"><div class="nav-label">Work</div>
-<a class="nav-item">${ic("messages-square")}Chat<span class="meta"><span class="live-tag"><span class="pulse"></span>working</span></span></a>
-<a class="nav-item on" aria-current="page">${ic("list-todo")}Tasks</a><a class="nav-item">${ic("building-2")}Clients</a><a class="nav-item">${ic("folder-kanban")}Projects</a></div>
+<a class="nav-item">${ic("messages-square")}<span>Chat</span><span class="meta"><span class="live-tag"><span class="pulse"></span>working</span></span></a>
+<a class="nav-item on" aria-current="page">${ic("list-todo")}<span>Tasks</span></a><a class="nav-item">${ic("building-2")}<span>Clients</span></a><a class="nav-item">${ic("folder-kanban")}<span>Projects</span></a></div>
 <div class="nav-section"><div class="nav-label">Projects<button aria-label="New project">${ic("plus", "icon sm")}</button></div>
-<a class="nav-item"><span class="dot" style="background:var(--c-yellow)"></span>Kade portal</a><a class="nav-item"><span class="dot" style="background:var(--c-teal)"></span>Groene Fiets webshop</a></div>
+<a class="nav-item"><span class="dot" style="background:var(--c-yellow)"></span><span>Kade portal</span></a><a class="nav-item"><span class="dot" style="background:var(--c-teal)"></span><span>Groene Fiets webshop</span></a></div>
 <div class="nav-section"><div class="nav-label">Agents<button aria-label="Add agent">${ic("plus", "icon sm")}</button></div>
-<a class="nav-item">${ic("server")}Backend Agent<span class="meta"><span class="live-tag"><span class="pulse"></span>1 live</span></span></a>
-<a class="nav-item">${ic("monitor")}Frontend Agent</a><a class="nav-item">${ic("flask-conical")}QA Agent</a><a class="nav-item">${ic("crown")}Team Lead</a></div>
-<div class="nav-section"><div class="nav-label">Company</div>
-<a class="nav-item">${ic("network")}Team</a><a class="nav-item">${ic("users")}Users</a><a class="nav-item">${ic("settings")}Settings</a></div>
+<a class="nav-item">${ic("server")}<span>Backend Agent</span><span class="meta"><span class="live-tag"><span class="pulse"></span>1 live</span></span></a>
+<a class="nav-item">${ic("monitor")}<span>Frontend Agent</span></a><a class="nav-item">${ic("flask-conical")}<span>QA Agent</span></a>
+<a class="nav-item">${ic("crown")}<span>Team Lead</span><span class="meta"><span class="faint">paused</span></span></a></div>
+</div>
+<div class="side-foot"><div class="nav-section"><div class="nav-label">Company</div>
+<a class="nav-item">${ic("chart-column")}<span>Usage</span></a><a class="nav-item">${ic("network")}<span>Team</span></a><a class="nav-item">${ic("users")}<span>Users</span></a><a class="nav-item">${ic("settings")}<span>Settings</span></a></div>
+<div class="data-tag">${ic("flask-conical", "icon sm")}Test data: demo</div></div>
 </aside><div style="flex:1;background:var(--bg)"></div></div>`,
 };
 
@@ -130,11 +137,79 @@ The consumer supplies the crumbs, the actions and the view state.`,
 
 C.Tabs = {
   group: "Navigation", height: 70,
-  readme: `Tabs switch between sections of one page: Comments, Activity and Runs on a task; Overview, Runs, Instructions and Settings on an agent.
+  readme: `Tabs switch between sections of one page: Comments, Activity and Runs on a task; Overview, Runs, Instructions and Settings on an agent; Subscription, Total, Agents and Projects on the Usage page; the parts of Settings (see SettingsTabs).
 
-Each tab has a 16px icon, a label and an optional count in \`text-3\`; the current tab has a 2px \`text\` underline.`,
+Each tab has a 16px icon, a label and an optional count in \`text-3\`; the current tab has a 2px \`text\` underline. In a narrow window the tabs wrap onto a second line rather than scroll.`,
   preview: doc(`<div class="tabs" role="tablist"><button class="tab" role="tab" aria-selected="true">${ic("message-square")}Comments <span class="n">3</span></button>
 <button class="tab" role="tab" aria-selected="false">${ic("activity")}Activity</button><button class="tab" role="tab" aria-selected="false">${ic("play")}Runs <span class="n">2</span></button></div>`),
+};
+
+// Settings → Appearance: the font choices and sizes come from the app itself, their styles from its appearance.css.
+const { FONTS, CHAT_SIZES, UI_SIZES, DOCS_SIZES, DEFAULTS } = await import(`${GZ}/src/lib/appearance.ts`);
+const APPEARANCE_CSS = fs.readFileSync(`${GZ}/src/styles/appearance.css`, "utf8");
+const sizes = (label, list, on) => `<div class="seg size-seg" role="group" aria-label="${label}">${list.map((n) =>
+  `<button aria-pressed="${n === on}" title="${n} px">${n}</button>`).join("")}</div>`;
+const fontChoice = (f, on) => `<label class="font-choice${on ? " on" : ""}" data-font="${f.key}"><input type="radio" name="ds-font"${on ? " checked" : ""}>
+<span class="fc-name">${f.name}</span><span class="fc-sample">Export invoices as CSV <span class="mono">KADE-41</span></span><span class="fc-note">${f.note}</span></label>`;
+const field = (label, body, hint = "", wide = true) => `<div class="field${wide ? " wide" : ""}"><label>${label}</label>${body}${hint && `<span class="hint">${hint}</span>`}</div>`;
+
+C.SettingsTabs = {
+  group: "Navigation", height: 960, extra: " width=1100",
+  readme: `Settings is one page with a tab per part, the same tabs as the Usage page's: General (Quit Gizai completely, Updates, Data), Appearance, Notifications, Agents and runs (Coding CLIs, Runs), MCP servers, and GitHub and Bitbucket. General opens first; the open tab is in the address (\`#/settings/appearance\`), so a link can open a tab.
+
+- Every tab stays on the page and only the open one shows, so a change you haven't saved is still there after you switch tabs. **Save settings** in the top bar saves the fields that need it, on any tab; switches save as soon as you switch them.
+- Appearance changes show at once, without Save, and are kept on this computer; "Reset to defaults" brings them all back.
+- **Font**: one choice for the whole app, each shown in its own font. A choice sets the text font and the code font (task IDs, code, run logs): Atkinson Hyperlegible (the default: Next and Mono), JetBrains Mono, Inter with JetBrains Mono, Geist with Geist Mono, and Hack. All are open source (OFL, Hack MIT) and ship with the app, so they work offline.
+- **Text size**: a segmented picker per part, in px of its main text: the chat, the interface, and tasks and docs (see TextSizes).
+- **Theme and density**: Dark or Light, Comfortable or Compact; the t and d keys switch them too.`,
+  preview: `<div style="background:var(--bg)"><div class="topbar"><div class="crumbs"><b>Settings</b></div><div class="actions"><button class="btn primary">Save settings</button></div></div>
+<div class="page" style="max-width:1100px;gap:18px">
+<div class="tabs" role="tablist" aria-label="Settings">${[["sliders-horizontal", "General"], ["palette", "Appearance"], ["bell", "Notifications"], ["bot", "Agents and runs"],
+    ["plug", "MCP servers"], ["git-pull-request", "GitHub and Bitbucket"]].map(([i, l]) => `<button class="tab" role="tab" aria-selected="${l === "Appearance"}">${ic(i)}${l}</button>`).join("")}</div>
+<div class="form" role="tabpanel" aria-label="Appearance">
+<div class="appearance-note"><span class="faint">Changes show at once, without Save settings, and are kept on this computer.</span><button class="link" disabled title="Everything is at its default">Reset to defaults</button></div>
+<section class="form-section"><header><h3>Font</h3><p>One font for the whole app: each choice sets the text font and the code font (task IDs, code and run logs). Claude's own fonts are licensed, so Gizai can't ship them; Inter and Geist give a similar clean look.</p></header>
+<div class="fields">${field("Text and code", `<div class="font-choices" role="radiogroup" aria-label="Font">${FONTS.map((f) => fontChoice(f, f.key === DEFAULTS.font)).join("")}</div>`)}</div></section>
+<section class="form-section"><header><h3>Text size</h3><p>In px of the main text. Headings grow about half as much; IDs, labels, times, badges and icons stay about the same.</p></header>
+<div class="fields">${field("Chat size", sizes("Chat size", CHAT_SIZES, DEFAULTS.chat), "Your messages, the agent's messages and the composer. The chat column gets wider with it, so lines stay about as long.")}
+${field("Interface size", sizes("Interface size", UI_SIZES, DEFAULTS.ui), "The sidebar, top bar, lists, board, forms, menus and the command palette. Rows, the sidebar and board columns grow with it.")}
+${field("Tasks and docs size", sizes("Tasks and docs size", DOCS_SIZES, DEFAULTS.docs), "Descriptions, acceptance criteria, comments and docs, when you read them and when you edit them.")}</div></section>
+<section class="form-section"><header><h3>Theme and density</h3><p>Also with the t and d keys, when you aren't typing.</p></header>
+<div class="fields">${field("Theme", `<div class="seg" role="group" aria-label="Theme"><button aria-pressed="true"><span class="seg-label">${ic("moon", "icon sm")}Dark</span></button><button aria-pressed="false"><span class="seg-label">${ic("sun", "icon sm")}Light</span></button></div>`, "", false)}
+${field("Density", `<div class="seg" role="group" aria-label="Density"><button aria-pressed="true">Comfortable</button><button aria-pressed="false">Compact</button></div>`, "Compact makes rows, menus, buttons and fields shorter.", false)}</div></section>
+</div></div></div>
+<style>${APPEARANCE_CSS}</style>`,
+};
+
+// The largest sizes, set the way the app sets them on <html> (src/lib/appearance.ts), here on one column.
+const LARGEST = "--fs:16.5px;--fs-sm:13.5px;--fs-xs:12.5px;--fs-md:16.5px;--fs-lg:21.5px;--ui-box:5px;--size-row:45px;--fs-prose:20px;--fs-chat:18.5px;--chat-grow:5px;--prose-grow-head:2.5px;--chat-scale:1.333";
+const sizeSample = (title, style) => `<div class="ts-col" style="${style}"><div class="ts-h">${title}</div>
+<a class="nav-item on">${ic("inbox")}<span>Inbox</span><span class="meta"><span class="count alert">2</span></span></a>
+<div class="card"><div class="top"><span class="id">KADE-1</span>${pri("high")}</div><div class="title">Export invoices as CSV from the portal</div><div class="meta">${lbl("backend", "c-orange")}${avatar("BA", "agent", "sm")}</div></div>
+<div class="row-btns"><button class="btn">${ic("plus")}New task</button><input class="input" value="Kade portal" aria-label="Name"></div>
+<div class="chat-msg user"><div class="bubble">Put both cards in To do.</div></div>
+<div class="chat-msg agent"><div class="prose"><p>Done: <b>KADE-12</b> and <b>KADE-13</b> are in To do.</p></div></div>
+<div class="prose"><h3>Acceptance criteria</h3><p>The export opens in Excel NL.</p></div></div>`;
+C.TextSizes = {
+  group: "Type", height: 640, extra: " width=1000",
+  readme: `Three text sizes in Settings → Appearance, each in px of its part's main text. The defaults are the sizes the tokens give, so nothing changes until you pick another size.
+
+- **Chat** (${CHAT_SIZES.join(" · ")}; ${DEFAULTS.chat} by default): your messages, the agent's messages and the composer. The chat column (760px at ${DEFAULTS.chat}) gets wider with it, so lines stay about as long.
+- **Interface** (${UI_SIZES.join(" · ")}; ${DEFAULTS.ui} by default, \`fs\`): the sidebar, top bar, lists, board, forms, menus and the command palette.
+- **Tasks and docs** (${DOCS_SIZES.join(" · ")}; ${DEFAULTS.docs} by default, \`t-prose\`): descriptions, acceptance criteria, comments and docs, read and edited, on the task page and in drawers.
+
+What grows, and by how much:
+- Reading text grows by the whole step; for the Interface size that includes rows, nav items, buttons and inputs.
+- Headings grow about half the step: task and page titles, section headings, Markdown h1–h3.
+- Small things stay the same, or grow at most 1px at the largest sizes: label pills, task IDs, timestamps and other meta, keyboard hints, uppercase group labels, badges, avatars and icons.
+- The layout grows with the text: rows, nav items and controls get taller (\`size-row\`, \`size-topbar\`), the sidebar 6px and a board column 8px wider per Interface step, and the chat column wider with the Chat size.
+
+The app sets each part's steps on \`<html>\` (\`--ui-grow\`, \`--chat-grow\`, \`--docs-grow\`, their \`-head\` and \`-meta\` parts, \`--ui-box\`, \`--chat-scale\`); components add them to their size with a 0 fallback, so without them every size is the token's. Left the defaults, right the largest sizes.`,
+  preview: `<div class="ts-grid">${sizeSample(`Defaults: chat ${DEFAULTS.chat}, interface ${DEFAULTS.ui}, tasks and docs ${DEFAULTS.docs}`, "")}
+${sizeSample(`Largest: chat ${CHAT_SIZES.at(-1)}, interface ${UI_SIZES.at(-1)}, tasks and docs ${DOCS_SIZES.at(-1)}`, LARGEST)}</div>
+<style>.ts-grid{display:grid;grid-template-columns:400px 1fr;gap:24px;align-items:start;padding:16px;background:var(--bg);color:var(--text);font-family:var(--font-sans)}
+.ts-col{display:flex;flex-direction:column;gap:12px;min-width:0}.ts-h{color:var(--text-3);font-size:var(--fs-xs)}.ts-col .card{width:100%}
+.row-btns{display:flex;gap:8px;align-items:center}.row-btns .input{flex:1}.ts-col .chat-msg.user .bubble{max-width:85%}</style>`,
 };
 
 C.StatusIcon = {
@@ -229,19 +304,59 @@ ${prop("Branch", '<span class="id" style="color:var(--text-2)">gizai/kade-1-expo
 };
 
 C.RunCard = {
-  group: "Data display", height: 420,
+  group: "Data display", height: 500,
   readme: `Run cards show an agent run: the latest result, or the live transcript while it runs.
 
 - Finished: outcome icon, outcome badge, the run ID chip, how it started (\`info\` badge), the time on the right, then the agent's summary.
 - Live: a \`live\` border with a soft halo, "Live run" with a pulse, the agent, the run ID, Stop (danger) and Open in terminal; a monospace transcript (tool calls with the tool name in teal, errors in \`danger\`), and a footer with tokens, cost and branch.
+- **Continue**: after a run that stopped (a limit, a hold, a question), Continue (\`primary\`, step-forward icon) picks up the agent's session where it stopped, and clears a hold; Run (secondary then) starts fresh. A note box above them takes an optional message that goes to the agent with Continue and onto the card as your comment; Enter continues. The line on the left says what each does; the select picks another agent for Run.
 
 The consumer supplies the run, its streamed events and the stop handler.`,
-  preview: doc(`<div class="run-card"><div class="run-head"><span style="color:var(--success)">${ic("check")}</span><span class="badge ok">succeeded</span><span class="chip-id">2fc1b863</span><span class="badge info">Heartbeat</span><span class="right">2h ago</span></div>
-<div class="run-summary">Exporter added with semicolon separators; 12 tests pass. Ready for testing.</div></div>
+  preview: doc(`<div class="run-card"><div class="run-head"><span style="color:var(--warning)">${ic("clock")}</span><span class="badge warn">time limit</span><span class="chip-id">2fc1b863</span><span class="badge info">Assigned</span><span class="right">2h ago</span></div>
+<div class="run-summary">Exporter added with semicolon separators; the mail job is half done. Stopped at the 45-minute limit.</div>
+<div class="run-note"><input class="input" aria-label="Note for Backend Agent" placeholder="A note for Backend Agent with Continue (optional), like: use the existing CSV writer"></div>
+<div class="run-actions"><span class="grow">Continue picks up Backend Agent's session where it stopped; Run starts fresh</span><select class="select" aria-label="Agent" style="width:220px;height:28px"><option>Backend Agent (assigned)</option></select>
+<button class="btn sm primary">${ic("step-forward")}Continue</button><button class="btn sm">${ic("play")}Run</button></div></div>
 <div style="height:14px"></div>
 <div class="run-card live"><div class="run-head"><span class="pulse"></span><span class="title">Live run</span><span class="who">${avatar("BA", "agent", "sm")}Backend Agent</span><span class="chip-id">9f7d5857</span><span class="right">4m 12s<button class="btn sm danger">${ic("square")}Stop</button><button class="btn sm ghost">${ic("terminal")}Open in terminal</button></span></div>
 <div class="run-stream"><div>Reading the exporter.</div><div class="tool"><b>Read</b> app/Exports/InvoiceExporter.php</div><div class="tool"><b>Edit</b> app/Exports/InvoiceExporter.php</div><div class="tool"><b>Bash</b> php artisan test --filter=InvoiceExport</div><div class="ok">12 passed</div></div>
 <div class="run-foot"><span>38k in · 4k out</span><span>$0.42</span><span class="mono">gizai/kade-1-export-invoices</span></div></div>`),
+};
+
+const runRow = (badge, id, who, more, cost, when, open = "") => `<div class="run-row${open ? " open" : ""}"><button class="panel-row" aria-expanded="${!!open}">${ic("chevron-right", "icon sm chev")}${badge}<span class="chip-id">${id}</span>
+<span class="grow">${who} <span class="faint">${more}</span></span><span class="faint">${cost}</span><span class="faint">${when}</span></button>${open}</div>`;
+C.RunHistory = {
+  group: "Data display", height: 520,
+  readme: `The Runs tab of a task or an agent: one row per run, newest first, in a panel; a row opens to the run's details.
+
+- A row: a chevron (turns down when open), the outcome badge, the run ID chip, the agent with its role, how the run started, how many commits and why it ended in \`text-3\`, then the cost and when, right-aligned.
+- Open: "Why it ended" when it didn't end by itself, the agent's summary (or its last message, in a \`line-2\` quote), the commits it made (short sha in mono and the subject), and the facts: started, ran for, model, tool calls, tokens, cost, branch, the commits it started and ended at, the worktree, and the command to continue the session by hand. "Show the whole output" opens the transcript.
+- Rows are \`panel-row\` buttons (\`aria-expanded\`); the details are selectable text.`,
+  preview: doc(`<div class="panel">
+${runRow('<span class="badge warn">time limit</span>', "2fc1b863", "Backend Agent", "· backend · Assigned · 2 commits · Stopped at the 45-minute limit", "$1.84", "2h ago", `<div class="run-detail">
+<h4>Why it ended</h4><p class="run-reason">Stopped at the 45-minute limit.</p>
+<h4>Summary</h4><div class="prose"><p>Exporter added with semicolon separators; the mail job is half done.</p></div>
+<h4>2 commits</h4><ul class="run-commits"><li><span class="mono">a41f0c2e9</span><span>Export invoices as CSV with semicolons</span></li><li><span class="mono">7be03d118</span><span>Tests for the CSV export</span></li></ul>
+<dl class="run-facts"><dt>Ran for</dt><dd>45m 02s</dd><dt>Model</dt><dd class="mono">claude-opus-5-5</dd><dt>Tool calls</dt><dd>212</dd><dt>Tokens</dt><dd>1.2M in, 38k out</dd><dt>Branch</dt><dd class="mono">gizai/kade-1-export-invoices</dd></dl>
+<button class="link">Show the whole output (214 steps)</button></div>`)}
+${runRow('<span class="badge ok">succeeded</span>', "9f7d5857", "QA Agent", "· qa · Assigned", "$0.42", "Yesterday")}
+${runRow('<span class="badge fail">failed</span>', "51c0aa3d", "Backend Agent", "· backend · Manual · 1 commit · Claude Code exited with an error", "$0.08", "Oct 6")}
+</div>`),
+};
+
+C.ContactRow = {
+  group: "Data display", height: 200,
+  readme: `A client's contacts, in a panel on the client page. Each row is a button that opens the contact's edit drawer (name, role, email, phone, primary), where it can also be removed.
+
+- The row: avatar, the name (a neutral "primary" badge on the main contact) with the role in \`text-3\`, then email and phone, right-aligned in \`text-3\`.
+- A pencil (\`text-3\`) at the end shows on hover and keyboard focus, so the row reads as editable without cluttering the list; the row gets the \`hover\` fill.
+- "No contacts yet." in a faint row when there are none; "Add contact" sits in the section head.`,
+  preview: doc(`<div class="section-head"><h3>Contacts</h3><button class="link">${ic("plus", "icon sm")}Add contact</button></div>
+<div class="panel">
+<button type="button" class="panel-row contact-row hover" aria-label="Edit Sanne Bakker">${avatar("SB")}<span class="grow">Sanne Bakker<span class="badge" style="margin-left:8px">primary</span> <span class="faint">Office manager</span></span><span class="faint">sanne@kade.nl · 010 123 4567</span>${ic("pencil", "icon sm edit-hint")}</button>
+<button type="button" class="panel-row contact-row" aria-label="Edit Ruben de Vries">${avatar("RV")}<span class="grow">Ruben de Vries <span class="faint">Planner</span></span><span class="faint">ruben@kade.nl</span>${ic("pencil", "icon sm edit-hint")}</button>
+</div>
+<style>.contact-row.hover{background:var(--hover)}.contact-row.hover .edit-hint{opacity:1}</style>`),
 };
 
 const bars = (days) => `<div class="bars">${days.map((d) => `<div class="day">${d.map(([k, h]) => `<div class="seg-${k}" style="height:${h}%"></div>`).join("")}</div>`).join("")}</div>`;
@@ -268,12 +383,13 @@ For agents: Assign task, Run, Pause/Resume and a state badge (\`state\`: idle in
 };
 
 C.Field = {
-  group: "Forms", height: 400,
+  group: "Forms", height: 480,
   readme: `Fields and form sections, used inside drawers.
 
 - A form is a stack of sections: a 220px intro column (\`t-section\` heading and one sentence in \`text-3\`) beside a two-column field grid. \`wide\` fields span both columns.
 - A field is a label (\`fs-sm\`, \`text-2\`), the control (34px, \`bg\` with a \`line-2\` border, accent border and halo on focus) and an optional hint (\`text-3\`), warning (\`warning\`) or error (\`danger\`) below it.
-- Native selects get the chevron; machine values (keys, paths, branches) use \`input mono\`.
+- Native selects get the chevron; machine values (keys, paths, branches, links) use \`input mono\`.
+- The project's Repository field takes a GitHub or Bitbucket link (\`https://github.com/owner/name\`); Gizai offers the folder's own remote until you type one, and the hint says what the link does: new cards start from the main branch fetched from there.
 
 The consumer supplies labels, values, validation messages and handlers.`,
   preview: doc(`<div class="form"><section class="form-section"><header><h3>Project</h3><p>Its name and task key. Tasks become KADE-1, KADE-2…</p></header>
@@ -283,9 +399,10 @@ The consumer supplies labels, values, validation messages and handlers.`,
 <div class="field"><label>Status</label><select class="select"><option>Active</option></select></div>
 <div class="field"><label>Colour</label><div class="swatches"><button class="swatch" style="background:var(--c-blue)"></button><button class="swatch" aria-pressed="true" style="background:var(--c-yellow)"></button><button class="swatch" style="background:var(--c-teal)"></button><button class="swatch" style="background:var(--c-violet)"></button></div></div>
 <div class="field"><label>Budget (€)</label><input class="input" value="12000"><span class="warn">Over the client's usual range</span></div></div></section>
-<section class="form-section"><header><h3>Repository</h3><p>Agents work in their own git worktree of this repository.</p></header>
+<section class="form-section"><header><h3>Repository</h3><p>Agents work in their own git worktree of this repository, on a branch per task.</p></header>
 <div class="fields"><div class="field wide"><label>Git repository</label><div class="input-group"><input class="input mono" value="/home/jeffrey/Code/kade-portal"><button class="btn">Choose…</button></div><span class="hint">git repository · on branch main</span></div>
-<label class="check"><input type="checkbox" checked>Agents may push this branch</label></div></section></div>`),
+<div class="field wide"><label>Repository</label><input class="input mono" value="https://github.com/kade-logistics/portal" placeholder="https://github.com/owner/name or https://bitbucket.org/workspace/name"><span class="hint">New cards start from the main branch fetched from here; agents hear when it moves on</span></div>
+<div class="field"><label>Main branch</label><input class="input mono" value="main"><span class="hint">New task branches start here</span></div></div></section></div>`),
 };
 
 C.MarkdownEditor = {
@@ -324,7 +441,8 @@ The consumer supplies the title, the form and the actions.`,
 <div class="fields"><div class="field"><label>Name</label><input class="input" value="Stapsgewijs"></div><div class="field"><label>Task key</label><input class="input mono" value="STAP"><span class="hint">Tasks become STAP-1, STAP-2…</span></div>
 <div class="field"><label>Client</label><select class="select"><option>Kade Logistics</option></select></div><div class="field"><label>Status</label><select class="select"><option>Active</option></select></div></div></section>
 <section class="form-section"><header><h3>Repository</h3><p>Agents work in their own git worktree of it.</p></header>
-<div class="fields"><div class="field wide"><label>Git repository</label><div class="input-group"><input class="input mono" value="/home/jeffrey/Herd/stapsgewijs"><button class="btn">Choose…</button></div><span class="hint">git repository · on branch feature/fortify-auth</span></div></div></section></div></div>
+<div class="fields"><div class="field wide"><label>Git repository</label><div class="input-group"><input class="input mono" value="/home/jeffrey/Herd/stapsgewijs"><button class="btn">Choose…</button></div><span class="hint">git repository · on branch feature/fortify-auth</span></div>
+<div class="field wide"><label>Repository</label><input class="input mono" value="https://github.com/yotech-ai/stapsgewijs"><span class="hint">New cards start from the main branch fetched from here; agents hear when it moves on</span></div></div></section></div></div>
 <div class="drawer-foot"><span class="hint">Ctrl+Enter creates</span><button class="btn ghost">Cancel</button><button class="btn primary">Create project</button></div></div></div>
 <style>.drawer{animation:none}.scrim{animation:none}</style>`,
 };
@@ -413,7 +531,7 @@ C.OrgChart = {
   readme: `The team as an org chart: the Team Lead on top, the team's branches below (Design, Development, Quality, Operations and the ones you add, then Specialists for other roles), drawn from the agents' roles.
 
 - Nodes are \`radius-pill\` cards on \`raised\`: a round role icon, the name in bold, a status dot and "Claude Code" (or "Chat · Claude Code" for the Team Lead). Grey dot when idle, \`warning\` when paused (and the node dims), \`live\` when working.
-- An agent working right now gets a teal ring and a teal "Working" badge on its top edge; teal still means only that.
+- An agent working right now gets a teal ring and a teal "Working" badge on its top edge; teal still means only that. The badge is opaque (the live tint over the page colour, with a 1px live outline), so the border it sits on doesn't show through its text.
 - Every branch ends in one empty spot: a dashed, transparent node ("Frontend · Add an agent"); hovering turns it \`accent\`; a click opens the agent form with the branch's role. Add branch, a dashed node at the end, asks a name; a branch's × removes it while it has no agents.
 - Agent nodes are what you drag onto a column in Team → Workflow; the dragged agent follows the pointer as a chip with \`shadow-drag\`.
 - Connectors are 1px \`line-2\` with \`radius\` corners; branch names sit on the line as small \`text-2\` labels.
@@ -484,13 +602,17 @@ write("assets/Icons/README.md", `Lucide icons (lucide-react 0.577, ISC licence),
 These files are drawn in one ink, \`#8a8e98\` (\`c-grey\`), so they show on both themes here. In the app every icon uses \`currentColor\` at a 1.75 stroke, 16px, and takes its colour from the text it sits in; status glyphs take their \`st-*\` colour. See the Iconography section of the README for which icon means what.
 `);
 
-// ---------- fonts ----------
+// ---------- fonts (tokens.json's: the default and the other choices in Settings → Appearance), with their licences ----------
 fs.mkdirSync(path.join(OUT, "fonts"), { recursive: true });
-for (const f of ["AtkinsonHyperlegibleNext-400-latin.woff2", "AtkinsonHyperlegibleNext-500-latin.woff2", "AtkinsonHyperlegibleNext-600-latin.woff2",
-  "AtkinsonHyperlegibleNext-700-latin.woff2", "AtkinsonHyperlegibleMono-400-latin.woff2", "AtkinsonHyperlegibleMono-500-latin.woff2"]) {
+const TOKENS = JSON.parse(fs.readFileSync(path.join(HERE, "tokens.json"), "utf8"));
+for (const f of TOKENS.type.fonts) fs.copyFileSync(`${GZ}/src/assets/${f.file}`, path.join(OUT, f.file));
+for (const f of fs.readdirSync(`${GZ}/src/assets/fonts`).filter((f) => f.startsWith("LICENSE-"))) {
   fs.copyFileSync(`${GZ}/src/assets/fonts/${f}`, path.join(OUT, "fonts", f));
 }
 fs.copyFileSync(path.join(HERE, "tokens.json"), path.join(OUT, "tokens.json"));
+// The brand book, and the app's component stylesheet as the design system's (keep the two equal: SOURCES.md).
+fs.copyFileSync(path.join(HERE, "README.md"), path.join(OUT, "README.md"));
+fs.copyFileSync(`${GZ}/src/styles/components.css`, path.join(OUT, "components", "bundle.css"));
 
 // Export the glyphs and icon list for the app.
 fs.writeFileSync(path.join(HERE, "glyphs.json"), JSON.stringify(GLYPH, null, 2));

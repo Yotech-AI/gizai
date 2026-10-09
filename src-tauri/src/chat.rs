@@ -1092,6 +1092,8 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
                 }
             }
             ChatEvent::Result { .. } => result = Some(ev),
+            // What Claude Code heard of the account's limits: kept for the CLI this turn ran on (Usage → Subscription).
+            ChatEvent::Limits { info } => crate::limits::from_claude(st, &run_id, &info),
             ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") => capped = true,
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             ChatEvent::Other { .. } => {}
@@ -1146,6 +1148,10 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         Some(ChatEvent::Result { text, .. }) => chat_stream::usage_limit(text),
         _ => None,
     }.or_else(|| chat_stream::usage_limit(&stderr_tail(&log_path)))).flatten();
+    // A limit hit is a reading of that limit too.
+    if let Some(l) = &limit {
+        crate::limits::hit(st, &run_id, l);
+    }
     Attempt { summary: TurnSummary { run_id, status: status.into(), error }, saw_init, limit }
 }
 
@@ -1289,6 +1295,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
                 }
             }
             ChatEvent::Result { .. } => result = Some(ev),
+            ChatEvent::Limits { info } => crate::limits::from_claude(st, &run_id, &info),
             ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") => capped = true,
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             _ => {}

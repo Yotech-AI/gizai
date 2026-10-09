@@ -20,6 +20,9 @@ pub enum RunEvent {
     /// The MCP servers Claude Code's init line names (Gizai's own `gizai` left out): each one's name and status, like
     /// connected, failed or needs-auth (`cli::Claude`).
     McpServers { servers: Vec<McpState> },
+    /// Claude Code's `rate_limit_event`: what it last heard of the account's subscription limits (`rate_limit_info`, as it
+    /// wrote it). Gizai keeps it for the run's coding CLI (`gizai_core::limits`); the Run panel doesn't show it.
+    Limits { info: Value },
 }
 
 /// One MCP server in a run's init line.
@@ -127,6 +130,7 @@ pub fn parse_line(line: &str) -> Vec<RunEvent> {
             out
         }
         "gizai_note" => vec![RunEvent::Note { text: s(&v["text"]) }],
+        "rate_limit_event" if v.get("rate_limit_info").is_some_and(Value::is_object) => vec![RunEvent::Limits { info: v["rate_limit_info"].clone() }],
         other => vec![RunEvent::Other { raw_type: other.into() }],
     }
 }

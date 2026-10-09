@@ -328,7 +328,8 @@ pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     }
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
     let events = match std::fs::read_to_string(&run.log_path) {
-        Ok(text) => agent_cli::parse_log(&text),
+        // The limits Claude Code reported are for the Usage page, not the Run panel.
+        Ok(text) => agent_cli::parse_log(&text).into_iter().filter(|e| !matches!(e, RunEvent::Limits { .. })).collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound
             && run.ended_at.unwrap_or(run.created_at) < ids::now_ms() - housekeeping::KEEP_LOGS_MS => {
             vec![RunEvent::Note { text: format!("Gizai keeps run logs for {} days, so this run's output is gone. Its summary, cost and commits stay.",
@@ -925,6 +926,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let rid = run_id.clone();
     let tid = task_id.to_string();
     let cli_name = cli.name.clone();
+    let kind = spec.kind;
     let dir = wt.path.clone();
     let (run_agent, run_config) = (agent_id.clone(), mcp_config.clone());
     let done = tokio::spawn(async move {
@@ -934,6 +936,12 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         let mut tools = 0usize;
         let mut refused: Vec<Refusal> = vec![];
         while let Some(ev) = handle.events.recv().await {
+            // What Claude Code heard of the account's limits: kept for this run's CLI (the Usage page's Subscription tab),
+            // not shown in the Run panel.
+            if let RunEvent::Limits { info } = &ev {
+                crate::limits::from_claude(&st2, &rid, info);
+                continue;
+            }
             match &ev {
                 RunEvent::ToolUse { .. } => tools += 1,
                 RunEvent::Refused { tool, input, reason } => refused.push(Refusal { tool: tool.clone(), input: input.clone(), reason: reason.clone() }),
@@ -971,6 +979,15 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         if let Err(e) = worktree::empty_temp(&dir) {
             eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");
         }
+        // The account's limits as the run left them: Codex's from its session log, or the limit a Claude Code run that
+        // failed says it hit (its result, else its stderr). Never from a successful run's text: an agent may quote one.
+        let failed_text = match &result {
+            _ if kind != Kind::ClaudeCode => None,
+            Some(RunEvent::Result { is_error: true, text, .. }) => Some(text.clone()),
+            Some(_) => None,
+            None => Some(stderr_tail(&rid, &st2)),
+        };
+        crate::limits::after_run(&st2, &rid, kind, failed_text.as_deref()).await;
         finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued, refused }, &cli_name).await
     });
     Ok((run_id, done))

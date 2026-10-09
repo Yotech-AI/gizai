@@ -149,3 +149,28 @@ fn run_for_me_takes_one_command_as_a_string_drops_blank_entries_and_never_spoils
     assert!(!serde_json::to_string(&o).unwrap().contains("run_for_me"));
     assert!(serde_json::to_string(&p("[\"x\"]")).unwrap().contains("\"run_for_me\":[\"x\"]"));
 }
+
+// GA-62: Claude Code's rate_limit_event, shaped like 2.1.x's own schema (rate_limit_info with unifiedWindows), is a Limits
+// event with the info as Claude Code wrote it; Gizai keeps it for the run's coding CLI and the Run panel doesn't show it.
+
+#[test]
+fn a_rate_limit_event_is_a_limits_event_with_its_info_as_written() {
+    let evs: Vec<RunEvent> = include_str!("fixtures/run-limits.jsonl").lines().flat_map(parse_line).collect();
+    let limits: Vec<&serde_json::Value> = evs.iter().filter_map(|e| match e { RunEvent::Limits { info } => Some(info), _ => None }).collect();
+    assert_eq!(limits.len(), 1, "{evs:?}");
+    assert_eq!(limits[0]["rateLimitType"], "five_hour");
+    assert_eq!(limits[0]["unifiedWindows"]["seven_day_overage_included"]["utilization"], 0.05);
+    assert!(matches!(evs.last(), Some(RunEvent::Result { is_error: false, .. })), "the rest of the run reads as before");
+    // The same lines in a saved run log (the Run panel filters Limits out of a finished run's events).
+    let logged = gizai_agents::cli::parse_log(include_str!("fixtures/run-limits.jsonl"));
+    assert_eq!(logged.iter().filter(|e| matches!(e, RunEvent::Limits { .. })).count(), 1);
+}
+
+#[test]
+fn a_rate_limit_event_without_an_info_object_stays_other() {
+    for line in [r#"{"type":"rate_limit_event"}"#, r#"{"type":"rate_limit_event","rate_limit_info":null}"#, r#"{"type":"rate_limit_event","rate_limit_info":"x"}"#] {
+        assert!(matches!(&parse_line(line)[..], [RunEvent::Other { raw_type }] if raw_type == "rate_limit_event"), "{line}");
+    }
+    let evs: Vec<RunEvent> = include_str!("fixtures/run-weird.jsonl").lines().flat_map(parse_line).collect();
+    assert!(!evs.iter().any(|e| matches!(e, RunEvent::Limits { .. })), "the old placeholder ('info', not 'rate_limit_info') isn't a reading");
+}

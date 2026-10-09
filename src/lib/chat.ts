@@ -115,9 +115,12 @@ function plain(md: string): string {
   return md.replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, "$1").replace(/^[ \t]*(?:#{1,6}|>|[-*+]|\d+[.)])[ \t]+/gm, "").replace(/\*\*|__|`/g, "");
 }
 
+/** How far a snippet's cut moves to fall between two words; in a longer word it cuts inside. */
+const WORD_CUT = 20;
+
 /** A search result's piece of a message: one line of at most about `max` characters around the first match of `query`, cut
- *  on words, with … where text was left out, and without Markdown's marks unless the match is in them (a link's address).
- *  Without a match, the message's start. */
+ *  on words (a very long word, like a link, is cut inside), with … where text was left out, and without Markdown's marks
+ *  unless the match is in them (a link's address). Without a match, the message's start. */
 export function snippet(body: string, query: string, max = 140): string {
   const re = searchPattern(query, "i");
   const bare = oneLine(plain(body));
@@ -130,9 +133,9 @@ export function snippet(body: string, query: string, max = 140): string {
   let from = Math.max(0, Math.min(at - Math.floor(Math.max(0, max - (end - at)) / 3), text.length - max));
   let to = from + max;
   const space = text.indexOf(" ", from);
-  if (from > 0 && space >= 0 && space < at) from = space + 1;
+  if (from > 0 && space >= 0 && space < at && space - from <= WORD_CUT) from = space + 1;
   const last = text.lastIndexOf(" ", to);
-  if (to < text.length && last >= end) to = last;
+  if (to < text.length && last >= end && to - last <= WORD_CUT) to = last;
   return `${from > 0 ? "…" : ""}${text.slice(from, to)}${to < text.length ? "…" : ""}`;
 }
 

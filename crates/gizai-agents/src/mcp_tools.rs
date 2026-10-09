@@ -2,6 +2,8 @@
 //! what the server says about it (`annotations`), and a risk. A hint the server didn't send follows the MCP spec's
 //! default (2025-06-18): not read-only, may delete or overwrite, not safe to repeat, reaches outside services. So a
 //! tool without hints counts as high risk, and the view says which hints the server sent.
+use std::collections::HashSet;
+
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -11,6 +13,9 @@ use crate::stream::cut;
 const MAX_TEXT: usize = 2000;
 /// The most parameters a view lists.
 const MAX_PARAMS: usize = 100;
+/// Where List tools keeps the order of a tool's parameters (the keys of `inputSchema.properties`) as the server wrote
+/// them, since serde_json's maps sort their keys. Not MCP: `mcp_client` adds it to each tool it lists.
+pub const PARAM_ORDER: &str = "x-gizai-param-order";
 
 /// One parameter of a tool.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -79,7 +84,7 @@ pub fn describe(tool: &Value) -> ToolView {
         name: text(tool.get("name")),
         title,
         description: cut(&text(tool.get("description")), MAX_TEXT),
-        params: params(tool.get("inputSchema")),
+        params: params(tool.get("inputSchema"), tool.get(PARAM_ORDER)),
         hints,
         notes: notes(&hints_sent),
         hints_sent,
@@ -132,16 +137,22 @@ fn notes(sent: &[String]) -> Vec<String> {
     out
 }
 
-/// The parameters in an `inputSchema` (`properties`, `required`), in the schema's order.
-fn params(schema: Option<&Value>) -> Vec<Param> {
+/// The parameters in an `inputSchema` (`properties`, `required`), in the order the server wrote them (`order`, from
+/// `PARAM_ORDER`); by name when that order isn't known.
+fn params(schema: Option<&Value>, order: Option<&Value>) -> Vec<Param> {
     let Some(schema) = schema.and_then(Value::as_object) else { return vec![] };
     let required: Vec<&str> = schema.get("required").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
     let Some(props) = schema.get("properties").and_then(Value::as_object) else { return vec![] };
-    props.iter().take(MAX_PARAMS).map(|(name, p)| Param {
-        name: name.clone(),
-        ty: type_of(p.as_object()),
-        required: required.contains(&name.as_str()),
-        description: cut(p.get("description").and_then(Value::as_str).map(str::trim).unwrap_or_default(), MAX_TEXT),
+    let written = order.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
+    let mut seen = HashSet::new();
+    written.chain(props.keys().map(String::as_str)).filter(|n| props.contains_key(*n) && seen.insert(*n)).take(MAX_PARAMS).map(|name| {
+        let p = &props[name];
+        Param {
+            name: name.to_string(),
+            ty: type_of(p.as_object()),
+            required: required.contains(&name),
+            description: cut(p.get("description").and_then(Value::as_str).map(str::trim).unwrap_or_default(), MAX_TEXT),
+        }
     }).collect()
 }
 

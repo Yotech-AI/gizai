@@ -12,12 +12,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::Serialize;
 use serde_json::{Value, json};
 use ureq::RequestExt;
 use ureq::http::{HeaderName, HeaderValue, Method, Response, StatusCode, Uri};
 
 use crate::cli::plain;
+use crate::mcp_tools::PARAM_ORDER;
 use crate::stream::cut;
 
 /// The MCP version Gizai asks for; the server answers with the one it speaks.
@@ -126,7 +128,8 @@ pub struct Listing {
     pub server_version: String,
     /// The MCP version the server chose.
     pub protocol_version: String,
-    /// The `tools/list` entries as the server sent them, from every page.
+    /// The `tools/list` entries as the server sent them, from every page, each with the order of its parameters added
+    /// (`mcp_tools::PARAM_ORDER`).
     pub tools: Vec<Value>,
 }
 
@@ -283,6 +286,98 @@ fn messages(v: Value) -> Vec<Value> {
     match v {
         Value::Array(list) => list,
         other => vec![other],
+    }
+}
+
+/// A message, or a batch, from the server. serde_json's maps sort their keys, so each tool of a `tools/list` answer also
+/// gets the order its parameters were written in, read from the text (`PARAM_ORDER`): the form lists them that way.
+fn parse_json(text: &str) -> serde_json::Result<Value> {
+    let mut v: Value = serde_json::from_str(text)?;
+    let lists_tools = |m: &Value| m.pointer("/result/tools").is_some_and(Value::is_array);
+    let any = match &v {
+        Value::Array(batch) => batch.iter().any(lists_tools),
+        one => lists_tools(one),
+    };
+    if any && let Ok(shape) = serde_json::from_str::<Shape>(text) {
+        mark_order(&mut v, &shape);
+    }
+    Ok(v)
+}
+
+/// Gives each tool in `v` (a message or a batch) the order of its parameters in `shape`, the same text read in order.
+fn mark_order(v: &mut Value, shape: &Shape) {
+    if let (Value::Array(batch), Shape::Array(shapes)) = (&mut *v, shape) {
+        batch.iter_mut().zip(shapes).for_each(|(m, s)| mark_order(m, s));
+        return;
+    }
+    let Some(tools) = v.pointer_mut("/result/tools").and_then(Value::as_array_mut) else { return };
+    let Some(Shape::Array(shapes)) = shape.get("result").and_then(|r| r.get("tools")) else { return };
+    for (tool, s) in tools.iter_mut().zip(shapes) {
+        if let (Some(tool), Some(Shape::Object(props))) = (tool.as_object_mut(), s.get("inputSchema").and_then(|i| i.get("properties"))) {
+            tool.insert(PARAM_ORDER.into(), props.iter().map(|(k, _)| Value::String(k.clone())).collect());
+        }
+    }
+}
+
+/// A JSON value's shape, each object's keys in the order they were written.
+enum Shape {
+    Object(Vec<(String, Shape)>),
+    Array(Vec<Shape>),
+    Other,
+}
+
+impl Shape {
+    /// An object's value at `key`: the last one, as serde_json keeps it.
+    fn get(&self, key: &str) -> Option<&Shape> {
+        match self {
+            Shape::Object(entries) => entries.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Shape {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Shape, D::Error> {
+        struct Any;
+        impl<'de> Visitor<'de> for Any {
+            type Value = Shape;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("any JSON value")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<Shape, A::Error> {
+                let mut entries = vec![];
+                while let Some(entry) = m.next_entry::<String, Shape>()? {
+                    entries.push(entry);
+                }
+                Ok(Shape::Object(entries))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> Result<Shape, A::Error> {
+                let mut items = vec![];
+                while let Some(item) = s.next_element::<Shape>()? {
+                    items.push(item);
+                }
+                Ok(Shape::Array(items))
+            }
+            fn visit_bool<E: de::Error>(self, _: bool) -> Result<Shape, E> {
+                Ok(Shape::Other)
+            }
+            fn visit_i64<E: de::Error>(self, _: i64) -> Result<Shape, E> {
+                Ok(Shape::Other)
+            }
+            fn visit_u64<E: de::Error>(self, _: u64) -> Result<Shape, E> {
+                Ok(Shape::Other)
+            }
+            fn visit_f64<E: de::Error>(self, _: f64) -> Result<Shape, E> {
+                Ok(Shape::Other)
+            }
+            fn visit_str<E: de::Error>(self, _: &str) -> Result<Shape, E> {
+                Ok(Shape::Other)
+            }
+            fn visit_unit<E: de::Error>(self) -> Result<Shape, E> {
+                Ok(Shape::Other)
+            }
+        }
+        d.deserialize_any(Any)
     }
 }
 
@@ -588,7 +683,7 @@ fn read_stdout(r: impl Read, out: &mpsc::Sender<Result<Value, String>>, tail: &M
         if line.is_empty() {
             continue;
         }
-        match serde_json::from_str::<Value>(line) {
+        match parse_json(line) {
             Ok(v) if v.is_object() || v.is_array() => {
                 if out.send(Ok(v)).is_err() {
                     return;
@@ -803,7 +898,7 @@ fn read_json(resp: Response<ureq::Body>, url: &str, limit: Limit) -> Result<Vec<
     if text.trim().is_empty() {
         return Ok(vec![]);
     }
-    serde_json::from_str::<Value>(&text).map(messages).map_err(|_| {
+    parse_json(&text).map(messages).map_err(|_| {
         let start = text.split_whitespace().collect::<Vec<_>>().join(" ");
         failed(format!("The server's answer isn't JSON: {}", cut(&start, 200)))
     })
@@ -859,7 +954,7 @@ fn event_kind(kind: String) -> String {
 
 /// The server's messages in one event, none when its data isn't JSON.
 fn event_messages(data: &str) -> Vec<Value> {
-    serde_json::from_str::<Value>(data).map(messages).unwrap_or_default()
+    parse_json(data).map(messages).unwrap_or_default()
 }
 
 /// Splits a URL into its origin ("https://host:port") and the rest ("/path?query").

@@ -16,8 +16,8 @@ export type Pending<K extends string> = {
  * Busy from the click until `done(key, value)` says the screen shows what the click started (the live run, or that it
  * ended; `value` is what the call resolved with, undefined until then), until the call fails, or PENDING_MS after the
  * call returned. The call itself can take minutes (a card's first run prepares its worktree): the button spins
- * meanwhile. `scope`: what the buttons act on, when the screen can switch to another (a chat thread); a click only
- * keeps its own busy.
+ * meanwhile. `scope`: what the buttons act on, on a screen that can switch to another (a chat thread): switching
+ * ends the wait.
  */
 export function usePending<K extends string>(done: (key: K, value: unknown) => boolean, scope?: unknown): Pending<K> {
   const [state, setState] = useState<{ key: K; n: number; scope: unknown; returned: boolean; value?: unknown } | null>(null);

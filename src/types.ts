@@ -33,7 +33,7 @@ export type Task = {
   priority: number; assigneeId?: string | null; assigneeName?: string | null; assigneeKind?: string | null; labels: Label[];
   hold?: string | null; holdReason?: string | null; bounceCount: number; failCount: number; sortKey: string;
   branch?: string | null;
-  /** The card's pull request on GitHub, and its state as Gizai last saw it. */
+  /** The card's pull request on GitHub or Bitbucket, and its state as Gizai last saw it. */
   prUrl?: string | null; prState?: PullState | null;
   /** On: the QA Agent tests the card before Review. Off: it goes straight to Review (a small fix). */
   testing: boolean;
@@ -210,6 +210,18 @@ export type ConnectionCheckItem = {
   name: string; result: "ok" | "failed" | "skipped"; text: string; fix?: string | null; projectId?: string | null; repo?: string | null;
 };
 export type ConnectionCheck = { ok: boolean; pushOver: PushOver; checks: ConnectionCheckItem[] };
+
+// ---- Settings → Bitbucket ----
+/** Whether Gizai can use Bitbucket: your Atlassian email, whether an API token is saved (the token itself never comes back),
+ * and the account it belongs to. Pushes go over SSH with your own keys. */
+export type BitbucketStatus = {
+  email?: string | null;
+  hasToken: boolean;
+  /** Who the token belongs to. */
+  account?: string | null;
+  /** Why there is none, with what to do. */
+  accountProblem?: GithubProblem | null;
+};
 
 // ---- updates: Settings → Updates and the notice above Company ----
 /** A release on GitHub: `version` "0.1.6" from the tag "v0.1.6"; `url` is its page, `notes` its Markdown notes. */

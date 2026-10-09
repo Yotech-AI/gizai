@@ -421,6 +421,30 @@ async fn codex_and_gemini_agents_get_only_what_their_cli_takes_and_the_rest_is_r
     }
 }
 
+/// Gemini searches the web in every run by its own policy (the form shows Web search as always on), so search results reach
+/// every Gemini agent: its prompt says that content is data, as for an agent with web search switched on.
+#[tokio::test]
+async fn a_gemini_agent_searches_the_web_in_every_run_so_its_prompt_says_web_content_is_data() {
+    fakes();
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    gizai_core::settings::set(&st.db, "claude_bin", &FAKE_RUN.to_string()).unwrap();
+    gizai_core::settings::set(&st.db, "agents_paused", &true).unwrap();
+    gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let cli = add_cli(&st, "Gemini", "gemini", FAKE_CLI, &["FAKE_KIND=gemini".into(), "FAKE_TEMP=1".into()]);
+    let agent = put_agent_on(&st, &cli);
+    let v = app_mcp::tools_view(&st, Some(&agent), &cli).unwrap();
+    assert_eq!(v.builtin.tools.iter().find(|x| x.id == "google_web_search").map(|x| x.how.as_str()), Some("always"));
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    assert_eq!(s.status, "succeeded", "{:?}", s.error);
+    let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    let stderr = read(&Path::new(&run.log_path).with_extension("stderr.log"));
+    let prompt = stderr.split("prompt>>").nth(1).and_then(|p| p.split("<<prompt").next()).unwrap_or_else(|| panic!("no prompt in {stderr}"));
+    assert!(prompt.contains(UNTRUSTED), "a Gemini agent gets search results in every run, but its prompt doesn't say they are data");
+}
+
 // ---- the Team Lead's chat ----
 
 struct ChatSetup {
@@ -610,6 +634,26 @@ async fn create_agent_and_update_agent_cant_change_the_web_browser_or_built_in_t
         let props: Vec<&String> = d.input_schema["properties"].as_object().unwrap().keys().collect();
         assert!(!props.iter().any(|p| p.contains("web") || p.contains("browser") || p.contains("builtin") || p.contains("cert")), "{}: {props:?}", d.name);
     }
+}
+
+/// The Team Lead may set an agent's allowed commands (update_agent's allowed_tools), and a task run passes them to
+/// --allowedTools. Naming WebSearch, WebFetch or a built-in tool there must not give a run what only the user's switches
+/// give: either update_agent refuses it, or the run doesn't get it.
+#[tokio::test]
+async fn the_team_lead_cant_give_an_agent_web_tools_through_its_allowed_commands_either() {
+    let t = run_setup(None);
+    let st = &t.st;
+    let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
+    let lead = gizai_core::team::add_agent(&st.db, &st.you_id, &team_id, AgentInput {
+        name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true), ..Default::default() }).unwrap();
+    let r = tools::call_in(st, &lead, None, "update_agent", json!({"agent": "Backend Agent",
+        "allowed_tools": ["Bash(git status:*)", "WebSearch", "WebFetch", "WebFetch(domain:evil.example)", "FancyNewTool"]})).await;
+    eprintln!("update_agent with web tools in allowed_tools: {}", match &r { Ok(_) => "accepted".to_string(), Err(e) => format!("refused: {e}") });
+    assert_eq!(core_mcp::agent_cli_tools(&st.db, &t.agent).unwrap(), CliTools::default(), "the switches are still off");
+    let g = t.run().await;
+    let allowed = g.allowed();
+    assert!(web_tools(&allowed).is_empty() && !allowed.contains(&"FancyNewTool".to_string()),
+            "a run got web or built-in tools the user never switched on, through the Team Lead's allowed_tools: {allowed:?}");
 }
 
 // ---- Stop, the tool cap and quitting end the browser ----

@@ -1009,7 +1009,7 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     // agent (QA, for its pull request) finds it on the remote, also when the agent's own push was refused. Not after a run
     // that couldn't start working, nor for a run Gizai's quitting stopped.
     let pushed = if quit || unstarted { None } else { push_after_run(st, run_id, dir).await };
-    if let Some(text) = pushed.as_ref().and_then(AfterRun::note) {
+    for text in pushed.as_ref().map(AfterRun::notes).unwrap_or_default() {
         note_run(st, run_id, &text);
     }
     let unpushed = pushed.and_then(|p| p.push.err());
@@ -1092,8 +1092,9 @@ struct AfterRun {
 }
 
 impl AfterRun {
-    /// What the run's output says about it; None when nothing went and nothing was left out.
-    fn note(&self) -> Option<String> {
+    /// What the run's output says about it, a note each: what went ("Gizai pushed …", which the Run panel shows as good
+    /// news) or why it couldn't, and the uncommitted changes left behind. Empty when nothing went and nothing was left.
+    fn notes(&self) -> Vec<String> {
         let mut said: Vec<String> = match &self.push {
             Ok(worktree::Pushed::Commits(n)) => vec![format!("Gizai pushed {} ({n} {})", self.branch, if *n == 1 { "commit" } else { "commits" })],
             Ok(worktree::Pushed::Nothing) => vec![],
@@ -1103,8 +1104,7 @@ impl AfterRun {
             let n = self.uncommitted;
             said.push(format!("Its worktree has {n} uncommitted {}, which Gizai doesn't push", if n == 1 { "change" } else { "changes" }));
         }
-        let said: Vec<String> = said.into_iter().map(|s| if s.ends_with('.') { s } else { s + "." }).collect();
-        (!said.is_empty()).then(|| said.join(" "))
+        said.into_iter().map(|s| if s.ends_with('.') { s } else { s + "." }).collect()
     }
 }
 
@@ -1130,8 +1130,8 @@ async fn push_after_run(st: &AppState, run_id: &str, dir: &Path) -> Option<After
     }).await;
     match after {
         Ok(a) => {
-            if a.push.is_err() {
-                eprintln!("gizai: after run {run_id}: {}", a.note().unwrap_or_default());
+            if let Err(why) = &a.push {
+                eprintln!("gizai: after run {run_id}: {why}");
             }
             Some(a)
         }

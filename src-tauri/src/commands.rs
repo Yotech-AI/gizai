@@ -469,6 +469,12 @@ pub fn usage_summary(st: State<AppState>, period: String) -> R<gizai_core::usage
     gizai_core::usage::for_period(&st.db, &period, gizai_core::ids::now_ms()).map_err(e)
 }
 
+/// The Usage page's Subscription tab: per coding CLI, the newest reading of each of its limits and the agents on it.
+#[tauri::command]
+pub fn subscription_limits(st: State<AppState>) -> R<Vec<gizai_core::limits::CliLimits>> {
+    crate::limits::subscription(&st)
+}
+
 // ---- chat with the Team Lead ----
 use crate::chat;
 

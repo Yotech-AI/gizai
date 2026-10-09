@@ -517,6 +517,11 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
     let lists = core_mcp::tool_lists(&st.db).unwrap_or_default();
     for a in on {
         let Some(s) = servers.iter().find(|s| s.id == a.server_id) else { continue };
+        // A name the list doesn't take (only in a list saved before its rules): its tools could pass for Gizai's own.
+        if let Some(why) = core_mcp::name_problem(&[], &s.name, &s.id) {
+            notes.push(format!("Left out {}: {why}. Give it another name in Settings → MCP servers.", s.name));
+            continue;
+        }
         let cached = lists.get(&s.id);
         let signed_in = s.transport != "stdio" && st.tokens.load(&s.id).ok().flatten().is_some();
         if !signed_in && cached.is_some_and(|c| c.needs_sign_in) {

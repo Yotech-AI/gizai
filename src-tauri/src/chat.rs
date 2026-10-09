@@ -111,9 +111,12 @@ fn mcp_states(st: &AppState, thread_id: &str, agent_id: &str, log_path: &Path) {
     crate::mcp_servers::record_states(st, agent_id, &states);
 }
 
-/// Tools that read nothing from outside: Claude Code's file tools and Gizai's own.
+/// Tools that read nothing from outside: Claude Code's file tools and Gizai's own. A name that only looks like Gizai's
+/// own, as the tools of a server called "gizai_" or "gizai__notes" would (`mcp__gizai___x`, `mcp__gizai__notes__x`),
+/// counts as outside. Such server names can't be saved, but this doesn't count on that.
 pub fn is_outside_tool(name: &str) -> bool {
-    !matches!(name, "Read" | "Glob" | "Grep") && !name.starts_with("mcp__gizai__")
+    let gizais = name.strip_prefix("mcp__gizai__").is_some_and(|t| !t.is_empty() && !t.starts_with('_') && !t.contains("__"));
+    !matches!(name, "Read" | "Glob" | "Grep") && !gizais
 }
 
 /// The outside tool this thread's answer under way used, if any.

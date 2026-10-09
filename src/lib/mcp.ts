@@ -109,6 +109,9 @@ export const TAKEN_NAMES = ["gizai", "chrome-devtools"];
 export function nameProblem(name: string, taken: string[]): string | null {
   const n = name.trim();
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(n)) return `A name takes letters, digits, - and _ (at most 64)${n ? `, not "${n}"` : ""}`;
+  if (n.includes("__") || n.endsWith("_")) {
+    return `A name can't have two _ in a row or end with _, not "${n}": its tools are called mcp__<name>__<tool>, and Claude Code reads __ as where the name ends`;
+  }
   if (TAKEN_NAMES.includes(n.toLowerCase())) return `${n} is Gizai's own: give the server another name`;
   if (taken.some((t) => t.toLowerCase() === n.toLowerCase())) return `There is already an MCP server called ${n}: give this one another name`;
   return null;

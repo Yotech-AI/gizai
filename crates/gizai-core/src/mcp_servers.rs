@@ -103,11 +103,21 @@ pub fn valid_name(n: &str) -> bool {
     !n.is_empty() && n.len() <= 64 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Whether Claude Code can tell where the name ends in its tool names, `mcp__<name>__<tool>`: it splits them at each `__`,
+/// so "gizai__notes" or "gizai_" would pass for the gizai server, and their tools for Gizai's own.
+pub fn clear_in_tool_names(n: &str) -> bool {
+    !n.contains("__") && !n.ends_with('_')
+}
+
 /// Whether `name` is free for a new server (or for the one with `own_id`), and if not, why, in plain words.
 pub fn name_problem(servers: &[McpServer], name: &str, own_id: &str) -> Option<String> {
     let name = name.trim();
     if !valid_name(name) {
         return Some(format!("an MCP server's name takes letters, digits, - and _ (at most 64), not \"{name}\""));
+    }
+    if !clear_in_tool_names(name) {
+        return Some(format!("an MCP server's name can't have two _ in a row or end with _, not \"{name}\": its tools are called \
+                             mcp__<name>__<tool>, and Claude Code reads __ as where the name ends"));
     }
     if TAKEN.iter().any(|t| t.eq_ignore_ascii_case(name)) {
         return Some(format!("{name} is Gizai's own: give the server another name"));

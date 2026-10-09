@@ -13,6 +13,7 @@ pub mod team;
 pub mod docs;
 pub mod files;
 pub mod runs;
+pub mod usage;
 pub mod settings;
 pub mod workflow;
 pub mod board;
@@ -26,6 +27,7 @@ pub mod folders;
 pub mod columns;
 pub mod labels;
 pub mod mcp_servers;
+pub mod housekeeping;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

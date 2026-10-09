@@ -10,6 +10,8 @@ export type Col<T> = {
   sort?: (row: T) => string | number | null | undefined;
   width?: number | string;
   align?: "right";
+  /** What the column shows, on hover over its header. */
+  title?: string;
 };
 
 type Item<T> = { type: "group"; name: string; count: number } | { type: "row"; row: T };
@@ -118,7 +120,7 @@ export function DataTable<T>({ rows, columns, rowId, onRowClick, groupBy, groupO
                   const dir = h.column.getIsSorted();
                   return (
                     <th key={c.key} style={{ width: c.width, cursor: c.sort ? "pointer" : undefined }} className={`${dir ? "sorted" : ""} ${c.align === "right" ? "num" : ""}`}
-                      onClick={h.column.getToggleSortingHandler()}>
+                      title={c.title} onClick={h.column.getToggleSortingHandler()}>
                       {c.header}{dir && <span className="arr">{dir === "asc" ? "↑" : "↓"}</span>}
                     </th>
                   );

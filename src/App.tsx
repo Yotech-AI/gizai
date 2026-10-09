@@ -17,8 +17,9 @@ import { TeamPage } from "./pages/TeamPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
+import { UsagePage } from "./pages/UsagePage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe } from "./selftest";
+import { chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function writePref(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
@@ -110,7 +111,12 @@ export default function App() {
             teamUi = await teamProbe(() => getTeam());
             if (!teamUi.ok) errors.push(`team probe: ${JSON.stringify(teamUi)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat });
+          let usage: Awaited<ReturnType<typeof usageProbe>> | undefined;
+          if (i.start_route === "usage") {
+            usage = await usageProbe();
+            if (!usage.ok) errors.push(`usage probe: ${JSON.stringify(usage)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage });
           await exitApp(0);
         }
       })
@@ -135,6 +141,7 @@ export default function App() {
             : route.page === "clients" ? <ClientsPage />
             : route.page === "client" && route.id ? <ClientPage key={route.id} id={route.id} />
             : route.page === "users" ? <UsersPage />
+            : route.page === "usage" ? <UsagePage />
             : route.page === "projects" ? <ProjectsPage />
             : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
             : <Placeholder route={route} info={info} />}

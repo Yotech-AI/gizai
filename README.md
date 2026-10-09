@@ -41,6 +41,14 @@ Click it and Gizai:
 
 If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull` and `./install.sh`.
 
+### Your data
+
+Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it elsewhere). It cleans up after itself when it starts and once a day while it runs:
+
+- **Run and chat logs** (`runs/` and `chat/`): kept for 30 days after the run, chat answer or board check ended, then removed. The run stays in the history with its summary, cost and commits; Show output says its log is gone.
+- **Keys for the Team Lead's tools** (`api_tokens` in `gizai.db`): each one lasts a chat answer or board check, and is removed a day after it expired or was revoked.
+- **Backups** (`backups/`): one before every update, install and database upgrade, and `gizai --backup` makes one when you ask. The newest 20 are kept. Their names use your local time, like `gizai-before-update-20261009-143502-123.db`.
+
 ![Gizai: the board, a live agent run, the Team Lead chat, the team and an agent](docs/gizai.gif)
 
 ## Features
@@ -70,6 +78,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - When a project's linked folder has dependencies behind main (`vendor/` or `node_modules/` missing, or a lock file that differs from main's), the Team Lead tells you what an update would do and, after your yes, updates it: a fast-forward to main (switching branch only if you agreed), then `composer install` or `npm ci`, never a merge, reset or the setup command
 - An org chart of your team: the Team Lead on top, then branches (Design, Development, Quality, Operations and your own), each with one empty spot that adds an agent there. Drag an agent onto a column in Team → Workflow to put it to work there
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
+- Usage (in Company): the agents' input tokens (cache included), output tokens and API cost for today, 7 days, 30 days or this month, in total with a bar per day, per agent and per project, with the Team Lead's chat on its own line. The Projects list shows each project's API cost this month. API cost is what the tokens would cost at API prices, not a bill; a CLI that reports no cost (Codex, Gemini) shows its tokens and an unknown cost
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
 - A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)
 

@@ -1,5 +1,6 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
 import { archiveTask, getTask, listChatThreads, listLabels, listTasks } from "./api";
+import { periodDays } from "./lib/usage";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -525,4 +526,116 @@ async function runsOnAndQueueProbe() {
   const ok = right && onLead && !!cc2 && codexOff && saved && shows && answering && locked && queued && notYet && went && done && note;
   return { ok, right_of_hints: right, on_lead: onLead, options, codex_disabled: codexOff, saved, shows, answering, locked_while_answering: locked,
     queued, not_sent_yet: notYet, went_after: went, answer_done: done, switch_note: note };
+}
+
+const DAY = 86_400_000;
+const textOf = (el: Element | null | undefined) => (el?.textContent ?? "").trim();
+const textsOf = (sel: string, root: ParentNode = document) => [...root.querySelectorAll(sel)].map((e) => textOf(e));
+const cellsOf = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => textOf(td));
+
+/** GA-33, against prep_usage's runs (today: $0.57 of the Backend Agent on KADE and GFW, a Codex run on KADE with tokens but
+ * no cost, a Team Lead chat turn of $0.03; 20 days ago: $1.00 on KADE). Company lists Usage above Team and it is the page
+ * shown; the three tabs, the period switch and the labels; today's numbers on each tab, which agree with each other; 30
+ * days takes in the older run; then the Projects list's AI usage column, sorted by a click on its header. */
+export async function usageProbe() {
+  const company = [...document.querySelectorAll(".side .nav-section")].find((s) => textOf(s.querySelector(".nav-label")) === "Company");
+  const companyItems = company ? textsOf("a.nav-item", company) : [];
+  const usageOn = textOf(company?.querySelector('a.nav-item[aria-current="page"]')) === "Usage";
+  if (!(await waitFor(() => q(".usage-tab"), 6000))) return { ok: false, error: "the Usage page shows no tab", company: companyItems, page: textOf(q(".main")).slice(0, 300) };
+
+  const tabs = textsOf(".tabs button.tab");
+  const selectedTab = () => textOf(q('.tabs button.tab[aria-selected="true"]'));
+  const chips = textsOf('[aria-label="Period"] .chip');
+  const pressedChip = () => textOf(q('[aria-label="Period"] .chip[aria-pressed="true"]'));
+  const shownDays = () => textOf(q(".topbar .crumbs .faint"));
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const sinceOf: Record<string, number> = { Today: today, "7 days": today - 6 * DAY, "30 days": today - 29 * DAY, "This month": Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) };
+  const daysOf = (label: string) => periodDays(sinceOf[label], today + DAY);
+  const first = { tab: selectedTab(), period: pressedChip(), days: shownDays(), want_days: daysOf("This month"), bars: q(".usage-bars")?.children.length,
+    want_bars: now.getUTCDate() };
+  const labels = textsOf(".usage-tab .stat-card h4");
+  const subs = textsOf(".usage-tab .stat-card .sub");
+  const foot = textOf(q(".usage-foot"));
+  const labelled = labels.includes("API cost") && labels.includes("Input tokens (incl. cache)") && labels.includes("Output tokens")
+    && subs.includes("An estimate at API prices, not a bill") && foot.includes("API cost: what these tokens would cost at API prices")
+    && foot.includes("Input tokens include cache reads and writes");
+
+  const period = async (label: string) => {
+    buttonByText(q('[aria-label="Period"]') ?? document, label)?.click();
+    return !!(await waitFor(() => (pressedChip() === label && shownDays() === daysOf(label) ? true : null), 4000));
+  };
+  const tab = async (label: string) => {
+    buttonByText(q(".tabs") ?? document, label)?.click();
+    return !!(await waitFor(() => (selectedTab() === label ? true : null), 2000));
+  };
+  const table = (label: string) => q(`table[aria-label="${label}"]`);
+  const rows = (label: string) => [...(table(label)?.querySelectorAll("tbody tr") ?? [])].map(cellsOf);
+  const total = (label: string) => [...(table(label)?.querySelectorAll("tfoot td") ?? [])].map((td) => textOf(td));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+  // Today, on each tab: [name, runs, input tokens, output tokens, API cost, share].
+  const toToday = await period("Today");
+  await sleep(300);
+  const metrics = textsOf(".usage-tab .usage-metric");
+  const unknownLine = textOf(q(".usage-tab .stat-card .sub.usage-unknown"));
+  const totalOk = same(metrics, ["$0.60", "23K", "4K", "4"]) && unknownLine === "+ an unknown cost for 1 run";
+  const wantTotal = ["Total", "3 runs · 1 chat turn", "23K", "4K", "$0.60 + unknown", ""];
+  await tab("Agents");
+  const agents = rows("Usage per agent");
+  const agentsTotal = total("Usage per agent");
+  const agentsOk = same(agents, [
+    ["Backend Agent", "2 runs", "16K", "3.4K", "$0.57", "95%"],
+    ["Team Lead", "1 chat turn", "2K", "100", "$0.03", "5%"],
+    ["Codex Agent", "1 run", "5K", "500", "Unknown", "0%"],
+  ]) && same(agentsTotal, wantTotal);
+  await tab("Projects");
+  const projects = rows("Usage per project");
+  const projectsTotal = total("Usage per project");
+  const projectsOk = same(projects, [
+    ["Kade portalKADE", "2 runs", "17K", "3.5K", "$0.42 + unknown", "70%"],
+    ["Groene Fiets webshopGFW", "1 run", "4K", "400", "$0.15", "25%"],
+    ["Chat (no project)", "1 chat turn", "2K", "100", "$0.03", "5%"],
+  ]) && same(projectsTotal, wantTotal);
+  // The other periods: the dates change; 30 days takes in the run of 20 days ago.
+  const to7 = await period("7 days");
+  const to30 = await period("30 days");
+  await sleep(300);
+  const projects30 = rows("Usage per project");
+  const total30 = total("Usage per project");
+  const thirtyOk = projects30[0]?.[0] === "Kade portalKADE" && projects30[0]?.[4] === "$1.42 + unknown" && same(total30, ["Total", "4 runs · 1 chat turn", "24K", "4.1K", "$1.60 + unknown", ""]);
+  const toMonth = await period("This month");
+  const periodsOk = toToday && to7 && to30 && toMonth;
+
+  // The Projects list: AI usage this month, sortable.
+  window.location.hash = "#/projects";
+  const th = await waitFor(() => [...document.querySelectorAll("table.grid th")].find((h) => textOf(h).startsWith("AI usage")) as HTMLElement | undefined, 4000);
+  if (!th) return { ok: false, error: "no AI usage column on the Projects list", company: companyItems, first, labelled, totalOk, agents, projects };
+  const heads = textsOf("table.grid thead th");
+  const at = heads.findIndex((h) => h.startsWith("AI usage")), nameAt = heads.findIndex((h) => h.startsWith("Project"));
+  const list = () => [...document.querySelectorAll("table.grid tbody tr")].map(cellsOf).filter((c) => c.length === heads.length).map((c) => [c[nameAt], c[at]]);
+  const oldInMonth = new Date(Date.now() - 20 * DAY).getUTCMonth() === now.getUTCMonth();
+  const kade = list().find(([n]) => n.startsWith("Kade portal"))?.[1], gfw = list().find(([n]) => n.startsWith("Groene Fiets"))?.[1];
+  const column = { kade, gfw, title: th.title, footer: textOf(q(".tablefoot")) };
+  const columnOk = kade === (oldInMonth ? "$1.42 + unknown" : "$0.42 + unknown") && gfw === "$0.15" && th.title.includes("API cost this month")
+    && column.footer.includes("AI usage: the API cost this month, an estimate at API prices, not a bill");
+  const sorted = async () => {
+    th.click();
+    await sleep(200);
+    const arrow = textOf(th.querySelector(".arr"));
+    const names = list().map(([n]) => n);
+    const want = ["Kade portal", "Groene Fiets"];
+    const firsts = (arrow === "↓" ? names : [...names].reverse()).slice(0, 2);
+    return { arrow, names, ok: (arrow === "↓" || arrow === "↑") && want.every((w, i) => firsts[i]?.startsWith(w)) };
+  };
+  const sort1 = await sorted(), sort2 = await sorted();
+  const sortOk = sort1.ok && sort2.ok && sort1.arrow !== sort2.arrow;
+
+  const companyOk = companyItems.indexOf("Usage") >= 0 && companyItems.indexOf("Usage") + 1 === companyItems.indexOf("Team") && usageOn;
+  const firstOk = same(tabs, ["Total", "Agents", "Projects"]) && same(chips, ["Today", "7 days", "30 days", "This month"]) && first.tab === "Total"
+    && first.period === "This month" && first.days === first.want_days && first.bars === first.want_bars;
+  const ok = companyOk && firstOk && labelled && totalOk && agentsOk && projectsOk && periodsOk && thirtyOk && columnOk && sortOk;
+  return { ok, company: companyItems, usage_on: usageOn, tabs, chips, first, labelled, metrics, unknown_line: unknownLine, total_ok: totalOk,
+    agents, agents_total: agentsTotal, projects, projects_total: projectsTotal, periods: { today: toToday, d7: to7, d30: to30, month: toMonth },
+    projects_30: projects30, total_30: total30, column, column_ok: columnOk, sort: [sort1, sort2] };
 }

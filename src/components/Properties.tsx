@@ -2,7 +2,7 @@
 import { Check, X } from "lucide-react";
 import { listTasks, moveTask, setTaskLabels, updateTask } from "../api";
 import { href } from "../router";
-import { relTime } from "../lib/format";
+import { relTime, textEnd } from "../lib/format";
 import { keyBetween } from "../lib/sortKey";
 import type { Person, Task, Team } from "../types";
 import { PRIORITY_NAMES, PriorityIcon, StatusIcon } from "./StatusIcon";
@@ -15,10 +15,13 @@ const HOLD_NAMES: Record<string, string> = {
   waiting_approval: "Waiting for approval", rate_limited: "Rate limited", blocked: "Blocked",
 };
 const date = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+/** A hold reason longer than this shows its end: about two lines of the value column (some 30 characters a line). */
+const REASON_CHARS = 60;
 
-/** `readOnly` (an archived card): the values show, but nothing can be changed. */
-export function Properties({ task, team, people, onError, onClose, readOnly }: {
-  task: Task; team: Team; people: Person[]; onError: (msg: string) => void; onClose: () => void; readOnly?: boolean;
+/** `readOnly` (an archived card): the values show, but nothing can be changed. `onReadComments`: the Hold row's "Read in
+ *  comments" under a shortened reason. */
+export function Properties({ task, team, people, onError, onClose, onReadComments, readOnly }: {
+  task: Task; team: Team; people: Person[]; onError: (msg: string) => void; onClose: () => void; onReadComments?: () => void; readOnly?: boolean;
 }) {
   const run = (p: Promise<unknown>) => p.catch((e) => onError(String(e)));
   // A value that opens its picker, or only shows when the card is read-only.
@@ -37,6 +40,8 @@ export function Properties({ task, team, people, onError, onClose, readOnly }: {
   };
   const row = (k: string, v: React.ReactNode) => <div className="prop-row"><span className="k">{k}</span>{v}</div>;
   const testing = task.testing !== false; // on unless the card says off
+  // A long hold reason is usually the agent's whole summary, which the comments show: only its end (the questions) here.
+  const reasonEnd = task.holdReason ? textEnd(task.holdReason, REASON_CHARS) : null;
   return (
     <aside className="props" aria-label="Properties">
       <div className="props-head">Properties<button className="btn ghost sm icon-only" aria-label="Close properties" title="Close properties (])" onClick={onClose}><X className="icon" /></button></div>
@@ -68,7 +73,9 @@ export function Properties({ task, team, people, onError, onClose, readOnly }: {
         {row("Project", task.projectId ? <a className="v editable" href={href({ page: "project", id: task.projectId })}><span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", background: task.projectColor ?? "var(--text-3)" }} />{task.projectName}</a> : <span className="v none">None</span>)}
         {task.hold && row("Hold", <span className="v" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
           <span className="badge needs">{HOLD_NAMES[task.hold] ?? task.hold}</span>
-          {task.holdReason && <span className="muted" style={{ fontSize: "var(--fs-sm)" }}>{task.holdReason}</span>}
+          {task.holdReason && <span className="muted" style={{ fontSize: "var(--fs-sm)", overflowWrap: "anywhere" }} title={reasonEnd ? task.holdReason : undefined}>
+            {reasonEnd ?? task.holdReason}</span>}
+          {reasonEnd && onReadComments && <button className="link" style={{ color: "var(--accent)" }} onClick={onReadComments}>Read in comments</button>}
           {!readOnly && <button className="btn sm" onClick={() => run(updateTask(task.id, { hold: "" }))}>Clear hold</button>}</span>)}
         {row("Branch", task.branch ? <span className="v"><span className="id" style={{ color: "var(--text-2)", whiteSpace: "normal", wordBreak: "break-all" }}>{task.branch}</span></span> : <span className="v none">Set when an agent starts</span>)}
         <div className="props-sep" />

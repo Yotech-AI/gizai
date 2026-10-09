@@ -14,8 +14,11 @@
 #     through the real gizai-mcp shim and socket, and the answer links the task it created. Then Runs on under the
 #     text box: it lists the Claude Code accounts (Codex disabled, with why) and picking Claude Code 2 saves it; while a
 #     slow answer is written, Enter queues a message, which shows as queued and goes by itself when the answer is done.
-#  7. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub.
-#  8. project form (GA-60): the New project drawer opens with its Repository field (a GitHub or Bitbucket link).
+#  7. usage (GA-33): Usage in the sidebar's Company section above Team; the Total, Agents and Projects tabs and the period
+#     switch against prep_usage's runs (an unknown cost, a chat turn, a run 20 days ago), and the tabs agree; then the
+#     Projects list's AI usage column, sorted by its header.
+#  8. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub.
+#  9. project form (GA-60): the New project drawer opens with its Repository field (a GitHub or Bitbucket link).
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -48,6 +51,9 @@ DATA=$PWD/.devdata/uitest ROUTE="task/$RUNTASK" MODE=run scripts/smoke-cage.sh |
 fresh
 (source scripts/env.sh && cargo run -q -p gizai-core --example prep_chat -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude-chat.py")
 DATA=$PWD/.devdata/uitest ROUTE=chat MODE=chat scripts/smoke-cage.sh || fail=1
+fresh
+(source scripts/env.sh && cargo run -q -p gizai-core --example prep_usage -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
+DATA=$PWD/.devdata/uitest ROUTE=usage scripts/smoke-cage.sh || fail=1
 fresh
 DATA=$PWD/.devdata/uitest ROUTE=settings MODE='steps:#s-bb-email' scripts/smoke-cage.sh || fail=1
 fresh

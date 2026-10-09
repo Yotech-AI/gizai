@@ -4,14 +4,21 @@ use crate::util::{clean, org_id};
 use crate::{Error, Result, ids};
 use rusqlite::{OptionalExtension, Row};
 
-const SELECT: &str = "SELECT p.id, p.client_id, c.name, p.number, p.key, p.name, p.status, p.color, p.goal_md,
+/// The project with its task counts and its AI usage since `?1` (the start of this month): the API cost of the runs on
+/// its cards, archived ones included, and how many of them have an unknown cost (`usage`).
+fn select() -> String {
+    let unknown = crate::usage::unknown_cost("u");
+    format!("SELECT p.id, p.client_id, c.name, p.number, p.key, p.name, p.status, p.color, p.goal_md,
     r.local_path, coalesce(r.default_branch, 'main'), p.team_id, p.budget_amount_minor, p.budget_hours,
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category NOT IN ('done','cancelled')),
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category = 'done'),
-    p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup
+    p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
+    (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
+    (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown})
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
-  LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL";
+  LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL")
+}
 
 fn row(r: &Row) -> rusqlite::Result<Project> {
     Ok(Project {
@@ -21,19 +28,25 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         done_tasks: r.get(15)?, updated_at: r.get(16)?, repo_url: r.get(17)?,
         worktree_copy: serde_json::from_str(&r.get::<_, String>(18)?).unwrap_or_default(),
         worktree_install: r.get(19)?, worktree_setup: r.get(20)?,
+        ai_cost_usd_micros: r.get(21)?, ai_unknown_cost_runs: r.get(22)?,
     })
+}
+
+/// The start of this month (UTC), from which a project's AI usage counts.
+fn month_start() -> i64 {
+    crate::runs::month_start_ms(ids::now_ms())
 }
 
 pub fn list(db: &Db) -> Result<Vec<Project>> {
     db.read(|c| {
-        let mut st = c.prepare(&format!("{SELECT} WHERE p.deleted_at IS NULL ORDER BY p.number DESC"))?;
-        Ok(st.query_map([], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut st = c.prepare(&format!("{} WHERE p.deleted_at IS NULL ORDER BY p.number DESC", select()))?;
+        Ok(st.query_map([month_start()], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
     })
 }
 
 pub fn get(db: &Db, id: &str) -> Result<Project> {
     db.read(|c| {
-        c.query_row(&format!("{SELECT} WHERE p.id = ?1"), [id], row)
+        c.query_row(&format!("{} WHERE p.id = ?2", select()), rusqlite::params![month_start(), id], row)
             .optional()?
             .ok_or_else(|| Error::NotFound(format!("project {id}")))
     })
@@ -69,6 +82,32 @@ pub fn suggest_key(name: &str) -> String {
         k.push('P');
     }
     k
+}
+
+/// A key for a new project called `name` that none of `taken` is: `suggest_key(name)`, else that key with a number (2, 3,
+/// …) for which its last letters make room, so it is never longer than 6 characters: "ABCDEF" → "ABCDE2" … "ABCDE9",
+/// "ABCD10".
+pub fn free_key(name: &str, taken: &[String]) -> String {
+    let base = suggest_key(name);
+    let is_taken = |k: &str| taken.iter().any(|t| t.eq_ignore_ascii_case(k));
+    let mut k = base.clone();
+    let mut n = 2;
+    // At most 5 digits, so a letter still starts the key.
+    while is_taken(&k) && n < 100_000 {
+        let num = n.to_string();
+        k = format!("{}{num}", &base[..base.len().min(6 - num.len())]);
+        n += 1;
+    }
+    k
+}
+
+/// `free_key` for a new project: none of the projects has the key yet (`create` refuses one that is used).
+pub fn unused_key(db: &Db, name: &str) -> Result<String> {
+    let taken = db.read(|c| {
+        let mut st = c.prepare("SELECT key FROM projects")?;
+        Ok(st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?)
+    })?;
+    Ok(free_key(name, &taken))
 }
 
 fn normalise_key(key: &str) -> Result<String> {

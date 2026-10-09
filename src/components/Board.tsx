@@ -8,8 +8,9 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { Task, WorkflowState } from "../types";
+import type { Member, Task, WorkflowState } from "../types";
 import { dropKey, groupByColumn } from "../lib/board";
+import { boardNote } from "../lib/columns";
 import { pullBadge, pullLabel } from "../lib/pulls";
 import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
@@ -17,14 +18,6 @@ import { Archive, Plus } from "lucide-react";
 
 const CAP = 50;
 const RAIL_CATEGORIES = new Set(["backlog", "done", "cancelled"]);
-/** A note that follows the column: your review, else who starts its cards (its agents, or Run). */
-const noteOf = (s: WorkflowState): string | undefined => {
-  if (s.category === "review") return "Waiting for your review";
-  if (["backlog", "done", "cancelled"].includes(s.category)) return undefined;
-  const agents = s.agentIds?.length ?? 0;
-  if (s.auto) return agents ? "Picked up by the agents on this column" : "Auto, but no agent is on this column";
-  return agents ? "Manual: press Run on a card" : undefined;
-};
 
 type Cols = Record<string, string[]>;
 
@@ -59,8 +52,8 @@ const Card = memo(function Card({ task, onOpen, onArchive, working }: {
   );
 });
 
-function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working }: {
-  state: WorkflowState; ids: string[]; byId: Map<string, Task>; rail: boolean; working: Map<string, string>;
+function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working, members }: {
+  state: WorkflowState; ids: string[]; byId: Map<string, Task>; rail: boolean; working: Map<string, string>; members?: Member[];
   onToggleRail: (id: string) => void; onOpen: (id: string) => void; onAdd?: (stateId: string) => void; onArchive?: (task: Task) => void;
 }) {
   // Only a card in Done can be archived (not Deploy, not Cancelled).
@@ -75,7 +68,8 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive
     );
   }
   const visible = ids.slice(0, shown);
-  const note = noteOf(state);
+  // The note follows the column: your review, or who starts its cards (its agents when Auto, Run when Manual).
+  const note = boardNote(state, members);
   return (
     <div className="col" data-col={state.name}>
       <div className="col-head">
@@ -100,8 +94,10 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive
   );
 }
 
-export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working = new Map() }: {
+export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working = new Map(), members }: {
   tasks: Task[]; states: WorkflowState[];
+  /** The team's members, so an Auto column's note names its agents. */
+  members?: Member[];
   /** task id → name of the agent working on it now */
   working?: Map<string, string>;
   onMove: (taskId: string, stateId: string, sortKey: string) => void;
@@ -203,7 +199,7 @@ export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working
       onDragEnd={onDragEnd}>
       <div className="board">
         {states.map((s) => (
-          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} />
+          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} members={members} />
         ))}
       </div>
     </DndContext>

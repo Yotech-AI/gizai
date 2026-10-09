@@ -20,7 +20,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
 import { chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
-import { toggleDensity, toggleTheme } from "./lib/appearance";
+import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 
 export default function App() {
   const route = useRoute();
@@ -54,6 +54,8 @@ export default function App() {
         if (kind === "task" || kind === "project" || kind === "client" || kind === "person") setDrawer({ kind });
         if (kind === "agent-lead") setDrawer({ kind: "agent", preset: { name: "Team Lead", role: "lead", chat: true } });
         if (i.selftest_mode === "theme:light") document.documentElement.dataset.theme = "light";
+        // GIZAI_SELFTEST_MODE=appearance:chat=20,ui=16.5,docs=20,font=inter,theme=light: Settings → Appearance for this start only.
+        if (i.selftest_mode?.startsWith("appearance:")) setAppearance(appearanceOf(i.selftest_mode.slice(11)), false);
         // GIZAI_SELFTEST_MODE=steps:<step>;<step>…: a step "#/route" goes there, any other step clicks that CSS selector.
         if (i.selftest_mode?.startsWith("steps:")) {
           for (const step of i.selftest_mode.slice(6).split(";")) {

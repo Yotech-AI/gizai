@@ -27,7 +27,7 @@ export function AppearanceSettings() {
         <button className="link" onClick={resetAppearance} disabled={atDefaults} title={atDefaults ? "Everything is at its default" : undefined}>Reset to defaults</button>
       </div>
       <FormSection title="Font" text="One font for the whole app: each choice sets the text font and the code font (task IDs, code and run logs). Claude's own fonts are licensed, so Gizai can't ship them; Inter and Geist give a similar clean look.">
-        <Field label="Font" wide>
+        <Field label="Text and code" wide>
           <div className="font-choices" role="radiogroup" aria-label="Font">
             {FONTS.map((f) => (
               <label key={f.key} className={`font-choice${a.font === f.key ? " on" : ""}`} data-font={f.key}>

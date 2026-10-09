@@ -57,6 +57,7 @@
 .font-choice .fc-sample { color: var(--text-2); }
 .font-choice .fc-sample .mono { margin-left: 4px; color: var(--text-3); }
 .font-choice .fc-note { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
+.field > .seg { align-self: flex-start; }
 .size-seg button { min-width: 38px; font-variant-numeric: tabular-nums; }
 .seg-label { display: inline-flex; align-items: center; gap: 5px; }
 .size-preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; align-items: start; }

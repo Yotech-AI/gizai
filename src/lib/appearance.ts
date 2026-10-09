@@ -112,11 +112,21 @@ export function getAppearance(): Appearance {
   return current;
 }
 
-/** Changes part of it: it shows at once and is kept for the next start (a default is kept as no value). */
-export function setAppearance(patch: Partial<Appearance>) {
+/** "chat=20,ui=16.5,font=inter": the dev hook's appearance (GIZAI_SELFTEST_MODE=appearance:…), the rest at its default. */
+export function appearanceOf(spec: string): Appearance {
+  const given = new Map(spec.split(",").map((p) => p.split("=").map((x) => x.trim()) as [string, string]));
+  const names = Object.keys(KEYS) as (keyof Appearance)[];
+  return parseAppearance((key) => given.get(names.find((n) => KEYS[n] === key) ?? "") ?? null);
+}
+
+/** Changes part of it: it shows at once and is kept for the next start (a default is kept as no value), unless `keep`
+ *  is false (the dev hook's screenshots). */
+export function setAppearance(patch: Partial<Appearance>, keep = true) {
   const next = { ...getAppearance(), ...patch };
   current = next;
   if (typeof document !== "undefined") applyAppearance(document.documentElement, next);
+  listeners.forEach((f) => f(next));
+  if (!keep) return;
   const s = prefs();
   for (const k of Object.keys(KEYS) as (keyof Appearance)[]) {
     try {
@@ -124,7 +134,6 @@ export function setAppearance(patch: Partial<Appearance>) {
       else s?.setItem(KEYS[k], String(next[k]));
     } catch { /* private mode: it lasts until a restart */ }
   }
-  listeners.forEach((f) => f(next));
 }
 
 export function resetAppearance() {

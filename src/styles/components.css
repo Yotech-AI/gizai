@@ -369,7 +369,10 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .chat-col { max-width: calc(760px * var(--chat-scale, 1)); margin: 0 auto; padding: 24px; }
 .chat-group { margin-bottom: 22px; }
 .chat-group.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-.chat-msg.user .bubble { max-width: min(calc(560px * var(--chat-scale, 1)), 85%); margin-left: auto; padding: 9px 13px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); color: var(--text); font-size: var(--fs-chat, var(--fs)); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+/* Your message spans the column, so its bubble's 85% is of the column, not of the bubble itself (which wrapped its
+   last words); the bubble is as wide as its text. */
+.chat-group.user > .chat-msg { align-self: stretch; }
+.chat-msg.user .bubble { width: fit-content; max-width: min(calc(560px * var(--chat-scale, 1)), 85%); margin-left: auto; padding: 9px 13px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); color: var(--text); font-size: var(--fs-chat, var(--fs)); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
 .chat-meta { font-size: var(--fs-xs); color: var(--text-3); }
 .chat-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: var(--fs-sm); color: var(--text-2); }
 .chat-head b { color: var(--text); font-weight: 600; }

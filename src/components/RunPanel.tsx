@@ -178,7 +178,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
         <div className="run-actions">
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`
             : task.hold ? "On hold" : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
-          <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!!pending.busy} style={{ width: 220, height: 28 }}>
+          <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!!pending.busy} style={{ width: 220, height: "calc(28px + var(--ui-box, 0px))" }}>
             <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
             {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}
           </select>

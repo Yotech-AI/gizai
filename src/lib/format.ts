@@ -10,6 +10,17 @@ export function relTime(ms: number, now = Date.now()): string {
   return d === 1 ? "yesterday" : `${d}d ago`;
 }
 
+/** The end of a text longer than `max` characters: its last words within `max`, after "…" (a hold reason ends with its
+ *  questions). Null when the text fits. A run of spaces and line breaks counts as one space. */
+export function textEnd(text: string, max: number): string | null {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return null;
+  const end = t.slice(-max);
+  const space = end.indexOf(" ");
+  // Start at a word: drop the part of one the cut split, unless that is a long one (a path): then the cut stays inside it.
+  return `…${t[t.length - max - 1] !== " " && space >= 0 && space < max / 4 ? end.slice(space + 1) : end}`;
+}
+
 /** "Marloes van der Visser" → "MV"; one word → its first two letters. */
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);

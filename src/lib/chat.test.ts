@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyDraft, chatRunsOn, groupMessages, toolCard, toolName, withSnapshot, type DraftChange, type LiveDraft } from "./chat";
+import { applyDraft, chatRunsOn, groupMessages, highlight, hitAuthor, RECENT_MAX, snippet, toolCard, toolName, withSnapshot, type DraftChange,
+  type LiveDraft } from "./chat";
 import type { ChatMessage } from "../types";
 
 const base: ChatMessage = { id: "m", threadId: "t", role: "tool", authorId: "a", authorName: "Team Lead", bodyMd: null, runId: "r", toolName: null, tool: null, createdAt: 1_000_000 };
@@ -93,5 +94,115 @@ describe("chatRunsOn", () => {
     expect(chatRunsOn("gone", "claude_code", clis)).toBe("claude_code");
     expect(chatRunsOn(undefined, null, clis)).toBe("claude_code");
     expect(chatRunsOn("cc2", "claude_code", null)).toBe("cc2");
+  });
+});
+
+// GA-46: Chat → Recent shows 30 chats; the Archive's rows show a piece of the matching message with the match marked.
+describe("Recent", () => {
+  it("shows 30 chats", () => {
+    expect(RECENT_MAX).toBe(30);
+  });
+});
+
+describe("the Archive's snippet", () => {
+  // 80 short words, ~520 characters: "w0 w1 w2 …"; `at` puts the match in place of word `at`.
+  const words = (at: number, match = "needle") => Array.from({ length: 80 }, (_, i) => (i === at ? match : `word${i}`)).join(" ");
+  const isWordAt = (text: string, piece: string) => {
+    const i = text.indexOf(piece);
+    return i >= 0 && (i === 0 || text[i - 1] === " ") && (i + piece.length === text.length || text[i + piece.length] === " ");
+  };
+
+  it("is a short message whole, on one line", () => {
+    expect(snippet("Hello\n\n  there ", "there")).toBe("Hello there");
+    expect(snippet("Hello there", "")).toBe("Hello there");
+  });
+
+  it("drops Markdown's marks: links and images keep their text", () => {
+    expect(snippet("**Bold** and `code` and [the docs](https://x.y/z) ![pic](a.png)", "code")).toBe("Bold and code and the docs pic");
+    expect(snippet("## Plan\n- one\n* two\n> quoted\n1. first\n2) second", "one")).toBe("Plan one two quoted first second");
+  });
+
+  it("keeps the marks when the match is in them, like a link's address", () => {
+    expect(snippet("See [the docs](https://example.com/guide)", "EXAMPLE.com")).toBe("See [the docs](https://example.com/guide)");
+  });
+
+  it("cuts a long message around the match, on words, with … where text was left out", () => {
+    for (const at of [0, 1, 5, 20, 40, 60, 75, 79]) {
+      const text = words(at);
+      const s = snippet(text, "NEEDLE");
+      expect(s, `at ${at}`).toContain("needle");
+      expect(s.length, `at ${at}`).toBeLessThanOrEqual(142);
+      expect(s.length, `at ${at}`).toBeGreaterThan(100);
+      expect(s.startsWith("…"), `at ${at}: ${s}`).toBe(!text.startsWith(s.replace(/…$/, "")));
+      expect(s.endsWith("…"), `at ${at}: ${s}`).toBe(!text.endsWith(s.replace(/^…/, "")));
+      expect(isWordAt(text, s.replace(/^…|…$/g, "")), `at ${at}: ${s}`).toBe(true);
+      expect(highlight(s, "needle").filter((p) => p.hit).map((p) => p.text), `at ${at}`).toEqual(["needle"]);
+    }
+  });
+
+  it("leaves some text before a match in the middle, to read it in context", () => {
+    const s = snippet(words(40), "needle");
+    expect(s.indexOf("needle")).toBeGreaterThan(20);
+  });
+
+  it("cuts inside a very long word (a link) instead of dropping the text around the match", () => {
+    const link = `https://example.com/${"a".repeat(200)}/needle/${"b".repeat(200)}`;
+    const s = snippet(`Read ${link} please`, "needle");
+    expect(s).toContain("/needle/");
+    expect(s.length).toBeLessThanOrEqual(142);
+    expect(s.startsWith("…") && s.endsWith("…")).toBe(true);
+    expect(s).toContain("aaaa");
+    expect(s).toContain("bbbb");
+  });
+
+  it("is the message's start when there is nothing to search for", () => {
+    const s = snippet(words(-1), "");
+    expect(s.startsWith("word0 word1")).toBe(true);
+    expect(s.endsWith("…")).toBe(true);
+    expect(s.length).toBeLessThanOrEqual(141);
+  });
+
+  it("reads the search as typed: spaces as one, regex characters literal", () => {
+    expect(snippet(words(70, "a.b*(c)"), "a.b*(c)")).toContain("a.b*(c)");
+    expect(snippet(`${words(-1)} the  warehouse`, "the   warehouse")).toContain("the warehouse");
+  });
+});
+
+describe("the Archive's highlight", () => {
+  const marked = (text: string, q: string) => highlight(text, q).filter((p) => p.hit).map((p) => p.text);
+
+  it("marks every match, case ignored, and keeps the text as it was", () => {
+    const parts = highlight("Warehouse and the WAREHOUSE.", "warehouse");
+    expect(parts).toEqual([
+      { text: "Warehouse", hit: true }, { text: " and the ", hit: false }, { text: "WAREHOUSE", hit: true }, { text: ".", hit: false },
+    ]);
+    expect(parts.map((p) => p.text).join("")).toBe("Warehouse and the WAREHOUSE.");
+  });
+
+  it("marks nothing for an empty search or no match", () => {
+    expect(highlight("Plain title", "")).toEqual([{ text: "Plain title", hit: false }]);
+    expect(highlight("Plain title", "   ")).toEqual([{ text: "Plain title", hit: false }]);
+    expect(highlight("Plain title", "zebra")).toEqual([{ text: "Plain title", hit: false }]);
+    expect(highlight("", "zebra")).toEqual([{ text: "", hit: false }]);
+  });
+
+  it("takes %, _ and regex characters literally", () => {
+    expect(marked("50% done, 500 done", "50%")).toEqual(["50%"]);
+    expect(marked("user_id and userXid", "user_id")).toEqual(["user_id"]);
+    expect(marked("a.b and axb", "a.b")).toEqual(["a.b"]);
+    expect(marked("(see) [x] C:\\temp $1 ^a", "C:\\t")).toEqual(["C:\\t"]);
+    expect(marked("(see) [x] $1 ^a", "(see) [x] $1 ^a")).toEqual(["(see) [x] $1 ^a"]);
+  });
+
+  it("marks a match at the start and at the end", () => {
+    expect(highlight("kade portal kade", "KADE")).toEqual([{ text: "kade", hit: true }, { text: " portal ", hit: false }, { text: "kade", hit: true }]);
+  });
+});
+
+describe("who wrote an Archive hit", () => {
+  it("is You for your message, the Team Lead by its name otherwise", () => {
+    expect(hitAuthor({ role: "user", authorName: "Jeffrey" })).toBe("You");
+    expect(hitAuthor({ role: "agent", authorName: "Kees" })).toBe("Kees");
+    expect(hitAuthor({ role: "agent", authorName: null })).toBe("Team Lead");
   });
 });

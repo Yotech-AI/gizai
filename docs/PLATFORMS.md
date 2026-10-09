@@ -68,6 +68,7 @@ The decisions (Jeffrey, 9 Oct 2026):
 - **Updates (decided).** Gizai fetches the release's tag and builds it from source with that system's install script, as on Linux. No Tauri updater, no signed update files.
 - **No signing (decided).** A build made on your own machine isn't a download, so Gatekeeper and SmartScreen have nothing to quarantine. The README says what to do if they still warn.
 - **CI.** `.github/workflows/ci.yml` builds Gizai on Linux, macOS (Apple Silicon) and Windows on every pull request, and runs `cargo test --workspace` and `npm test` on each. Releases stay as they are: no binaries attached.
+- **The installers in CI.** `ci.yml` checks that `install.sh` parses with macOS's bash 3.2 and that `install.ps1` parses with Windows PowerShell 5.1 and PowerShell 7, and runs their checks. `.github/workflows/install.yml` does what an update does on a Mac and a Windows PC, into a scratch folder: build only, install, install again over it, then uninstall. It also checks Gizai.app's signature and the Start menu shortcut's app ID. A release build takes a while, so it runs only on pull requests that change an installer (or `tauri.conf.json`), and by hand.
 
 ## Check list per system
 

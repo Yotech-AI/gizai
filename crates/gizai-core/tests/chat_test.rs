@@ -84,6 +84,26 @@ fn a_minted_token_verifies_until_revoked_or_expired() {
 }
 
 #[test]
+fn minted_tokens_are_64_lowercase_hex_characters_of_fresh_randomness_on_every_system() {
+    // GA-51: the bytes come from the system's random source (getrandom), not /dev/urandom, which Windows lacks.
+    let (db, s) = setup();
+    let lead = agent(&db, &s, "Team Lead", "lead", Some(true));
+    let toks: Vec<String> = (0..32).map(|_| tokens::mint(&db, &lead, json!({"chat": "T1"}), 60_000).unwrap()).collect();
+    for tok in &toks {
+        assert_eq!(tok.len(), 64, "{tok}");
+        assert!(tok.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)), "lowercase hex: {tok}");
+        assert_eq!(tokens::verify(&db, tok).unwrap().unwrap().actor_id, lead);
+    }
+    let distinct: std::collections::HashSet<&String> = toks.iter().collect();
+    assert_eq!(distinct.len(), toks.len(), "every token differs");
+    // No fixed or zeroed bytes: each of the 64 places takes more than one value across the tokens.
+    for i in 0..64 {
+        let seen: std::collections::HashSet<u8> = toks.iter().map(|t| t.as_bytes()[i]).collect();
+        assert!(seen.len() > 1, "place {i} is the same in every token: {toks:?}");
+    }
+}
+
+#[test]
 fn tokens_are_stored_hashed() {
     let (db, s) = setup();
     let lead = agent(&db, &s, "Team Lead", "lead", Some(true));

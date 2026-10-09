@@ -365,21 +365,46 @@ pub fn push_branch(repo: &Path, to: &str, branch: &str) -> Result<(), AgentError
 }
 
 /// Pushes the local `branch` to the branch of the same name at `to` (a remote's name, or a URL): over SSH with your
-/// keys, or over HTTPS with gh's login (`over`, set for this one command: no git config or remote changes). Never
-/// forces and never asks for anything; gives up after two minutes. A failure says what to check, in plain words.
+/// keys, or over HTTPS with gh's login, or to Bitbucket over SSH (`over`, set for this one command: no git config or
+/// remote changes). Never forces and never asks for anything; gives up after two minutes. A failure says what to
+/// check, in plain words.
 pub fn push_branch_over(repo: &Path, to: &str, branch: &str, over: &PushOver) -> Result<(), AgentError> {
     let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    quiet(repo, &over.git_config(), &["push", "--quiet", to, &spec], PUSH_LIMIT)
+    quiet(repo, &push_config(repo, to, over), &["push", "--quiet", to, &spec], PUSH_LIMIT)
         .map(|_| ())
         .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {}", e.problem(over))))
 }
 
 /// Whether you can push to `to` the way `push_branch_over` would, without pushing anything: a dry run of the
-/// repository's latest commit to a new branch. It reaches GitHub and needs write access, but sends nothing and runs
-/// no hooks.
+/// repository's latest commit to a new branch. It reaches GitHub (or Bitbucket) and needs write access, but sends
+/// nothing and runs no hooks.
 pub fn can_push(repo: &Path, to: &str, over: &PushOver, limit: Duration) -> Result<(), Problem> {
     let args = ["push", "--dry-run", "--quiet", "--no-verify", to, "HEAD:refs/heads/gizai-connection-check"];
-    quiet(repo, &over.git_config(), &args, limit).map(|_| ()).map_err(|e| e.problem(over))
+    quiet(repo, &push_config(repo, to, over), &args, limit).map(|_| ()).map_err(|e| e.problem(over))
+}
+
+/// `over`'s settings for one push to `to`: for Bitbucket with the addresses `to` pushes to (`PushOver::git_config_for`),
+/// so an address with a user name in it goes over SSH too.
+fn push_config(repo: &Path, to: &str, over: &PushOver) -> Vec<String> {
+    match over {
+        PushOver::Bitbucket => over.git_config_for(&push_addresses(repo, to)),
+        _ => over.git_config(),
+    }
+}
+
+/// The addresses a push to `to` goes to, as written: `to` itself (an address), or the push addresses of the remote it
+/// names (`remote.<name>.pushurl`, else its `url`).
+fn push_addresses(repo: &Path, to: &str) -> Vec<String> {
+    let mut out = vec![to.to_string()];
+    for key in ["pushurl", "url"] {
+        let found: Vec<String> = git(repo, &["config", "--get-all", &format!("remote.{to}.{key}")]).unwrap_or_default()
+            .lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
+        if !found.is_empty() {
+            out.extend(found);
+            break;
+        }
+    }
+    out
 }
 
 /// Every branch that is checked out in a worktree of the repository, with that worktree.
@@ -539,7 +564,7 @@ impl Failure {
     fn problem(self, over: &PushOver) -> Problem {
         match self {
             Failure::Said(said) => connection::push_problem(&said, over),
-            Failure::NoAnswer(limit) => connection::no_answer(limit),
+            Failure::NoAnswer(limit) => connection::push_no_answer(over, limit),
             Failure::CantRun(e) => Problem::plain(e),
         }
     }

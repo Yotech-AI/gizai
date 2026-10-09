@@ -9,6 +9,10 @@ version.workspace = true
 serde_json = { workspace = true }
 tokio = { workspace = true }
 
+# The named pipe's DACL and the user checks at both ends of it on Windows (see `pipe` in src/lib.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

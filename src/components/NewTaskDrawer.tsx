@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
-import { createTask, getTeam, listProjects, listUsers } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { addFiles, createTask, getTeam, listProjects, listUsers } from "../api";
 import { go } from "../router";
+import { addPaths, fileName } from "../lib/files";
+import { useDropZone } from "../lib/useDropZone";
 import type { Person, Project, Team } from "../types";
 import { Drawer } from "./Drawer";
+import { PendingFiles } from "./FileDrop";
 import { Field, FormSection } from "./Form";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { NewLabel } from "./NewLabel";
@@ -10,7 +13,8 @@ import { PRIORITY_NAMES } from "./StatusIcon";
 
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 
-/** N anywhere. Title, project, column (default Backlog), priority, assignee, labels, description and acceptance criteria. */
+/** N anywhere. Title, project, column (default Backlog), priority, assignee, labels, description, acceptance criteria and files.
+ *  The files are only listed until Create task: it creates the task, then adds them. */
 export function NewTaskDrawer({ onClose, stateId: presetState, projectId: presetProject, assigneeId: presetAssignee }: {
   onClose: () => void; stateId?: string | null; projectId?: string | null; assigneeId?: string | null;
 }) {
@@ -28,6 +32,11 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   const [acceptance, setAcceptance] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paths, setPaths] = useState<string[]>([]);
+  // The task exists, but some files were not added: the drawer says which and why, and offers only Open task and Close.
+  const [created, setCreated] = useState<{ id: string; failed: string[] } | null>(null);
+  // From Create task on (unless creating the task fails): another Create task or Ctrl+Enter does nothing.
+  const creating = useRef(false);
 
   useEffect(() => {
     listProjects().then((ps) => {
@@ -41,30 +50,50 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   }, []);
 
   const create = async () => {
+    if (creating.current) return;
     if (!title.trim()) { setErr("Give the task a title."); return; }
     if (!projectId) { setErr("Pick a project."); return; }
+    creating.current = true;
     setBusy(true);
+    let id: string;
     try {
-      const id = await createTask({ projectId, title: title.trim(), stateId: stateId || null, labelIds, priority, assigneeId: assigneeId || null,
+      id = await createTask({ projectId, title: title.trim(), stateId: stateId || null, labelIds, priority, assigneeId: assigneeId || null,
         descriptionMd: description, acceptanceMd: acceptance.trim() ? acceptance : null, testing });
-      onClose();
-      go({ page: "task", id });
-    } catch (e) { setErr(String(e)); setBusy(false); }
+    } catch (e) { creating.current = false; setErr(String(e)); setBusy(false); return; }
+    // The task exists now: a file that can't be added never undoes it or creates it again.
+    if (paths.length) {
+      let failed: string[];
+      try { failed = (await addFiles("task", id, paths)).failed; }
+      catch (e) { failed = [`${paths.map(fileName).join(", ")}: ${String(e)}`]; }
+      if (failed.length) { setCreated({ id, failed }); setBusy(false); return; }
+    }
+    onClose();
+    go({ page: "task", id });
   };
+  const openTask = (id: string) => { onClose(); go({ page: "task", id }); };
+  const pick = (more: string[]) => { if (!creating.current) setPaths((ps) => addPaths(ps, more)); };
+  const unpick = (path: string) => { if (!creating.current) setPaths((ps) => ps.filter((p) => p !== path)); };
   const agents = (team?.members ?? []).filter((m) => m.kind === "agent");
   const states = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
   const noProjects = projects !== null && projects.length === 0;
-  const dirty = !!(title.trim() || description.trim() || acceptance.trim());
+  const dirty = !created && !!(title.trim() || description.trim() || acceptance.trim() || paths.length);
+  // Without a project there is no Files section, but a drop still never reaches the page behind the drawer.
+  useDropZone(useRef(null), () => {}, { modal: true, on: noProjects });
 
   return (
-    <Drawer title="New task" subtitle="Its column decides which agents pick it up, and when." onClose={onClose} dirty={dirty} error={err}
-      hint={noProjects ? undefined : "Ctrl+Enter creates"}
+    <Drawer title="New task" subtitle="Its column decides which agents pick it up, and when." onClose={onClose} dirty={dirty}
+      error={created ? `Task created. Not added: ${created.failed.join("; ")}` : err}
+      hint={noProjects || created ? undefined : "Ctrl+Enter creates"}
       actions={noProjects ? <button className="btn ghost" onClick={onClose}>Close</button>
+        : created ? <><button key="close" className="btn ghost" onClick={onClose}>Close</button>
+          <button key="open" className="btn primary" autoFocus onClick={() => openTask(created.id)}>Open task</button></>
         : <><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={create}>Create task</button></>}>
       {noProjects ? (
         <div className="empty"><span><b>No project yet.</b> Tasks live in a project. <a href="#/projects" onClick={onClose}>Create a project</a> first.</span></div>
       ) : (
-        <form className="form" onSubmit={(e) => { e.preventDefault(); create(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); create(); } }}>
+        // Once the task exists, the form is only there to look at.
+        <form className="form" inert={!!created} onSubmit={(e) => { e.preventDefault(); create(); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); create(); } }}>
           <FormSection title="Task" text="What needs to happen, where it starts and who picks it up.">
             <Field label="Title" htmlFor="t-title" wide><input id="t-title" className="input" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Export invoices as CSV from the portal" /></Field>
             <Field label="Project" htmlFor="t-project"><select id="t-project" className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
@@ -101,6 +130,9 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
           <FormSection title="Acceptance criteria" text="What must be true when it's done. The QA agent checks these one by one.">
             <Field label="Acceptance criteria" wide><MarkdownEditor value={acceptance} onChange={setAcceptance} ariaLabel="Acceptance criteria" minHeight={100}
               placeholder="- [ ] Opens in Excel with semicolons" /></Field>
+          </FormSection>
+          <FormSection title="Files" text="Screenshots, exports, specs. They are added when you create the task.">
+            <Field label="Files" wide><PendingFiles paths={paths} onAdd={pick} onRemove={unpick} adding={busy && paths.length > 0} disabled={busy || !!created} /></Field>
           </FormSection>
         </form>
       )}

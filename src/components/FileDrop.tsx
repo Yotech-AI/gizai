@@ -1,22 +1,26 @@
-// Files attached to a client, project or task. Drops arrive through Tauri's native drag-and-drop event
-// (HTML5 drop never fires in the webview; see the spike); "Add files" uses the system file picker.
+// Files attached to a client, project or task, and files picked for a task that doesn't exist yet. Drops arrive through
+// lib/useDropZone (Tauri's native drag-and-drop event), which gives each drop to one zone; "Add files" uses the system file picker.
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Upload, X } from "lucide-react";
 import { addFiles, listFiles, openFile, removeFile } from "../api";
 import { useData } from "../lib/useData";
+import { useDropZone } from "../lib/useDropZone";
+import { fileFolder, fileName } from "../lib/files";
 import { formatBytes, relTime } from "../lib/format";
-import { dropHits } from "../lib/drop";
 import type { FileOwner } from "../types";
 
-// Every mounted drop zone. A drop that hits no zone goes to the only zone on screen, if there is one.
-const zones = new Set<symbol>();
+/** The system file picker, several files at once; [] when nothing was picked. */
+async function pickFiles(): Promise<string[]> {
+  const sel = await open({ multiple: true, directory: false, title: "Add files" });
+  return Array.isArray(sel) ? sel : typeof sel === "string" ? [sel] : [];
+}
+
+const ext = (name: string) => (name.includes(".") ? name.split(".").pop()! : "file").slice(0, 4).toUpperCase();
 
 /** `readOnly` (an archived card): the files open, but none are added or removed, and drops go elsewhere. */
 export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerType: FileOwner; ownerId: string; emptyText?: string; readOnly?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [hover, setHover] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -31,31 +35,8 @@ export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerTyp
     } catch (e) { setMsg(String(e)); }
     finally { setBusy(false); }
   };
-  const addRef = useRef(add);
-  addRef.current = add;
-
-  useEffect(() => {
-    if (readOnly) return;
-    const me = Symbol("filedrop");
-    zones.add(me);
-    let un: (() => void) | undefined;
-    let alive = true;
-    getCurrentWebview().onDragDropEvent((ev) => {
-      const p = ev.payload;
-      const el = ref.current;
-      if (!el) return;
-      if (p.type === "leave") { setHover(false); return; }
-      const hit = dropHits(p.position, window.devicePixelRatio, el.getBoundingClientRect()) || zones.size === 1;
-      if (p.type === "drop") { setHover(false); if (hit) addRef.current(p.paths); }
-      else setHover(hit);
-    }).then((f) => (alive ? (un = f) : f())).catch(() => {});
-    return () => { alive = false; un?.(); zones.delete(me); };
-  }, [readOnly]);
-
-  const choose = async () => {
-    const sel = await open({ multiple: true, directory: false, title: "Add files" });
-    if (Array.isArray(sel)) add(sel); else if (typeof sel === "string") add([sel]);
-  };
+  const hover = useDropZone(ref, add, { on: !readOnly });
+  const choose = async () => add(await pickFiles());
 
   return (
     <div ref={ref} className={`filedrop${hover ? " hover" : ""}${readOnly ? " read-only" : ""}`}>
@@ -64,7 +45,7 @@ export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerTyp
           {(files ?? []).map((f) => (
             <li key={f.id}>
               <button className="file" title={`Open ${f.name}`} onClick={() => openFile(f.id).catch((e) => setMsg(String(e)))}>
-                <span className="ext">{(f.name.includes(".") ? f.name.split(".").pop()! : "file").slice(0, 4).toUpperCase()}</span>
+                <span className="ext">{ext(f.name)}</span>
                 <span className="fname"><b>{f.name}</b><span>{formatBytes(f.sizeBytes)} · {relTime(f.createdAt)}</span></span>
               </button>
               {readOnly ? null : confirm === f.id
@@ -81,6 +62,49 @@ export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerTyp
         </div>
       )}
       {msg && <div style={{ color: "var(--warning)", fontSize: "var(--fs-sm)" }}>{msg}</div>}
+    </div>
+  );
+}
+
+/** Files picked for a task that doesn't exist yet (the New task drawer): only their paths, nothing is copied until the task
+ *  is created. It sits in a drawer, so every drop goes here while it is open. `disabled` (the task is being created, or
+ *  exists): drops still come here, so none reach the page behind, but they change nothing. `adding`: the files are being added. */
+export function PendingFiles({ paths, onAdd, onRemove, adding, disabled }: {
+  paths: string[]; onAdd: (paths: string[]) => void; onRemove: (path: string) => void; adding?: boolean; disabled?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const over = useDropZone(ref, (dropped) => { if (!disabled) onAdd(dropped); }, { modal: true });
+  const hover = over && !disabled;
+  // Files dropped anywhere land here: bring the list into view, so the drop shows.
+  useEffect(() => { if (hover) ref.current?.scrollIntoView({ block: "nearest" }); }, [hover]);
+  const choose = async () => {
+    const picked = await pickFiles();
+    if (picked.length) onAdd(picked);
+  };
+
+  return (
+    <div ref={ref} className={`filedrop${hover ? " hover" : ""}`}>
+      {paths.length > 0 && (
+        <ul className="files">
+          {paths.map((p) => {
+            const name = fileName(p);
+            return (
+              <li key={p}>
+                <span className="file pending" title={p}>
+                  <span className="ext">{ext(name)}</span>
+                  <span className="fname"><b>{name}</b><span>{fileFolder(p)}</span></span>
+                </span>
+                <button type="button" className="btn ghost sm icon-only" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} onClick={() => onRemove(p)}>
+                  <X className="icon" /></button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="filedrop-bar">
+        <span className="faint">{adding ? "Adding…" : hover ? "Drop to add" : paths.length ? "Drop more files here, or" : "Drop files here, or"}</span>
+        <button type="button" className="btn sm" onClick={choose} disabled={disabled}><Upload className="icon" />Add files</button>
+      </div>
     </div>
   );
 }

@@ -116,6 +116,11 @@ select.chip { appearance: none; padding-right: 26px; background-image: url("data
 .file .fname { display: flex; flex-direction: column; min-width: 0; }
 .file .fname b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file .fname span { color: var(--text-3); font-size: var(--fs-xs); }
+/* A file picked in the New task drawer: listed with its folder, added once the task is created. */
+.file.pending { cursor: default; }
+.file.pending:hover { border-color: var(--line); }
+.file.pending .fname span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form[inert] { opacity: .6; }
 
 /* ---------- team ---------- */
 .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }

@@ -239,7 +239,7 @@ Updates merge: `update_project` and `update_client` read the current row and cha
   - tools act as the token's agent;
   - the shim exits with a clear stderr message when it can't connect.
 - **Tool inputs** are validated by gizai-core, as for the UI. Errors come back to Claude as `isError: true` with gizai-core's sentence, so it can correct itself.
-- **`attach_file`** copies only regular files up to 1 GB (the existing core rule). The Team Lead can only attach a path Jeffrey gave it or one inside its copies of the code (§5a). The copies hold only tracked files, so a repository's `.env` isn't among them.
+- **`attach_file`** copies only regular files up to 1 GB (the existing core rule). The Team Lead can only attach a path Jeffrey gave it, a file Jeffrey added to a message in the chat (its copy in `<data dir>/lead/files/<file id>/`, GA-41), or one inside its copies of the code (§5a). The copies hold only tracked files, so a repository's `.env` isn't among them.
 - **Instructions:** the Team Lead's appended instructions say:
   - ask before changes that touch more than five items, or anything it can't undo;
   - never invent ids: look things up first;
@@ -250,7 +250,7 @@ Updates merge: `update_project` and `update_client` read the current row and cha
 
 - Delete and archive tools.
 - Approval cards for risky actions.
-- Attachments typed into the composer (drag a file into the chat).
+- Attachments typed into the composer (drag a file into the chat). Done in GA-41: + → Add files, or a drop on the Chat page; the files are kept with the message, and the turn names each with the path of the Team Lead's copy.
 - Task agents getting the Gizai MCP tools (their runs could later use the same socket with task-scoped tokens).
 - Codex, Gemini and other adapters.
 - Rich charts in chat.

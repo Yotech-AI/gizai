@@ -386,11 +386,41 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .tool-card .tc-h { font-size: var(--fs-xs); color: var(--text-3); }
 .tool-card pre { margin: 4px 0 8px; max-height: 240px; overflow: auto; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; border: 1px solid var(--line-2); border-radius: var(--radius-l); background: var(--raised); }
+.composer-box { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line-2); border-radius: var(--radius-l); background: var(--raised); }
 .composer-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.composer-box textarea { flex: 1; min-height: 26px; max-height: 200px; padding: 3px 0; border: 0; outline: none; resize: none; background: transparent; color: var(--text); font: inherit; font-size: var(--fs); line-height: 1.5; }
-.composer-box textarea::placeholder { color: var(--text-3); }
+.composer-box.disabled { opacity: .6; }
+.composer-row { display: flex; align-items: flex-end; gap: 8px; }
+.composer-box .composer-plus { flex: none; }
+.composer-box .composer-plus.on { background: var(--hover); color: var(--text); }
+/* The text box: a Markdown editor without a toolbar, up to 200px tall, then it scrolls */
+.md-editor.composer-editor { flex: 1; min-width: 0; border: 0; background: transparent; }
+.md-editor.composer-editor:focus-within { box-shadow: none; }
+.composer-editor .md-surface { min-height: 26px; padding: 3px 0; }
+.composer-editor .cm-editor { max-height: 200px; font-size: var(--fs); }
+.composer-editor .cm-scroller { overflow-y: auto; }
+.composer-editor .cm-content { line-height: 1.5; }
 .composer-box .stop-btn { border-color: var(--live); color: var(--live); background: transparent; }
+.chat-banner.warn { border-color: var(--warning); color: var(--warning); }
+/* Files dropped on the Chat page go to the message */
+.chat-main { position: relative; }
+.chat-drop { position: absolute; inset: 8px; z-index: 20; display: grid; place-items: center; border: 1.5px dashed var(--accent); border-radius: var(--radius-l); background: var(--accent-soft); color: var(--accent); font-weight: 600; pointer-events: none; }
+/* Small file chips: above the chat's text box, and under a message you sent */
+.files.compact { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+.files.compact .file { gap: 8px; padding: 4px 8px; }
+.files.compact .file .ext { width: 26px; height: 26px; font-size: 8.5px; }
+.files.msg-files { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: min(560px, 85%); margin-left: auto; }
+.files.msg-files li { width: 210px; }
+.chat-msg.user .bubble + .msg-files { margin-top: 6px; }
+.msg-files-error { margin-top: 4px; text-align: right; font-size: var(--fs-xs); color: var(--warning); }
+/* A link to a Gizai item (the @ picker's): a chip with its name, in editors and wherever the text is shown */
+.item-chip, .prose a.item-chip { padding: 1px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: .94em; text-decoration: none; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.item-chip:hover, .prose a.item-chip:hover { background: var(--selected); color: var(--accent-hover); }
+.pop.up { top: auto; bottom: calc(100% + 6px); }
+.pop.item-picker { position: fixed; z-index: 1000; width: 360px; max-width: calc(100vw - 16px); max-height: 300px; }
+.item-picker .opt { min-width: 0; }
+.item-picker .opt > .icon { flex: none; color: var(--text-3); }
+.item-picker .opt .ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-picker .opt .faint { flex: 0 1 auto; max-width: 45%; }
 .composer-hint { display: flex; gap: 14px; margin-top: 6px; font-size: var(--fs-xs); color: var(--text-3); }
 .composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
 .composer-foot .composer-hint { margin-top: 0; }

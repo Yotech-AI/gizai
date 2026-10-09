@@ -6,17 +6,15 @@ import { Upload, X } from "lucide-react";
 import { addFiles, listFiles, openFile, removeFile } from "../api";
 import { useData } from "../lib/useData";
 import { useDropZone } from "../lib/useDropZone";
-import { fileFolder, fileName } from "../lib/files";
+import { fileExt as ext, fileFolder, fileName } from "../lib/files";
 import { formatBytes, relTime } from "../lib/format";
 import type { FileOwner } from "../types";
 
 /** The system file picker, several files at once; [] when nothing was picked. */
-async function pickFiles(): Promise<string[]> {
+export async function pickFiles(): Promise<string[]> {
   const sel = await open({ multiple: true, directory: false, title: "Add files" });
   return Array.isArray(sel) ? sel : typeof sel === "string" ? [sel] : [];
 }
-
-const ext = (name: string) => (name.includes(".") ? name.split(".").pop()! : "file").slice(0, 4).toUpperCase();
 
 /** `readOnly` (an archived card): the files open, but none are added or removed, and drops go elsewhere. */
 export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerType: FileOwner; ownerId: string; emptyText?: string; readOnly?: boolean }) {
@@ -66,6 +64,31 @@ export function FileDrop({ ownerType, ownerId, emptyText, readOnly }: { ownerTyp
   );
 }
 
+/** Picked paths, each with its type badge, name, folder and an X that takes it off the list (the New task drawer's Files,
+ *  and the chips above the chat's text box with `compact`). Nothing when there are none. */
+export function PendingFileList({ paths, onRemove, disabled, compact }: {
+  paths: string[]; onRemove: (path: string) => void; disabled?: boolean; compact?: boolean;
+}) {
+  if (paths.length === 0) return null;
+  return (
+    <ul className={`files${compact ? " compact" : ""}`} aria-label="Files to add">
+      {paths.map((p) => {
+        const name = fileName(p);
+        return (
+          <li key={p}>
+            <span className="file pending" title={p}>
+              <span className="ext">{ext(name)}</span>
+              <span className="fname"><b>{name}</b><span>{fileFolder(p)}</span></span>
+            </span>
+            <button type="button" className="btn ghost sm icon-only" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} onClick={() => onRemove(p)}>
+              <X className="icon" /></button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** Files picked for a task that doesn't exist yet (the New task drawer): only their paths, nothing is copied until the task
  *  is created. It sits in a drawer, so every drop goes here while it is open. `disabled` (the task is being created, or
  *  exists): drops still come here, so none reach the page behind, but they change nothing. `adding`: the files are being added. */
@@ -84,23 +107,7 @@ export function PendingFiles({ paths, onAdd, onRemove, adding, disabled }: {
 
   return (
     <div ref={ref} className={`filedrop${hover ? " hover" : ""}`}>
-      {paths.length > 0 && (
-        <ul className="files">
-          {paths.map((p) => {
-            const name = fileName(p);
-            return (
-              <li key={p}>
-                <span className="file pending" title={p}>
-                  <span className="ext">{ext(name)}</span>
-                  <span className="fname"><b>{name}</b><span>{fileFolder(p)}</span></span>
-                </span>
-                <button type="button" className="btn ghost sm icon-only" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} onClick={() => onRemove(p)}>
-                  <X className="icon" /></button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <PendingFileList paths={paths} onRemove={onRemove} disabled={disabled} />
       <div className="filedrop-bar">
         <span className="faint">{adding ? "Adding…" : hover ? "Drop to add" : paths.length ? "Drop more files here, or" : "Drop files here, or"}</span>
         <button type="button" className="btn sm" onClick={choose} disabled={disabled}><Upload className="icon" />Add files</button>

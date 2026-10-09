@@ -301,7 +301,11 @@ export type ChatMessage = { id: string; threadId: string; role: string; authorId
   bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number;
   /** A note's details: {kind: "switch", cli, cliName} where the chat moved to another CLI, {kind: "limit", cli, cliName, limit, resets?, messageIds}
    *  where an answer hit a usage limit. */
-  meta?: ChatNoteMeta | null };
+  meta?: ChatNoteMeta | null;
+  /** The files you added to the message. */
+  files?: FileRow[] };
+/** Paths picked or dropped for a chat message: those that can be added, and why each other one can't. */
+export type FileCheck = { ok: string[]; failed: string[] };
 /** A chat the Archive found, with the newest of its messages (yours or the Team Lead's) whose text matches; none when only
  *  its title matches, or for an empty search. */
 export type ChatHit = { thread: ChatThread; message?: ChatMessage | null };
@@ -309,7 +313,9 @@ export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cl
 /** `seq`: the last change to the text being written that `draft` holds. */
 export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
 /** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */
-export type QueuedMessage = { id: string; threadId: string; bodyMd: string; createdAt: number; updatedAt: number; held: boolean };
+export type QueuedMessage = { id: string; threadId: string; bodyMd: string; createdAt: number; updatedAt: number; held: boolean;
+  /** The files added to it; they go with it. */
+  files?: FileRow[] };
 /** A coding CLI in Runs on under the chat's text box; `problem`: why it can't run the chat. */
 export type ChatCli = { id: string; name: string; kind: CliKind; problem?: string | null };
 export type ChatEvent =

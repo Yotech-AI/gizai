@@ -1,5 +1,10 @@
 // Files picked or dropped before their task exists: only their paths are kept until Create task adds them.
 
+/** A file's type badge: its extension, at most 4 letters, upper case ("FILE" without one). */
+export function fileExt(name: string): string {
+  return (name.includes(".") ? name.split(".").pop() ?? "file" : "file").slice(0, 4).toUpperCase();
+}
+
 /** A path's last part: the file's name. */
 export function fileName(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;

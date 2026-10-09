@@ -471,6 +471,7 @@ pub fn run() {
             commands::usage_summary,
             commands::list_chat_threads, commands::get_chat_thread, commands::search_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
+            commands::check_files, commands::item_id,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,

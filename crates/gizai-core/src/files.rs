@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::db::Db;
+use crate::db::{Db, Writer};
 use crate::model::FileRow;
 use crate::{Error, Result, ids, util};
 
@@ -29,15 +29,22 @@ fn mime_for(name: &str) -> Option<&'static str> {
     })
 }
 
-/// Copies one file into the blob store (hashing while copying) and links it to its owner.
-pub fn add_from_path(db: &Db, actor: &str, data_dir: &Path, owner_type: &str, owner_id: &str, path: &Path) -> Result<FileRow> {
-    if !OWNER_TYPES.contains(&owner_type) {
-        return Err(Error::Invalid(format!("files can't belong to a {owner_type}")));
-    }
-    if owner_type == "task" {
-        db.read(|c| crate::tasks::not_archived(c, owner_id))?;
-    }
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+/// A file copied into the blob store that nothing points at yet (`insert` links it to its owner).
+#[derive(Debug, Clone)]
+pub struct Blob {
+    pub name: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
+fn name_of(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// Whether `path` can be added: a file that can be read, at most 1 GB. Returns its size; the error says why not (a
+/// folder, too large, or it can't be read), naming the file.
+pub fn check_path(path: &Path) -> Result<u64> {
+    let name = name_of(path);
     let meta = std::fs::metadata(path).map_err(|_| Error::Invalid(format!("can't read {name}")))?;
     if !meta.is_file() {
         return Err(Error::Invalid(format!("{name} is a folder, not a file")));
@@ -45,7 +52,26 @@ pub fn add_from_path(db: &Db, actor: &str, data_dir: &Path, owner_type: &str, ow
     if meta.len() > MAX_BYTES {
         return Err(Error::Invalid(format!("{name} is larger than 1 GB")));
     }
+    Ok(meta.len())
+}
 
+/// Copies one file into the blob store and links it to its owner.
+pub fn add_from_path(db: &Db, actor: &str, data_dir: &Path, owner_type: &str, owner_id: &str, path: &Path) -> Result<FileRow> {
+    if !OWNER_TYPES.contains(&owner_type) {
+        return Err(Error::Invalid(format!("files can't belong to a {owner_type}")));
+    }
+    if owner_type == "task" {
+        db.read(|c| crate::tasks::not_archived(c, owner_id))?;
+    }
+    let blob = store(data_dir, path)?;
+    db.write(Some(actor), |w| insert(w, Some(actor), owner_type, owner_id, &blob))
+}
+
+/// Copies one file into the blob store (hashing while copying), checked as `check_path` does. Nothing points at it
+/// until `insert` links it to an owner.
+pub fn store(data_dir: &Path, path: &Path) -> Result<Blob> {
+    check_path(path)?;
+    let name = name_of(path);
     let dir = data_dir.join("files");
     std::fs::create_dir_all(&dir)?;
     let tmp = dir.join(format!("incoming-{}", ids::new_id()));
@@ -75,24 +101,40 @@ pub fn add_from_path(db: &Db, actor: &str, data_dir: &Path, owner_type: &str, ow
         perm.set_readonly(true); // blobs never change; their name is their content hash
         std::fs::set_permissions(&blob, perm)?;
     }
-
-    let mime = mime_for(&name);
-    db.write(Some(actor), |w| {
-        let c = w.conn();
-        let now = ids::now_ms();
-        let id = ids::new_id();
-        c.execute(
-            "INSERT INTO files(id, created_at, updated_at, created_by, updated_by, org_id, owner_type, owner_id, name, mime, size_bytes, sha256, uploaded_by_actor_id)
-             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?3)",
-            rusqlite::params![id, now, actor, util::org_id(c)?, owner_type, owner_id, name, mime, size as i64, sha],
-        )?;
-        w.insert("files", &id, serde_json::json!({"name": name, "owner_type": owner_type, "owner_id": owner_id, "size_bytes": size}))?;
-        Ok(FileRow { id, name: name.clone(), mime: mime.map(String::from), size_bytes: size as i64, sha256: sha.clone(), created_at: now })
-    })
+    Ok(Blob { name, sha256: sha, size_bytes: size })
 }
 
-fn row(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
+/// Links a stored file to its owner, inside a write (`actor` uploaded it).
+pub fn insert(w: &Writer, actor: Option<&str>, owner_type: &str, owner_id: &str, blob: &Blob) -> Result<FileRow> {
+    if !OWNER_TYPES.contains(&owner_type) {
+        return Err(Error::Invalid(format!("files can't belong to a {owner_type}")));
+    }
+    let c = w.conn();
+    let now = ids::now_ms();
+    let id = ids::new_id();
+    let mime = mime_for(&blob.name);
+    let size = i64::try_from(blob.size_bytes).unwrap_or(i64::MAX);
+    c.execute(
+        "INSERT INTO files(id, created_at, updated_at, created_by, updated_by, org_id, owner_type, owner_id, name, mime, size_bytes, sha256, uploaded_by_actor_id)
+         VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?3)",
+        rusqlite::params![id, now, actor, util::org_id(c)?, owner_type, owner_id, blob.name, mime, size, blob.sha256],
+    )?;
+    w.insert("files", &id, serde_json::json!({"name": blob.name, "owner_type": owner_type, "owner_id": owner_id, "size_bytes": size}))?;
+    Ok(FileRow { id, name: blob.name.clone(), mime: mime.map(String::from), size_bytes: size, sha256: blob.sha256.clone(), created_at: now })
+}
+
+/// The columns `row` reads, in its order.
+pub(crate) const ROW_COLS: &str = "id, name, mime, size_bytes, sha256, created_at";
+
+pub(crate) fn row(r: &rusqlite::Row) -> rusqlite::Result<FileRow> {
     Ok(FileRow { id: r.get(0)?, name: r.get(1)?, mime: r.get(2)?, size_bytes: r.get(3)?, sha256: r.get(4)?, created_at: r.get(5)? })
+}
+
+/// The files of one owner, oldest first (the order they were added in), inside a read or a write.
+pub(crate) fn of_owner(c: &rusqlite::Connection, owner_type: &str, owner_id: &str) -> Result<Vec<FileRow>> {
+    let mut st = c.prepare(&format!(
+        "SELECT {ROW_COLS} FROM files WHERE owner_type = ?1 AND owner_id = ?2 AND deleted_at IS NULL ORDER BY created_at, rowid"))?;
+    Ok(st.query_map([owner_type, owner_id], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// Newest first.
@@ -136,12 +178,23 @@ pub fn remove(db: &Db, actor: &str, id: &str) -> Result<()> {
 /// default app recognises the type. Always a real copy: a hard link would let an app that saves in
 /// place change the stored blob. Reused when it already exists.
 pub fn materialize(data_dir: &Path, f: &FileRow) -> Result<PathBuf> {
+    copy_out(data_dir, f, &data_dir.join("open"))
+}
+
+/// Where `copy_out` puts the file in `dir`: `dir/<file id>/<its name>` (a name that isn't safe as one becomes "file").
+pub fn copy_path(dir: &Path, f: &FileRow) -> PathBuf {
     let safe: String = f.name.chars().map(|c| if c == '/' || c == '\\' || c.is_control() { '_' } else { c }).collect();
     let safe = if safe.is_empty() || safe == "." || safe == ".." { "file".to_string() } else { safe };
-    let dir = data_dir.join("open").join(&f.id);
-    let out = dir.join(safe);
+    dir.join(&f.id).join(safe)
+}
+
+/// A real copy of the blob under its original name in `dir` (at `copy_path`), reused when it is there already.
+pub fn copy_out(data_dir: &Path, f: &FileRow, dir: &Path) -> Result<PathBuf> {
+    let out = copy_path(dir, f);
     if !out.exists() {
-        std::fs::create_dir_all(&dir)?;
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::copy(blob_path(data_dir, &f.sha256), &out)?;
     }
     Ok(out)

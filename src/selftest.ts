@@ -1,5 +1,7 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
-import { archiveTask, getTask, listChatThreads, listLabels, listTasks } from "./api";
+import { EditorView } from "@codemirror/view";
+import { emit } from "@tauri-apps/api/event";
+import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listLabels, listTasks, setAgentStatus } from "./api";
 import { periodDays } from "./lib/usage";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -42,7 +44,8 @@ export async function dragProbe(from = "To do", to = "In progress") {
   return { moved: stateName === to && onScreen, identifier, from, to, stored_in: stateName, on_screen_in_target: onScreen };
 }
 
-/** Opens the task's description editor, types like a keyboard would, saves with Ctrl+Enter, reads the task back. */
+/** Opens the task's description editor, links two items with the @ picker (GA-41), types like a keyboard would, saves with
+ * Ctrl+Enter, reads the task back. `saved` also needs the picker's checks and the saved links shown as chips that open. */
 export async function editorProbe(taskId: string, getDescription: (id: string) => Promise<string>, holdMs = 0) {
   const box = await waitFor(() => document.querySelector(".md-click") as HTMLElement | null);
   if (!box) return { saved: false, error: "no description block" };
@@ -51,6 +54,8 @@ export async function editorProbe(taskId: string, getDescription: (id: string) =
   if (!content) return { saved: false, error: "editor did not open" };
   await sleep(200);
   const dimmed = document.querySelectorAll(".md-edit-box .cm-md-mark").length;
+  const picker = await taskPickerProbe(content);
+  if (!picker.ok) return { saved: false, error: "the @ picker in the description editor", picker };
   const typed = " Typed by the self-test: café ✓";
   document.execCommand("insertText", false, typed);
   await sleep(holdMs);
@@ -62,7 +67,83 @@ export async function editorProbe(taskId: string, getDescription: (id: string) =
     if (stored.endsWith(typed)) break;
   }
   const closed = !document.querySelector(".md-edit-box");
-  return { saved: stored.endsWith(typed), editor_closed: closed, dimmed_marks: dimmed, task: taskId };
+  const links = /\]\(gizai:task\/[A-Z][A-Z0-9]*-\d+\)/.test(stored) && /\]\(gizai:project\/[A-Z0-9]+\)/.test(stored);
+  const shown = await shownChipsProbe();
+  return { saved: stored.endsWith(typed) && links && shown.ok, editor_closed: closed, dimmed_marks: dimmed, task: taskId, links_saved: links, picker, shown };
+}
+
+const docOf = (content: Element) => EditorView.findFromDOM(content as HTMLElement)?.state.doc.toString() ?? "";
+const pickerRows = () => [...document.querySelectorAll(".item-picker .opt")].map((e) => (e.textContent ?? "").trim());
+const pickerReady = (test: (rows: string[]) => boolean) => waitFor(() => { const r = pickerRows(); return r.length > 0 && test(r) ? r : null; }, 4000);
+const KINDS = ["Task@task.", "Project@project.", "Client@client.", "Agent@agent.", "Person@person.", "Doc@doc."];
+const onlyTasks = (rows: string[]) => rows.every((r) => /^[A-Z][A-Z0-9]*-\d+ - /.test(r));
+const press = (el: HTMLElement, key: string, keyCode: number, more: KeyboardEventInit = {}) =>
+  el.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, keyCode, bubbles: true, cancelable: true, ...more }));
+const write = (text: string) => document.execCommand("insertText", false, text);
+
+/** GA-41 in the task page's description editor: @ lists the kinds, @task. only tasks; ↓ moves the selection; Escape closes
+ * only the picker; Enter picks (a link, no new line, still editing); a click on a row picks too and leaves the edit box open
+ * and focused; links show as chips; `@zzqq`, which finds nothing, stays a mention. */
+async function taskPickerProbe(content: HTMLElement) {
+  const view = EditorView.findFromDOM(content);
+  if (!view) return { ok: false, error: "no CodeMirror view" };
+  content.focus();
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  write(" @");
+  const kinds = await pickerReady((r) => r.length === 6);
+  const listsKinds = JSON.stringify(kinds) === JSON.stringify(KINDS);
+  write("task.");
+  const tasks = await pickerReady(onlyTasks);
+  press(content, "ArrowDown", 40);
+  await sleep(150);
+  const opts = document.querySelectorAll(".item-picker .opt");
+  const moved = opts.length > 1 ? opts[1].classList.contains("active") && !opts[0].classList.contains("active") : opts.length === 1;
+  press(content, "Escape", 27);
+  await sleep(200);
+  const escClosesPicker = !document.querySelector(".item-picker");
+  const escKeepsEdit = !!document.querySelector(".md-edit-box") && docOf(content).endsWith(" @task.");
+
+  write(" @task.");
+  await pickerReady(onlyTasks);
+  const lines = docOf(content).split("\n").length;
+  press(content, "Enter", 13);
+  await sleep(200);
+  const afterEnter = docOf(content);
+  const enterLinks = /\[[A-Z][A-Z0-9]*-\d+ - [^\]]+\]\(gizai:task\/[A-Z][A-Z0-9]*-\d+\) $/.test(afterEnter);
+  const noNewLine = afterEnter.split("\n").length === lines;
+  const stillEditing = !!document.querySelector(".md-edit-box") && !document.querySelector(".item-picker");
+
+  write("@project.");
+  const projects = await pickerReady((r) => r.every((x) => / - /.test(x)));
+  const row = document.querySelector(".item-picker .opt") as HTMLElement | null;
+  row?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  row?.click();
+  await sleep(250);
+  const clickLinks = /\]\(gizai:project\/[A-Z0-9]+\) $/.test(docOf(content));
+  const keptOpen = !!document.querySelector(".md-edit-box") && document.activeElement === content;
+  const chips = [...document.querySelectorAll(".md-edit-box .cm-item-chip")].map((e) => e.textContent ?? "");
+
+  write("@zzqq");
+  await sleep(400);
+  const mention = !document.querySelector(".item-picker") && [...document.querySelectorAll(".md-edit-box .cm-chip-mention")].some((e) => e.textContent === "@zzqq");
+  const ok = listsKinds && !!tasks && moved && escClosesPicker && escKeepsEdit && enterLinks && noNewLine && stillEditing && !!projects && clickLinks && keptOpen
+    && chips.length === 2 && mention;
+  return { ok, kinds, tasks: tasks?.slice(0, 3), arrow_moves: moved, escape_closes_picker: escClosesPicker, escape_keeps_edit: escKeepsEdit,
+    enter_links: enterLinks, enter_adds_no_line: noNewLine, still_editing: stillEditing, projects: projects?.slice(0, 2), click_links: clickLinks,
+    click_keeps_edit_focused: keptOpen, chips, at_name_stays_mention: mention };
+}
+
+/** The saved description shows its links as chips with the items' names; a click on the project's opens its page. */
+async function shownChipsProbe() {
+  const chips = await waitFor(() => { const c = [...document.querySelectorAll(".md-click a.item-chip, .prose a.item-chip")] as HTMLElement[]; return c.length >= 2 ? c : null; }, 3000);
+  if (!chips) return { ok: false, error: "no chips in the saved description" };
+  const kinds = chips.map((c) => [...c.classList].find((k) => k.startsWith("kind-")));
+  const project = chips.find((c) => c.classList.contains("kind-project"));
+  project?.click();
+  const opened = await waitFor(() => (window.location.hash.startsWith("#/project/") ? window.location.hash : null), 3000);
+  const page = await waitFor(() => textOf(document.querySelector(".entity-head h1")) || null, 3000);
+  const ok = kinds.includes("kind-task") && !!opened && !!page && page === textOf(project);
+  return { ok, kinds, chip_texts: chips.map((c) => textOf(c)), opened, page };
 }
 
 /** Doc page: type and save with Ctrl+S; then type again while "an agent" saves underneath, expect the
@@ -489,11 +570,12 @@ export async function chatProbe(listTitles: () => Promise<string[]>) {
   buttonByText(dialog, "Add agent")?.click();
   const agentPage = !!(await waitFor(() => (document.querySelector(".entity-head h1")?.textContent ?? "") === "Team Lead" || null, 4000));
   window.location.hash = "#/chat";
-  const box = await waitFor(() => document.querySelector(".composer-box textarea") as HTMLTextAreaElement | null, 4000);
+  // GA-41: the text box is a Markdown editor without a toolbar.
+  const box = await waitFor(composer, 4000);
   if (!box) return { ok: false, error: "no composer", name, chatOn, onTeam, agentPage };
-  typeInto(box, "create task Chat probe task in KADE");
+  typeIn(box, "create task Chat probe task in KADE");
   await sleep(50);
-  box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+  enter(box);
   const card = await waitFor(() => document.querySelector('.tool-card a[href^="#/task/"]') as HTMLAnchorElement | null, 15000);
   const reply = !!(await waitFor(() => [...document.querySelectorAll(".chat-msg.agent")].some((e) => (e.textContent ?? "").includes("Done:")) || null, 15000));
   const made = (await listTitles()).includes("Chat probe task");
@@ -501,13 +583,142 @@ export async function chatProbe(listTitles: () => Promise<string[]>) {
   const listed = !!document.querySelector(".chat-threads .th.on");
   const first = onTeam && name === "Team Lead" && chatOn && agentPage && !!card && reply && made && thread && listed;
   const runsOn = await runsOnAndQueueProbe();
-  const ok = first && runsOn.ok;
+  const linksAndFiles = await chatPickerAndFilesProbe();
+  const ok = first && runsOn.ok && linksAndFiles.ok;
   return { ok, on_team: onTeam, name, chat_on: chatOn, agent_page: agentPage, tool_card: card?.textContent, reply, task_made: made, thread_url: thread,
-    thread_listed: listed, runs_on: runsOn };
+    thread_listed: listed, runs_on: runsOn, links_and_files: linksAndFiles };
 }
 
 const enter = (el: HTMLElement) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
-const composer = () => document.querySelector(".composer-box textarea") as HTMLTextAreaElement | null;
+const composer = () => document.querySelector(".composer-box .cm-content") as HTMLElement | null;
+/** Types into a CodeMirror editor the way a keyboard would: focused, at the cursor. */
+function typeIn(el: HTMLElement, text: string) {
+  el.focus();
+  document.execCommand("insertText", false, text);
+}
+const sentCount = () => document.querySelectorAll(".chat-msg.user:not(.queued)").length;
+
+/** GA-41 in a chat that is not answering: + opens a menu upward with Add files and Link an item; Link an item types @ and
+ * opens the picker above the text box with the kinds; @task. lists tasks; Enter links one without sending; Shift+Enter adds
+ * a line; Enter sends, and the sent message shows the link as a chip. Then files: Tauri's drag-and-drop events (sent
+ * through Tauri's event system, as the native drop sends them; a real OS drop can't be made headless) show the drop state
+ * and add the file as a removable chip, refusing a folder with why; sending sends the file, the message shows it and the
+ * Team Lead's prompt names it; after reopening the chat the chips and the file are still there. */
+async function chatPickerAndFilesProbe() {
+  const idle = await waitFor(() => { const c = composer(); return c && !document.querySelector(".composer-box .stop-btn") ? c : null; }, 15000);
+  const plus = document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null;
+  if (!idle || !plus) return { ok: false, error: "no idle composer or no + button" };
+  const threadId = window.location.hash.slice("#/chat/".length);
+  plus.click();
+  const menu = await waitFor(() => document.querySelector('.composer-box .pop.up[role="menu"]') as HTMLElement | null, 2000);
+  const items = menu ? textsOf("button", menu) : [];
+  const menuUp = !!menu && menu.getBoundingClientRect().bottom <= plus.getBoundingClientRect().top + 1;
+  if (menu) buttonByText(menu, "Link an item")?.click();
+  const kinds = await pickerReady((r) => r.length === 6);
+  const menuClosed = !document.querySelector('.composer-box .pop[role="menu"]');
+  const content = composer()!;
+  const typedAt = docOf(content) === "@";
+  const pk = document.querySelector(".item-picker")?.getBoundingClientRect();
+  const pickerUp = !!pk && pk.bottom <= content.getBoundingClientRect().bottom && pk.top < content.getBoundingClientRect().top;
+  typeIn(content, "task.");
+  const tasks = await pickerReady(onlyTasks);
+  const before = sentCount();
+  enter(content);
+  await sleep(300);
+  const linked = docOf(content);
+  const enterLinks = /^\[[A-Z][A-Z0-9]*-\d+ - [^\]]+\]\(gizai:task\/[A-Z][A-Z0-9]*-\d+\) $/.test(linked) && sentCount() === before;
+  const chipInBox = !!content.querySelector(".cm-item-chip");
+  press(content, "Enter", 13, { shiftKey: true });
+  typeIn(content, "please look");
+  await sleep(100);
+  const twoLines = docOf(content).split("\n").length === 2 && sentCount() === before;
+  enter(content);
+  const sentChip = await waitFor(() => [...document.querySelectorAll(".chat-msg.user:not(.queued) .bubble a.item-chip.kind-task")].pop() as HTMLElement | null, 4000);
+  const cleared = !!(await waitFor(() => (docOf(composer()!) === "" ? true : null), 3000));
+  await waitFor(() => (!document.querySelector(".composer-box .stop-btn") && !document.querySelector(".chat-working") ? true : null), 15000);
+
+  // Files, dropped the way Tauri reports a native drop: physical pixels over the Chat page.
+  const data = (await appInfo()).data_dir;
+  const file = `${data}/gizai.db`;
+  const main = document.querySelector(".chat-main")!.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const position = { x: Math.round((main.left + main.width / 2) * dpr), y: Math.round((main.top + main.height / 3) * dpr) };
+  let emitError: string | null = null;
+  try {
+    await emit("tauri://drag-enter", { paths: [file, data], position });
+    await emit("tauri://drag-over", { position });
+  } catch (e) { emitError = String(e); }
+  if (emitError) return { ok: false, error: `couldn't send Tauri's drag events: ${emitError}` };
+  const dropState = textOf(await waitFor(() => document.querySelector(".chat-main.dropping .chat-drop"), 2000));
+  await emit("tauri://drag-drop", { paths: [file, data], position });
+  const chips = await waitFor(() => { const n = textsOf(".composer-box .files.compact li b"); return n.length ? n : null; }, 4000);
+  const dropGone = !document.querySelector(".chat-drop");
+  const refused = textOf(await waitFor(() => document.querySelector(".chat-composer .chat-banner.warn"), 2000));
+  (document.querySelector('.composer-box button[aria-label="Remove gizai.db"]') as HTMLButtonElement | null)?.click();
+  const removed = !!(await waitFor(() => (!document.querySelector(".composer-box .files.compact") ? true : null), 2000));
+  await emit("tauri://drag-enter", { paths: [file], position });
+  await emit("tauri://drag-drop", { paths: [file], position });
+  const again = await waitFor(() => { const n = textsOf(".composer-box .files.compact li b"); return n.length ? n : null; }, 4000);
+  typeIn(composer()!, "here is a file");
+  enter(composer()!);
+  const sentFile = await waitFor(() => [...document.querySelectorAll(".chat-msg.user:not(.queued)")].pop()?.querySelector(".msg-files b") ?? null, 5000);
+  const chipsCleared = !!(await waitFor(() => (!document.querySelector(".composer-box .files.compact") ? true : null), 3000));
+  await waitFor(() => (!document.querySelector(".composer-box .stop-btn") && !document.querySelector(".chat-working") ? true : null), 15000);
+  const saved = (await chatMessages(threadId)).filter((m) => m.role === "user").pop();
+
+  // The text box grows with its lines up to 200 px, then scrolls; emptied again by hand.
+  const box = composer()!;
+  const cm = () => document.querySelector(".composer-editor .cm-editor") as HTMLElement;
+  const oneLine = cm().getBoundingClientRect().height;
+  typeIn(box, "line");
+  for (let i = 0; i < 14; i++) { press(box, "Enter", 13, { shiftKey: true }); typeIn(box, "line"); }
+  await sleep(200);
+  const tall = cm().getBoundingClientRect().height;
+  const scroller = document.querySelector(".composer-editor .cm-scroller") as HTMLElement;
+  const grows = oneLine < 60 && tall > 150 && tall <= 201 && scroller.scrollHeight > scroller.clientHeight + 20 && sentCount() === before + 2;
+  const view = EditorView.findFromDOM(box)!;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+
+  // While the Team Lead is paused: the text box, + and drops are off.
+  const leadId = (await listChatThreads()).find((t) => t.id === threadId)?.agentId ?? "";
+  await setAgentStatus(leadId, "paused");
+  const off = !!(await waitFor(() => document.querySelector(".composer-box.disabled"), 4000));
+  const plusOff = !!(document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null)?.disabled;
+  (document.querySelector(".composer-box .composer-plus") as HTMLElement | null)?.click();
+  await sleep(150);
+  const noMenu = !document.querySelector('.composer-box .pop[role="menu"]');
+  await emit("tauri://drag-enter", { paths: [file], position });
+  await emit("tauri://drag-over", { position });
+  await sleep(300);
+  const noDropState = !document.querySelector(".chat-drop");
+  await emit("tauri://drag-drop", { paths: [file], position });
+  await sleep(500);
+  const noDrop = !document.querySelector(".composer-box .files.compact");
+  await setAgentStatus(leadId, "active");
+  const on = !!(await waitFor(() => (document.querySelector(".composer-box") && !document.querySelector(".composer-box.disabled") ? true : null), 4000));
+  const pausedOk = off && plusOff && noMenu && noDropState && noDrop && on;
+
+  // Reopened: the link and the file are still shown.
+  window.location.hash = "#/chat";
+  await waitFor(() => (!document.querySelector(".chat-msg.user") ? true : null), 3000);
+  window.location.hash = `#/chat/${threadId}`;
+  const reopenedChip = await waitFor(() => document.querySelector(".chat-msg.user .bubble a.item-chip.kind-task") as HTMLElement | null, 5000);
+  const reopenedFile = textOf(await waitFor(() => document.querySelector(".chat-msg.user .msg-files b"), 5000));
+  // A click on the chip opens the task.
+  reopenedChip?.click();
+  const opened = await waitFor(() => (window.location.hash.startsWith("#/task/") ? window.location.hash : null), 3000);
+
+  const ok = JSON.stringify(items) === JSON.stringify(["Add files", "Link an item"]) && menuUp && menuClosed && JSON.stringify(kinds) === JSON.stringify(KINDS)
+    && typedAt && pickerUp && !!tasks && enterLinks && chipInBox && twoLines && !!sentChip && cleared
+    && dropState === "Drop to add to this message" && JSON.stringify(chips) === '["gizai.db"]' && dropGone && refused.includes("is a folder, not a file") && removed
+    && JSON.stringify(again) === '["gizai.db"]' && textOf(sentFile) === "gizai.db" && chipsCleared && saved?.files?.[0]?.name === "gizai.db"
+    && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk;
+  return { ok, grows: { ok: grows, one_line: oneLine, tall }, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
+    no_drop: noDrop, on_again: on }, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
+    enter_links_without_sending: enterLinks, chip_in_box: chipInBox, shift_enter_new_line: twoLines, sent_chip: sentChip?.textContent, cleared,
+    drop_state: dropState, chips, drop_state_gone: dropGone, refused, removed, dropped_again: again, sent_file: textOf(sentFile), chips_cleared: chipsCleared,
+    saved_files: saved?.files?.map((f) => f.name), reopened_chip: reopenedChip?.textContent, reopened_file: reopenedFile, chip_opens: opened };
+}
 const picker = () => document.querySelector('.composer-foot select[aria-label="Runs on"]') as HTMLSelectElement | null;
 const userSaid = (text: string) => [...document.querySelectorAll(".chat-msg.user:not(.queued)")].some((e) => (e.textContent ?? "").includes(text));
 
@@ -534,13 +745,13 @@ async function runsOnAndQueueProbe() {
 
   const box = composer();
   if (!box) return { ok: false, error: "no composer" };
-  typeInto(box, "FAKE_CHAT_SLOW what is next?");
+  typeIn(box, "FAKE_CHAT_SLOW what is next?");
   await sleep(50);
   enter(box);
   const answering = !!(await waitFor(() => document.querySelector(".composer-box .stop-btn"), 4000));
   const locked = !!picker()?.disabled;
   const box2 = composer();
-  if (box2) { typeInto(box2, "and one more thing"); await sleep(50); enter(box2); }
+  if (box2) { typeIn(box2, "and one more thing"); await sleep(50); enter(box2); }
   const queued = !!(await waitFor(() => [...document.querySelectorAll(".chat-queue .chat-msg.queued")].find((e) =>
     (e.textContent ?? "").includes("and one more thing") && (e.textContent ?? "").includes("Queued: goes when this answer is done")) || null, 3000));
   const notYet = !userSaid("and one more thing");

@@ -125,7 +125,7 @@ fn review_then_done(c: &Card) {
 
 #[tokio::test]
 async fn open_pull_request_pushes_the_cards_branch_and_opens_its_pull_request_with_gh() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     gizai_core::tasks::update(&c.st.db, &c.st.you_id, &c.task, gizai_core::model::TaskPatch {
         description_md: Some("Download all invoices as one CSV file.".into()), acceptance_md: Some("- [ ] One row per invoice".into()), ..Default::default() }).unwrap();
@@ -156,7 +156,7 @@ async fn open_pull_request_pushes_the_cards_branch_and_opens_its_pull_request_wi
 
 #[tokio::test]
 async fn a_pull_request_an_agent_opened_shows_on_the_card_and_push_branch_adds_to_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     to_review(&c);
     git(&c.local, &["push", "-q", "origin", &c.branch]); // the agent pushed it and opened a pull request
@@ -185,7 +185,7 @@ async fn a_pull_request_an_agent_opened_shows_on_the_card_and_push_branch_adds_t
 
 #[tokio::test]
 async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_the_next_check() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     review_then_done(&c);
     to_review(&c);
@@ -219,7 +219,7 @@ async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_th
 
 #[tokio::test]
 async fn a_merged_card_keeps_a_worktree_with_uncommitted_work() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     review_then_done(&c);
     to_review(&c);
@@ -237,7 +237,7 @@ async fn a_merged_card_keeps_a_worktree_with_uncommitted_work() {
 
 #[tokio::test]
 async fn an_older_merged_pull_request_does_not_move_a_card_with_newer_work() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     to_review(&c);
     // the branch's pull request #3 was merged before this card's latest commit
@@ -250,7 +250,7 @@ async fn an_older_merged_pull_request_does_not_move_a_card_with_newer_work() {
 
 #[tokio::test]
 async fn gh_problems_are_said_plainly_and_change_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     to_review(&c);
     // not logged in
@@ -274,7 +274,7 @@ async fn gh_problems_are_said_plainly_and_change_nothing() {
 
 #[tokio::test]
 async fn the_github_cli_is_a_setting_and_empty_means_find_it_when_needed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let mut s = gizai_lib::runs::get_settings(&st);
     assert_eq!(s.gh_bin, None);
@@ -290,7 +290,7 @@ async fn the_github_cli_is_a_setting_and_empty_means_find_it_when_needed() {
 async fn with_a_deploy_column_a_merge_moves_the_card_to_deploy_and_nothing_starts_on_it() {
     // GA-32: Deploy (merged, not deployed yet) after Review, in the seed since GA-49 (Review's next column, Manual); the
     // DevOps Agent is on it and has the card.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
     let team = gizai_core::team::get(&c.st.db, &gizai_core::team::list(&c.st.db).unwrap()[0].id).unwrap();
     let ops = gizai_core::team::add_agent(&c.st.db, &c.st.you_id, &team.id, gizai_core::model::AgentInput { name: "DevOps Agent".into(),
@@ -322,4 +322,13 @@ async fn with_a_deploy_column_a_merge_moves_the_card_to_deploy_and_nothing_start
     assert!(pulls::check_all(&c.st).await.is_empty());
     assert_eq!(gh_calls(&c.gh).len(), calls);
     assert_eq!(task(&c).state_name, "Deploy", "until a person drags it to Done");
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
 }

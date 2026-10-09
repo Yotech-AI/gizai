@@ -42,6 +42,7 @@ async fn asks_a_running_claude_code_and_lets_it_exit() {
 #[tokio::test]
 async fn a_claude_code_that_gives_no_list_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();
-    let e = fetch_models("/bin/false".as_ref(), tmp.path()).await.unwrap_err();
+    // /usr/bin/false: macOS has no /bin/false
+    let e = fetch_models("/usr/bin/false".as_ref(), tmp.path()).await.unwrap_err();
     assert!(e.to_string().contains("model list"), "{e}");
 }

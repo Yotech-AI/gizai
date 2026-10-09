@@ -43,7 +43,8 @@ fn the_whole_disk_your_profile_gizais_data_and_the_key_folders_are_refused_in_an
     assert_eq!(refused(r"C:\USERS\U\.SSH\keys").as_deref(), Some(r"it holds keys or logins (~\.ssh)"));
     assert!(refused(r"~\AppData\Roaming\GitHub CLI").unwrap().contains(r"AppData\Roaming"), "gh's and git's logins");
     assert!(refused(r"~\AppData\Local\Microsoft\Credentials").unwrap().contains(r"AppData\Local\Microsoft"));
-    assert!(refused(r"~\AppData").unwrap().contains("keys or logins"), "a folder above a key folder");
+    assert!(refused(r"~\AppData\Local").unwrap().contains(r"keys or logins (~\AppData\Local\Microsoft)"), "a folder above a key folder");
+    assert!(refused(r"~\AppData").unwrap().contains("holds Gizai's data folder"), "a folder above Gizai's data");
     assert!(refused(r"~\.claude-2").unwrap().contains(".claude-2"), "a second Claude Code account");
     assert_eq!(refused(r"~\Herd\shop"), None);
     assert_eq!(refused(r"D:\work\shared"), None);

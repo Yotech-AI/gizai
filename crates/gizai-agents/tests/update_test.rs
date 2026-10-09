@@ -352,7 +352,7 @@ fn stub_source(tmp: &Path, script: &str) -> (PathBuf, PathBuf) {
 
 const STUB: &str = r#"set -e
 echo "args=$*" > "$MARKS/args"
-echo "nice=$(nice)" >> "$MARKS/args"
+echo "nice=$(nice 2>/dev/null || ps -o nice= -p $$ | tr -d ' ')" >> "$MARKS/args"
 echo "pwd=$(pwd)" >> "$MARKS/args"
 echo "target=$CARGO_TARGET_DIR" >> "$MARKS/args"
 echo "prefix=${GIZAI_PREFIX:-}" >> "$MARKS/args"
@@ -370,7 +370,7 @@ fn the_build_runs_the_releases_install_sh_build_only_at_low_priority() {
     up::build(&dir, None, &log, &Stop::default()).unwrap();
     let args = std::fs::read_to_string(marks.join("args")).unwrap();
     assert!(args.contains("args=--build-only\n"), "{args}");
-    let own_nice: i32 = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap().trim().parse().unwrap();
+    let own_nice: i32 = own_nice();
     let nice: i32 = args.lines().find_map(|l| l.strip_prefix("nice=")).unwrap().parse().unwrap();
     assert_eq!(nice, (own_nice + 10).min(19), "nice 10 above Gizai: {args}");
     assert!(args.contains(&format!("pwd={}\n", dir.display())), "runs in the source: {args}");
@@ -391,7 +391,7 @@ fn the_install_goes_into_the_prefix_with_its_desktop_entry_under_it() {
     assert!(args.contains("args=--skip-build\n"), "{args}");
     assert!(args.contains(&format!("prefix={}\n", prefix.display())), "{args}");
     assert!(args.contains(&format!("xdg={}\n", prefix.join("share").display())), "the desktop entry and icons go under the prefix: {args}");
-    let own_nice: i32 = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap().trim().parse().unwrap();
+    let own_nice: i32 = own_nice();
     assert!(args.contains(&format!("nice={own_nice}\n")), "the install runs at Gizai's own priority: {args}");
 }
 
@@ -480,4 +480,15 @@ fn after_stop_no_other_command_starts() {
     assert!(!marks.join("args").exists(), "the installer never ran");
     let repo = release_repo(tmp.path());
     assert_eq!(up::get_source(&repo.display().to_string(), "v1.0.0", &tmp.path().join("src2"), &log, &stop).unwrap_err().what, "Stopped");
+}
+
+/// This process's niceness: what `nice` prints on Linux; macOS's BSD nice prints nothing without a command, so ps there.
+fn own_nice() -> i32 {
+    let nice = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap();
+    let nice = if nice.trim().is_empty() {
+        String::from_utf8(Command::new("ps").args(["-o", "nice=", "-p", &std::process::id().to_string()]).output().unwrap().stdout).unwrap()
+    } else {
+        nice
+    };
+    nice.trim().parse().unwrap()
 }

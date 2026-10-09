@@ -37,7 +37,7 @@ const RELEASE_INSTALL_SH: &str = r#"set -e
 T='@T@'; C="$T/control"; M="$T/marks"
 case "$1" in
   --build-only)
-    echo "nice=$(nice)" > "$M/build"
+    echo "nice=$(nice 2>/dev/null || ps -o nice= -p $$ | tr -d ' ')" > "$M/build"
     [ -f "$C/build-secs" ] && sleep "$(cat "$C/build-secs")"
     if [ -f "$C/fail-build" ]; then echo "error[E0425]: cannot find value (a fake build failure)" >&2; exit 101; fi
     v=9.9.9; [ -f "$C/built-version" ] && v="$(cat "$C/built-version")"
@@ -324,7 +324,7 @@ async fn an_update_builds_in_the_background_backs_up_installs_and_offers_a_resta
     assert_eq!(backups.len(), 1, "{backups:?}");
     assert_eq!(job.backup.as_deref(), Some(s.t.join("data/backups").join(&backups[0]).display().to_string().as_str()));
     // it built at low priority, and installed into this Gizai's prefix with the desktop entry under it
-    let own_nice: i32 = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap().trim().parse().unwrap();
+    let own_nice: i32 = own_nice();
     assert_eq!(std::fs::read_to_string(s.t.join("marks/build")).unwrap().trim(), format!("nice={}", (own_nice + 10).min(19)));
     let install = std::fs::read_to_string(s.t.join("marks/install")).unwrap();
     assert!(install.contains(&format!("prefix={}\n", s.prefix.display())) && install.contains(&format!("xdg={}\n", s.prefix.join("share").display())), "{install}");
@@ -507,4 +507,15 @@ async fn quitting_gizai_stops_an_update_that_builds() {
     }
     update::on_exit(&s.st);
     assert_eq!(wait_for_update(&s.st).job.unwrap().step, "stopped");
+}
+
+/// This process's niceness: what `nice` prints on Linux; macOS's BSD nice prints nothing without a command, so ps there.
+fn own_nice() -> i32 {
+    let nice = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap();
+    let nice = if nice.trim().is_empty() {
+        String::from_utf8(Command::new("ps").args(["-o", "nice=", "-p", &std::process::id().to_string()]).output().unwrap().stdout).unwrap()
+    } else {
+        nice
+    };
+    nice.trim().parse().unwrap()
 }

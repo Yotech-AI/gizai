@@ -35,7 +35,11 @@ fn feed(lines: &[&str]) -> Vec<RunEvent> {
 #[test]
 fn a_command_servers_entry_has_its_command_arguments_and_environment_values() {
     let e = mcp_run::stdio("npx", &strings(&["-y", "@otus/mcp"]), &[("OTUS_TOKEN".into(), "s3cret".into()), ("OTUS_REGION".into(), "eu".into())]);
+    #[cfg(not(windows))]
     assert_eq!(e, json!({"type": "stdio", "command": "npx", "args": ["-y", "@otus/mcp"], "env": {"OTUS_TOKEN": "s3cret", "OTUS_REGION": "eu"}}));
+    // Windows: npx is a batch file (npx.cmd), which goes through cmd /c, as Claude Code asks there
+    #[cfg(windows)]
+    assert_eq!(e, json!({"type": "stdio", "command": "cmd", "args": ["/c", "npx", "-y", "@otus/mcp"], "env": {"OTUS_TOKEN": "s3cret", "OTUS_REGION": "eu"}}));
     assert_eq!(mcp_run::stdio("/usr/bin/x", &[], &[]), json!({"type": "stdio", "command": "/usr/bin/x", "args": [], "env": {}}));
 }
 

@@ -54,11 +54,18 @@ export default function App() {
         if (kind === "task" || kind === "project" || kind === "client" || kind === "person") setDrawer({ kind });
         if (kind === "agent-lead") setDrawer({ kind: "agent", preset: { name: "Team Lead", role: "lead", chat: true } });
         if (i.selftest_mode === "theme:light") document.documentElement.dataset.theme = "light";
-        // GIZAI_SELFTEST_MODE=appearance:chat=20,ui=16.5,docs=20,font=inter,theme=light: Settings → Appearance for this start only.
-        if (i.selftest_mode?.startsWith("appearance:")) setAppearance(appearanceOf(i.selftest_mode.slice(11)), false);
+        // GIZAI_SELFTEST_MODE=appearance:chat=20,ui=16.5,docs=20,font=inter,theme=light[;<step>…]: Settings → Appearance for
+        // this start only (not kept), then the steps, as below.
+        let steps: string[] = [];
+        if (i.selftest_mode?.startsWith("appearance:")) {
+          const [spec = "", ...then] = i.selftest_mode.slice(11).split(";");
+          setAppearance(appearanceOf(spec), false);
+          steps = then;
+        }
         // GIZAI_SELFTEST_MODE=steps:<step>;<step>…: a step "#/route" goes there, any other step clicks that CSS selector.
-        if (i.selftest_mode?.startsWith("steps:")) {
-          for (const step of i.selftest_mode.slice(6).split(";")) {
+        if (i.selftest_mode?.startsWith("steps:")) steps = i.selftest_mode.slice(6).split(";");
+        if (steps.length) {
+          for (const step of steps) {
             await new Promise((r) => setTimeout(r, 1200));
             if (step.startsWith("#/")) window.location.hash = step;
             else { const el = document.querySelector(step) as HTMLElement | null; el?.scrollIntoView({ block: "start" }); el?.click(); }

@@ -174,7 +174,18 @@ export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> 
 export const listChatThreads = () => invoke<T.ChatThread[]>("list_chat_threads");
 export const chatMessages = (threadId: string) => invoke<T.ChatMessage[]>("chat_messages", { threadId });
 /** Sends a message (a new thread when threadId is null) and starts the answer; resolves with the thread id. */
-export const sendChat = (threadId: string | null, text: string) => invoke<string>("send_chat", { threadId, text });
+/** Sends a message (queued while the Team Lead answers in the chat); a new chat runs on `cli` when one was picked. */
+export const sendChat = (threadId: string | null, text: string, cli?: string | null) => invoke<string>("send_chat", { threadId, text, cli: cli ?? null });
+export const chatQueue = (threadId: string) => invoke<T.QueuedMessage[]>("chat_queue", { threadId });
+export const editQueuedChat = (id: string, text: string) => invoke<T.QueuedMessage>("edit_queued_chat", { id, text });
+export const removeQueuedChat = (id: string) => invoke<void>("remove_queued_chat", { id });
+/** Send now: the chat's queued messages go together. */
+export const sendChatQueue = (threadId: string) => invoke<void>("send_chat_queue", { threadId });
+/** Runs on under the text box; null: the Team Lead's Runs on. */
+export const setChatCli = (threadId: string, cli: string | null) => invoke<T.ChatThread>("set_chat_cli", { threadId, cli });
+/** Answer on <CLI> under a usage-limit note. */
+export const answerChatOn = (threadId: string, cli: string, noteId: string) => invoke<void>("answer_chat_on", { threadId, cli, noteId });
+export const chatClis = () => invoke<T.ChatCli[]>("chat_clis");
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
 /** × on a Team Lead chat in the Inbox: it no longer waits for you. */
 export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });

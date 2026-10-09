@@ -166,15 +166,18 @@ async fn chat_needs_an_active_chat_agent() {
 }
 
 #[tokio::test]
-async fn a_second_message_while_working_is_refused() {
+async fn a_second_message_while_working_is_queued() {
+    // GA-50: it used to be refused ("still answering"); now it waits in the chat's queue.
     let t = setup().await;
     let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_HANG".into(), None).await.unwrap();
     for _ in 0..100 {
         if app_chat::live(&t.st).iter().any(|l| l.thread_id == thread && !l.run_id.is_empty()) { break; }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    let e = app_chat::send(&t.st, Some(thread.clone()), "another".into(), None).await.unwrap_err();
-    assert!(e.contains("still answering"), "{e}");
+    let (same, queued) = app_chat::send(&t.st, Some(thread.clone()), "another".into(), None).await.unwrap();
+    assert_eq!(same, thread);
+    assert_eq!(queued.await.unwrap().status, "queued");
+    assert_eq!(chat::queue(&t.st.db, &thread).unwrap().iter().map(|q| q.body_md.as_str()).collect::<Vec<_>>(), ["another"]);
     // another thread is fine meanwhile
     let (_, other) = t.turn(None, "separate chat").await;
     assert_eq!(other.status, "succeeded");
@@ -453,4 +456,300 @@ async fn the_team_lead_gets_its_folders_in_chat_but_only_reads_them() {
     assert!(sys.contains("## Your folders") && sys.contains("you never change files in them"), "{sys}");
     assert!(sys.contains(&format!("- {} (read)\n", real(&shared))) && sys.contains(&format!("- {} (read and change)\n", real(&out))), "{sys}");
     assert!(!sys.contains(&gone.display().to_string()), "{sys}");
+}
+
+// GA-50: Runs on per chat, the hand-over when a chat moves to another account, the usage limit, and the queue.
+
+/// A second Claude Code account in Settings (its own CLAUDE_CONFIG_DIR in the test's folder, which the fake only
+/// reads), with usage left (the fake's limit doesn't apply to it). Returns its id and its folder.
+fn second_account(t: &T) -> (String, String) {
+    let dir = t.st.data_dir.join("acct-2").display().to_string();
+    let all = gizai_core::clis::save(&t.st.db, vec![gizai_core::clis::Cli {
+        name: "Claude Code 2".into(), kind: "claude_code".into(), command: FAKE.into(),
+        env: vec![format!("CLAUDE_CONFIG_DIR={dir}"), "FAKE_HAS_USAGE=1".into()], ..Default::default() }]).unwrap();
+    (all.into_iter().find(|c| c.name == "Claude Code 2").unwrap().id, dir)
+}
+
+fn argv_of(call: &Value) -> Vec<String> {
+    serde_json::from_value(call["argv"].clone()).unwrap()
+}
+
+fn notes_of(t: &T, thread: &str) -> Vec<String> {
+    chat::messages(&t.st.db, thread).unwrap().into_iter().filter(|m| m.role == "system").map(|m| m.body_md.unwrap_or_default()).collect()
+}
+
+/// Waits until the fake is waiting for fake-go (FAKE_CHAT_WAIT), so a Stop or a queued message lands during the answer.
+async fn until_waiting(t: &T) {
+    let f = t.st.data_dir.join("chat/fake-waiting");
+    for _ in 0..200 {
+        if f.exists() { return; }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("the fake never started waiting");
+}
+
+fn go(t: &T) {
+    std::fs::write(t.st.data_dir.join("chat/fake-go"), "").unwrap();
+}
+
+fn chat_runs(t: &T, thread: &str) -> Vec<(String, String)> {
+    t.st.db.read(|c| {
+        let mut st = c.prepare("SELECT status, COALESCE(adapter, '') FROM runs WHERE chat_thread_id=?1 ORDER BY created_at, rowid")?;
+        Ok(st.query_map([thread], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<(String, String)>, _>>()?)
+    }).unwrap()
+}
+
+#[tokio::test]
+async fn a_chat_moved_to_another_account_starts_a_new_session_there_with_the_hand_over_and_moves_back_the_same_way() {
+    let t = setup().await;
+    let (cc2, acct2) = second_account(&t);
+    let home = std::env::var("CLAUDE_CONFIG_DIR").unwrap_or_default();
+    let (thread, s) = t.turn(None, "Remember this: the release is called Tulip.").await;
+    assert_eq!(s.status, "succeeded");
+    let s1 = chat::get_thread(&t.st.db, &thread).unwrap().session_id.unwrap();
+    assert_eq!(chat::get_thread(&t.st.db, &thread).unwrap().session_cli.as_deref(), Some("claude_code"));
+
+    // Runs on under the text box → Claude Code 2: saved on the chat, the Team Lead keeps its own.
+    let lead_cli = team::agent(&t.st.db, &t.lead).unwrap().adapter;
+    assert_eq!(app_chat::set_cli(&t.st, &thread, Some(&cc2)).unwrap().cli.as_deref(), Some(cc2.as_str()));
+    assert_eq!(chat::get_thread(&t.st.db, &thread).unwrap().cli.as_deref(), Some(cc2.as_str()), "kept after reopening");
+    assert_eq!(team::agent(&t.st.db, &t.lead).unwrap().adapter, lead_cli, "board checks and task runs keep the agent's Runs on");
+
+    let (_, s) = t.turn(Some(thread.clone()), "What is the release called?").await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let calls = t.calls();
+    assert_eq!(calls.len(), 2, "no failed resume first");
+    let argv = argv_of(&calls[1]);
+    assert!(argv.contains(&"--session-id".to_string()) && !argv.contains(&"--resume".to_string()), "a new session: {argv:?}");
+    assert_eq!(calls[1]["account"], acct2.as_str(), "on Claude Code 2's account");
+    let prompt = calls[1]["prompt"].as_str().unwrap();
+    assert!(prompt.contains("This chat moved to Claude Code 2, in a new session."), "{prompt}");
+    assert!(prompt.contains("User: Remember this: the release is called Tulip.") && prompt.contains("You: Here is the overview."), "{prompt}");
+    assert!(prompt.contains("(You called get_overview; its result began: {"), "the tool call, with the start of its result: {prompt}");
+    assert!(prompt.ends_with("(New message:)\nWhat is the release called?"), "{prompt}");
+    let th = chat::get_thread(&t.st.db, &thread).unwrap();
+    assert_ne!(th.session_id.as_deref(), Some(s1.as_str()));
+    assert_eq!(th.session_cli.as_deref(), Some(cc2.as_str()));
+    // the note sits where the switch happened, before the message that went there
+    let msgs = chat::messages(&t.st.db, &thread).unwrap();
+    let note = msgs.iter().position(|m| m.role == "system").unwrap();
+    assert_eq!(msgs[note].body_md.as_deref(), Some("Now on Claude Code 2. The conversation so far was handed over."));
+    assert_eq!(msgs[note].meta.as_ref().unwrap()["kind"], "switch");
+    assert_eq!(msgs[note + 1].body_md.as_deref(), Some("What is the release called?"));
+    // every turn records the CLI it ran on
+    assert_eq!(chat_runs(&t, &thread), [("succeeded".to_string(), "claude_code".to_string()), ("succeeded".into(), cc2.clone())]);
+
+    // The next message on Claude Code 2 resumes its session, without a note.
+    t.turn(Some(thread.clone()), "Thanks").await;
+    let calls = t.calls();
+    let argv = argv_of(&calls[2]);
+    assert_eq!(argv[argv.iter().position(|a| a == "--resume").expect("resumed") + 1], th.session_id.clone().unwrap());
+    assert_eq!(calls[2]["account"], acct2.as_str());
+    assert_eq!(notes_of(&t, &thread).len(), 1);
+
+    // Back to the Team Lead's Runs on: a new session on the first account, with the hand-over, and a note.
+    assert_eq!(app_chat::set_cli(&t.st, &thread, None).unwrap().cli, None);
+    let (_, s) = t.turn(Some(thread.clone()), "And the one before?").await;
+    assert_eq!(s.status, "succeeded");
+    let calls = t.calls();
+    assert_eq!(calls.len(), 4, "no failed resume when switching back either");
+    assert!(!argv_of(&calls[3]).contains(&"--resume".to_string()));
+    assert_eq!(calls[3]["account"], home.as_str());
+    let prompt = calls[3]["prompt"].as_str().unwrap();
+    assert!(prompt.contains("This chat moved to Claude Code, in a new session.") && prompt.contains("User: What is the release called?")
+        && prompt.contains("User: Remember this: the release is called Tulip."), "{prompt}");
+    assert_eq!(notes_of(&t, &thread).last().map(String::as_str), Some("Now on Claude Code. The conversation so far was handed over."));
+    assert_eq!(chat_runs(&t, &thread).last().unwrap().1, "claude_code");
+    assert!(!std::path::Path::new(&acct2).exists(), "nothing is written in an account's folder");
+}
+
+#[tokio::test]
+async fn a_changed_runs_on_in_the_agent_form_moves_a_chat_without_its_own_pick() {
+    let t = setup().await;
+    let (cc2, acct2) = second_account(&t);
+    let (thread, _) = t.turn(None, "First question").await;
+    let m = team::agent(&t.st.db, &t.lead).unwrap();
+    team::update_agent(&t.st.db, &t.st.you_id, &t.lead, AgentInput { name: m.name, role_key: m.role_key, adapter: cc2.clone(), ..Default::default() }).unwrap();
+    let (_, s) = t.turn(Some(thread.clone()), "Second question").await;
+    assert_eq!(s.status, "succeeded");
+    let calls = t.calls();
+    assert_eq!(calls.len(), 2, "no failed resume first");
+    assert!(!argv_of(&calls[1]).contains(&"--resume".to_string()));
+    assert_eq!(calls[1]["account"], acct2.as_str());
+    assert!(calls[1]["prompt"].as_str().unwrap().contains("User: First question"));
+    assert_eq!(notes_of(&t, &thread), ["Now on Claude Code 2. The conversation so far was handed over."]);
+    assert_eq!(chat::get_thread(&t.st.db, &thread).unwrap().cli, None, "the chat still follows the Team Lead");
+}
+
+#[tokio::test]
+async fn a_session_that_cant_be_resumed_gets_the_same_hand_over() {
+    let t = setup().await;
+    let (thread, _) = t.turn(None, "First question").await;
+    t.turn(Some(thread.clone()), "FAKE_LOST_SESSION second question").await;
+    let prompt = t.calls()[2]["prompt"].as_str().unwrap().to_string();
+    assert!(prompt.contains("This chat's earlier session could not be resumed, so this is a new one.") && prompt.contains("User: First question")
+        && prompt.contains("(You called get_overview; its result began:"), "{prompt}");
+}
+
+#[tokio::test]
+async fn a_usage_limit_says_so_and_answer_on_another_account_sends_the_message_again_there() {
+    let t = setup().await;
+    let (cc2, acct2) = second_account(&t);
+    let (thread, s) = t.turn(None, "FAKE_CHAT_LIMIT Will you answer?").await;
+    assert_eq!(s.status, "failed");
+    let msgs = chat::messages(&t.st.db, &thread).unwrap();
+    let note = msgs.last().unwrap();
+    assert_eq!(note.role, "system");
+    assert_eq!(note.body_md.as_deref(), Some("Claude Code has hit its weekly limit, so the Team Lead couldn't answer. It resets Oct 9, 5pm (Europe/Amsterdam)."));
+    let meta = note.meta.clone().unwrap();
+    assert_eq!((meta["kind"].as_str(), meta["cli"].as_str(), meta["limit"].as_str()), (Some("limit"), Some("claude_code"), Some("weekly limit")));
+    assert_eq!(meta["messageIds"], serde_json::json!([msgs[0].id]));
+
+    let done = app_chat::answer_on(&t.st, &thread, &cc2, &note.id, None).await.unwrap();
+    let s = tokio::time::timeout(std::time::Duration::from_secs(30), done).await.unwrap().unwrap();
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let calls = t.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1]["account"], acct2.as_str());
+    assert!(!argv_of(&calls[1]).contains(&"--resume".to_string()));
+    assert!(calls[1]["prompt"].as_str().unwrap().ends_with("FAKE_CHAT_LIMIT Will you answer?"));
+    assert_eq!(chat::get_thread(&t.st.db, &thread).unwrap().cli.as_deref(), Some(cc2.as_str()), "the chat runs on Claude Code 2 now");
+    let msgs = chat::messages(&t.st.db, &thread).unwrap();
+    assert_eq!(msgs.iter().filter(|m| m.role == "user").count(), 1, "the same message goes again, not a copy");
+    assert!(notes_of(&t, &thread).last().unwrap().starts_with("Now on Claude Code 2."));
+    // A failure that isn't a limit stays the usual error, without Answer on.
+    let (other, s) = t.turn(None, "FAKE_CHAT_CRASH").await;
+    assert_eq!(s.status, "failed");
+    let last = chat::messages(&t.st.db, &other).unwrap().pop().unwrap();
+    assert!(last.body_md.unwrap().starts_with("The Team Lead couldn't answer:") && last.meta.is_none());
+}
+
+#[tokio::test]
+async fn two_messages_queued_during_an_answer_go_as_one_turn_after_it_and_stay_separate_messages() {
+    let t = setup().await;
+    let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_WAIT first".into(), None).await.unwrap();
+    until_waiting(&t).await;
+    for text in ["second", "third", "fourth"] {
+        let (_, h) = app_chat::send(&t.st, Some(thread.clone()), text.into(), None).await.unwrap();
+        assert_eq!(h.await.unwrap().status, "queued");
+    }
+    let q = chat::queue(&t.st.db, &thread).unwrap();
+    assert_eq!(q.iter().map(|q| q.body_md.as_str()).collect::<Vec<_>>(), ["second", "third", "fourth"]);
+    assert!(q.iter().all(|q| !q.held));
+    // editable and removable until they go
+    app_chat::edit_queued(&t.st, &q[1].id, "third, changed").unwrap();
+    app_chat::remove_queued(&t.st, &q[2].id).unwrap();
+    assert!(app_chat::set_cli(&t.st, &thread, Some("claude_code")).is_err(), "Runs on waits until the answer is done");
+    assert_eq!(chat::messages(&t.st.db, &thread).unwrap().iter().filter(|m| m.role == "user").count(), 1);
+
+    go(&t);
+    let s = tokio::time::timeout(std::time::Duration::from_secs(30), done).await.expect("both answers done").unwrap();
+    assert_eq!(s.status, "succeeded");
+    let calls = t.calls();
+    assert_eq!(calls.len(), 2, "one turn for both");
+    let first_session = argv_of(&calls[0])[argv_of(&calls[0]).iter().position(|a| a == "--session-id").unwrap() + 1].clone();
+    let argv = argv_of(&calls[1]);
+    assert_eq!(argv[argv.iter().position(|a| a == "--resume").expect("the same session") + 1], first_session);
+    assert!(calls[1]["prompt"].as_str().unwrap().ends_with("(2 messages, written while you answered, oldest first:)\n\nsecond\n\nthird, changed"),
+            "{}", calls[1]["prompt"]);
+    let users: Vec<String> = chat::messages(&t.st.db, &thread).unwrap().into_iter().filter(|m| m.role == "user").map(|m| m.body_md.unwrap()).collect();
+    assert_eq!(users, ["FAKE_CHAT_WAIT first", "second", "third, changed"]);
+    assert_eq!(t.roles(&thread), ["user", "agent", "tool", "agent", "user", "user", "agent", "tool", "agent"]);
+    assert!(chat::queue(&t.st.db, &thread).unwrap().is_empty());
+    assert!(app_chat::live(&t.st).is_empty());
+}
+
+#[tokio::test]
+async fn after_a_stopped_answer_the_queue_waits_until_send_now() {
+    let t = setup().await;
+    let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_WAIT plan three tasks".into(), None).await.unwrap();
+    until_waiting(&t).await;
+    app_chat::send(&t.st, Some(thread.clone()), "only two, please".into(), None).await.unwrap();
+    app_chat::stop(&t.st, &thread);
+    let s = tokio::time::timeout(std::time::Duration::from_secs(15), done).await.unwrap().unwrap();
+    assert_eq!(s.status, "cancelled");
+    assert_eq!(t.calls().len(), 1, "nothing went by itself");
+    let q = chat::queue(&t.st.db, &thread).unwrap();
+    assert!(q.len() == 1 && q[0].held, "{q:?}");
+    assert_eq!(notes_of(&t, &thread), ["Stopped."]);
+
+    let done = app_chat::send_queue(&t.st, &thread, None).await.unwrap();
+    assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(30), done).await.unwrap().unwrap().status, "succeeded");
+    assert!(t.calls()[1]["prompt"].as_str().unwrap().ends_with("only two, please"));
+    assert!(chat::queue(&t.st.db, &thread).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn after_a_failed_answer_the_queue_waits_and_can_be_removed() {
+    let t = setup().await;
+    let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_WAIT FAKE_CHAT_FAIL".into(), None).await.unwrap();
+    until_waiting(&t).await;
+    app_chat::send(&t.st, Some(thread.clone()), "and then?".into(), None).await.unwrap();
+    go(&t);
+    let s = tokio::time::timeout(std::time::Duration::from_secs(30), done).await.unwrap().unwrap();
+    assert_eq!(s.status, "failed");
+    assert_eq!(t.calls().len(), 1);
+    let q = chat::queue(&t.st.db, &thread).unwrap();
+    assert!(q.len() == 1 && q[0].held);
+    app_chat::remove_queued(&t.st, &q[0].id).unwrap();
+    assert!(chat::queue(&t.st.db, &thread).unwrap().is_empty());
+    assert!(app_chat::send_queue(&t.st, &thread, None).await.is_err(), "nothing left to send");
+}
+
+#[tokio::test]
+async fn stop_pressed_as_the_answer_finishes_doesnt_mark_it_cancelled_and_the_queue_goes() {
+    let t = setup().await;
+    let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_WAIT FAKE_IGNORE_STOP".into(), None).await.unwrap();
+    until_waiting(&t).await;
+    app_chat::send(&t.st, Some(thread.clone()), "next one".into(), None).await.unwrap();
+    // Stop reaches Claude Code just as it finishes its answer anyway.
+    app_chat::stop(&t.st, &thread);
+    go(&t);
+    let s = tokio::time::timeout(std::time::Duration::from_secs(30), done).await.unwrap().unwrap();
+    assert_eq!(s.status, "succeeded");
+    assert_eq!(chat_runs(&t, &thread).iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["succeeded", "succeeded"], "the finished answer, then the queued one");
+    assert!(!notes_of(&t, &thread).contains(&"Stopped.".to_string()));
+    assert!(t.calls()[1]["prompt"].as_str().unwrap().ends_with("next one"));
+}
+
+#[tokio::test]
+async fn after_a_restart_a_queued_message_waits_and_an_answer_cut_off_by_a_crash_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    let (thread, run) = {
+        let st = gizai_lib::open_state(data.clone(), Arc::new(|_| {})).unwrap();
+        let team_id = team::list(&st.db).unwrap()[0].id.clone();
+        let lead = team::add_agent(&st.db, &st.you_id, &team_id, AgentInput {
+            name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true), ..Default::default() }).unwrap();
+        let thread = chat::create_thread(&st.db, &st.you_id, &lead, "First question").unwrap();
+        chat::add_message(&st.db, chat::NewMessage { thread_id: thread.clone(), role: "user".into(), body_md: Some("First question".into()), ..Default::default() }).unwrap();
+        chat::enqueue(&st.db, &st.you_id, &thread, "queued before the crash").unwrap();
+        let run = core_runs::create_chat(&st.db, &lead, &thread, "S", "/tmp/lead", "/tmp/r.jsonl").unwrap();
+        core_runs::set_running(&st.db, &run, 4242).unwrap();
+        (thread, run)
+        // Gizai crashes here: nothing else is recorded.
+    };
+    let again = gizai_lib::open_state(data, Arc::new(|_| {})).unwrap();
+    let q = chat::queue(&again.db, &thread).unwrap();
+    assert!(q.len() == 1 && q[0].held, "it waits for Send now: {q:?}");
+    let last = chat::messages(&again.db, &thread).unwrap().pop().unwrap();
+    assert_eq!((last.role.as_str(), last.body_md.as_deref()), ("system", Some(chat::INTERRUPTED)));
+    assert_eq!(core_runs::get(&again.db, &run).unwrap().status, "failed");
+}
+
+#[tokio::test]
+async fn the_live_snapshot_numbers_the_text_it_holds() {
+    let t = setup().await;
+    let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_HANG".into(), None).await.unwrap();
+    let mut live = None;
+    for _ in 0..100 {
+        live = app_chat::live(&t.st).into_iter().find(|l| l.thread_id == thread && !l.draft.is_empty());
+        if live.is_some() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    let live = live.expect("a draft");
+    assert_eq!(live.draft, "Thinking about ");
+    assert!(live.seq > 0, "the snapshot says which change it holds, so the Chat page adds only the later ones");
+    app_chat::stop(&t.st, &thread);
+    done.await.unwrap();
 }

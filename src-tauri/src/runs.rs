@@ -181,6 +181,9 @@ pub struct Settings {
     /// How Open pull request and Push branch reach GitHub: "ssh" (your SSH keys, the default) or "https" (gh's login).
     #[serde(default = "default_push_over")]
     pub push_over: String,
+    /// Desktop notifications, a switch per kind (Settings → Notifications); all on by default.
+    #[serde(default)]
+    pub notifications: crate::notifications::Switches,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
@@ -198,6 +201,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         max_run_tool_calls: settings::get(&st.db, "max_run_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_TOOL_CALLS),
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
         push_over: crate::github::push_over_name(st),
+        notifications: crate::notifications::switches(&st.db),
     }
 }
 
@@ -227,6 +231,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_run_minutes", &s.max_run_minutes).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_tool_calls", &s.max_run_tool_calls).map_err(|e| e.to_string())?;
     crate::github::save_push_over(st, &s.push_over)?;
+    crate::notifications::save_switches(&st.db, &s.notifications)?;
     Ok(())
 }
 
@@ -1003,18 +1008,39 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
         _ => None,
     };
     record_head(&st.db, run_id, dir);
+    let agent = core_runs::get(&st.db, run_id).map(|r| r.agent_id).unwrap_or_default();
+    let unstarted = status == "failed" && tools == 0 && error.as_deref().is_some_and(login_problem);
+    // Gizai pushes the card's branch itself (GA-56), before the run counts as ended and the card moves on, so the next
+    // agent (QA, for its pull request) finds it on the remote, also when the agent's own push was refused. Not after a run
+    // that couldn't start working, nor for a run Gizai's quitting stopped.
+    let pushed = if quit || unstarted { None } else { push_after_run(st, run_id, dir).await };
+    for text in pushed.as_ref().map(AfterRun::notes).unwrap_or_default() {
+        note_run(st, run_id, &text);
+    }
+    let unpushed = pushed.and_then(|p| p.push.err());
+    // A Stop pressed while Gizai pushed came after the run had ended: it changes nothing.
+    st.runs.stopped.lock().unwrap().remove(run_id);
     if !refused.is_empty() && let Err(e) = core_runs::set_refused(&st.db, run_id, &refused) {
         eprintln!("gizai: saving what run {run_id} was refused failed: {e}");
     }
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
     let mut nudge = None;
-    let agent = core_runs::get(&st.db, run_id).map(|r| r.agent_id).unwrap_or_default();
-    // Claude Code couldn't start working (not logged in): not a failed run. The card goes back where it was, on hold;
-    // one failure holds one card, so a card the queue started before another card's failure paused the agent only
-    // waits again.
-    let unstarted = status == "failed" && tools == 0 && error.as_deref().is_some_and(login_problem);
-    if unstarted {
+    if let Some(reason) = &unpushed {
+        // The push failed: the card stays where it is, on hold with the reason, whatever the run's answer (its summary is
+        // still posted), so it shows in the Inbox. Nothing retries: the next run's end pushes again.
+        if cancelled {
+            hold_card(st, &agent, task_id, reason);
+        } else if let Err(e) = workflow::hold_unpushed(&st.db, run_id, if status == "succeeded" { verdict.as_ref() } else { None }, reason) {
+            eprintln!("gizai: holding the card of run {run_id} failed: {e}");
+        }
+        if status == "failed" && !quit {
+            pause_pull(st, &agent, error.as_deref().unwrap_or("its last run failed"));
+        }
+    } else if unstarted {
+        // Claude Code couldn't start working (not logged in): not a failed run. The card goes back where it was, on hold;
+        // one failure holds one card, so a card the queue started before another card's failure paused the agent only
+        // waits again.
         let reason = error.clone().unwrap_or_default();
         let first = pause_pull(st, &agent, &reason);
         let done = if first || !queued { workflow::hold_unstarted(&st.db, run_id, &reason) } else { workflow::release_unstarted(&st.db, run_id) };
@@ -1059,6 +1085,89 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
         crate::pulls::check_soon(st, task_id);
     }
     RunSummary { run_id: run_id.to_string(), status: status.into(), outcome: verdict.map(|v| v.outcome), cost_usd_micros: cost, error }
+}
+
+/// What Gizai's push after a run did (GA-56).
+struct AfterRun {
+    branch: String,
+    /// What went, or why it couldn't, in plain words.
+    push: Result<worktree::Pushed, String>,
+    /// Files with uncommitted changes in the run's worktree: they stay there, Gizai pushes only commits.
+    uncommitted: usize,
+}
+
+impl AfterRun {
+    /// What the run's output says about it, a note each: what went ("Gizai pushed …", which the Run panel shows as good
+    /// news) or why it couldn't, and the uncommitted changes left behind. Empty when nothing went and nothing was left.
+    fn notes(&self) -> Vec<String> {
+        let mut said: Vec<String> = match &self.push {
+            Ok(worktree::Pushed::Commits(n)) => vec![format!("Gizai pushed {} ({n} {})", self.branch, if *n == 1 { "commit" } else { "commits" })],
+            Ok(worktree::Pushed::Nothing) => vec![],
+            Err(why) => vec![why.trim().to_string()],
+        };
+        if self.uncommitted > 0 {
+            let n = self.uncommitted;
+            said.push(format!("Its worktree has {n} uncommitted {}, which Gizai doesn't push", if n == 1 { "change" } else { "changes" }));
+        }
+        said.into_iter().map(|s| if s.ends_with('.') { s } else { s + "." }).collect()
+    }
+}
+
+/// Gizai's push after a run (GA-56): the run's branch goes to the project's GitHub, Bitbucket or git link when it has
+/// commits that remote doesn't have (`worktree::push_new_commits`). It goes where Open pull request pushes and over the
+/// same Push over setting (`pulls::push_to`, `pulls::push_over_for`), never forced and tried once, so it doesn't matter
+/// whether the agent's own push was refused. None: nothing to push to (no link or repository) or no branch.
+async fn push_after_run(st: &AppState, run_id: &str, dir: &Path) -> Option<AfterRun> {
+    let run = core_runs::get(&st.db, run_id).ok()?;
+    let branch = run.branch.filter(|b| !b.trim().is_empty())?;
+    let task = tasks::get(&st.db, run.task_id.as_deref()?).ok()?;
+    let project = projects::get(&st.db, task.project_id.as_deref()?).ok()?;
+    let repo = PathBuf::from(project.repo_path.clone().filter(|p| !p.trim().is_empty())?);
+    let link = gizai_core::repo_url::normalize(project.repo_url.as_deref()?).ok().flatten()?;
+    let (st2, dir) = (st.clone(), dir.to_path_buf());
+    let after = tokio::task::spawn_blocking(move || {
+        let push = crate::pulls::push_over_for(&st2, &link.provider).map_err(|e| format!("Couldn't push {branch}: {e}")).and_then(|over| {
+            // the main branch the card started from, as fetched for this run: the remote has its commits
+            let base = crate::git::start_point(&project, &repo, None).map_err(crate::pulls::plain)?;
+            worktree::push_new_commits(&repo, &crate::pulls::push_to(&repo, &link.url), &branch, &base, &over).map_err(crate::pulls::plain)
+        });
+        AfterRun { uncommitted: worktree::uncommitted(&dir).unwrap_or(0), branch, push }
+    }).await;
+    match after {
+        Ok(a) => {
+            if let Err(why) = &a.push {
+                eprintln!("gizai: after run {run_id}: {why}");
+            }
+            Some(a)
+        }
+        Err(e) => {
+            eprintln!("gizai: pushing after run {run_id} failed: {e}");
+            None
+        }
+    }
+}
+
+/// Gizai's note on a run that is ending: in its log, where Show output reads it later, and in the Run panel now.
+fn note_run(st: &AppState, run_id: &str, text: &str) {
+    if let Ok(run) = core_runs::get(&st.db, run_id) {
+        use std::io::Write;
+        let added = std::fs::OpenOptions::new().create(true).append(true).open(&run.log_path)
+            .and_then(|mut log| writeln!(log, "{}", agent_cli::note_line(text)));
+        if let Err(e) = added {
+            eprintln!("gizai: couldn't add a note to the log of run {run_id}: {e}");
+        }
+    }
+    let event = RunEvent::Note { text: text.to_string() };
+    let seq = {
+        let mut live = st.runs.live.lock().unwrap();
+        let Some(l) = live.get_mut(run_id) else { return };
+        let seq = l.next_seq;
+        l.next_seq += 1;
+        l.events.push(SeqEvent { seq, event: event.clone() });
+        if l.events.len() > BUFFER { l.events.remove(0); }
+        seq
+    };
+    (st.notify)(Note::Event { run_id: run_id.to_string(), seq, event });
 }
 
 /// Gizai's nudge (GA-54): a run that ended normally without its GIZAI_RESULT line (succeeded, `no_result`) is continued

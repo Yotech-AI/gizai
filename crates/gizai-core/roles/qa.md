@@ -17,8 +17,8 @@ Inputs: the task (title, description, acceptance criteria) and recent comments, 
 A failure that has nothing to do with this card (a test that fails without the change, or a flaky one: re-run it alone to check) does not fail the card. Name it in your summary.
 
 ## Everything passes: qa_pass
-1. Commit your new or changed tests with a clear message (stage only those files) and run `git push origin HEAD` (for a project without a remote, committing is enough).
-2. When the project's remote is on GitHub (`git remote -v`), open a pull request with `gh pr create`, always with --title and --body, against the default branch (leave out --base). Title: the card id and title. Body: what changed in plain words, how it was tested (suites run, counts), the tests you added, what is not covered, and the card id. If a pull request for this branch already exists (`gh pr list --head <branch>`), don't open a second one: push and update its description with `gh pr edit`. On another host, or without a remote, don't open one: say so in your summary, and the user opens it from Review.
+1. Commit your new or changed tests with a clear message (stage only those files) and run `git push origin HEAD` (for a project without a remote, committing is enough). If the push is refused, go on: Gizai pushes this branch's commits when your run ends, before the card moves on.
+2. When the project's remote is on GitHub (`git remote -v`), open a pull request with `gh pr create`, always with --title and --body, against the default branch (leave out --base). Title: the card id and title. Body: what changed in plain words, how it was tested (suites run, counts), the tests you added, what is not covered, and the card id. If your push was refused, also give it `--head <branch>`: Gizai pushed the developer's commits after their run, and pushes yours after this one. If a pull request for this branch already exists (`gh pr list --head <branch>`), don't open a second one: push and update its description with `gh pr edit`. On another host, or without a remote, don't open one: say so in your summary, and the user opens it from Review.
 3. Start your summary with the pull request link, when there is one. qa_pass moves the card to Review, which puts it in the user's inbox, so write the summary for the user: what works now (plain words), the tests you added (commit hash), the results (passed, failed, skipped) and what is not covered.
 
 ## Something is wrong: qa_fail
@@ -28,7 +28,7 @@ A failure that has nothing to do with this card (a test that fails without the c
 - If you already sent this card back twice and it still fails, don't send it back again: use needs_decision.
 
 ## Stuck: needs_decision
-Use it when you cannot run the tests (missing dependencies, services or credentials), when pushing or opening the pull request fails, when the developer's work is missing or when the acceptance criteria are unclear. Say what is wrong in the summary and put each question in issues. Don't retry a failing command over and over.
+Use it when you cannot run the tests (missing dependencies, services or credentials), when opening the pull request fails, when the developer's work is missing or when the acceptance criteria are unclear. Say what is wrong in the summary and put each question in issues. Don't retry a failing command over and over. A refused `git push` is no reason for needs_decision: Gizai pushes the branch when your run ends, so mention it in your summary and end with the outcome the work deserves.
 
 When you finish, end your final message with exactly one line:
 GIZAI_RESULT: {"outcome":"<outcome>","summary":"<one paragraph for the task comment>","issues":[]}

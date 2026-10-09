@@ -375,6 +375,58 @@ pub fn push_branch_over(repo: &Path, to: &str, branch: &str, over: &PushOver) ->
         .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {}", e.problem(over))))
 }
 
+/// What `push_new_commits` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pushed {
+    /// Nothing went: the branch has no commits of its own, or `to` has all of them already.
+    Nothing,
+    /// The branch went to `to` with this many commits `to` didn't have.
+    Commits(u32),
+}
+
+/// Gizai's push after a run: pushes the local `branch` to the branch of the same name at `to` (a remote's name, or a
+/// URL) with `push_branch_over` (never forced, never asking, plain words when it fails), but only when it has commits
+/// `to` doesn't have. `base` is the main branch it started from as last fetched (`start_ref`): `to` has those commits, so
+/// a branch without commits of its own goes nowhere. It asks `to` for its copy of the branch first (`ls-remote`, the
+/// same way the push goes); when that copy has commits this repository hasn't seen, the push itself says whether it can
+/// go, and it can't: it never forces.
+pub fn push_new_commits(repo: &Path, to: &str, branch: &str, base: &str, over: &PushOver) -> Result<Pushed, AgentError> {
+    let ours = rev_parse(repo, &format!("refs/heads/{branch}"))
+        .map_err(|_| AgentError::Git(format!("Couldn't push {branch}: it isn't in {} any more", repo.display())))?;
+    // what `to` has for sure; without the base (gone since it was fetched) every commit counts
+    let mut theirs: Vec<String> = rev_parse(repo, &format!("{base}^{{commit}}")).into_iter().collect();
+    if new_commits(repo, &ours, &theirs)? == 0 {
+        return Ok(Pushed::Nothing);
+    }
+    let head = format!("refs/heads/{branch}");
+    let listed = quiet(repo, &push_config(repo, to, over), &["ls-remote", "--quiet", to, &head], PUSH_LIMIT)
+        .map_err(|e| AgentError::Git(format!("Couldn't push {branch} to {to}: {}", e.problem(over))))?;
+    let copy = listed.lines().filter_map(|l| l.split_once('\t')).find(|(_, r)| r.trim() == head).map(|(sha, _)| sha.trim().to_string());
+    match copy {
+        Some(sha) if sha == ours => return Ok(Pushed::Nothing),
+        // a commit this repository has: what `to` has since
+        Some(sha) if sha.chars().all(|c| c.is_ascii_hexdigit()) && git(repo, &["cat-file", "-e", &format!("{sha}^{{commit}}")]).is_ok() => {
+            theirs.push(sha)
+        }
+        // none yet, or one with commits Gizai hasn't seen (the push is refused then)
+        _ => {}
+    }
+    match new_commits(repo, &ours, &theirs)? {
+        0 => Ok(Pushed::Nothing),
+        n => push_branch_over(repo, to, branch, over).map(|_| Pushed::Commits(n)),
+    }
+}
+
+/// How many commits `ours` has that none of `theirs` has (commit ids).
+fn new_commits(repo: &Path, ours: &str, theirs: &[String]) -> Result<u32, AgentError> {
+    let mut args = vec!["rev-list", "--count", ours];
+    if !theirs.is_empty() {
+        args.push("--not");
+        args.extend(theirs.iter().map(String::as_str));
+    }
+    git(repo, &args)?.trim().parse().map_err(|_| AgentError::Git("rev-list gave no count".into()))
+}
+
 /// Whether you can push to `to` the way `push_branch_over` would, without pushing anything: a dry run of the
 /// repository's latest commit to a new branch. It reaches GitHub (or Bitbucket) and needs write access, but sends
 /// nothing and runs no hooks.

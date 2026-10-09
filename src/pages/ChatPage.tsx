@@ -1,14 +1,17 @@
-// Chat with the Team Lead (design system: ChatMessage, ToolCard, ChatSetup): threads on the left, the
-// conversation in the middle. Without a Team Lead, a panel explains how to set one up.
-import { Crown, MessagesSquare, Plus, Settings } from "lucide-react";
-import { chatAgent, listChatThreads } from "../api";
+// Chat with the Team Lead (design system: ChatMessage, ToolCard, ChatSetup): the 30 newest chats on the left (Recent) with
+// Archive under them, the conversation or the Archive (#/chats) in the middle. Without a Team Lead, a panel explains how to
+// set one up.
+import { Crown, History, MessagesSquare, Plus, Settings } from "lucide-react";
+import { chatAgent, getChatThread, listChatThreads } from "../api";
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useDrawer } from "../lib/drawers";
 import { useCurrentTeam } from "../lib/team";
 import { relTime } from "../lib/format";
 import { chatLabel } from "../lib/inbox";
+import { RECENT_MAX } from "../lib/chat";
 import { Avatar } from "../components/Avatar";
+import { ChatArchive } from "../components/chat/ChatArchive";
 import { ChatThread } from "../components/chat/ChatThread";
 import { useChatLive } from "../components/chat/useChat";
 
@@ -29,18 +32,25 @@ function ChatSetup() {
   );
 }
 
-export function ChatPage({ id }: { id?: string }) {
+/** `archive`: Chat → Archive (#/chats) instead of a conversation. */
+export function ChatPage({ id, archive = false }: { id?: string; archive?: boolean }) {
   const agent = useData(() => chatAgent().then((a) => ({ a })));
-  const threads = useData(() => listChatThreads());
+  const threads = useData(() => listChatThreads(RECENT_MAX));
   const live = useChatLive();
   const open = useDrawer();
   const lead = agent.data?.a ?? null;
-  const thread = threads.data?.find((t) => t.id === id);
+  const recent = threads.data ?? [];
+  const listed = id ? recent.find((t) => t.id === id) : undefined;
+  // A chat older than those in Recent (opened from the Archive) is asked for on its own: its title, its Runs on.
+  const older = useData(() => (id && !listed ? getChatThread(id) : Promise.resolve(null)), [id, !listed]);
+  const thread = listed ?? (older.data && older.data.id === id ? older.data : undefined);
   const working = live.length > 0;
   return (
     <>
       <div className="topbar">
-        <div className="crumbs"><a href={href({ page: "chat" })}>Chat</a>{thread && <><span className="sep">/</span><span className="ellipsis">{thread.title}</span></>}</div>
+        <div className="crumbs"><a href={href({ page: "chat" })}>Chat</a>
+          {archive ? <><span className="sep">/</span><span>Archive</span></>
+            : thread && <><span className="sep">/</span><span className="ellipsis">{thread.title}</span></>}</div>
         {lead && (
           <div className="actions">
             <a className="lead-chip" href={href({ page: "agent", id: lead.actorId })} title={`${lead.name}: open its page`}>
@@ -57,18 +67,26 @@ export function ChatPage({ id }: { id?: string }) {
       {lead && (
         <div className="chat">
           <aside className="chat-threads" aria-label="Chats">
-            <a className={`th${!id ? " on" : ""}`} href={href({ page: "chat" })}><span className="t"><Plus className="icon sm" />New chat</span></a>
-            {(threads.data ?? []).length > 0 && <div className="nav-label">Recent</div>}
-            {(threads.data ?? []).map((t) => (
-              <a key={t.id} className={`th${t.id === id ? " on" : ""}`} href={href({ page: "chat", id: t.id })} aria-current={t.id === id ? "page" : undefined}>
-                <span className="t">{live.some((l) => l.threadId === t.id) && <span className="pulse" />}
-                  {chatLabel(t) && <span className={`badge ${t.waiting ? "needs" : "outline"}`} title={t.waiting ? "The Team Lead asks you this" : "The Team Lead started this chat"}>{chatLabel(t)}</span>}
-                  <span className="ellipsis">{t.title}</span></span>
-                <span className="when">{relTime(t.updatedAt)}</span>
-              </a>
-            ))}
+            <div className="chat-threads-list">
+              <a className={`th${!id && !archive ? " on" : ""}`} href={href({ page: "chat" })}><span className="t"><Plus className="icon sm" />New chat</span></a>
+              {recent.length > 0 && <div className="nav-label">Recent</div>}
+              {recent.map((t) => (
+                <a key={t.id} className={`th${t.id === id ? " on" : ""}`} href={href({ page: "chat", id: t.id })} aria-current={t.id === id ? "page" : undefined}>
+                  <span className="t">{live.some((l) => l.threadId === t.id) && <span className="pulse" />}
+                    {chatLabel(t) && <span className={`badge ${t.waiting ? "needs" : "outline"}`} title={t.waiting ? "The Team Lead asks you this" : "The Team Lead started this chat"}>{chatLabel(t)}</span>}
+                    <span className="ellipsis">{t.title}</span></span>
+                  <span className="when">{relTime(t.updatedAt)}</span>
+                </a>
+              ))}
+            </div>
+            {recent.length > 0 && (
+              <div className="chat-threads-foot">
+                <a className={`th${archive ? " on" : ""}`} href={href({ page: "chats" })} aria-current={archive ? "page" : undefined}
+                  title="Every chat, with a search through their titles and messages"><span className="t"><History className="icon sm" />Archive</span></a>
+              </div>
+            )}
           </aside>
-          <ChatThread threadId={id ?? null} thread={thread} agent={lead} />
+          {archive ? <ChatArchive live={live} /> : <ChatThread threadId={id ?? null} thread={thread} agent={lead} />}
         </div>
       )}
     </>

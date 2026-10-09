@@ -323,7 +323,12 @@ fn switch_note(st: &AppState, thread: &ChatThread, plan: &Plan, always: bool) {
 
 fn start_chain(st: &AppState, thread_id: &str, plan: Plan, new: NewTurn, bin_override: Option<String>) -> tokio::task::JoinHandle<TurnSummary> {
     let (st2, tid) = (st.clone(), thread_id.to_string());
-    tokio::spawn(async move { chain(&st2, &tid, plan, new, bin_override).await })
+    tokio::spawn(async move {
+        let summary = chain(&st2, &tid, plan, new, bin_override).await;
+        // The answer and the messages queued after it are done: "The Team Lead answered", if the window is out of sight.
+        crate::notifications::answered(&st2, &tid, &summary);
+        summary
+    })
 }
 
 /// Sends `text` in a thread (a new one when None) and starts the Team Lead's answer. Returns the thread id at once,

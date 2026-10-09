@@ -42,3 +42,20 @@ describe("Stream", () => {
     expect(t).not.toContain("/tmp/x.txt (");
   });
 });
+
+describe("Stream: Gizai's push after the run (GA-56)", () => {
+  it("shows what Gizai pushed as good news and why a push failed as a warning", () => {
+    const events: SeqEvent[] = [
+      { seq: 1, event: { kind: "note", text: "Gizai pushed gizai/kade-1-export (2 commits)." } },
+      { seq: 2, event: { kind: "note", text: "Couldn't push gizai/kade-1-export to https://github.com/acme/shop: Your GitHub account octocat can't push to this repository. Ask for write access to it, or use an account that has it." } },
+      { seq: 3, event: { kind: "note", text: "Its worktree has 1 uncommitted change, which Gizai doesn't push." } },
+    ];
+    const html = renderToStaticMarkup(<Stream events={events} />);
+    expect(html).toContain('<div class="ok">Gizai pushed gizai/kade-1-export (2 commits).</div>');
+    const warnings = html.match(/<div style="color:var\(--warning\)">[^<]*<\/div>/g) ?? [];
+    expect(warnings).toHaveLength(2);
+    const [failed = "", left = ""] = warnings;
+    expect(text(failed)).toContain("octocat can't push to this repository");
+    expect(text(left)).toBe("Its worktree has 1 uncommitted change, which Gizai doesn't push.");
+  });
+});

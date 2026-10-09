@@ -45,3 +45,15 @@ describe("agent pages", () => {
     expect(parseHash("#/chat/abc")).toEqual({ page: "chat", id: "abc" });
   });
 });
+
+describe("chat archive (GA-46)", () => {
+  it("is #/chats, a page of its own", () => {
+    expect(parseHash("#/chats")).toEqual({ page: "chats" });
+    expect(href({ page: "chats" })).toBe("#/chats");
+    expect(parseHash(href({ page: "chats" }))).toEqual({ page: "chats" });
+  });
+  it("takes no id, and chat/<id> is still one chat", () => {
+    expect(parseHash("#/chats/abc")).toEqual({ page: "chats" });
+    expect(parseHash("#/chat/archive")).toEqual({ page: "chat", id: "archive" });
+  });
+});

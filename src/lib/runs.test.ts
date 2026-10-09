@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeOf, dayRate, canContinue, commitCount, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, resumeCommand, runReason, toolCalls } from "./runs";
+import { badgeOf, dayRate, canContinue, commitCount, elapsed, formatCost, formatTokens, lastAgentText, mergeEvents, noteIsGood, resumeCommand, runReason, toolCalls } from "./runs";
 import type { Run, SeqEvent } from "../types";
 
 const ev = (seq: number, text = `t${seq}`) => ({ seq, event: { kind: "text" as const, text } });
@@ -112,5 +112,17 @@ describe("commitCount", () => {
     expect(commitCount(1)).toBe("1 commit");
     expect(commitCount(2)).toBe("2 commits");
     expect(commitCount(12)).toBe("12 commits");
+  });
+});
+
+// GA-56: what Gizai pushed after a run is good news; its other notes (a failed push among them) are warnings.
+describe("noteIsGood", () => {
+  it("is true only for Gizai's push after the run", () => {
+    expect(noteIsGood("Gizai pushed gizai/kade-1-export-invoices (2 commits).")).toBe(true);
+    expect(noteIsGood("Gizai pushed gizai/kade-1-export-invoices (1 commit).")).toBe(true);
+    expect(noteIsGood("Couldn't push gizai/kade-1-export-invoices to https://github.com/acme/shop: The branch on GitHub has commits this one doesn't. Gizai never forces a push: merge GitHub's copy into the branch first.")).toBe(false);
+    expect(noteIsGood("Its worktree has 3 uncommitted changes, which Gizai doesn't push.")).toBe(false);
+    expect(noteIsGood("Left out the folder /home/u/notes: it isn't there")).toBe(false);
+    expect(noteIsGood("")).toBe(false);
   });
 });

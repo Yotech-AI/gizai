@@ -9,6 +9,7 @@ pub mod git;
 pub mod github;
 pub mod mcp;
 pub mod mcp_servers;
+pub mod notifications;
 pub mod pulls;
 mod quit;
 pub mod runs;
@@ -49,6 +50,11 @@ pub struct AppState {
     pub tokens: Arc<gizai_agents::oauth::TokenStore>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
     pub notify: Arc<dyn Fn(runs::Note) + Send + Sync>,
+    /// Shows desktop notifications and says whether the window is out of sight (see `notifications`). Shows nothing
+    /// until `run` sets the real one; tests set their own.
+    pub desktop: notifications::Desktop,
+    /// The Inbox as the notifications last saw it (see `notifications::watch`).
+    pub inbox: Arc<notifications::Watch>,
 }
 
 #[derive(Serialize)]
@@ -210,11 +216,18 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
     Ok(AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
-                  github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify })
+                  github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
+                  desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()) })
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
     Arc::new(move |note| {
+        // Tasks or chats changed: the desktop notifications look at the Inbox again.
+        if matches!(note, runs::Note::RowsChanged("tasks" | "chat_threads") | runs::Note::ChatChanged)
+            && let Some(st) = app.try_state::<AppState>()
+        {
+            notifications::poke(st.inner());
+        }
         let _ = match note {
             runs::Note::RowsChanged(table) => app.emit("rows-changed", serde_json::json!({ "table": table })),
             runs::Note::RunsChanged => app.emit("runs-changed", ()),
@@ -227,6 +240,56 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
             runs::Note::UpdateChanged => app.emit("update-changed", ()),
         };
+    })
+}
+
+/// Brings the main window back: unminimised, shown and focused. The tray's Open Gizai, starting Gizai again, the Dock
+/// icon on macOS and a click on a notification.
+pub fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// The tray icon: top right in Omarchy's Waybar, in the menu bar on macOS. A click opens its menu (on Linux a click
+/// always does): Open Gizai, and Quit Gizai completely, which goes through `app.exit` like `exit_app`, so agents at
+/// work are stopped first. On Linux it needs libayatana-appindicator (or the older libappindicator); without it there is
+/// no tray icon, and starting Gizai again brings the window back.
+fn tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+    #[cfg(target_os = "linux")]
+    if !appindicator_found() {
+        eprintln!("gizai: no tray icon: libayatana-appindicator isn't installed (Arch and Omarchy: libayatana-appindicator; Debian and Ubuntu: libayatana-appindicator3-1)");
+        return Ok(());
+    }
+    let open = MenuItem::with_id(app, "open", "Open Gizai", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Gizai completely", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    TrayIconBuilder::with_id("gizai")
+        .icon(tauri::include_image!("icons/64x64.png"))
+        .tooltip("Gizai")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, e| match e.id().as_ref() {
+            "open" => show_main(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
+/// Whether the tray's library loads: the tray (libappindicator-sys) panics without it. It stays loaded; the tray loads
+/// the same one.
+#[cfg(target_os = "linux")]
+fn appindicator_found() -> bool {
+    ["libayatana-appindicator3.so.1", "libappindicator3.so.1"].iter().any(|name| {
+        let Ok(name) = std::ffi::CString::new(*name) else { return false };
+        // SAFETY: dlopen with a NUL-terminated name; the handle is kept, never closed.
+        !unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) }.is_null()
     })
 }
 
@@ -278,16 +341,11 @@ pub fn run() {
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir); // so the instance id names the folder the same way from the first start
     tauri::Builder::default()
-        // Starting Gizai again on the same data (the launcher, the gizai command) brings the open window forward.
+        // Starting Gizai again on the same data (the launcher, the gizai command) brings the open window forward, also
+        // when it was closed (hidden): on a desktop without a tray, that is how the window comes back.
         .plugin(tauri_plugin_single_instance::Builder::new()
             .dbus_id(instance_id(&dir))
-            .callback(|app, _args, _cwd| {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.unminimize();
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            })
+            .callback(|app, _args, _cwd| show_main(app))
             .build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -295,7 +353,9 @@ pub fn run() {
             if let (Some(label), Some(w)) = (data_label(&dir), app.get_webview_window("main")) {
                 let _ = w.set_title(&format!("Gizai ({label} data)"));
             }
-            let state = match open_state(dir.clone(), ui_notifier(app.handle().clone())) {
+            // Headless test and screenshot runs.
+            let test_run = ["GIZAI_SELFTEST", "GIZAI_ROUTE"].iter().any(|v| std::env::var_os(v).is_some());
+            let mut state = match open_state(dir.clone(), ui_notifier(app.handle().clone())) {
                 Ok(s) => s,
                 Err(e) => {
                     // e.g. another Gizai holds this data folder (from another login session)
@@ -304,9 +364,17 @@ pub fn run() {
                     std::process::exit(1);
                 }
             };
+            // Desktop notifications go to the desktop (a test run only writes them to stderr).
+            state.desktop = notifications::real(app.handle(), test_run);
             app.manage(state.clone());
             // After manage: quitting reads the state.
             quit::on_signals(app.handle());
+            // The tray icon, with Open Gizai and Quit Gizai completely: closing the window only hides it.
+            if let Err(e) = tray(app) {
+                eprintln!("gizai: the tray icon could not start: {e}");
+            }
+            // Desktop notifications: the Inbox is watched from now on (what is in it now counts as seen).
+            tauri::async_runtime::spawn(notifications::watch(state.clone()));
             // The MCP server chat turns reach Gizai's tools through.
             {
                 let st = state.clone();
@@ -337,7 +405,6 @@ pub fn run() {
             // The release check: 20 seconds after start, then every ten minutes, Gizai asks GitHub for the latest
             // release when a check is due (Check for new releases is on, and the last check is six hours old).
             // Headless test and screenshot runs don't ask GitHub, unless they point the check at a fake release.
-            let test_run = ["GIZAI_SELFTEST", "GIZAI_ROUTE"].iter().any(|v| std::env::var_os(v).is_some());
             if !test_run || std::env::var_os("GIZAI_RELEASES_URL").is_some() {
                 let st = state.clone();
                 tauri::async_runtime::spawn(async move {
@@ -402,7 +469,7 @@ pub fn run() {
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::usage_summary,
-            commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
+            commands::list_chat_threads, commands::get_chat_thread, commands::search_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
@@ -422,12 +489,21 @@ pub fn run() {
             {
                 api.prevent_exit();
             }
-            // Nothing keeps the window open, so a close request means it closes now and Gizai quits. WebKit's
-            // page process ends before the window goes (see `quit`); Exit does the same for every other way out.
-            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { .. }, .. } = &event
+            // Closing the window (Super+W on Omarchy, its X button) only hides it: Gizai keeps running in the tray, with
+            // its agents, heartbeats, chat and MCP socket, and the hidden window keeps its page. Quitting is the tray's or
+            // Settings' Quit Gizai completely, Cmd+Q on macOS or a signal; Exit ends the page process (see `quit`).
+            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
                 && label == "main"
             {
-                quit::end_web_content(app);
+                api.prevent_close();
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+            // macOS: clicking the Dock icon shows the window again.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                show_main(app);
             }
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);

@@ -19,7 +19,7 @@ import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function writePref(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
@@ -116,7 +116,12 @@ export default function App() {
             usage = await usageProbe();
             if (!usage.ok) errors.push(`usage probe: ${JSON.stringify(usage)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage });
+          let chats: Awaited<ReturnType<typeof chatArchiveProbe>> | undefined;
+          if (i.start_route === "chat" && i.selftest_mode === "archive") {
+            chats = await chatArchiveProbe();
+            if (!chats.ok) errors.push(`chat archive probe: ${JSON.stringify(chats)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats });
           await exitApp(0);
         }
       })
@@ -130,7 +135,7 @@ export default function App() {
         <Sidebar youId={info?.you_id ?? ""} dataLabel={info?.data_label} dataDir={info?.data_dir} route={route} onSearch={() => setPalette(true)} onNewTask={() => newTask()} />
         <main className="main">
           {error && <div className="error-banner">{error}</div>}
-          {route.page === "chat" ? <ChatPage id={route.id} />
+          {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
             : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
             : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
             : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} />

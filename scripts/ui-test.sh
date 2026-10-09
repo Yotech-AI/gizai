@@ -20,6 +20,10 @@
 #     Projects list's AI usage column, sorted by its header.
 #  8. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub.
 #  9. project form (GA-60): the New project drawer opens with its Repository field (a GitHub or Bitbucket link).
+# 10. chat archive (GA-46): against prep_chats' 36 chats, Recent shows the 30 newest with Archive under them, in sight when
+#     Recent is scrolled; Archive opens #/chats (Recent still there, Chat / Archive, the search focused, all 36 chats); a word
+#     from the oldest chat's Team Lead message finds only that chat, marked; "0%" matches literally; no match says so; the
+#     hit opens the chat, its title in the crumbs.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -59,4 +63,7 @@ fresh
 DATA=$PWD/.devdata/uitest ROUTE=settings MODE='steps:#s-bb-email' scripts/smoke-cage.sh || fail=1
 fresh
 DATA=$PWD/.devdata/uitest ROUTE=projects MODE=open:project scripts/smoke-cage.sh || fail=1
+fresh
+(source scripts/env.sh && cargo run -q -p gizai-core --example prep_chats -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
+DATA=$PWD/.devdata/uitest ROUTE=chat MODE=archive scripts/smoke-cage.sh || fail=1
 exit $fail

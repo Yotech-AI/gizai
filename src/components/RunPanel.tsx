@@ -6,7 +6,7 @@ import { continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, sugges
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { usePending } from "../lib/usePending";
-import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, resumeCommand, runReason } from "../lib/runs";
+import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, noteIsGood, resumeCommand, runReason } from "../lib/runs";
 import { relTime, textEnd } from "../lib/format";
 import type { Refusal, Run, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
@@ -31,7 +31,7 @@ export function Stream({ events }: { events: SeqEvent[] }) {
           case "tool_use": return <div key={seq} className="tool"><b>{e.name}</b> {e.summary}</div>;
           case "tool_result": return e.is_error ? <div key={seq} className="err">{e.preview}</div> : null;
           case "result": return <div key={seq} className={e.is_error ? "err" : "ok"}>{e.is_error ? `Ended with ${e.subtype}` : "Done"} · {e.num_turns} turns</div>;
-          case "note": return <div key={seq} style={{ color: "var(--warning)" }}>{e.text}</div>;
+          case "note": return noteIsGood(e.text) ? <div key={seq} className="ok">{e.text}</div> : <div key={seq} style={{ color: "var(--warning)" }}>{e.text}</div>;
           case "refused": return <div key={seq} className="err">Refused: <b>{e.tool}</b> {e.input}{e.reason ? ` (${e.reason})` : ""}</div>;
           case "mcp_servers": return <div key={seq} className="faint">MCP servers: {e.servers.map((s) => `${s.name} (${s.status === "connected" ? "connected" : s.status || "failed"})`).join(", ")}</div>;
           default: return e.raw_type?.startsWith("cap_exceeded") ? <div key={seq} className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;

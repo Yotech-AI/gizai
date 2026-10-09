@@ -663,3 +663,85 @@ export async function usageProbe() {
     agents, agents_total: agentsTotal, projects, projects_total: projectsTotal, periods: { today: toToday, d7: to7, d30: to30, month: toMonth },
     projects_30: projects30, total_30: total30, column, column_ok: columnOk, sort: [sort1, sort2] };
 }
+
+/** GA-46, against prep_chats' 36 chats (the newest "Which database?", a Team Lead question; then "Chat 1" … "Chat 35", the
+ * oldest last). Recent shows the 30 newest with Archive under them, which stays in sight when Recent is scrolled to its end;
+ * Archive opens #/chats with Recent still there, the crumbs Chat / Archive and the search box focused, over all 36 chats.
+ * A word from the Team Lead's message in the oldest chat finds that chat alone (the same word in Chat 33's tool call and
+ * note doesn't), with the word marked; "0%" finds only "50% done"; a word nowhere says so; clicking the hit opens the chat. */
+export async function chatArchiveProbe() {
+  const recentTitles = () => textsOf(".chat-threads-list a.th .ellipsis");
+  if (!(await waitFor(() => (recentTitles().length > 0 ? true : null), 6000))) return { ok: false, error: "Recent shows no chats", page: textOf(q(".main")).slice(0, 300) };
+  const want = ["Which database?", ...Array.from({ length: 35 }, (_, i) => `Chat ${i + 1}`)];
+  const recent = recentTitles();
+  const recentOk = recent.length === 30 && JSON.stringify(recent) === JSON.stringify(want.slice(0, 30));
+  const labelOk = textOf(q(".chat-threads-list a.th .badge")) === "Question";
+
+  // Archive sits under the list, outside the part that scrolls, and stays in sight when Recent is scrolled to its end.
+  const scroller = q(".chat-threads-list");
+  const button = q<HTMLAnchorElement>(".chat-threads-foot a.th");
+  const aside = q(".chat-threads");
+  const inSight = () => {
+    const b = button?.getBoundingClientRect(), a = aside?.getBoundingClientRect();
+    return !!b && !!a && b.height > 0 && b.top >= a.top && b.bottom <= a.bottom + 0.5 && b.bottom <= window.innerHeight + 0.5;
+  };
+  const scrolls = !!scroller && scroller.scrollHeight > scroller.clientHeight;
+  const before = inSight();
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  await sleep(100);
+  const atEnd = !!scroller && scroller.scrollTop > 0 && inSight();
+  const lastRowAbove = (q(".chat-threads-list a.th:last-child")?.getBoundingClientRect().bottom ?? 1e9) <= (button?.getBoundingClientRect().top ?? 0) + 0.5;
+  const buttonOk = !!button && textOf(button) === "Archive" && button.getAttribute("href") === "#/chats" && !!button.querySelector("svg.lucide-history")
+    && !button.classList.contains("on") && !scroller?.contains(button);
+
+  // The Archive page.
+  button?.click();
+  const opened = !!(await waitFor(() => (location.hash === "#/chats" && q(".chat-archive") ? true : null), 4000));
+  const rows = () => [...document.querySelectorAll(".archive-row")];
+  const rowTitles = () => rows().map((r) => textOf(r.querySelector(".title")));
+  const all = !!(await waitFor(() => (rows().length > 0 ? true : null), 4000)) ? rowTitles() : [];
+  const allOk = JSON.stringify(all) === JSON.stringify(want);
+  const firstRow = rows()[0];
+  // "Which database?" was asked half an hour before the seed ran
+  const rowOk = textOf(firstRow?.querySelector(".badge")) === "Question" && /^3\dm ago$/.test(textOf(firstRow?.querySelector(".when")))
+    && !firstRow?.querySelector(".snippet");
+  const crumbs = textOf(q(".topbar .crumbs"));
+  const search = q<HTMLInputElement>(".chat-archive input.archive-search");
+  const focused = !!search && document.activeElement === search;
+  const focusedEl = `${document.activeElement?.tagName} ${document.activeElement?.className}`;
+  const highlighted = !!q('.chat-threads-foot a.th.on[aria-current="page"]');
+  const chatNavOn = textOf(q('.side a.nav-item[aria-current="page"]')) === "Chat";
+  const recentStays = recentTitles().length === 30;
+  const searchOnTop = !!search && !!firstRow && search.getBoundingClientRect().bottom <= firstRow.getBoundingClientRect().top;
+
+  const find = async (text: string, done: () => boolean) => {
+    if (search) typeInto(search, text);
+    return !!(await waitFor(() => (done() ? true : null), 4000));
+  };
+  const flamingo = await find("FLAMINGO", () => JSON.stringify(rowTitles()) === JSON.stringify(["Chat 35"]));
+  await sleep(400); // a later answer would add Chat 33 if the search took tool calls or notes
+  const hit = rows()[0];
+  const found = { titles: rowTitles(), who: textOf(hit?.querySelector(".snippet .who")), snippet: textOf(hit?.querySelector(".snippet")),
+    marks: textsOf(".snippet mark", hit ?? document) };
+  const hitOk = flamingo && found.titles.length === 1 && found.who === "Team Lead:" && found.snippet === "Team Lead: The old flamingo plan is in the docs."
+    && JSON.stringify(found.marks) === JSON.stringify(["flamingo"]);
+  const percent = await find("0%", () => JSON.stringify(rowTitles()) === JSON.stringify(["Chat 34"]));
+  await sleep(400);
+  const percentOk = percent && JSON.stringify(rowTitles()) === JSON.stringify(["Chat 34"]) && JSON.stringify(textsOf(".snippet mark")) === JSON.stringify(["0%"]);
+  const none = await find("zebra-crossing", () => textOf(q(".chat-archive .empty b")) === "No chats match “zebra-crossing”." && rows().length === 0);
+  await find("flamingo", () => JSON.stringify(rowTitles()) === JSON.stringify(["Chat 35"]));
+
+  // Clicking the hit opens the chat, older than the 30 in Recent: its title in the crumbs, its messages.
+  q<HTMLAnchorElement>(".archive-row")?.click();
+  const openedChat = !!(await waitFor(() => (location.hash.startsWith("#/chat/") && textOf(q(".topbar .crumbs")).includes("Chat 35")
+    && [...document.querySelectorAll(".chat-msg")].some((m) => textOf(m).includes("flamingo plan")) ? true : null), 5000));
+  const chatCrumbs = textOf(q(".topbar .crumbs"));
+  const notInRecent = !recentTitles().includes("Chat 35") && !q(".chat-threads-list a.th.on") && !q(".chat-threads-foot a.th.on");
+
+  const ok = recentOk && labelOk && scrolls && before && atEnd && lastRowAbove && buttonOk && opened && allOk && rowOk && crumbs === "Chat/Archive" && focused
+    && highlighted && chatNavOn && recentStays && searchOnTop && hitOk && percentOk && none && openedChat && notInRecent;
+  return { ok, recent_ok: recentOk, recent: recent.length, label_ok: labelOk, scrolls, in_sight: before, in_sight_at_end: atEnd, last_row_above: lastRowAbove,
+    button_ok: buttonOk, opened, all: all.length, all_ok: allOk, row_ok: rowOk, crumbs, focused, focused_el: focusedEl, highlighted,
+    chat_nav_on: chatNavOn, recent_stays: recentStays, search_on_top: searchOnTop, found, hit_ok: hitOk, percent_ok: percentOk, no_match: none,
+    opened_chat: openedChat, chat_crumbs: chatCrumbs, not_in_recent: notInRecent };
+}

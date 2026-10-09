@@ -45,7 +45,7 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
 
       <div className="nav-section">
         <div className="nav-label">Work</div>
-        <Item to={{ page: "chat" }} icon={MessagesSquare} label="Chat" active={is("chat")}
+        <Item to={{ page: "chat" }} icon={MessagesSquare} label="Chat" active={is("chat", "chats")}
           meta={chatLive.length > 0 ? <span className="live-tag"><span className="pulse" />working</span> : undefined} />
         <Item to={{ page: "tasks" }} icon={ListTodo} label="Tasks" active={is("tasks", "board", "task")} />
         <Item to={{ page: "clients" }} icon={Building2} label="Clients" active={is("clients", "client")} />

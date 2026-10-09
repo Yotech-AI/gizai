@@ -183,7 +183,12 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   /** The GitHub CLI; null = found when needed. */
   ghBin?: string | null;
   /** How Open pull request and Push branch reach GitHub. */
-  pushOver: PushOver };
+  pushOver: PushOver;
+  /** Settings → Notifications: a desktop notification per kind, on or off. */
+  notifications: NotificationSwitches };
+/** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
+ *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
+export type NotificationSwitches = { hold: boolean; waiting: boolean; leadAsks: boolean; leadAnswered: boolean };
 /** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
 export type OldWorktree = {
   taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;
@@ -297,6 +302,9 @@ export type ChatMessage = { id: string; threadId: string; role: string; authorId
   /** A note's details: {kind: "switch", cli, cliName} where the chat moved to another CLI, {kind: "limit", cli, cliName, limit, resets?, messageIds}
    *  where an answer hit a usage limit. */
   meta?: ChatNoteMeta | null };
+/** A chat the Archive found, with the newest of its messages (yours or the Team Lead's) whose text matches; none when only
+ *  its title matches, or for an empty search. */
+export type ChatHit = { thread: ChatThread; message?: ChatMessage | null };
 export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
 /** `seq`: the last change to the text being written that `draft` holds. */
 export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };

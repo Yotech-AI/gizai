@@ -5,10 +5,12 @@ import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "luci
 import { continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
+import { usePending } from "../lib/usePending";
 import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, resumeCommand, runReason } from "../lib/runs";
 import { relTime } from "../lib/format";
 import type { Refusal, Run, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
+import { BusyButton } from "./BusyButton";
 import { MarkdownView } from "./MarkdownView";
 
 const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", nudge: "Continue" };
@@ -87,8 +89,14 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
   useEffect(() => { setAgentId(""); suggestAgent(task.id).then(setSuggested).catch(() => setSuggested(null)); }, [task.id, task.stateId, task.assigneeId]);
   const suggestedName = agents.find((a) => a.actorId === suggested)?.name;
   const result = [...events].reverse().find((e) => e.event.kind === "result")?.event;
-  const start = () => { setErr(null); startRun(task.id, agentId || null).catch((e) => setErr(String(e))); };
-  const resume = () => { if (run) { setErr(null); continueRun(run.id).catch((e) => setErr(String(e))); } };
+  const fail = (e: unknown) => setErr(String(e));
+  // Run and Continue spin until the panel shows the live run, or that the run ended (it can end before it shows live);
+  // Stop spins until the live run is gone.
+  const pending = usePending<"start" | "resume" | "stop">((k, runId) => k === "stop" ? !live
+    : !!(live && run) || !!runs?.some((r) => r.id === runId && r.endedAt != null));
+  const start = () => { setErr(null); pending.act("start", () => startRun(task.id, agentId || null), fail); };
+  const resume = () => { if (run) { setErr(null); pending.act("resume", () => continueRun(run.id), fail); } };
+  const stop = () => { if (run) pending.act("stop", () => stopRun(run.id), fail); };
   const continuable = !!run && canContinue(run);
   const copy = async () => {
     if (!run?.worktreePath || !run.sessionId) return;
@@ -104,7 +112,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
           <span className="who"><Avatar name={run.agentName} kind="agent" size="sm" />{run.agentName}</span><span className="chip-id">{run.id.slice(-8)}</span>
           <span className="right">{elapsed(run.startedAt ?? run.createdAt, now)}
             <button className="btn sm ghost" onClick={copy} disabled={!run.sessionId}><Terminal className="icon" />{copied ? "Copied" : "Open in terminal"}</button>
-            <button className="btn sm danger" onClick={() => stopRun(run.id).catch((e) => setErr(String(e)))}><Square className="icon" />Stop</button></span>
+            <BusyButton className="btn sm danger" pending={pending} name="stop" busyLabel="Stopping…" icon={<Square className="icon" />} onClick={stop}>Stop</BusyButton></span>
         </div>
         <Stream events={events} />
         <div className="run-foot">
@@ -146,12 +154,13 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
         <div className="run-actions">
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`
             : task.hold ? "On hold" : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
-          <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} style={{ width: 220, height: 28 }}>
+          <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!!pending.busy} style={{ width: 220, height: 28 }}>
             <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
             {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}
           </select>
-          {continuable && <button className="btn sm primary" onClick={resume}><StepForward className="icon" />Continue</button>}
-          <button className={`btn sm${continuable ? "" : " primary"}`} onClick={start} disabled={!!task.hold || (!agentId && !suggestedName)}><Play className="icon" />Run</button>
+          {continuable && <BusyButton className="btn sm primary" pending={pending} name="resume" busyLabel="Continuing…" icon={<StepForward className="icon" />} onClick={resume}>Continue</BusyButton>}
+          <BusyButton className={`btn sm${continuable ? "" : " primary"}`} pending={pending} name="start" busyLabel="Starting…" icon={<Play className="icon" />} onClick={start}
+            disabled={!!task.hold || (!agentId && !suggestedName)}>Run</BusyButton>
         </div>
       )}
     </section>

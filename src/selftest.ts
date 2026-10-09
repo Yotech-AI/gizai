@@ -182,7 +182,9 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   const dialog = await waitFor(() => q("[role=dialog]"));
   if (!dialog) return fail("the empty spot opened no agent form");
   out.spot_form = { name: q<HTMLInputElement>("#a-name", dialog)?.value, role: q<HTMLSelectElement>("#a-role", dialog)?.value,
-    wake_up: !!q("input[aria-label=Minutes]", dialog) || (dialog.textContent ?? "").includes("Wakes up") };
+    wake_up: !!q("input[aria-label=Minutes]", dialog) || (dialog.textContent ?? "").includes("Wakes up"),
+    // GA-39's Tools section next to this card's Work section (merged in from main)
+    sections: [...dialog.querySelectorAll("h3")].map((h) => h.textContent ?? "") };
   const modelSel = await waitFor(() => { const el = q<HTMLSelectElement>("#a-model", dialog); return el && !el.disabled && [...el.options].some((o) => o.value === "opus") ? el : null; }, 8000);
   if (modelSel) pickOption(modelSel, "opus");
   await sleep(100);
@@ -196,7 +198,8 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   const id = agent.actorId;
   out.agent = { role: agent.roleKey, wakeup: agent.wakeup, heartbeat: agent.heartbeatMinutes, model: agent.model, effort: agent.effort,
     agent_page: !!(await waitFor(() => (q(".entity-head h1")?.textContent ?? "") === "Frontend Agent" || null, 3000)),
-    columns: (await getTeam()).states.filter((s) => s.agentIds?.includes(id)).map((s) => s.name) };
+    columns: (await getTeam()).states.filter((s) => s.agentIds?.includes(id)).map((s) => s.name),
+    added_once: (await getTeam()).members.filter((m) => m.name === "Frontend Agent" && m.kind === "agent").length === 1 };
   window.location.hash = "#/team";
   if (!(await waitFor(() => column("Testing"), 4000))) return fail("back on the Team page: no columns");
 
@@ -384,8 +387,8 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   }
   out.drawer_new_label = { drawer: !!drawer, pill_on: pill, card_has_it: drawerCard };
 
-  const a = out.agent as { role?: string; wakeup?: string | null; model?: string | null; effort?: string | null; agent_page?: boolean; columns?: string[] };
-  const sf = out.spot_form as { name?: string; role?: string; wake_up?: boolean };
+  const a = out.agent as { role?: string; wakeup?: string | null; model?: string | null; effort?: string | null; agent_page?: boolean; columns?: string[]; added_once?: boolean };
+  const sf = out.spot_form as { name?: string; role?: string; wake_up?: boolean; sections?: string[] };
   const pa = out.plus_agent as Record<string, boolean>, am = out.auto_manual as { manual: boolean; auto: boolean; manual_line: string; auto_line: string };
   const nc = out.next_column as { self_link_refused: string; cleared: boolean; auto_without_next_refused: string; stayed_manual: boolean; linked_to_done: boolean; error_gone: boolean };
   const ac = out.add_column as { made: boolean; category?: string; auto?: boolean; shown: boolean };
@@ -397,8 +400,9 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   const checks: Record<string, boolean> = {
     design_first: (out.branches as string[]).slice(0, 4).join(",") === "Design,Development,Quality,Operations",
     one_spot_each: !!out.one_spot_each,
-    spot_form: sf.name === "Frontend Agent" && sf.role === "frontend" && !sf.wake_up,
-    agent: a.role === "frontend" && a.wakeup !== "heartbeat" && !!a.agent_page && a.model === "opus" && a.effort === "xhigh" && a.columns?.join(",") === "To do,In progress",
+    spot_form: sf.name === "Frontend Agent" && sf.role === "frontend" && !sf.wake_up && sf.sections?.join(",") === "Agent,Chat,Work,Permissions,Tools,Instructions",
+    agent: a.role === "frontend" && a.wakeup !== "heartbeat" && !!a.agent_page && a.model === "opus" && a.effort === "xhigh" && a.columns?.join(",") === "To do,In progress"
+      && !!a.added_once,
     plus_agent: Object.values(pa).every(Boolean),
     auto_manual: am.manual && am.auto && am.manual_line.startsWith("Manual: press Run on a card to start Frontend Agent") && am.auto_line.startsWith("Auto: Frontend Agent takes cards"),
     next_column: !!nc.self_link_refused && nc.cleared && !!nc.auto_without_next_refused && nc.stayed_manual && nc.linked_to_done && nc.error_gone,

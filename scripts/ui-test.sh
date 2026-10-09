@@ -22,7 +22,9 @@
 #     system: a real OS drop can't be made headless) show the drop state and add a file (a folder is refused), which is
 #     sent and shown; the text box stops growing at 200 px; while the Team Lead is paused, + and drops are off; after
 #     reopening the chat the chip and the file are still there and the chip opens the task.
-#  7. usage (GA-33): Usage in the sidebar's Company section above Team; the Total, Agents and Projects tabs and the period
+#  7. usage (GA-33): Usage in the sidebar's Company section above Team. GA-62: it opens on the Subscription tab, a block
+#     per coding CLI entry (Claude Code, Claude Code 2, Codex, Gemini) with prep_usage's limits and the agents on each.
+#     Then the Total, Agents and Projects tabs and the period
 #     switch against prep_usage's runs (an unknown cost, a chat turn, a run 20 days ago), and the tabs agree; then the
 #     Projects list's AI usage column, sorted by its header.
 #  8. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub.

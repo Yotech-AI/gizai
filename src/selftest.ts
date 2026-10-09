@@ -770,8 +770,10 @@ const cellsOf = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => text
 
 /** GA-33, against prep_usage's runs (today: $0.57 of the Backend Agent on KADE and GFW, a Codex run on KADE with tokens but
  * no cost, a Team Lead chat turn of $0.03; 20 days ago: $1.00 on KADE). Company lists Usage above Team and it is the page
- * shown; the three tabs, the period switch and the labels; today's numbers on each tab, which agree with each other; 30
- * days takes in the older run; then the Projects list's AI usage column, sorted by a click on its header. */
+ * shown. GA-62: it opens on Subscription, the first tab, with a block per coding CLI entry and the limits prep_usage kept
+ * (Claude Code, Claude Code 2, Codex, and Gemini, which can't be read) and the agents on each, no period switch and no
+ * table cut off. Then Total: the period switch and the labels; today's numbers on each tab, which agree with each other;
+ * 30 days takes in the older run; then the Projects list's AI usage column, sorted by a click on its header. */
 export async function usageProbe() {
   const company = [...document.querySelectorAll(".side .nav-section")].find((s) => textOf(s.querySelector(".nav-label")) === "Company");
   const companyItems = company ? textsOf("a.nav-item", company) : [];
@@ -780,22 +782,12 @@ export async function usageProbe() {
 
   const tabs = textsOf(".tabs button.tab");
   const selectedTab = () => textOf(q('.tabs button.tab[aria-selected="true"]'));
-  const chips = textsOf('[aria-label="Period"] .chip');
   const pressedChip = () => textOf(q('[aria-label="Period"] .chip[aria-pressed="true"]'));
   const shownDays = () => textOf(q(".topbar .crumbs .faint"));
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const sinceOf: Record<string, number> = { Today: today, "7 days": today - 6 * DAY, "30 days": today - 29 * DAY, "This month": Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) };
   const daysOf = (label: string) => periodDays(sinceOf[label], today + DAY);
-  const first = { tab: selectedTab(), period: pressedChip(), days: shownDays(), want_days: daysOf("This month"), bars: q(".usage-bars")?.children.length,
-    want_bars: now.getUTCDate() };
-  const labels = textsOf(".usage-tab .stat-card h4");
-  const subs = textsOf(".usage-tab .stat-card .sub");
-  const foot = textOf(q(".usage-foot"));
-  const labelled = labels.includes("API cost") && labels.includes("Input tokens (incl. cache)") && labels.includes("Output tokens")
-    && subs.includes("An estimate at API prices, not a bill") && foot.includes("API cost: what these tokens would cost at API prices")
-    && foot.includes("Input tokens include cache reads and writes");
-
   const period = async (label: string) => {
     buttonByText(q('[aria-label="Period"]') ?? document, label)?.click();
     return !!(await waitFor(() => (pressedChip() === label && shownDays() === daysOf(label) ? true : null), 4000));
@@ -808,6 +800,52 @@ export async function usageProbe() {
   const rows = (label: string) => [...(table(label)?.querySelectorAll("tbody tr") ?? [])].map(cellsOf);
   const total = (label: string) => [...(table(label)?.querySelectorAll("tfoot td") ?? [])].map((td) => textOf(td));
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+  // GA-62: the page opens on Subscription, the first tab, with a block per coding CLI entry (prep_usage's four) and no period
+  // switch. Each block shows its own limits, or why it has none; no table is cut off at the block's edge.
+  const blocks = (await waitFor(() => {
+    const all = [...document.querySelectorAll(".limits .limits-block")];
+    return all.length >= 4 ? all : null;
+  }, 4000)) ?? [];
+  const blockOf = (name: string) => blocks.find((b) => b.getAttribute("aria-label") === name);
+  const limitRows = (name: string) => [...(blockOf(name)?.querySelectorAll("tbody tr") ?? [])].map(cellsOf);
+  const subscription = {
+    tab: selectedTab(), chips: document.querySelectorAll('[aria-label="Period"]').length, days: shownDays(),
+    blocks: blocks.map((b) => b.getAttribute("aria-label")),
+    claude: limitRows("Claude Code"), claude2: limitRows("Claude Code 2"), codex: limitRows("Codex"),
+    gemini: textOf(blockOf("Gemini")), gemini_tables: blockOf("Gemini")?.querySelectorAll("table").length,
+    agents: blocks.map((b) => textsOf(".limits-agent", b)),
+    chats: textsOf(".limits-note", blockOf("Claude Code 2") ?? document),
+    states: blocks.map((b) => [...b.querySelectorAll("tbody tr")].map((tr) => tr.className)),
+    clipped: blocks.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.getAttribute("aria-label")),
+    foot: textOf(q(".usage-foot")),
+  };
+  const asOf = (r: string[] | undefined) => !!r && r[3]?.startsWith("as of ") === true;
+  const subscriptionOk = subscription.tab === "Subscription" && subscription.chips === 0 && subscription.days === ""
+    && same(subscription.blocks, ["Claude Code", "Claude Code 2", "Codex", "Gemini"])
+    && same(subscription.claude.map((r) => r.slice(0, 2)), [["Session limit", "42%"], ["Weekly limit", "85%"], ["Fable limit", "Not reported yet"]])
+    && asOf(subscription.claude[0]) && asOf(subscription.claude[1]) && subscription.claude[0]?.[2] !== "" && subscription.claude[2]?.[3] === ""
+    && same(subscription.claude2.map((r) => r.slice(0, 3)), [["Session limit", "Limit reached", "3pm (Europe/Amsterdam)"], ["Weekly limit", "35%", subscription.claude2[1]?.[2]], ["Fable limit", "Not reported yet", ""]])
+    && asOf(subscription.claude2[0]) && asOf(subscription.claude2[1])
+    && same(subscription.codex.map((r) => r.slice(0, 2)), [["5-hour limit", "24%"], ["Weekly limit", "41%"]]) && asOf(subscription.codex[0])
+    && subscription.gemini.includes("Gizai can't read Gemini's limits yet.") && subscription.gemini_tables === 0
+    && same(subscription.agents, [["Backend Agent (paused)"], ["Team Lead (paused)"], ["Codex Agent (paused)"], []])
+    && subscription.chats.includes("The Team Lead's chat runs here.")
+    && same(subscription.states, [["limit-ok", "limit-near", "limit-unread"], ["limit-reached", "limit-ok", "limit-unread"], ["limit-ok", "limit-ok"], []])
+    && subscription.clipped.length === 0 && subscription.foot.includes("it never asks Anthropic or OpenAI");
+
+  // Then the Total tab, with the period switch.
+  const toTotal = await tab("Total");
+  await sleep(200);
+  const chips = textsOf('[aria-label="Period"] .chip');
+  const first = { tab: selectedTab(), period: pressedChip(), days: shownDays(), want_days: daysOf("This month"), bars: q(".usage-bars")?.children.length,
+    want_bars: now.getUTCDate() };
+  const labels = textsOf(".usage-tab .stat-card h4");
+  const subs = textsOf(".usage-tab .stat-card .sub");
+  const foot = textOf(q(".usage-foot"));
+  const labelled = labels.includes("API cost") && labels.includes("Input tokens (incl. cache)") && labels.includes("Output tokens")
+    && subs.includes("An estimate at API prices, not a bill") && foot.includes("API cost: what these tokens would cost at API prices")
+    && foot.includes("Input tokens include cache reads and writes");
 
   // Today, on each tab: [name, runs, input tokens, output tokens, API cost, share].
   const toToday = await period("Today");
@@ -867,10 +905,11 @@ export async function usageProbe() {
   const sortOk = sort1.ok && sort2.ok && sort1.arrow !== sort2.arrow;
 
   const companyOk = companyItems.indexOf("Usage") >= 0 && companyItems.indexOf("Usage") + 1 === companyItems.indexOf("Team") && usageOn;
-  const firstOk = same(tabs, ["Total", "Agents", "Projects"]) && same(chips, ["Today", "7 days", "30 days", "This month"]) && first.tab === "Total"
-    && first.period === "This month" && first.days === first.want_days && first.bars === first.want_bars;
-  const ok = companyOk && firstOk && labelled && totalOk && agentsOk && projectsOk && periodsOk && thirtyOk && columnOk && sortOk;
-  return { ok, company: companyItems, usage_on: usageOn, tabs, chips, first, labelled, metrics, unknown_line: unknownLine, total_ok: totalOk,
+  const firstOk = same(tabs, ["Subscription", "Total", "Agents", "Projects"]) && same(chips, ["Today", "7 days", "30 days", "This month"])
+    && toTotal && first.tab === "Total" && first.period === "This month" && first.days === first.want_days && first.bars === first.want_bars;
+  const ok = companyOk && subscriptionOk && firstOk && labelled && totalOk && agentsOk && projectsOk && periodsOk && thirtyOk && columnOk && sortOk;
+  return { ok, company: companyItems, usage_on: usageOn, tabs, subscription, subscription_ok: subscriptionOk, chips, first, labelled, metrics,
+    unknown_line: unknownLine, total_ok: totalOk,
     agents, agents_total: agentsTotal, projects, projects_total: projectsTotal, periods: { today: toToday, d7: to7, d30: to30, month: toMonth },
     projects_30: projects30, total_30: total30, column, column_ok: columnOk, sort: [sort1, sort2] };
 }

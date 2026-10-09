@@ -505,7 +505,8 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   const checks: Record<string, boolean> = {
     design_first: (out.branches as string[]).slice(0, 4).join(",") === "Design,Development,Quality,Operations",
     one_spot_each: !!out.one_spot_each,
-    spot_form: sf.name === "Frontend Agent" && sf.role === "frontend" && !sf.wake_up && sf.sections?.join(",") === "Agent,Chat,Work,Permissions,Tools,Instructions",
+    // GA-19 adds the Memory section (Use memory) after Chat.
+    spot_form: sf.name === "Frontend Agent" && sf.role === "frontend" && !sf.wake_up && sf.sections?.join(",") === "Agent,Chat,Memory,Work,Permissions,Tools,Instructions",
     agent: a.role === "frontend" && a.wakeup !== "heartbeat" && !!a.agent_page && a.model === "opus" && a.effort === "xhigh" && a.columns?.join(",") === "To do,In progress"
       && !!a.added_once && !!a.tools,
     role_fills: Object.values(out.role_fills as Record<string, boolean>).every(Boolean),

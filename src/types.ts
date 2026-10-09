@@ -300,7 +300,7 @@ export type ChatMessage = { id: string; threadId: string; role: string; authorId
 /** A chat the Archive found, with the newest of its messages (yours or the Team Lead's) whose text matches; none when only
  *  its title matches, or for an empty search. */
 export type ChatHit = { thread: ChatThread; message?: ChatMessage | null };
-export type ChatNoteMeta ={ kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
+export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
 /** `seq`: the last change to the text being written that `draft` holds. */
 export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
 /** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */

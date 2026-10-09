@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { AgentMcpView, AgentServer, McpServerView, McpToolView } from "../types";
+import coreRs from "../../crates/gizai-core/src/mcp_servers.rs?raw";
 
 // Values for the next useState calls, in order; then each useState starts as written.
 const queue: unknown[] = [];
@@ -22,7 +23,7 @@ vi.mock("react", async (orig) => {
   return { ...R, default: { ...R, useState, useEffect }, useState, useEffect };
 });
 
-const { AgentToolsField, MCP_NOT_YET } = await import("./AgentTools");
+const { AgentToolsField, MCP_NOT_ON } = await import("./AgentTools");
 const { AgentDrawer } = await import("./AgentForm");
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<")
@@ -203,10 +204,14 @@ describe("AgentToolsField", () => {
       const html = render({ kind, allowedTools: ["Bash(npm:*)"], value: [{ serverId: "s-otus", on: true, toolsOff: [] }] });
       for (const s of servers) {
         expect(row(html, s.name)).toMatch(new RegExp(`aria-label="Use ${s.name}" disabled=""`));
-        expect(row(html, s.name)).not.toContain("checked");
+        // the attribute, not the word: Codex's reason says what Gizai "hasn't checked yet"
+        expect(row(html, s.name)).not.toContain('checked=""');
       }
-      expect(text(html)).toContain(MCP_NOT_YET);
-      expect(MCP_NOT_YET).toBe("MCP servers work on Claude Code for now: Codex and Gemini come with GA-55.");
+      // GA-55: each CLI says why, in the same words as mcp_not_on in crates/gizai-core/src/mcp_servers.rs
+      expect(text(html)).toContain(MCP_NOT_ON[kind]);
+      expect(MCP_NOT_ON[kind]).toContain(kind === "codex" ? "Codex" : "Gemini");
+      expect(MCP_NOT_ON[kind]).toContain("the browser");
+      expect(coreRs).toContain(MCP_NOT_ON[kind]!.split(": ")[0]!);
       // no tool switches and no npm warning while it can't use them
       expect(html).not.toContain('aria-label="Use search"');
       expect(text(html)).not.toContain("This agent may run npm or npx");

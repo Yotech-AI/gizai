@@ -11,7 +11,7 @@ export const TOKEN_SCOPES = ["read:user:bitbucket", "read:repository:bitbucket",
 
 /** How to make the API token and the scopes it needs, in one line. */
 export const TOKEN_HOW_TO = "Make the token in your Atlassian account: Security → Create and manage API tokens → Create API token with scopes, "
-  + `app Bitbucket, with the scopes ${TOKEN_SCOPES.slice(0, -1).join(", ")} and ${TOKEN_SCOPES[TOKEN_SCOPES.length - 1]}.`;
+  + `pick Bitbucket, and give it the scopes ${TOKEN_SCOPES.slice(0, -1).join(", ")} and ${TOKEN_SCOPES[TOKEN_SCOPES.length - 1]}.`;
 
 /** How pushes go, in one line. */
 export const SSH_LINE = "Pushes go over SSH with your own keys: add your public key in Bitbucket → Personal settings → SSH keys.";

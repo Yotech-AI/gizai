@@ -350,6 +350,10 @@ pub struct Run {
     pub head_sha: Option<String>,
     /// The tool calls its CLI refused because they needed an approval nobody could give (Claude Code reports them).
     pub refused: Vec<Refusal>,
+    /// Gizai's own nudge: it continued, by itself, a run that ended without a result (trigger `nudge`). A person's
+    /// Continue is a `nudge` too, but not nudged.
+    #[serde(default)]
+    pub nudged: bool,
 }
 
 /// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI

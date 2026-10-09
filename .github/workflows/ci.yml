@@ -94,6 +94,7 @@ jobs:
       # First, as it takes seconds: it still runs when the Rust tests fail later.
       - run: npm test
 
-      - run: cargo build --workspace --all-targets
+      # Gizai and its helpers on their own first, so a test that doesn't build still shows whether the app itself does.
+      - run: cargo build --workspace
 
       - run: cargo test --workspace

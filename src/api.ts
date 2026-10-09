@@ -90,6 +90,21 @@ export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
 /** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
  * CLI (a second account); other kinds of CLI have no list. */
 export const claudeModels = (refresh = false, cli: string | null = null) => invoke<T.ModelOption[]>("claude_models", { refresh, cli });
+// Settings → MCP servers and the agent form's Tools. Values of environment and header lines go in once and stay in the keychain.
+export const listMcpServers = () => invoke<T.McpServerView[]>("list_mcp_servers");
+export const saveMcpServer = (input: T.McpServerInput) => invoke<T.McpServerView>("save_mcp_server", { input });
+export const removeMcpServer = (id: string) => invoke<void>("remove_mcp_server", { id });
+/** Starts or calls the server, lists its tools and stops it (up to 2 minutes: an npx server downloads its package once). */
+export const listMcpTools = (id: string) => invoke<T.McpServerView>("list_mcp_tools", { id });
+/** The MCP servers in each Claude Code's config file; reads only, starts nothing. */
+export const scanClaudeCodeMcp = () => invoke<T.McpScan>("scan_claude_code_mcp");
+export const importMcpServers = (picks: T.McpPick[]) => invoke<T.McpServerView[]>("import_mcp_servers", { picks });
+/** Opens the sign-in page in your default browser and waits (up to 10 minutes) until you come back. */
+export const mcpSignIn = (id: string) => invoke<T.McpServerView>("mcp_sign_in", { id });
+export const mcpSignOut = (id: string) => invoke<T.McpServerView>("mcp_sign_out", { id });
+export const agentMcp = (agentId: string) => invoke<T.AgentMcpView>("agent_mcp", { agentId });
+export const saveAgentMcp = (agentId: string, tools: T.AgentTools) => invoke<T.AgentMcpView>("save_agent_mcp", { agentId, tools });
+
 /** Settings → Coding CLIs. */
 export const listClis = () => invoke<T.CliStatus[]>("list_clis");
 export const saveClis = (clis: T.Cli[]) => invoke<T.CliStatus[]>("save_clis", { clis });

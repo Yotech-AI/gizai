@@ -78,7 +78,7 @@ export function BitbucketSettings({ say }: { say: (ok: boolean, text: string) =>
 
   const account: StatusLine | null = statusErr ? { mark: "failed", text: statusErr } : status ? accountLine(status) : null;
   return (
-    <FormSection title="Bitbucket" text="Open pull request pushes a card's branch to Bitbucket over SSH and opens its pull request through Bitbucket's API, with your Atlassian email and an API token. Every two minutes Gizai asks Bitbucket about the pull requests of cards in Review; a merge moves the card to Done. Your email and token stay in your keychain.">
+    <FormSection title="Bitbucket" text="Gizai pushes a card's branch to Bitbucket over SSH after every agent run, and Open pull request pushes it and opens its pull request through Bitbucket's API, with your Atlassian email and an API token. Every two minutes Gizai asks Bitbucket about the pull requests of cards in Review; a merge moves the card to Done. Your email and token stay in your keychain.">
       <Field label="Account" wide hint={status?.account && !statusErr ? "Gizai opens pull requests on Bitbucket as this account." : undefined}>
         {account ? <Line mark={account.mark}>{account.text}</Line> : <div className="gh-line muted">Checking…</div>}
       </Field>

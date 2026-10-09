@@ -89,7 +89,7 @@ export function GithubSettings({ s, setS, save, say, savedAt }: {
   const accountHint = status?.account ? "gh opens pull requests as this account."
     : status?.loginCommand ? <>Log in with GitHub runs gh's own login in your browser. In a terminal: <span className="mono">{status.loginCommand}</span></> : undefined;
   return (
-    <FormSection title="GitHub" text="Open pull request pushes a card's branch to GitHub and opens its pull request with the GitHub CLI (gh). Every two minutes Gizai asks GitHub about the pull requests of cards in Review; a merge moves the card to Done. Gizai never stores a token or password: it uses gh's login and your SSH keys.">
+    <FormSection title="GitHub" text="Gizai pushes a card's branch to GitHub after every agent run, and Open pull request pushes it and opens its pull request with the GitHub CLI (gh). Every two minutes Gizai asks GitHub about the pull requests of cards in Review; a merge moves the card to Done. Gizai never stores a token or password: it uses gh's login and your SSH keys.">
       <Field label="GitHub CLI" htmlFor="s-gh" wide hint="Empty: Gizai finds gh when it needs it. Detect looks in your login shell and the usual install folders.">
         {gh ? <Line mark={gh.mark}>{gh.text}</Line> : <div className="gh-line muted">Checking…</div>}
         <div className="input-group"><input id="s-gh" className="input mono" value={s.ghBin ?? ""} onChange={(e) => setS({ ...s, ghBin: e.target.value })} placeholder="/usr/bin/gh" />

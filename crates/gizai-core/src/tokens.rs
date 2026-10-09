@@ -1,14 +1,12 @@
 //! Short-lived tokens for the MCP socket: one per chat turn, so the tools know which agent acts and nothing
 //! else on the machine can borrow them. Only the sha256 is stored; the token itself lives in the turn's
 //! 0600 MCP config file and Claude Code's environment, and dies with the turn (revoked or expired).
-use std::io::Read;
-
 use rusqlite::OptionalExtension;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::db::Db;
-use crate::{Result, ids};
+use crate::{Error, Result, ids};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenGrant {
@@ -29,10 +27,10 @@ fn hash(token: &str) -> String {
     sha256_hex(token)
 }
 
-/// A new random token (64 hex characters) for `actor_id`, valid for `ttl_ms`.
+/// A new random token (64 hex characters, 32 bytes from the system's random source) for `actor_id`, valid for `ttl_ms`.
 pub fn mint(db: &Db, actor_id: &str, scope: Value, ttl_ms: i64) -> Result<String> {
     let mut raw = [0u8; 32];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut raw)?;
+    getrandom::fill(&mut raw).map_err(|e| Error::Invalid(format!("Couldn't make a random token: {e}")))?;
     let token = hex(&raw);
     let now = ids::now_ms();
     db.write(None, |w| {

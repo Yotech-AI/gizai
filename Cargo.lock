@@ -1430,6 +1430,7 @@ dependencies = [
 name = "gizai-agents"
 version = "0.5.0"
 dependencies = [
+ "getrandom 0.4.3",
  "keyring",
  "libc",
  "serde",
@@ -1446,6 +1447,7 @@ dependencies = [
 name = "gizai-core"
 version = "0.5.0"
 dependencies = [
+ "getrandom 0.4.3",
  "libc",
  "rusqlite",
  "rusqlite_migration",

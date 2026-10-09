@@ -239,3 +239,33 @@ fn the_nudge_says_the_run_ended_without_its_result_and_to_check_in_the_foregroun
     assert!(!short.contains("## Limits") && short.contains("check it in the foreground now"), "{short}");
     assert!(!p.contains("was stopped") && !p.contains("asking for a decision"), "not Continue's or an answer's words: {p}");
 }
+
+// GA-56: Gizai pushes the card's branch after every run, so a refused push is no reason to stop.
+use gizai_agents::prompt::PUSHED_BY_GIZAI;
+
+#[test]
+fn every_task_prompt_on_every_cli_says_gizai_pushes_the_branch_after_the_run() {
+    for want in ["When the run ends, Gizai itself pushes this branch's commits (not uncommitted changes)", "a refused `git push` of this branch",
+                 "is no reason for `needs_decision`", "mention it in your summary", "end with the outcome your work deserves"] {
+        assert!(PUSHED_BY_GIZAI.contains(want), "{want} missing in {PUSHED_BY_GIZAI}");
+    }
+    let limits = Some(RunLimits { minutes: 90, tool_calls: 200 });
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        for mode in ["", "acceptEdits", "auto", "default", "bypassPermissions", "yolo"] {
+            for r in [rules(kind, mode), default_list(kind, mode)] {
+                for (which, p) in [("new", build(&TaskContext { limits, ..ctx() }, "You are the Backend Agent.")),
+                                   ("continued", continue_prompt("stopped at the limit of 200 tool calls per run", limits)),
+                                   ("answered", answered_prompt("Use semicolons.", limits)), ("nudged", nudge_prompt(limits))] {
+                    let full = with_rules(&p, &r);
+                    let sec = &full[full.find("## How this run works").unwrap()..];
+                    assert_eq!(sec.matches(PUSHED_BY_GIZAI).count(), 1, "{kind:?} {mode:?} {which}: {sec}");
+                    assert_eq!(full.matches("Gizai itself pushes").count(), 1, "{kind:?} {mode:?} {which}: once");
+                    // a bullet of its own, before the last line about refusals, and the section stays about 12 lines
+                    assert!(sec.contains(&format!("\n- {PUSHED_BY_GIZAI}\n")), "{kind:?} {mode:?} {which}: {sec}");
+                    assert!(sec.find(PUSHED_BY_GIZAI).unwrap() < sec.find("don't try other spellings").unwrap(), "{kind:?} {mode:?} {which}: {sec}");
+                    assert!(bullets(sec) <= 12, "{kind:?} {mode:?} {which}: at most about 12 lines: {sec}");
+                }
+            }
+        }
+    }
+}

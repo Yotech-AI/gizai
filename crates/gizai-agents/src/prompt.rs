@@ -138,7 +138,8 @@ something, check it in the foreground now and finish the task. End with your GIZ
 }
 
 /// How a headless task run works, told at the end of every task prompt, new and continued (`with_rules`): nobody can
-/// approve anything, the commands the agent may run, its CLI's shell rules, the run's temp folder and how to wait.
+/// approve anything, the commands the agent may run, its CLI's shell rules, the run's temp folder, how to wait, and that
+/// Gizai pushes the branch when the run ends (`PUSHED_BY_GIZAI`).
 /// Only what holds for its CLI and permission mode goes in. Claude Code's shell rules were checked against Claude Code
 /// 2.1.289 in acceptEdits mode with Gizai's task-run flags (GA-48): `$(…)`, backticks, variables, a heredoc with an
 /// unquoted delimiter, and reading or writing outside the working folders (an allowed `ls /tmp`, a redirect to `/tmp`,
@@ -297,6 +298,7 @@ refused. Pipes, `2>&1`, `&&` and `;` between allowed commands are fine, and so i
         }
     }
     lines.extend(waiting_lines(r));
+    lines.push(PUSHED_BY_GIZAI.into());
     lines.push("When something is refused, don't try other spellings of it: go on without it, and name the exact command in your summary \
 under what you could not check.".into());
     let mut s = String::from("\n## How this run works\n\n");
@@ -305,6 +307,12 @@ under what you could not check.".into());
     }
     s
 }
+
+/// Gizai pushes the card's branch itself when a run ends (GA-56), so a CLI that refuses the agent's `git push` no longer
+/// holds a card up: told to every CLI in every mode. Agents keep `git push` in their list.
+pub const PUSHED_BY_GIZAI: &str = "When the run ends, Gizai itself pushes this branch's commits (not uncommitted changes) to the project's \
+remote, when it has one. So a refused `git push` of this branch is no reason for `needs_decision`: mention it in your summary and end \
+with the outcome your work deserves.";
 
 /// The waiting rule (see `rules_section`): ending the message ends the run, how to wait in the foreground, and what to do
 /// when it won't be done in time. `sleep` is named only when the agent may run it.

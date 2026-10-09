@@ -62,6 +62,12 @@ export function runReason(r: Run): string | null {
   return null;
 }
 
+/** Gizai's notes in a run's output are warnings (a folder or MCP server left out, a push that failed), except what
+ * Gizai pushed after the run (GA-56), which is good news. */
+export function noteIsGood(text: string): boolean {
+  return text.startsWith("Gizai pushed ");
+}
+
 /** The agent's last words in a run, without the GIZAI_RESULT line. */
 export function lastAgentText(events: SeqEvent[]): string | null {
   for (let i = events.length - 1; i >= 0; i--) {

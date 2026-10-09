@@ -75,12 +75,20 @@ export function parseArgs(text: string): string[] {
   return text.split("\n").map((a) => a.trim()).filter(Boolean);
 }
 
-/** A secret line in the server form: its name, a new value typed now, and whether a value is saved already. */
-export type LineDraft = { name: string; value: string; saved: boolean };
+/** A secret line in the server form: its name, a new value typed now, and whether a value is saved already under that
+ * name. `savedAs`: the name its saved value is kept under, once the line is renamed. */
+export type LineDraft = { name: string; value: string; saved: boolean; savedAs?: string };
 
 /** The lines of a saved server: names only, their values stay in the keychain. */
 export function linesOf(names: string[], missing: string[] = []): LineDraft[] {
   return names.map((name) => ({ name, value: "", saved: !missing.includes(name) }));
+}
+
+/** The line under a new name. The keychain keeps a saved value under the line's name, and Save removes the old name's
+ * value, so a renamed line has no saved value until it gets its old name back. */
+export function renameLine(l: LineDraft, name: string): LineDraft {
+  const savedAs = l.savedAs ?? (l.saved ? l.name.trim() : undefined);
+  return savedAs === undefined ? { ...l, name } : { ...l, name, saved: name.trim() === savedAs, savedAs };
 }
 
 /** The lines to save: a value only when typed in now (null keeps the saved one). */

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { importMcpServers, listMcpServers, listMcpTools, mcpSignIn, mcpSignOut, removeMcpServer, saveMcpServer, scanClaudeCodeMcp } from "../api";
-import { linesOf, nameProblem, parseArgs, RISK_BADGE, secretLines, serverWhere, signInLabel, toolsSummary, TRANSPORT_LABEL, type LineDraft } from "../lib/mcp";
+import { linesOf, nameProblem, parseArgs, renameLine, RISK_BADGE, secretLines, serverWhere, signInLabel, toolsSummary, TRANSPORT_LABEL, type LineDraft } from "../lib/mcp";
 import { relTime } from "../lib/format";
 import type { McpScan, McpServerInput, McpServerView } from "../types";
 import { McpToolList } from "./McpTools";
@@ -21,6 +21,10 @@ const inputOf = (d: Draft): McpServerInput => {
   };
 };
 
+/** What a line's value box says while it is empty. */
+const valueHint = (l: LineDraft) =>
+  l.saved ? "Saved in your keychain: type to replace" : l.savedAs ? `Renamed from ${l.savedAs}: type its value again` : "Value";
+
 /** Environment or header lines: a name and a value each. A saved value is never shown: typing replaces it. */
 function SecretLines({ what, lines, onChange, namePlaceholder }: { what: string; lines: LineDraft[]; onChange: (l: LineDraft[]) => void; namePlaceholder: string }) {
   const put = (i: number, l: LineDraft) => onChange(lines.map((x, j) => (j === i ? l : x)));
@@ -29,9 +33,9 @@ function SecretLines({ what, lines, onChange, namePlaceholder }: { what: string;
       {lines.map((l, i) => (
         <div key={i} className="input-group">
           <input className="input mono" style={{ flex: "0 0 38%" }} aria-label={`${what} ${i + 1} name`} value={l.name} placeholder={namePlaceholder}
-            onChange={(e) => put(i, { ...l, name: e.target.value })} />
+            onChange={(e) => put(i, renameLine(l, e.target.value))} />
           <input className="input mono" type="password" autoComplete="off" aria-label={`${what} ${i + 1} value`} value={l.value}
-            placeholder={l.saved ? "Saved in your keychain: type to replace" : "Value"} onChange={(e) => put(i, { ...l, value: e.target.value })} />
+            placeholder={valueHint(l)} onChange={(e) => put(i, { ...l, value: e.target.value })} />
           <button type="button" className="btn ghost sm icon-only" aria-label={`Remove ${what.toLowerCase()} ${i + 1}`} title="Remove"
             onClick={() => onChange(lines.filter((_, j) => j !== i))}><X className="icon" /></button>
         </div>

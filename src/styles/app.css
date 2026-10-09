@@ -410,3 +410,25 @@ a.member:hover { border-color: var(--line-2); }
 .usage-foot { margin: 0; max-width: 760px; font-size: var(--fs-sm); }
 .usage-utc { font-size: var(--fs-sm); }
 @media (max-width: 960px) { .usage-table .share { display: none; } }
+/* The Subscription tab (GA-62): a block per coding CLI with its limits; amber near a limit, red once it is reached. */
+.limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; align-items: start; }
+.limits-block { padding: 14px 0; min-width: 0; overflow-x: auto; }
+.limits-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 0 16px 8px; }
+.limits-head h3 { margin: 0; font-size: var(--fs); font-weight: 600; color: var(--text); }
+.limits-dir { margin-left: auto; font-size: var(--fs-sm); }
+.limits-table th { position: static; background: none; }
+.limits-table th:first-child, .limits-table td:first-child { padding-left: 16px; }
+.limits-table tr:hover td { background: none; }
+.limits-table tr:last-child td { border-bottom: 0; }
+.limit-used { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-variant-numeric: tabular-nums; }
+.limit-used .track { width: 90px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; display: inline-block; }
+.limit-used .track i { display: block; height: 100%; background: var(--accent); }
+.limit-near .limit-used { color: var(--warning); }
+.limit-near .limit-used .track i { background: var(--warning); }
+.limit-reached .limit-used { color: var(--danger); font-weight: 600; }
+.limit-reached .limit-used .track i { background: var(--danger); }
+.limits-note { margin: 8px 16px 0; font-size: var(--fs-sm); }
+.limits-agents { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 10px 16px 0; font-size: var(--fs-sm); }
+.limits-agent { display: inline-flex; align-items: center; gap: 5px; color: var(--text); text-decoration: none; }
+.limits-agent:hover { text-decoration: underline; }
+.limits-agent .icon { width: 14px; height: 14px; color: var(--text-3); }

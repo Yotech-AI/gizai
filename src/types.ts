@@ -282,6 +282,22 @@ export type ProjectUsage = { projectId: string; number: string; key: string; nam
 export type Usage = { since: number; until: number; total: UsageTotals; days: UsageDay[]; agents: AgentUsage[]; projects: ProjectUsage[];
   chat: UsageTotals; noProject: UsageTotals };
 
+// ---- the Usage page's Subscription tab (gizai-core limits.rs) ----
+/** One reading of a subscription limit, as the coding CLI reported it in a run or chat turn. `usedPercent`: 0 to 100 (more past the
+ *  cap), null when the CLI only said the limit was reached; `status`: allowed, allowed_warning (near it) or rejected (reached);
+ *  `resetsAt`, `observedAt`: Unix ms; `resetsText`: the reset as the CLI wrote it, when it gave no time stamp. */
+export type LimitReading = { key: string; usedPercent?: number | null; status?: string | null; resetsAt?: number | null; resetsText?: string | null;
+  windowMinutes?: number | null; observedAt: number; runId?: string | null };
+/** A limit of a coding CLI: Claude Code's session (five_hour), weekly (seven_day) and Fable (seven_day_overage_included) limits, or a
+ *  Codex window (primary, secondary); `reading` null until a run on that CLI reports it. */
+export type SubscriptionLimit = { key: string; name: string; windowMinutes?: number | null; reading?: LimitReading | null };
+export type LimitAgent = { agentId: string; name: string; roleKey: string; status: string; isLead: boolean };
+/** One coding CLI's block (Settings → Coding CLIs): `readable` for Claude Code and Codex; `accountDir` holds the account (Claude
+ *  Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME with its session logs); `leadChat`: the Team Lead's chat runs on it; `chats`: chats
+ *  whose own Runs on it is. */
+export type CliLimits = { cliId: string; name: string; kind: CliKind; readable: boolean; accountDir?: string | null; limits: SubscriptionLimit[];
+  agents: LimitAgent[]; leadChat: boolean; chats: number };
+
 // ---- chat with the Team Lead ----
 export type ChatThread = { id: string; agentId: string; title: string; sessionId?: string | null; createdAt: number; updatedAt: number;
   costUsdMicros: number; inputTokens: number; outputTokens: number;

@@ -1,7 +1,8 @@
 //! The Team Lead's board check, in code (no model): what on the board needs attention. Answered cards (a person's
-//! comment after a "needs a decision" hold), other held cards, cards no agent will start (with why) and cards in
-//! In progress whose run stopped part-way. Only To do, In progress and Testing count, and paused, done and archived
-//! projects are left out. The heartbeat and the `check_board` tool both use it, so they see the same thing.
+//! comment after a "needs a decision" hold), other held cards, cards in an Auto column no agent will start (with why)
+//! and cards in In progress whose run stopped part-way. Only To do, In progress and Testing count (cards in a Manual
+//! column wait for Run by design), and paused, done and archived projects are left out. The Team Lead's scheduled check and
+//! the `check_board` tool both use it, so they see the same thing.
 //!
 //! What each check saw is kept on its run (`runs.findings_json`): a finding is new when the Team Lead hasn't seen it
 //! yet, or its card changed since (a comment, a run, a move, the hold), not counting the Team Lead's own changes.
@@ -13,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::Db;
 use crate::{Error, Result, ids, runs, team, workflow};
 
-/// An agent with a free slot takes a waiting card within this long; a heartbeat agent within its interval and this.
+/// An agent with a free slot takes a waiting card within this long (the queue pulls every minute).
 pub const FREE_SLOT_GRACE_MS: i64 = 2 * 60_000;
 /// "Runs at once" (Settings) full for this long is a finding.
 pub const RUNS_FULL_MS: i64 = 60 * 60_000;
@@ -54,7 +55,7 @@ pub struct LastRun {
 pub struct Finding {
     /// answered | held | waiting | stopped
     pub kind: String,
-    /// Why, as a code. held: the hold. waiting: no_route, person, agents_paused, paused, budget, manual, pull_paused,
+    /// Why, as a code. held: the hold. waiting: no_agents, testing_off, agents_paused, paused, budget, pull_paused,
     /// stopped_run, free_slot or runs_full. stopped: limit, failed, no_result, stopped (by a person) or quit.
     pub code: String,
     pub task_id: String,
@@ -99,8 +100,6 @@ pub fn seen_of(findings: &[Finding]) -> Vec<Seen> {
 struct Agent {
     name: String,
     status: String,
-    wakeup: String,
-    heartbeat_minutes: i64,
     max_runs: i64,
     over_budget: Option<String>,
     /// Its card runs at work now.
@@ -138,8 +137,7 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
             None => None,
         };
         agents.insert(m.actor_id.clone(), Agent {
-            name: m.name, status: m.status, wakeup: m.wakeup.unwrap_or_else(|| "manual".into()), heartbeat_minutes: m.heartbeat_minutes.unwrap_or(0),
-            max_runs: m.max_runs.max(1), over_budget, busy: 0, free_since: 0,
+            name: m.name, status: m.status, max_runs: m.max_runs.max(1), over_budget, busy: 0, free_since: 0,
         });
     }
     db.read(|c| {
@@ -242,16 +240,23 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                 continue;
             }
             let route = workflow::route(c, &card.id)?;
+            if !route.auto {
+                // A Manual column: only a person's Run starts its cards.
+                continue;
+            }
+            if route.testing_off {
+                out.push(base("waiting", "testing_off", since, None,
+                              format!("Its Testing switch is off, so no QA run starts in {}: move it on, or turn Testing on", route.column)));
+                continue;
+            }
             if route.agents.is_empty() {
                 let f = match &route.person {
                     Some(p) => {
                         let name: String = c.query_row("SELECT name FROM actors WHERE id=?1", [p], |r| r.get(0)).unwrap_or_default();
-                        base("waiting", "person", since, None, format!("It is assigned to {name}, a person, and nothing routes it to an agent"))
+                        base("waiting", "no_agents", since, None,
+                             format!("It is assigned to {name}, a person, and no agent is on {}: put one on it on the Team page", route.column))
                     }
-                    None => match &route.role {
-                        Some(role) => base("waiting", "no_route", since, None, format!("It routes to the {role} role, but no agent has that role")),
-                        None => base("waiting", "no_route", since, None, "Nothing routes it: no label rule, column rule or assigned agent".into()),
-                    },
+                    None => base("waiting", "no_agents", since, None, format!("No agent is on {}: put one on it on the Team page", route.column)),
                 };
                 out.push(f);
                 continue;
@@ -267,8 +272,6 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                     Some(("paused", format!("{} is paused", a.name)))
                 } else if let Some(b) = &a.over_budget {
                     Some(("budget", b.clone()))
-                } else if a.wakeup == "manual" {
-                    Some(("manual", format!("{} only starts when someone presses Run (wake-up: manual)", a.name)))
                 } else if let Some(why) = cx.pull_paused.get(id) {
                     Some(("pull_paused", format!("{} stopped taking cards: {why}", a.name)))
                 } else {
@@ -282,7 +285,7 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                     }
                     None if a.busy >= a.max_runs => waits_only = true,
                     None => {
-                        let grace = FREE_SLOT_GRACE_MS + if a.wakeup == "heartbeat" { a.heartbeat_minutes.max(1) * 60_000 } else { 0 };
+                        let grace = FREE_SLOT_GRACE_MS;
                         let free_for = cx.now - a.free_since.max(since);
                         if free_for > grace {
                             free.get_or_insert((id.clone(), free_for));
@@ -307,7 +310,7 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
             } else if !waits_only && let Some((id, code, reason)) = first_blocker {
                 out.push(base("waiting", &code, since, agent_of(&id), reason));
             } else if !waits_only {
-                out.push(base("waiting", "no_route", since, None, "The agent it is assigned or pinned to is no longer on the team".into()));
+                out.push(base("waiting", "no_agents", since, None, "The agent it is assigned or pinned to is no longer on the team".into()));
             }
         }
         let order = |k: &str| match k { "answered" => 0, "held" => 1, "stopped" => 2, _ => 3 };

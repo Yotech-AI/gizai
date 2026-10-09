@@ -79,6 +79,15 @@ fn exclude_lines(repo: &Path) -> usize {
     std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default().lines().filter(|l| l.trim() == "/.gizai-tmp/").count()
 }
 
+/// Makes In progress Manual (GA-49: the column decides who starts a card). A run stopped at a limit leaves its card there,
+/// assigned to its agent: in an Auto column the queue would start the card again on its own as the run ends, while the
+/// test looks at the temp folder or Continues the run by hand.
+fn in_progress_manual(st: &gizai_lib::AppState) {
+    let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
+    let state = gizai_core::team::get(&st.db, &team_id).unwrap().states.into_iter().find(|s| s.category == "in_progress").unwrap().id;
+    gizai_core::columns::set_column(&st.db, &st.you_id, &state, gizai_core::columns::ColumnInput { auto: Some(false), ..Default::default() }).unwrap();
+}
+
 #[tokio::test]
 async fn claude_code_codex_gemini_and_other_clis_get_the_worktrees_temp_folder_as_tmpdir_tmp_and_temp() {
     let tmp = tempfile::tempdir().unwrap();
@@ -132,6 +141,7 @@ async fn every_task_prompt_new_and_continued_ends_with_how_this_run_works() {
     // no list of its own: the default one, with the read-only helpers
     put_agent_on(&st, &claude, AgentInput::default());
     describe(&st, &task, "The card's own words.");
+    in_progress_manual(&st);
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
@@ -186,6 +196,7 @@ async fn the_temp_folder_is_emptied_after_stop_and_after_the_tool_call_limit() {
 
     // the tool-call limit
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    in_progress_manual(&st);
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();

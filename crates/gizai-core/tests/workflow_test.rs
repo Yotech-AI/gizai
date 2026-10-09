@@ -255,3 +255,63 @@ fn clearing_the_hold_gives_the_card_fresh_tries() {
     let task = tasks::get(&db, &t).unwrap();
     assert_eq!((task.fail_count, task.hold.as_deref()), (1, None), "one more failure doesn't stall it again");
 }
+
+// GA-54: Gizai's nudge continues a run that ended without a result once; when it too ends without one, the card is held.
+fn nudge(db: &Db, agent: &str, task: &str, role: &str) -> String {
+    runs::create_nudge(db, agent, task, role, "S", "/tmp", "/tmp", "gizai/x", "/tmp/n.jsonl").unwrap()
+}
+
+#[test]
+fn a_nudge_that_ends_without_a_result_too_holds_the_card_stalled() {
+    let (db, _s, t) = setup();
+    let be = agent(&db, "Backend Agent");
+    let first = start(&db, &be, &t, "backend");
+    runs::finish(&db, &first, "succeeded", None, 0, 0, 0, None).unwrap();
+    assert_eq!(workflow::apply_outcome(&db, &first, None).unwrap().hold, None);
+    let task = tasks::get(&db, &t).unwrap();
+    assert_eq!((task.state_name.as_str(), task.fail_count, task.hold.as_deref()), ("In progress", 1, None));
+    assert!(!runs::get(&db, &first).unwrap().nudged);
+
+    let n = nudge(&db, &be, &t, "backend");
+    let run = runs::get(&db, &n).unwrap();
+    assert_eq!((run.trigger.as_str(), run.nudged, run.session_id.as_deref()), ("nudge", true, Some("S")));
+    assert!(runs::list_for_task(&db, &t).unwrap().iter().any(|r| r.id == n && r.nudged), "listed as nudged too");
+    runs::finish(&db, &n, "succeeded", None, 0, 0, 0, None).unwrap();
+    let g = workflow::apply_outcome(&db, &n, None).unwrap();
+    assert_eq!((g.hold.as_deref(), g.moved_to.as_deref()), (Some("stalled"), None));
+    let task = tasks::get(&db, &t).unwrap();
+    assert_eq!((task.state_name.as_str(), task.fail_count, task.hold.as_deref()), ("In progress", 2, Some("stalled")));
+    assert_eq!(task.hold_reason.as_deref(), Some(workflow::NUDGE_STALLED));
+    assert_eq!(runs::get(&db, &n).unwrap().outcome.as_deref(), Some("no_result"));
+    // held: the queue doesn't start it again
+    assert!(workflow::waiting_for(&db, &be).unwrap().is_empty());
+}
+
+#[test]
+fn a_nudge_that_fails_hits_a_limit_or_finishes_counts_as_usual_and_a_persons_continue_is_not_a_nudge() {
+    for status in ["failed", "timed_out"] {
+        let (db, _s, t) = setup();
+        let be = agent(&db, "Backend Agent");
+        let n = nudge(&db, &be, &t, "backend");
+        runs::finish(&db, &n, status, None, 0, 0, 0, Some("stopped at the limit of 200 tool calls per run")).unwrap();
+        assert_eq!(workflow::apply_outcome(&db, &n, None).unwrap().hold, None, "{status}");
+        let task = tasks::get(&db, &t).unwrap();
+        assert_eq!((task.fail_count, task.hold.as_deref()), (1, None), "{status}");
+    }
+    // a person's Continue is recorded as a nudge too, but not nudged: no hold
+    let (db, _s, t) = setup();
+    let be = agent(&db, "Backend Agent");
+    let c = runs::create_with_trigger(&db, &be, &t, "backend", "nudge", "S", "/tmp", "/tmp", "gizai/x", "/tmp/c.jsonl").unwrap();
+    assert!(!runs::get(&db, &c).unwrap().nudged);
+    runs::finish(&db, &c, "succeeded", None, 0, 0, 0, None).unwrap();
+    assert_eq!(workflow::apply_outcome(&db, &c, None).unwrap().hold, None);
+    // the nudge ends with a result: the card moves on as usual
+    let (db, _s, t) = setup();
+    let be = agent(&db, "Backend Agent");
+    let first = start(&db, &be, &t, "backend");
+    workflow::apply_outcome(&db, &first, None).unwrap();
+    let n = nudge(&db, &be, &t, "backend");
+    runs::finish(&db, &n, "succeeded", Some(&out("ready_for_testing")), 0, 0, 0, None).unwrap();
+    let g = workflow::apply_outcome(&db, &n, Some(&out("ready_for_testing"))).unwrap();
+    assert_eq!((g.moved_to.as_deref(), g.hold.as_deref()), (Some("Testing"), None));
+}

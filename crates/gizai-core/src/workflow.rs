@@ -26,6 +26,9 @@ fn strip_list_marker(s: &str) -> &str {
 
 pub const MAX_BOUNCES: i64 = 3;
 pub const MAX_FAILS: i64 = 3;
+/// The hold's reason when Gizai's nudge (GA-54) also ended without a result.
+pub const NUDGE_STALLED: &str = "Its run ended without a GIZAI_RESULT line twice: Gizai continued it once, and it ended without one again. \
+Its last message is in the Runs tab.";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -489,7 +492,13 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
             None => {
                 let fails = t.fail_count + 1;
                 set_fields(w, &task_id, "fail_count=?2", &[&fails], serde_json::json!({"failCount": fails}))?;
-                if fails >= MAX_FAILS {
+                // Gizai's nudge ended normally without a result too: no third run, the card waits for a person. A nudge
+                // that failed or hit a limit counts as usual.
+                let ended_normally = matches!(run.status.as_str(), "succeeded" | "queued" | "running" | "waiting_approval");
+                if run.nudged && ended_normally {
+                    set_hold(w, &task_id, "stalled", NUDGE_STALLED)?;
+                    g.hold = Some("stalled".into());
+                } else if fails >= MAX_FAILS {
                     let last: Option<String> = w.conn().query_row("SELECT error FROM runs WHERE id=?1", [run_id], |r| r.get(0)).ok().flatten();
                     let reason = match last.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
                         Some(e) => format!("{MAX_FAILS} runs ended without a result. The last one: {e}"),

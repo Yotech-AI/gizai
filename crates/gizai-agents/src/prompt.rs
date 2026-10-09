@@ -118,12 +118,24 @@ pub fn continue_prompt(reason: &str, limits: Option<RunLimits>) -> String {
     p.trim_end().to_string() + "\n"
 }
 
+/// Gizai's nudge (GA-54): the message that continues, once and by itself, a run that ended normally without its
+/// GIZAI_RESULT line, in the same session. Often the agent ended its message to wait for something outside the run.
+pub fn nudge_prompt(limits: Option<RunLimits>) -> String {
+    let mut p = String::from("Your run ended without your GIZAI_RESULT line, and nothing wakes you up later. If you were waiting for \
+something, check it in the foreground now and finish the task. End with your GIZAI_RESULT line.");
+    if let Some(l) = limits {
+        p.push_str(&limits_section(l));
+    }
+    p.trim_end().to_string() + "\n"
+}
+
 /// How a headless task run works, told at the end of every task prompt, new and continued (`with_rules`): nobody can
-/// approve anything, the commands the agent may run, its CLI's shell rules and the run's temp folder. Only what holds
-/// for its CLI and permission mode goes in. Claude Code's shell rules were checked against Claude Code 2.1.289 in
-/// acceptEdits mode with Gizai's task-run flags (GA-48): `$(…)`, backticks, variables, a heredoc with an unquoted
-/// delimiter, and reading or writing outside the working folders (an allowed `ls /tmp`, a redirect to `/tmp`, the Write
-/// tool on `/tmp`) were refused; pipes, `2>&1`, `&&`, `;`, a quoted heredoc and a redirect to a file in the worktree ran.
+/// approve anything, the commands the agent may run, its CLI's shell rules, the run's temp folder and how to wait.
+/// Only what holds for its CLI and permission mode goes in. Claude Code's shell rules were checked against Claude Code
+/// 2.1.289 in acceptEdits mode with Gizai's task-run flags (GA-48): `$(…)`, backticks, variables, a heredoc with an
+/// unquoted delimiter, and reading or writing outside the working folders (an allowed `ls /tmp`, a redirect to `/tmp`,
+/// the Write tool on `/tmp`) were refused; pipes, `2>&1`, `&&`, `;`, a quoted heredoc and a redirect to a file in the
+/// worktree ran.
 #[derive(Debug, Clone)]
 pub struct RunRules {
     pub kind: crate::cli::Kind,
@@ -180,6 +192,56 @@ outside the worktree, and are never committed. Gizai empties that folder when th
     }
 }
 
+/// Whether the agent may run `sleep`, so the waiting rule may name it: its CLI runs commands without a list (Codex, its
+/// sandbox decides), its mode lets every command run (bypassPermissions, yolo), or its list allows `sleep` with any
+/// arguments (`Bash(sleep:*)`, `Bash(sleep *)`, and for Claude Code a bare `Bash` or `Bash(*)` too). An Other CLI has
+/// no list Gizai knows: no.
+fn may_sleep(r: &RunRules) -> bool {
+    use crate::cli::Kind;
+    let listed = |all_bash: bool| r.allowed_tools.iter().map(|t| t.trim()).any(|t| {
+        if t == "Bash" { return all_bash; }
+        match t.strip_prefix("Bash(").and_then(|i| i.strip_suffix(')')).map(str::trim) {
+            Some("*") => all_bash,
+            Some(inner) => inner.strip_suffix(":*").or_else(|| inner.strip_suffix('*')).is_some_and(|p| p.trim() == "sleep"),
+            None => false,
+        }
+    });
+    match r.kind {
+        Kind::ClaudeCode => r.mode.trim() == "bypassPermissions" || listed(true),
+        Kind::Codex => true,
+        Kind::Gemini => r.mode.trim() == "yolo" || listed(false),
+        Kind::Other => false,
+    }
+}
+
+/// How to wait for something outside the run (GA-54), for every CLI. Claude Code 2.1.289 was checked in a headless run
+/// with Gizai's task-run flags, acceptEdits and the default list plus `Bash(sleep:*)`:
+/// - A command that starts with a sleep longer than 20 seconds is blocked before it runs ("Blocked: sleep 45 followed
+///   by: git status --short. To wait for a condition, use Monitor with an until-loop … To wait for a command you
+///   started, use run_in_background: true. Do not chain shorter sleeps to work around this block."), and so is a lone
+///   `sleep 30`. `sleep 20 && pwd` ran, `sleep 25 && pwd` was blocked. A sleep after the first command runs:
+///   `git status --short && sleep 40 && git status --short` took its 40 seconds.
+/// - A foreground command gets 2 minutes: `pwd && sleep 150 && pwd` was moved to the background after 120 s ("Command
+///   did not complete within its 120s timeout and was moved to the background"). The Bash tool's `timeout` allows up
+///   to 10 minutes and keeps it in the foreground (`pwd && sleep 130 && pwd` with timeout 200000 ran to its end).
+/// - A command started with run_in_background is killed when the agent ends its message: the run ended at once (8 s,
+///   the command needed 20), the stream says `task_updated` killed, and what the command was to write never appeared.
+///   Gizai ends the run's process group after that anyway (`process::spawn_exec`), for every CLI.
+/// - A Monitor is the exception: `claude -p` stays alive while one watches, wakes the agent at each event and when its
+///   command ends (each wake-up is a turn with its own result line; Gizai reads the last), and a Monitor expires after
+///   5 minutes. The rule doesn't offer it: one foreground check after another keeps the run one turn, with the
+///   GIZAI_RESULT line in its last message.
+/// - Loops are a gamble: `until git status --short; do sleep 2; done` and `until test -f ci-done.txt; do sleep 30; done`
+///   ran in the foreground, but `for i in {1..20}; …` ("A brace pattern in this command can't be checked before it
+///   runs"), `while true; do test -f ci-done.txt && break; sleep 30; done` ("requires approval: break") and an `until`
+///   with a pipe in its check were refused. So the rule asks for one check and then the sleep in one command, no loop.
+/// - A Haiku run told to wait for a file a fake CI wrote after 100 s, with an earlier wording of this rule (without "no
+///   loop"), tried the two refused loops, then waited with the `until` loop. With this wording it tried a subshell
+///   (`… || ( sleep 30 && … )`, refused: "shell operators that require approval"), then waited with one check per
+///   command (`test -f ci-done.txt && cat ci-done.txt || sleep 30`, four times). Both ended with their GIZAI_RESULT line.
+///
+/// Codex, Gemini and Other CLIs were not checked; they hear the same rule without Claude Code's limits, and `sleep` only
+/// when they may run it (`may_sleep`).
 pub fn rules_section(r: &RunRules) -> String {
     use crate::cli::Kind;
     let mode = r.mode.trim();
@@ -226,6 +288,7 @@ refused. Pipes, `2>&1`, `&&` and `;` between allowed commands are fine, and so i
             lines.push(temp_line(temp, None, false));
         }
     }
+    lines.extend(waiting_lines(r));
     lines.push("When something is refused, don't try other spellings of it: go on without it, and name the exact command in your summary \
 under what you could not check.".into());
     let mut s = String::from("\n## How this run works\n\n");
@@ -233,4 +296,31 @@ under what you could not check.".into());
         s.push_str(&format!("- {l}\n"));
     }
     s
+}
+
+/// The waiting rule (see `rules_section`): ending the message ends the run, how to wait in the foreground, and what to do
+/// when it won't be done in time. `sleep` is named only when the agent may run it.
+fn waiting_lines(r: &RunRules) -> Vec<String> {
+    let claude = r.kind == crate::cli::Kind::ClaudeCode;
+    let sleep = may_sleep(r);
+    let what = "To wait for something outside this run (a CI run, a release or deploy workflow, a pull request's checks)";
+    let wait = if sleep {
+        format!("{what}, check it in the foreground about once a minute, within this run's limits: one check and then the sleep in one \
+command, like `<check>; sleep 45`, and again until it is done.")
+    } else {
+        format!("{what}, check it again in the foreground until it is done, within this run's limits.")
+    };
+    let mut lines = vec![
+        format!("Ending your message ends the run: nothing wakes you up later, and {} is stopped.",
+                if claude { "a command still running in the background (run_in_background)" } else { "anything still running in the background" }),
+        wait,
+    ];
+    if claude {
+        lines.push(format!("Don't write a loop (`for`, `while`, `until`): most are refused. {}A command that runs longer than 2 minutes, \
+or than the timeout you give it (at most 10 minutes), is moved to the background.",
+                           if sleep { "A command that starts with a sleep longer than 20 seconds is blocked. " } else { "" }));
+    }
+    lines.push("If it won't be done before the limit, don't wait for it: end with your GIZAI_RESULT line, and say in your summary what to \
+check and what is left.".into());
+    lines
 }

@@ -12,7 +12,7 @@ const ACTIVE: &str = "('queued','running','waiting_approval')";
 const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.trigger, r.status, r.outcome, r.summary_md, r.created_at,
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
                     r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha,
-                    COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]')";
+                    COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]'), r.nudged";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -22,6 +22,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
         branch: r.get(15)?, worktree_path: r.get(16)?, session_id: r.get(17)?, error: r.get(18)?, log_path: r.get(19)?, pid: r.get(20)?,
         base_sha: r.get(21)?, adapter: r.get(22)?, head_sha: r.get(23)?,
         refused: serde_json::from_str(&r.get::<_, String>(24)?).unwrap_or_default(),
+        nudged: r.get::<_, i64>(25)? != 0,
     })
 }
 
@@ -36,6 +37,21 @@ pub fn create(db: &Db, agent_id: &str, task_id: &str, role_key: &str, session_id
 #[allow(clippy::too_many_arguments)]
 pub fn create_with_trigger(db: &Db, agent_id: &str, task_id: &str, role_key: &str, trigger: &str, session_id: &str, cwd: &str,
                            worktree: &str, branch: &str, log_path: &str) -> Result<String> {
+    create_run(db, agent_id, task_id, role_key, trigger, false, session_id, cwd, worktree, branch, log_path)
+}
+
+/// Gizai's nudge (GA-54): a run that continues, by itself, a run that ended without a result, in the same session.
+/// Recorded like `create_with_trigger` with trigger `nudge` and marked `nudged`, so it is never nudged in turn: when it
+/// ends without a result too, the card goes on hold (`workflow::apply_outcome`).
+#[allow(clippy::too_many_arguments)]
+pub fn create_nudge(db: &Db, agent_id: &str, task_id: &str, role_key: &str, session_id: &str, cwd: &str, worktree: &str, branch: &str,
+                    log_path: &str) -> Result<String> {
+    create_run(db, agent_id, task_id, role_key, "nudge", true, session_id, cwd, worktree, branch, log_path)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_run(db: &Db, agent_id: &str, task_id: &str, role_key: &str, trigger: &str, nudged: bool, session_id: &str, cwd: &str,
+              worktree: &str, branch: &str, log_path: &str) -> Result<String> {
     db.write(Some(agent_id), |w| {
         let c = w.conn();
         let now = ids::now_ms();
@@ -56,13 +72,18 @@ pub fn create_with_trigger(db: &Db, agent_id: &str, task_id: &str, role_key: &st
         let id = ids::new_id();
         c.execute(
             "INSERT INTO runs(id, created_at, updated_at, created_by, updated_by, org_id, agent_actor_id, task_id, trigger, role_key, adapter, model,
-                              status, cwd, worktree_path, branch, session_id, log_path)
-             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?3, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?11, ?12, ?13, ?14)",
-            rusqlite::params![id, now, agent_id, util::org_id(c)?, task_id, trigger, role_key, adapter, model, cwd, worktree, branch, session_id, log_path],
+                              status, cwd, worktree_path, branch, session_id, log_path, nudged)
+             VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?3, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?11, ?12, ?13, ?14, ?15)",
+            rusqlite::params![id, now, agent_id, util::org_id(c)?, task_id, trigger, role_key, adapter, model, cwd, worktree, branch, session_id, log_path,
+                              nudged as i64],
         )?;
         c.execute("UPDATE tasks SET claimed_by_run_id=?2, lease_expires_at=?3, branch=COALESCE(branch, ?4) WHERE id=?1",
                   rusqlite::params![task_id, id, now + LEASE_MS, branch])?;
-        w.insert("runs", &id, serde_json::json!({"task_id": task_id, "agent": agent_id, "role": role_key, "trigger": trigger}))?;
+        let mut diff = serde_json::json!({"task_id": task_id, "agent": agent_id, "role": role_key, "trigger": trigger});
+        if nudged {
+            diff["nudged"] = serde_json::json!(true);
+        }
+        w.insert("runs", &id, diff)?;
         Ok(id)
     })
 }

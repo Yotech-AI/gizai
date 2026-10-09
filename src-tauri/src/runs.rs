@@ -28,12 +28,13 @@ const BUFFER: usize = 500;
 pub const STOPPED_BY_QUIT: &str = "Stopped because Gizai quit.";
 
 /// Used when an agent has no allowed commands of its own; new agents start with the same list (`src/lib/agents.ts`).
-/// The read-only helpers at the end are the ones agents use in pipes.
-pub const DEFAULT_TOOLS: [&str; 28] = [
+/// The read-only helpers near the end are the ones agents use in pipes; `sleep` lets an agent wait in the foreground
+/// (for CI, a release or a deploy) between checks, as "How this run works" tells it.
+pub const DEFAULT_TOOLS: [&str; 29] = [
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(composer:*)",
     "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)",
     "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(diff:*)", "Bash(grep:*)", "Bash(jq:*)",
-    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)",
+    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)", "Bash(sleep:*)",
 ];
 
 /// What the UI hears about.
@@ -424,6 +425,8 @@ struct Resume {
     reason: String,
     /// It ended asking for a decision: what was written on the card since, told to the agent instead.
     answer: Option<String>,
+    /// Gizai's own nudge (`nudge_for`): the run ended without a result, and the agent hears `prompt::nudge_prompt`.
+    nudge: bool,
 }
 
 /// Continue: resumes a stopped run's session in its worktree, as a new run of the same agent on the same CLI. Only the
@@ -476,7 +479,7 @@ async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String
         return Err("its worktree is gone; Run starts the card fresh".into());
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
-    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason, answer })).await
+    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason, answer, nudge: false })).await
         .map_err(StartError::message)?;
     resume_pull(st, &run.agent_id);
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
@@ -488,13 +491,14 @@ async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String
     Ok(started)
 }
 
-/// A start nobody is watching (the queue): a start that can't work puts the card on hold "blocked" with the
-/// reason (it stays where it was, and its failure count doesn't change), so Jeffrey sees why, and the agent stops taking
-/// cards until a person starts or edits it. When another card's failure paused the agent while this card was starting,
-/// the card only waits again: one failure holds one card. A start that only has to wait leaves the card waiting for
-/// the next pull.
-async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger: &str) -> Option<tokio::task::JoinHandle<RunSummary>> {
-    match start_inner(st, task_id, Some(agent_id.to_string()), None, trigger, None).await {
+/// A start nobody is watching (the queue, Gizai's nudge with the session to resume): a start that can't work puts the
+/// card on hold "blocked" with the reason (it stays where it was, and its failure count doesn't change), so Jeffrey sees
+/// why, and the agent stops taking cards until a person starts or edits it. When another card's failure paused the agent
+/// while this card was starting, the card only waits again: one failure holds one card. A start that only has to wait
+/// leaves the card waiting for the next pull.
+async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger: &str, resume: Option<Resume>)
+    -> Option<tokio::task::JoinHandle<RunSummary>> {
+    match start_inner(st, task_id, Some(agent_id.to_string()), None, trigger, resume).await {
         Ok((_, done)) => Some(done),
         Err(StartError::Card(reason)) => {
             if pause_pull(st, agent_id, &reason) {
@@ -649,9 +653,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if project.repo_url.is_some() {
         crate::code::fetched(st, &project.key);
     }
-    // A card the queue starts waits when another of the agent's cards failed meanwhile: asked before its worktree is made
-    // and again before its process spawns.
-    let queued = trigger == "assigned";
+    // A card the queue or Gizai's nudge starts waits when another of the agent's cards failed meanwhile: asked before its
+    // worktree is made and again before its process spawns.
+    let queued = matches!(trigger, "assigned" | "nudge");
     let wait_if_paused = || match pull_paused(st, &agent_id) {
         Some(why) if queued => Err(StartError::Wait(format!("{} stopped taking cards: {why}", agent.name))),
         _ => Ok(()),
@@ -681,8 +685,12 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     };
     let wt_path = wt.path.to_string_lossy().to_string();
     let db_trigger = if resume.is_some() { "nudge" } else { trigger };
-    let run_id = core_runs::create_with_trigger(&st.db, &agent_id, task_id, &role, db_trigger, &session, &wt_path, &wt_path, &wt.branch,
-                                                &log_path.to_string_lossy()).map_err(|e| StartError::Other(e.to_string()))?;
+    let log = log_path.to_string_lossy();
+    let run_id = if resume.as_ref().is_some_and(|r| r.nudge) {
+        core_runs::create_nudge(&st.db, &agent_id, task_id, &role, &session, &wt_path, &wt_path, &wt.branch, &log)
+    } else {
+        core_runs::create_with_trigger(&st.db, &agent_id, task_id, &role, db_trigger, &session, &wt_path, &wt_path, &wt.branch, &log)
+    }.map_err(|e| StartError::Other(e.to_string()))?;
 
     if let Ok(sha) = worktree::rev_parse(&wt.path, "HEAD") {
         let _ = core_runs::set_base_sha(&st.db, &run_id, &sha);
@@ -724,6 +732,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
         prompt: prompt::with_rules(&match &resume {
+            Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
             Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
             Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
             None => prompt::build(&ctx, &instructions),
@@ -946,6 +955,7 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     }
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
+    let mut nudge = None;
     let agent = core_runs::get(&st.db, run_id).map(|r| r.agent_id).unwrap_or_default();
     // Claude Code couldn't start working (not logged in): not a failed run. The card goes back where it was, on hold;
     // one failure holds one card, so a card the queue started before another card's failure paused the agent only
@@ -966,6 +976,10 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
             Ok(g) => moved = g.moved_to.is_some(),
             Err(e) => eprintln!("gizai: applying the outcome of run {run_id} failed: {e}"),
         }
+        // It ended normally without its result line: Gizai continues it once (never after Stop, a limit or a failure).
+        if status == "succeeded" && verdict.is_none() {
+            nudge = nudge_for(st, run_id, task_id);
+        }
         // A failing CLI must not run through the whole queue.
         if status == "failed" && !quit {
             pause_pull(st, &agent, error.as_deref().unwrap_or("its last run failed"));
@@ -976,16 +990,68 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     (st.notify)(Note::RowsChanged("comments"));
     (st.notify)(Note::RunsChanged);
     // A slot is free and the card may now belong to another agent (Testing → QA): agents take their next cards. A card
-    // that was stopped or stayed put isn't restarted (`workflow::waiting_for`).
+    // that was stopped or stayed put isn't restarted (`workflow::waiting_for`). Gizai's nudge goes first, so the queue
+    // doesn't start the card afresh meanwhile.
     if !quit {
-        let st2 = st.clone();
-        tokio::spawn(async move { pull(&st2).await; });
+        let (st2, task, agent) = (st.clone(), task_id.to_string(), agent.clone());
+        tokio::spawn(async move {
+            if let Some(resume) = nudge {
+                start_nudge(&st2, &task, &agent, resume).await;
+            }
+            pull(&st2).await;
+        });
     }
     // In Review: a pull request the agent opened shows on the card at once, not at the next PR check.
     if moved && tasks::get(&st.db, task_id).is_ok_and(|t| t.state_category == "review") {
         crate::pulls::check_soon(st, task_id);
     }
     RunSummary { run_id: run_id.to_string(), status: status.into(), outcome: verdict.map(|v| v.outcome), cost_usd_micros: cost, error }
+}
+
+/// Gizai's nudge (GA-54): a run that ended normally without its GIZAI_RESULT line (succeeded, `no_result`) is continued
+/// once, by itself, in the same session, like Continue. Often the agent ended its message to wait for something outside
+/// the run (CI, a release, a deploy), and nothing would ever wake it up. What to resume, or None: the run was Gizai's
+/// nudge itself (its card is held stalled instead, `workflow::apply_outcome`), the card is on hold (the third run
+/// without a result holds it too), a person moved it to Backlog, Done or Cancelled, or its CLI has no session to resume
+/// or its worktree is gone.
+fn nudge_for(st: &AppState, run_id: &str, task_id: &str) -> Option<Resume> {
+    let run = core_runs::get(&st.db, run_id).ok()?;
+    if run.status != "succeeded" || run.outcome.as_deref() != Some("no_result") || run.nudged {
+        return None;
+    }
+    let task = tasks::get(&st.db, task_id).ok()?;
+    if task.hold.is_some() || task.archived_at.is_some() || matches!(task.state_category.as_str(), "backlog" | "done" | "cancelled") {
+        return None;
+    }
+    let cli = crate::clis::of_agent(st, run.adapter.as_deref()).ok()?;
+    if !Kind::parse(&cli.kind).is_some_and(Kind::can_resume) || !run.worktree_path.as_deref().is_some_and(|p| Path::new(p).is_dir()) {
+        return None;
+    }
+    let session = run.session_id.filter(|s| !s.is_empty())?;
+    Some(Resume { session, cli, reason: "it ended without a result".into(), answer: None, nudge: true })
+}
+
+/// Starts Gizai's nudge (`nudge_for`) only when a start is allowed now: Gizai isn't quitting, agents aren't paused in
+/// Settings, the agent's pull isn't paused, the agent is active, within its budget and its cards at once, and "Runs at
+/// once" has room. Otherwise nothing changes: the run stays without a result. Like the queue's start, one that can't
+/// work holds the card "blocked" (`start_background`). Boxed, like `pull`: a finishing run starts it (start → finish →
+/// nudge → start).
+fn start_nudge<'a>(st: &'a AppState, task_id: &'a str, agent_id: &'a str, resume: Resume)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+    Box::pin(async move {
+        if !takes_cards(st, agent_id) {
+            return;
+        }
+        let Ok(agent) = team::agent(&st.db, agent_id) else { return };
+        let busy = st.runs.live.lock().unwrap().values().filter(|l| l.agent_id == agent_id).count() as i64;
+        if busy >= agent.max_runs.max(1) {
+            return;
+        }
+        // The start checks the rest: active, budget, Runs at once (a wait, so nothing changes).
+        if start_background(st, task_id, agent_id, "nudge", Some(resume)).await.is_some() {
+            eprintln!("gizai: a run on card {task_id} ended without a result: continued it once");
+        }
+    })
 }
 
 /// The last lines the CLI wrote to stderr (argument errors, login problems), at most 400 characters.
@@ -1056,7 +1122,7 @@ async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSu
             // Read again each time: the cards this pull started are claimed now, and others may have moved or been held.
             let busy = |t: &String| st.runs.live.lock().unwrap().values().any(|l| &l.task_id == t) || st.runs.starting.lock().unwrap().contains(t);
             let Some(task) = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default().into_iter().find(|t| !busy(t)) else { break };
-            match start_background(st, &task, &a.actor_id, "assigned").await {
+            match start_background(st, &task, &a.actor_id, "assigned", None).await {
                 Some(done) => started.push((task, done)),
                 None => break,
             }

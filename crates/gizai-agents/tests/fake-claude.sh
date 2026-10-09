@@ -10,6 +10,10 @@
 # FAKE_REFUSED_THEN_HANG prints run-refused up to its result line, then hangs like FAKE_HANG (a run stopped part-way).
 # FAKE_TEMP=1 in its environment (a CLI's environment line, GA-48) also writes TMPDIR, TMP and TEMP, whether that
 # folder is there and the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty.
+# FAKE_NO_RESULT in the prompt, or FAKE_NO_RESULT=1 in its environment (every run, Gizai's nudge too), finishes like
+# run-no-result: the agent pushes, starts a background wait for CI and ends its message without the GIZAI_RESULT line
+# (GA-54). FAKE_GATE=<file> in its environment waits (at most 30 s) until that file exists before it finishes, so a test
+# can change things while the run is still live.
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -33,6 +37,8 @@ if [ -n "${FAKE_TEMP:-}" ]; then
 fi
 fixture="$here/fixtures/run-ok.jsonl"
 case "$prompt" in *FAKE_REFUSED*) fixture="$here/fixtures/run-refused.jsonl" ;; esac
+case "$prompt" in *FAKE_NO_RESULT*) fixture="$here/fixtures/run-no-result.jsonl" ;; esac
+if [ -n "${FAKE_NO_RESULT:-}" ]; then fixture="$here/fixtures/run-no-result.jsonl"; fi
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
 case "$prompt" in *FAKE_REFUSED_THEN_HANG*) prompt=refusedhang ;; esac
 if [ "$prompt" = "refusedhang" ]; then
@@ -69,6 +75,9 @@ if [ "$prompt" = "orphan" ]; then
 fi
 if [ "$prompt" = "leftover" ]; then
   ( trap '' TERM; exec sleep 600 ) > /dev/null 2>&1 &
+fi
+if [ -n "${FAKE_GATE:-}" ]; then
+  for _ in $(seq 600); do [ -e "$FAKE_GATE" ] && break; sleep 0.05; done
 fi
 while IFS= read -r line; do
   printf '%s\n' "$line"

@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"S1","model":"claude-opus-5-5","tools":["Read","Edit","Bash"]}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Pushing the release branch."},{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"git push origin HEAD","description":"Push the branch"}}]},"session_id":"S1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"Everything up-to-date","is_error":false}]},"session_id":"S1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu2","name":"Bash","input":{"command":"gh run watch","description":"Wait for CI","run_in_background":true}}]},"session_id":"S1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu2","content":"Command running in background with ID: b1","is_error":false}]},"session_id":"S1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"CI is running. I'll check the release when it finishes."}]},"session_id":"S1"}
+{"type":"result","subtype":"success","is_error":false,"result":"CI is running. I'll check the release when it finishes.","total_cost_usd":0.12,"num_turns":4,"session_id":"S1","usage":{"input_tokens":9000,"output_tokens":300}}

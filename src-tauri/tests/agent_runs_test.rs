@@ -322,6 +322,8 @@ fn new_agents_start_with_the_longer_list_and_the_two_lists_are_the_same() {
         let rule = format!("Bash({helper}:*)");
         assert!(rust.contains(&rule.as_str()), "{rule} missing");
     }
+    // GA-54: and sleep, so an agent can wait in the foreground between checks
+    assert!(rust.contains(&"Bash(sleep:*)"), "sleep missing: {rust:?}");
     let mut unique = rust.clone();
     unique.sort();
     unique.dedup();

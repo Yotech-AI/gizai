@@ -15,8 +15,8 @@ const { Board } = await import("./Board");
 
 const states: WorkflowState[] = [
   { id: "s-todo", name: "To do", category: "ready", sortKey: "a1" },
-  { id: "s-review", name: "Review", category: "review", ownerRole: "human", sortKey: "a4" },
-  { id: "s-deploy", name: "Deploy", category: "deploy", ownerRole: "human", sortKey: "a4V" },
+  { id: "s-review", name: "Review", category: "review", sortKey: "a4" },
+  { id: "s-deploy", name: "Deploy", category: "deploy", sortKey: "a4V" },
   { id: "s-done", name: "Done", category: "done", sortKey: "a5" },
   { id: "s-cancelled", name: "Cancelled", category: "cancelled", sortKey: "a6" },
 ];

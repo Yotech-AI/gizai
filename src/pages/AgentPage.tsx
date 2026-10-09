@@ -1,12 +1,14 @@
 // An agent's page (Paperclip's agent page): who it is, what it is doing, how its runs went, and its settings.
 import { useState } from "react";
 import { Check, CircleAlert, MessagesSquare, Pause, Pencil, Play, Plus, X } from "lucide-react";
-import { agentNextTask, agentRuns, agentStats, getAgent, listTasks, setAgentStatus, startRun } from "../api";
+import { agentNextTask, agentRuns, agentStats, getAgent, getTeam, listTasks, setAgentStatus, startRun } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { relTime } from "../lib/format";
-import { roleLabel, wakeupLabel } from "../lib/agents";
+import { roleLabel } from "../lib/agents";
+import { andList, boardOrder } from "../lib/columns";
+import { useCurrentTeam } from "../lib/team";
 import { cliName } from "../lib/clis";
 import { useClis } from "../lib/useClis";
 import { formatCost, dayRate } from "../lib/runs";
@@ -53,12 +55,17 @@ export function AgentPage({ id }: { id: string }) {
   const { data: runs } = useData(() => agentRuns(id, 20), [id]);
   const clis = useClis();
   const { data: tasks } = useData(() => listTasks({}));
+  const [teamId] = useCurrentTeam();
+  const { data: team } = useData(() => getTeam(teamId), [teamId]);
   const live = useLiveRuns().filter((r) => r.agentId === id);
   const open = useDrawer();
   const [msg, setMsg] = useState<string | null>(null);
   if (error) return <div className="error-banner">{error}</div>;
   if (!agent) return null;
   const taskOf = (r: Run) => tasks?.find((t) => t.id === r.taskId);
+  // The columns it is on decide when it works (Team → Workflow); shown when the agent is on the team picked there.
+  const columns = team?.members.some((m) => m.actorId === id) ? boardOrder(team.states).filter((s) => s.agentIds?.includes(id)) : null;
+  const onColumns = !columns ? "" : columns.length ? ` · on ${andList(columns.map((s) => `${s.name} (${s.auto ? "Auto" : "Manual"})`))}` : " · on no column";
   const state = live.length ? "running" : agent.status === "paused" ? "paused" : "idle";
   const last = runs?.[0];
   const monthStart = (() => { const n = new Date(); return Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), 1); })();
@@ -69,7 +76,7 @@ export function AgentPage({ id }: { id: string }) {
     setMsg(null);
     try {
       const task = await agentNextTask(id);
-      if (!task) { setMsg(`Nothing to pick up: no card routes to ${agent.name} right now.`); return; }
+      if (!task) { setMsg(`Nothing to pick up: no card waits for ${agent.name} in an Auto column right now.`); return; }
       await startRun(task, id);
     } catch (e) { setMsg(String(e)); }
   };
@@ -81,7 +88,7 @@ export function AgentPage({ id }: { id: string }) {
           <div className="entity-head">
             <Avatar name={agent.name} kind="agent" size="xl" role={agent.roleKey} />
             <div className="names"><h1>{agent.name}</h1>
-              <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""}{agent.chatEnabled && agent.boardCheckMinutes ? ` · checks the board every ${agent.boardCheckMinutes} min` : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""} · {wakeupLabel(agent.wakeup, agent.heartbeatMinutes)}</p></div>
+              <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""}{agent.chatEnabled && agent.boardCheckMinutes ? ` · checks the board every ${agent.boardCheckMinutes} min` : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""}{onColumns}</p></div>
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>
@@ -111,7 +118,7 @@ export function AgentPage({ id }: { id: string }) {
                   <span className="right">{relTime(last.endedAt ?? last.createdAt)}</span></div>
                 <div className="run-summary">{last.summaryMd ? <MarkdownView md={last.summaryMd} /> : <span className="muted">{last.error ?? "No summary."}</span>}</div>
               </div>
-            ) : <div className="empty"><b>No runs yet.</b><span>{agent.name} starts when you press Run, when a card is assigned to it, or on its heartbeat.</span></div>}
+            ) : <div className="empty"><b>No runs yet.</b><span>{agent.name} starts when you press Run, or by itself on the cards of the Auto columns it is on (Team → Workflow).</span></div>}
           </section>
 
           {days && days.length > 0 && (

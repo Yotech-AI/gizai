@@ -34,11 +34,11 @@ const { filterTasks } = await import("../lib/taskView");
 const { describeChange } = await import("../lib/activity");
 
 const team: Team = {
-  id: "team", name: "Software", members: [], labels: [], rules: [],
+  id: "team", name: "Software", members: [], labels: [],
   states: [
     { id: "s-todo", name: "To do", category: "ready", sortKey: "a1" },
-    { id: "s-review", name: "Review", category: "review", ownerRole: "human", sortKey: "a4" },
-    { id: "s-deploy", name: "Deploy", category: "deploy", ownerRole: "human", sortKey: "a4V" },
+    { id: "s-review", name: "Review", category: "review", sortKey: "a4" },
+    { id: "s-deploy", name: "Deploy", category: "deploy", sortKey: "a4V" },
     { id: "s-done", name: "Done", category: "done", sortKey: "a5" },
   ],
 };

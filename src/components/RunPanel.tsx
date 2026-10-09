@@ -78,7 +78,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
   const [showLast, setShowLast] = useState(false);
   const events = useEvents(live ? live.runId : showLast && run ? run.id : null);
   const agents = team.members.filter((m) => m.kind === "agent" && m.status === "active");
-  const [agentId, setAgentId] = useState<string>(""); // "" = let Gizai choose (assigned agent, else routing)
+  const [agentId, setAgentId] = useState<string>(""); // "" = let Gizai choose (assigned agent, else the column's first agent)
   const [suggested, setSuggested] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -129,7 +129,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
       </div>
       <div className="run-summary">
         {agents.length === 0 ? <span className="muted">No agents yet. Add them on the <a href="#/team">Team</a> page; then Run starts one on this card.</span>
-          : !run ? <span className="muted">{task.hold ? holdLine : "No agent has worked on this card yet. Run starts the agent chosen here (or the one the routing picks) in its own git worktree."}</span>
+          : !run ? <span className="muted">{task.hold ? holdLine : "No agent has worked on this card yet. Run starts the agent chosen here (or the card's agent, else the first agent on its column) in its own git worktree."}</span>
           : <>
             {task.hold && <div className="muted" style={{ marginBottom: 6 }}>{holdLine}</div>}
             {run.summaryMd ? <MarkdownView md={run.summaryMd} /> : <span className="run-reason">{runReason(run) ?? "No summary."}</span>}
@@ -147,7 +147,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`
             : task.hold ? "On hold" : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
           <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} style={{ width: 220, height: 28 }}>
-            <option value="">{suggestedName ? `${suggestedName} (routed)` : "Choose an agent"}</option>
+            <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
             {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}
           </select>
           {continuable && <button className="btn sm primary" onClick={resume}><StepForward className="icon" />Continue</button>}

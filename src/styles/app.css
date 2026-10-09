@@ -126,18 +126,72 @@ a.member:hover { border-color: var(--line-2); }
 .member .fn { color: var(--text-3); font-size: var(--fs-sm); }
 .member .now { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-2); font-size: var(--fs-sm); }
 .member .tags { display: flex; gap: 5px; flex-wrap: wrap; }
-.flow { display: flex; overflow-x: auto; }
-.stage { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-left: 0; background: var(--raised); }
-.stage:first-child { border-left: 1px solid var(--line); border-radius: var(--radius-l) 0 0 var(--radius-l); }
-.stage:last-child { border-radius: 0 var(--radius-l) var(--radius-l) 0; }
-.stage .nm { display: flex; align-items: center; gap: 7px; font-weight: 600; }
-.stage .by { color: var(--text-2); font-size: var(--fs-sm); }
-.stage .lim { color: var(--text-3); font-size: var(--fs-xs); }
 .stage-name { width: 100%; min-width: 0; margin-left: -4px; padding: 1px 4px; border: 1px solid transparent; border-radius: var(--radius-s); background: transparent; color: var(--text); font: inherit; font-weight: 600; }
 .stage-name:hover { border-color: var(--line-2); }
 .stage-name:focus { outline: none; border-color: var(--accent); background: var(--bg); }
-.rule { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); }
-.rule:first-child { border-top: 0; }
+
+/* ---------- Team → Workflow: the column editor ---------- */
+.wf { display: flex; flex-direction: column; gap: 8px; }
+.wf-col { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); }
+.wf-col.drop { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--raised); }
+.wf-col.dragging { z-index: 5; box-shadow: var(--shadow-drag); border-color: var(--line-2); }
+.wf-main { display: grid; grid-template-columns: auto minmax(130px, 190px) minmax(0, 1fr) auto auto; align-items: center; gap: 10px; }
+.wf-grip { display: grid; place-items: center; width: 22px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: grab; touch-action: none; }
+.wf-grip:hover { color: var(--text); background: var(--hover); }
+.wf-grip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.wf-col.dragging .wf-grip { cursor: grabbing; }
+.wf-name { display: flex; align-items: center; gap: 7px; min-width: 0; font-weight: 600; }
+.wf-agents { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.wf-you { color: var(--text-2); font-weight: 500; }
+.wf-flow { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.wf-next { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; }
+.wf-next .select { width: auto; max-width: 220px; height: 28px; }
+.wf-bin { display: inline-flex; }
+.wf-line, .wf-err, .wf-confirm { margin-left: 32px; }
+.wf-line { margin-top: 6px; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.45; }
+.wf-err { margin-top: 4px; color: var(--danger); font-size: var(--fs-sm); line-height: 1.45; }
+.wf-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
+.wf-confirm-move { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.wf-confirm-move .select { width: auto; height: 28px; }
+.wf-confirm-actions { display: inline-flex; gap: 6px; margin-left: auto; }
+.agent-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; max-width: 100%; padding: 0 3px 0 3px; border: 1px solid var(--line-2); border-radius: var(--radius-s); background: var(--bg); color: var(--text); font-size: var(--fs-sm); }
+.agent-chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; padding-right: 3px; }
+.agent-chip.paused { opacity: .62; }
+.agent-chip .chip-x { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: pointer; }
+.agent-chip .chip-x:hover { background: var(--hover); color: var(--text); }
+.agent-chip .chip-x:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.agent-chip .chip-x .icon { width: 13px; height: 13px; }
+.drag-chip { padding-right: 8px; background: var(--overlay); box-shadow: var(--shadow-drag); cursor: grabbing; }
+.pop .pop-empty { padding: 6px 8px; color: var(--text-3); font-size: var(--fs-sm); }
+.pop .opt .faint { margin-left: auto; font-size: var(--fs-xs); }
+@media (max-width: 900px) {
+  .wf-main { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .wf-agents, .wf-flow { grid-column: 2 / 4; justify-content: flex-start; }
+  .wf-bin { grid-column: 3; grid-row: 1; }
+}
+
+/* ---------- Team → Labels, and New label… in the label pickers ---------- */
+.labels .label-row { padding: 8px 14px; border-top: 1px solid var(--line); }
+.labels .label-row:first-child { border-top: 0; }
+.label-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.label-main .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.label-dot-btn { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: none; cursor: pointer; }
+.label-dot-btn:hover, .label-dot-btn:focus-visible { border-color: var(--line-2); outline: none; }
+.label-name { width: 260px; max-width: 100%; flex: 0 1 auto; }
+.label-cards { margin-left: auto; color: var(--text-3); font-size: var(--fs-sm); }
+.label-new .input { width: 220px; height: 28px; }
+.label-new .label-main .dot { margin: 0 7px; }
+.pop-swatches { padding: 6px 4px; }
+.labels .wf-confirm, .labels .wf-err { margin-left: 34px; }
+.new-label-form { display: inline-flex; flex-direction: column; gap: 4px; min-width: 200px; padding: 2px; }
+.pop .new-label-form { display: flex; padding: 4px; }
+.new-label-form .input { height: 28px; }
+.new-label-form .hint { color: var(--text-3); font-size: var(--fs-xs); }
+.new-label-form .error { color: var(--danger); font-size: var(--fs-xs); }
+.label-pill.new-label { border-style: dashed; color: var(--text-3); cursor: pointer; }
+.label-pill.new-label:hover { color: var(--text); border-color: var(--accent); }
+.label-pill.new-label .icon, .pop .opt.new-label .icon { width: 13px; height: 13px; }
+.pop .opt.new-label { color: var(--text-2); }
 .rule-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); color: var(--text-2); }
 .rule-add .select, .rule-add .input { width: auto; }
 .col-add { margin-top: 10px; }
@@ -207,6 +261,17 @@ a.member:hover { border-color: var(--line-2); }
 .chat-composer .chat-col { padding-top: 12px; padding-bottom: 14px; }
 @media (max-width: 1100px) { .chat { grid-template-columns: 220px minmax(0, 1fr); } }
 .org-panel { padding: 6px 0; background: var(--bg); }
+/* Branch names with × (shown on hover or focus; off while the branch has agents), Add branch, a dragged agent card. */
+.org-dept-name { display: inline-flex; align-items: center; gap: 2px; }
+.org-dept-x .btn { width: 20px; height: 20px; margin-right: -6px; opacity: 0; transition: opacity .12s; }
+.org-dept-x .btn .icon { width: 13px; height: 13px; }
+.org-dept:hover .org-dept-x .btn, .org-dept-x .btn:focus-visible { opacity: 1; }
+.org-dept:hover .org-dept-x .btn:disabled { opacity: .45; }
+@media (hover: none) { .org-dept-x .btn { opacity: 1; } }
+.org-branch-form { display: flex; flex-direction: column; gap: 6px; width: 204px; }
+.org-branch-form .error { color: var(--danger); font-size: var(--fs-xs); line-height: 1.4; }
+.org-branch-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.org-node.dragging { opacity: .45; }
 
 /* ---------- Settings → GitHub ---------- */
 .gh-line { display: flex; align-items: flex-start; gap: 8px; line-height: 1.5; color: var(--text); }

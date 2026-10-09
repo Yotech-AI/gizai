@@ -172,7 +172,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
       onClose={onClose} dirty={JSON.stringify(d) !== JSON.stringify(initial)} error={err} hint="Ctrl+Enter saves"
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !d.name.trim()} onClick={save}>{isNew ? "Add agent" : "Save changes"}</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }}>
-        <FormSection title="Agent" text="Its name and the job it does. The role decides which cards it takes.">
+        <FormSection title="Agent" text="Its name and the job it does. The role gives it its starting instructions, its branch in the organisation chart and its usual columns.">
           <Field label="Name" htmlFor="a-name"><input id="a-name" className="input" autoFocus={isNew} value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="Frontend Agent" /></Field>
           <Field label="Role" htmlFor="a-role">
             <div className="input-group">
@@ -234,16 +234,9 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
             </span>
           </Field>
         </FormSection>
-        <FormSection title="Wakes up" text="When the agent starts work without you pressing Run, and on how many cards at once.">
-          <Field label="Wake-up" wide>
-            <div className="radios" role="radiogroup" aria-label="Wakes up">
-              {([["manual", "Only when I press Run"], ["on_assign", "When a card is routed or assigned to it"], ["heartbeat", "On a heartbeat"]] as const).map(([k, l]) => (
-                <label key={k}><input type="radio" name="wake" checked={d.wakeup === k} onChange={() => set("wakeup", k)} /> {l}</label>
-              ))}
-              {d.wakeup === "heartbeat" && (
-                <span className="inline">every <input className="input" aria-label="Minutes" type="number" min={1} max={1440} style={{ width: 90 }} value={d.minutes} onChange={(e) => set("minutes", e.target.value)} /> minutes it looks for its next card</span>
-              )}
-            </div></Field>
+        <FormSection title="Work" text={isNew
+          ? "The columns it is on decide when it works (Team → Workflow). A new agent goes on its role's usual columns: builders on To do and In progress, QA on Testing, DevOps on Deploy, the Team Lead on none."
+          : "The columns it is on decide when it works (Team → Workflow): on an Auto column it takes cards by itself, on a Manual one Run starts it."}>
           <Field label="Cards at once" htmlFor="a-runs" hint="1 to 10. Each card gets its own git worktree; Settings sets the limit for all agents together."
             warn={d.maxRuns.trim() !== "" && !(Number(d.maxRuns) >= 1 && Number(d.maxRuns) <= 10) ? "Pick a number from 1 to 10" : null}>
             <input id="a-runs" className="input" type="number" min={1} max={10} style={{ width: 90 }} value={d.maxRuns} onChange={(e) => set("maxRuns", e.target.value)} /></Field>

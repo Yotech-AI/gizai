@@ -50,7 +50,8 @@ export const DEFAULT_TOOLS = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(gi
 /** How the agent form opens for a new agent from elsewhere (the Chat page's Team Lead, an empty place on the org chart). */
 export type AgentPreset = { name?: string; role?: string; chat?: boolean };
 
-export type AgentDraft = { name: string; role: string; model: string; wakeup: Wakeup; minutes: string; instructions: string;
+/** No wake-up or heartbeat: the columns an agent is on decide when it works (GA-49). The Team Lead's board check stays. */
+export type AgentDraft = { name: string; role: string; model: string; instructions: string;
   permissionMode: string; tools: string; budget: string; chat: boolean; effort: string; maxRuns: string;
   /** The Team Lead's board check (with Chat on), every `boardMinutes` minutes. */
   boardCheck: boolean; boardMinutes: string;
@@ -63,8 +64,8 @@ export type AgentDraft = { name: string; role: string; model: string; wakeup: Wa
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
-    name: m?.name ?? preset?.name ?? "", role: m?.roleKey ?? preset?.role ?? "frontend", model: m?.model ?? "", wakeup: (m?.wakeup as Wakeup) ?? "manual",
-    minutes: String(m?.heartbeatMinutes ?? 15), instructions: m?.instructionsMd ?? "", permissionMode: m?.permissionMode ?? "acceptEdits",
+    name: m?.name ?? preset?.name ?? "", role: m?.roleKey ?? preset?.role ?? "frontend", model: m?.model ?? "",
+    instructions: m?.instructionsMd ?? "", permissionMode: m?.permissionMode ?? "acceptEdits",
     tools: (m ? m.allowedTools : DEFAULT_TOOLS).join("\n"), budget: microsToDollars(m?.budgetUsdMicros), chat: m ? !!m.chatEnabled : !!preset?.chat,
     effort: m?.effort ?? "", maxRuns: String(m?.maxRuns ?? 1), cli: m?.adapter || "claude_code",
     boardCheck: !!m?.boardCheckMinutes, boardMinutes: String(m?.boardCheckMinutes ?? 15),
@@ -81,8 +82,8 @@ export function foldersFrom(list: AgentFolder[]): AgentFolder[] {
 export function inputFrom(d: AgentDraft): AgentInput {
   return {
     name: d.name, roleKey: d.role, model: d.model.trim() || null, instructionsMd: d.instructions.trim() ? d.instructions : null,
-    permissionMode: d.permissionMode, allowedTools: parseTools(d.tools), wakeup: d.wakeup,
-    heartbeatMinutes: d.wakeup === "heartbeat" ? Number(d.minutes) || 0 : Number(d.minutes) || null,
+    // No wake-up and no heartbeat: an old setting goes on save (it changed nothing since GA-49).
+    permissionMode: d.permissionMode, allowedTools: parseTools(d.tools),
     budgetUsdMicros: dollarsToMicros(d.budget), adapter: d.cli || "claude_code", chatEnabled: d.chat, effort: d.effort || null,
     maxRuns: /^\d+$/.test(d.maxRuns.trim()) ? Number(d.maxRuns) : null,
     // The board check belongs to the agent with Chat on: off with Chat.

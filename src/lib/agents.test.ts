@@ -41,8 +41,20 @@ import { draftFrom, inputFrom, ROLES, roleLabel } from "./agents";
 describe("agent drafts", () => {
   it("start from a preset: the Chat page's Team Lead", () => {
     const d = draftFrom(null, { name: "Team Lead", role: "lead", chat: true });
-    expect(d).toMatchObject({ name: "Team Lead", role: "lead", chat: true, wakeup: "manual" });
+    expect(d).toMatchObject({ name: "Team Lead", role: "lead", chat: true });
     expect(inputFrom(d)).toMatchObject({ name: "Team Lead", roleKey: "lead", chatEnabled: true });
+  });
+  it("have no wake-up or heartbeat: the columns decide when an agent works (GA-53)", () => {
+    const m = { actorId: "a", name: "Backend Agent", kind: "agent", roleKey: "backend", handle: "b", status: "active", isLead: false, allowedTools: [],
+      chatEnabled: false, wakeup: "heartbeat", heartbeatMinutes: 20 };
+    const d = draftFrom(m);
+    expect(d).not.toHaveProperty("wakeup");
+    expect(d).not.toHaveProperty("minutes");
+    // an old setting isn't sent back, so it goes on save
+    const input = inputFrom(d);
+    expect(input).not.toHaveProperty("wakeup");
+    expect(input).not.toHaveProperty("heartbeatMinutes");
+    expect(inputFrom(draftFrom(null))).not.toHaveProperty("wakeup");
   });
   it("keep an agent's chat setting and send it back", () => {
     const m = { actorId: "a", name: "Backend Agent", kind: "agent", roleKey: "backend", handle: "b", status: "active", isLead: false, allowedTools: [], chatEnabled: false };

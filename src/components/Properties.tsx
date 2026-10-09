@@ -8,6 +8,7 @@ import type { Person, Task, Team } from "../types";
 import { PRIORITY_NAMES, PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
 import { Popover } from "./Popover";
+import { NewLabel } from "./NewLabel";
 
 const HOLD_NAMES: Record<string, string> = {
   needs_decision: "Needs your decision", stalled: "Stalled", merge_conflict: "Merge conflict",
@@ -48,8 +49,12 @@ export function Properties({ task, team, people, onError, onClose, readOnly }: {
           <input type="checkbox" checked={testing} disabled={readOnly} onChange={(e) => run(updateTask(task.id, { testing: e.target.checked }))} />Test before Review</label>)}
         {row("Labels", pick("Labels", task.labels.length ? "" : " none",
           task.labels.length ? task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>) : "No labels",
-          () => team.labels.map((l) => { const on = task.labels.some((x) => x.id === l.id); return (
-            <button key={l.id} className="opt" onClick={() => toggleLabel(l.id)}><span className="dot" style={{ width: 8, height: 8, borderRadius: "50%", background: l.color ?? "var(--text-3)" }} />{l.name}{on && <Check className="icon tick" />}</button>); }),
+          () => (<>
+            {team.labels.map((l) => { const on = task.labels.some((x) => x.id === l.id); return (
+              <button key={l.id} className="opt" onClick={() => toggleLabel(l.id)}><span className="dot" style={{ width: 8, height: 8, borderRadius: "50%", background: l.color ?? "var(--text-3)" }} />{l.name}{on && <Check className="icon tick" />}</button>); })}
+            {team.labels.length > 0 && <div className="sep" />}
+            <NewLabel labels={team.labels} onCreated={(l) => setTaskLabels(task.id, [...task.labels.map((x) => x.id), l.id])} />
+          </>),
           { flexWrap: "wrap" }))}
         {row("Assignee", pick("Assignee", task.assigneeName ? "" : " none",
           task.assigneeName ? <><Avatar name={task.assigneeName} kind={task.assigneeKind} size="sm" />{task.assigneeName}</> : "Unassigned",

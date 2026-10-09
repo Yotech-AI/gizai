@@ -93,7 +93,7 @@ pub fn pull_number(url: &str) -> Option<u64> {
 
 /// gh without prompts, colours or update checks.
 pub(crate) fn gh_command(gh: &Path) -> Command {
-    let mut cmd = Command::new(gh);
+    let mut cmd = crate::os::command(gh);
     cmd.env("GH_PROMPT_DISABLED", "1").env("GH_NO_UPDATE_NOTIFIER", "1").env("GH_NO_EXTENSION_UPDATE_NOTIFIER", "1")
         .env("GH_SPINNER_DISABLED", "1").env("NO_COLOR", "1").env("CLICOLOR", "0").env("GIT_TERMINAL_PROMPT", "0");
     cmd

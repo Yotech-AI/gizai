@@ -3,20 +3,22 @@
 //!   work. GitHub answers `/releases/latest` with the newest release that is neither a draft nor a pre-release.
 //! - An update builds that release from source. A shallow fetch of its tag goes into a folder of its own, which is kept
 //!   so the next build is quicker. Then the release's own installer builds it (`install.sh --build-only`) and installs
-//!   it (`install.sh --skip-build`), so every release builds and installs the way its own version needs.
-//! - Every command writes to the update's log and never prompts. Stop ends it with everything it started.
+//!   it (`install.sh --skip-build`), so every release builds and installs the way its own version needs. On Windows the
+//!   installer is `install.ps1` (`-BuildOnly`, then `-SkipBuild`), run with Windows PowerShell.
+//! - Every command writes to the update's log and never prompts. Stop ends it with everything it started (its process
+//!   group; a Job Object on Windows, see `os::Tree`).
 use std::ffi::OsStr;
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::connection::{self, Problem};
+use crate::os::{self, End, Tree};
 
 /// Gizai's own repository: its releases and their source (GIZAI_REPO changes it, as it does for install.sh).
 pub const REPO: &str = "https://github.com/Yotech-AI/gizai.git";
@@ -131,7 +133,7 @@ pub fn latest_release_url(owner: &str, name: &str) -> String {
 /// The answer is GitHub's (see `latest_release_url`); an http:// or file:// URL works too (a test's fake release).
 /// Ok(None): there is no release yet.
 pub fn latest_release(url: &str, user_agent: &str, limit: Duration) -> Result<Option<Release>, Problem> {
-    let mut cmd = Command::new("curl");
+    let mut cmd = os::command("curl");
     // -q first: your ~/.curlrc plays no part
     cmd.args(["-q", "--silent", "--show-error", "--location", "--proto", "=https,http,file", "--proto-redir", "=https"])
         .args(["--max-time", &limit.as_secs().max(1).to_string()])
@@ -169,18 +171,51 @@ fn curl_problem(said: &str, url: &str, limit: Duration) -> Problem {
     }
 }
 
-/// The prefix install.sh installed the Gizai at `exe` into: `<prefix>/lib/gizai/gizai` gives `<prefix>`. None for a
-/// Gizai that runs from anywhere else (a build in a checkout's target/, a test build): an update never installs there.
+/// The prefix the installer installed the Gizai at `exe` into. None for a Gizai that runs from anywhere else (a build in
+/// a checkout's target/, a test build): an update never installs there. The layouts:
+/// - Linux (install.sh): `<prefix>/lib/gizai/gizai`.
+/// - macOS (install.sh): the same, a link into `<prefix>/lib/gizai/Gizai.app`; started from the Dock or Finder Gizai is
+///   `<prefix>/lib/gizai/Gizai.app/Contents/MacOS/gizai`. `exe` is resolved first (std's `current_exe` doesn't follow
+///   links on macOS), and both give `<prefix>`.
+/// - Windows (install.ps1): `<prefix>\gizai.exe`, in a folder that holds install.ps1's marker `gizai-installed.txt` (a
+///   build in target\release has none).
 pub fn install_prefix(exe: &Path) -> Option<PathBuf> {
-    let lib_gizai = exe.parent()?;
-    let lib = lib_gizai.parent()?;
-    let named = exe.file_name()? == "gizai" && lib_gizai.file_name()? == "gizai" && lib.file_name()? == "lib";
-    named.then(|| lib.parent().map(Path::to_path_buf)).flatten()
+    #[cfg(windows)]
+    {
+        let dir = exe.parent()?;
+        let installed = exe.file_name()?.eq_ignore_ascii_case("gizai.exe") && dir.join("gizai-installed.txt").is_file();
+        installed.then(|| dir.to_path_buf())
+    }
+    #[cfg(not(windows))]
+    {
+        #[cfg(target_os = "macos")]
+        let exe = &mac_exe(exe);
+        let lib_gizai = exe.parent()?;
+        let lib = lib_gizai.parent()?;
+        let named = exe.file_name()? == "gizai" && lib_gizai.file_name()? == "gizai" && lib.file_name()? == "lib";
+        named.then(|| lib.parent().map(Path::to_path_buf)).flatten()
+    }
+}
+
+/// macOS: `exe` with its links resolved, and Gizai.app's own binary (`<dir>/Gizai.app/Contents/MacOS/gizai`) taken as
+/// the `<dir>/gizai` that install.sh links to it.
+#[cfg(target_os = "macos")]
+fn mac_exe(exe: &Path) -> PathBuf {
+    let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
+    let in_app = exe.file_name().is_some_and(|n| n == "gizai") && exe.parent().is_some_and(|d| d.ends_with("Gizai.app/Contents/MacOS"));
+    let link = exe.ancestors().nth(3).filter(|_| in_app).map(|app| app.with_file_name("gizai"));
+    link.unwrap_or(exe)
+}
+
+/// The Gizai binary installed into `prefix`: `<prefix>/lib/gizai/gizai` (on macOS a link into Gizai.app, which
+/// install.sh keeps), on Windows `<prefix>\gizai.exe`.
+pub fn installed_exe(prefix: &Path) -> PathBuf {
+    if cfg!(windows) { prefix.join("gizai.exe") } else { prefix.join("lib/gizai/gizai") }
 }
 
 /// The version the Gizai installed into `prefix` says it is: "gizai 0.1.6" from `gizai --version` gives "0.1.6".
 pub fn installed_version(prefix: &Path) -> Option<String> {
-    let mut cmd = Command::new(prefix.join("lib/gizai/gizai"));
+    let mut cmd = os::command(installed_exe(prefix));
     cmd.arg("--version");
     let (ok, out, _) = crate::github::run(cmd, None, Duration::from_secs(10)).ok()?;
     let word = out.split_whitespace().nth(1)?;
@@ -207,26 +242,27 @@ pub fn source_version(dir: &Path) -> Option<String> {
 #[derive(Clone, Default)]
 pub struct Stop {
     asked: Arc<AtomicBool>,
-    /// The process group of the command that runs now (0: none).
-    group: Arc<AtomicI32>,
+    /// The process group (on Windows the job) of the command that runs now (None: none).
+    tree: Arc<Mutex<Option<Tree>>>,
 }
 
 impl Stop {
-    /// SIGTERM to the process group of the command that runs now (SIGKILL follows after 5 seconds).
+    /// SIGTERM to the process group of the command that runs now (SIGKILL follows after 5 seconds). On Windows its job
+    /// ends at once (see `os::End`).
     pub fn stop(&self) {
         self.asked.store(true, Ordering::SeqCst);
-        signal(self.group.load(Ordering::SeqCst), libc::SIGTERM);
+        if let Some(tree) = self.tree.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            tree.end(End::Terminate);
+        }
     }
 
     pub fn asked(&self) -> bool {
         self.asked.load(Ordering::SeqCst)
     }
-}
 
-fn signal(pgid: i32, sig: i32) {
-    if pgid > 1 {
-        // SAFETY: a plain syscall; a negative pid addresses the process group started for the command.
-        unsafe { libc::kill(-pgid, sig); }
+    /// The command that runs now (None: none).
+    fn now(&self, tree: Option<Tree>) {
+        *self.tree.lock().unwrap_or_else(|p| p.into_inner()) = tree;
     }
 }
 
@@ -301,7 +337,7 @@ pub fn get_source(repo: &str, tag: &str, dir: &Path, log: &Log, stop: &Stop) -> 
 /// git in `dir` that never looks for a repository above it, so a broken one here can't send it into a checkout around
 /// the data folder.
 fn git(dir: &Path, args: &[&str]) -> Command {
-    let mut c = Command::new("git");
+    let mut c = os::command("git");
     c.arg("-C").arg(dir).args(args);
     if let Some(parent) = dir.parent() {
         c.env("GIT_CEILING_DIRECTORIES", parent);
@@ -330,31 +366,54 @@ fn fetch_problem(f: UpdateFailed, repo: &str, tag: &str) -> UpdateFailed {
     UpdateFailed { what, output: f.output }
 }
 
-/// Builds the release in `dir` with its own installer, `install.sh --build-only`, at low CPU priority so Gizai stays
-/// quick meanwhile. `path` is the PATH the build gets (None: Gizai's own).
+/// The release's installer, and its two steps (build, install) as given to it and as the log shows them.
+#[cfg(not(windows))]
+const INSTALLER: &str = "install.sh";
+#[cfg(not(windows))]
+const STEPS: [(&str, &str); 2] = [("--build-only", "./install.sh --build-only"), ("--skip-build", "./install.sh --skip-build")];
+#[cfg(windows)]
+const INSTALLER: &str = "install.ps1";
+#[cfg(windows)]
+const STEPS: [(&str, &str); 2] = [("-BuildOnly", r".\install.ps1 -BuildOnly"), ("-SkipBuild", r".\install.ps1 -SkipBuild")];
+
+/// Builds the release in `dir` with its own installer, `install.sh --build-only` (`install.ps1 -BuildOnly` on Windows),
+/// at low CPU priority so Gizai stays quick meanwhile. `path` is the PATH the build gets (None: Gizai's own).
 pub fn build(dir: &Path, path: Option<&OsStr>, log: &Log, stop: &Stop) -> Result<(), UpdateFailed> {
     let mut cmd = installer(dir, path)?;
-    cmd.arg("--build-only");
-    run("./install.sh --build-only", cmd, log, BUILD_LIMIT, stop, true).map(|_| ())
+    let (arg, shown) = STEPS[0];
+    cmd.arg(arg);
+    run(shown, cmd, log, BUILD_LIMIT, stop, true).map(|_| ())
 }
 
 /// Installs what `build` made into `prefix` with the release's installer, `install.sh --skip-build`. Its desktop entry
 /// and icons go under the prefix too (`<prefix>/share`: ~/.local/share for the usual install), so an install anywhere
 /// else, a test's scratch folder, never changes the launcher entry you use. The installer backs up the data folder
 /// there (`<prefix>/share/gizai`) with the new build first, and installs nothing when it can't.
+/// On Windows `install.ps1 -SkipBuild` gets the prefix only: XDG_DATA_HOME means nothing there, and the data folder
+/// install.ps1 backs up is `%APPDATA%\Gizai`.
 pub fn install(dir: &Path, prefix: &Path, path: Option<&OsStr>, log: &Log, stop: &Stop) -> Result<(), UpdateFailed> {
     let mut cmd = installer(dir, path)?;
-    cmd.arg("--skip-build").env("GIZAI_PREFIX", prefix).env("XDG_DATA_HOME", prefix.join("share"));
-    run("./install.sh --skip-build", cmd, log, INSTALL_LIMIT, stop, false).map(|_| ())
+    let (arg, shown) = STEPS[1];
+    cmd.arg(arg).env("GIZAI_PREFIX", prefix);
+    #[cfg(not(windows))]
+    cmd.env("XDG_DATA_HOME", prefix.join("share"));
+    run(shown, cmd, log, INSTALL_LIMIT, stop, false).map(|_| ())
 }
 
-/// The release's install.sh, run with bash in its source, building into the source's own target/.
+/// The release's installer, run in its source, building into the source's own target/: install.sh with bash, on
+/// Windows install.ps1 with Windows PowerShell (`-ExecutionPolicy Bypass`, as the release's own script isn't signed;
+/// `-NonInteractive`, so a question fails instead of waiting).
 fn installer(dir: &Path, path: Option<&OsStr>) -> Result<Command, UpdateFailed> {
-    let script = dir.join("install.sh");
+    let script = dir.join(INSTALLER);
     if !script.is_file() {
-        return Err(UpdateFailed::plain("The release has no install.sh, so Gizai can't build it"));
+        return Err(UpdateFailed::plain(format!("The release has no {INSTALLER}, so Gizai can't build it")));
     }
-    let mut cmd = Command::new("bash");
+    #[cfg(not(windows))]
+    let mut cmd = os::command("bash");
+    #[cfg(windows)]
+    let mut cmd = os::command("powershell.exe");
+    #[cfg(windows)]
+    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
     cmd.arg(script).current_dir(dir)
         .env("CARGO_TARGET_DIR", dir.join("target")).env("TAURI_TELEMETRY_DISABLED", "1")
         .env_remove("GIZAI_REPO").env_remove("GIZAI_BRANCH").env_remove("GIZAI_PREFIX").env_remove("GIZAI_DATA_DIR");
@@ -364,33 +423,23 @@ fn installer(dir: &Path, path: Option<&OsStr>) -> Result<Command, UpdateFailed> 
     Ok(cmd)
 }
 
-/// Runs `cmd` (`shown` in the log) in its own process group without prompts, its output going to the log. It is ended,
-/// with everything it started, after `limit` or when `stop` is asked. `low`: at low CPU priority (nice 10). Ok: the end
-/// of its output.
+/// Runs `cmd` (`shown` in the log) in its own process group (a Job Object on Windows) without prompts, its output going
+/// to the log. It is ended, with everything it started, after `limit` or when `stop` is asked. `low`: at low CPU
+/// priority (nice 10; below normal on Windows). Ok: the end of its output.
 fn run(shown: &str, mut cmd: Command, log: &Log, limit: Duration, stop: &Stop, low: bool) -> Result<String, UpdateFailed> {
     if stop.asked() {
         return Err(UpdateFailed::plain("Stopped"));
     }
     log.say(&format!("$ {shown}"));
     let program = cmd.get_program().to_string_lossy().to_string();
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0)
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .env("GIT_TERMINAL_PROMPT", "0").env("NO_COLOR", "1").env("CARGO_TERM_COLOR", "never")
         .env("npm_config_color", "false").env("npm_config_update_notifier", "false").env("npm_config_fund", "false").env("npm_config_audit", "false");
-    if low {
-        // SAFETY: nice(2) is a plain syscall, safe to make between fork and exec.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::nice(10);
-                Ok(())
-            });
-        }
-    }
-    let mut child = cmd.spawn().map_err(|e| match e.kind() {
+    let (mut child, tree) = os::spawn_tree(&mut cmd, low).map_err(|e| match e.kind() {
         ErrorKind::NotFound => UpdateFailed::plain(format!("{program} isn't installed (or not on Gizai's PATH)")),
         _ => UpdateFailed::plain(format!("Couldn't start {shown}: {e}")),
     })?;
-    let pgid = child.id() as i32;
-    stop.group.store(pgid, Ordering::SeqCst);
+    stop.now(Some(tree.clone()));
     let output = Arc::new(Mutex::new(Vec::<u8>::new()));
     let pipes: Vec<Box<dyn Read + Send>> = [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
@@ -424,23 +473,23 @@ fn run(shown: &str, mut cmd: Command, log: &Log, limit: Duration, stop: &Stop, l
         }
         if ending.is_none() && (stop.asked() || Instant::now() >= until) {
             timed_out = !stop.asked();
-            signal(pgid, libc::SIGTERM);
+            tree.end(End::Terminate);
             ending = Some(Instant::now());
         }
         if ending.is_some_and(|at| at.elapsed() > Duration::from_secs(5)) {
-            signal(pgid, libc::SIGKILL);
+            tree.end(End::Kill);
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    stop.group.store(0, Ordering::SeqCst);
+    stop.now(None);
     // what it left running in the background (a compiler cache's server) would hold its output open
-    signal(pgid, libc::SIGTERM);
+    tree.end(End::Terminate);
     let quiet_by = Instant::now() + Duration::from_secs(3);
     while readers.iter().any(|r| !r.is_finished()) && Instant::now() < quiet_by {
         std::thread::sleep(Duration::from_millis(50));
     }
     if readers.iter().any(|r| !r.is_finished()) {
-        signal(pgid, libc::SIGKILL);
+        tree.end(End::Kill);
         let quiet_by = Instant::now() + Duration::from_secs(2);
         while readers.iter().any(|r| !r.is_finished()) && Instant::now() < quiet_by {
             std::thread::sleep(Duration::from_millis(50));

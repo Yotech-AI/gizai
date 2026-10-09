@@ -118,8 +118,13 @@ describe("DEFAULT_TOOLS", () => {
     for (const t of ["Bash(git status:*)", "Bash(git commit:*)", "Bash(npm:*)", "Bash(cargo:*)", "Bash(cat:*)", "Bash(rg:*)"]) {
       expect(DEFAULT_TOOLS).toContain(t);
     }
-    expect(DEFAULT_TOOLS).toHaveLength(28);
+    expect(DEFAULT_TOOLS).toHaveLength(29);
     expect(new Set(DEFAULT_TOOLS).size).toBe(DEFAULT_TOOLS.length);
+  });
+  // GA-54: and sleep, so an agent can wait in the foreground between checks (CI, a release, a deploy)
+  it("lets new agents run sleep", () => {
+    expect(DEFAULT_TOOLS).toContain("Bash(sleep:*)");
+    expect(DEFAULT_TOOLS.at(-1)).toBe("Bash(sleep:*)");
   });
   it("is what the form for a new agent starts with", () => {
     expect(parseTools(draftFrom().tools)).toEqual(DEFAULT_TOOLS);

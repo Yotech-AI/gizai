@@ -1,7 +1,7 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
 import { EditorView } from "@codemirror/view";
 import { emit } from "@tauri-apps/api/event";
-import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listLabels, listTasks } from "./api";
+import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listLabels, listTasks, setAgentStatus } from "./api";
 import { periodDays } from "./lib/usage";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -666,6 +666,38 @@ async function chatPickerAndFilesProbe() {
   await waitFor(() => (!document.querySelector(".composer-box .stop-btn") && !document.querySelector(".chat-working") ? true : null), 15000);
   const saved = (await chatMessages(threadId)).filter((m) => m.role === "user").pop();
 
+  // The text box grows with its lines up to 200 px, then scrolls; emptied again by hand.
+  const box = composer()!;
+  const cm = () => document.querySelector(".composer-editor .cm-editor") as HTMLElement;
+  const oneLine = cm().getBoundingClientRect().height;
+  typeIn(box, "line");
+  for (let i = 0; i < 14; i++) { press(box, "Enter", 13, { shiftKey: true }); typeIn(box, "line"); }
+  await sleep(200);
+  const tall = cm().getBoundingClientRect().height;
+  const scroller = document.querySelector(".composer-editor .cm-scroller") as HTMLElement;
+  const grows = oneLine < 60 && tall > 150 && tall <= 201 && scroller.scrollHeight > scroller.clientHeight + 20 && sentCount() === before + 2;
+  const view = EditorView.findFromDOM(box)!;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+
+  // While the Team Lead is paused: the text box, + and drops are off.
+  const leadId = (await listChatThreads()).find((t) => t.id === threadId)?.agentId ?? "";
+  await setAgentStatus(leadId, "paused");
+  const off = !!(await waitFor(() => document.querySelector(".composer-box.disabled"), 4000));
+  const plusOff = !!(document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null)?.disabled;
+  (document.querySelector(".composer-box .composer-plus") as HTMLElement | null)?.click();
+  await sleep(150);
+  const noMenu = !document.querySelector('.composer-box .pop[role="menu"]');
+  await emit("tauri://drag-enter", { paths: [file], position });
+  await emit("tauri://drag-over", { position });
+  await sleep(300);
+  const noDropState = !document.querySelector(".chat-drop");
+  await emit("tauri://drag-drop", { paths: [file], position });
+  await sleep(500);
+  const noDrop = !document.querySelector(".composer-box .files.compact");
+  await setAgentStatus(leadId, "active");
+  const on = !!(await waitFor(() => (document.querySelector(".composer-box") && !document.querySelector(".composer-box.disabled") ? true : null), 4000));
+  const pausedOk = off && plusOff && noMenu && noDropState && noDrop && on;
+
   // Reopened: the link and the file are still shown.
   window.location.hash = "#/chat";
   await waitFor(() => (!document.querySelector(".chat-msg.user") ? true : null), 3000);
@@ -680,8 +712,9 @@ async function chatPickerAndFilesProbe() {
     && typedAt && pickerUp && !!tasks && enterLinks && chipInBox && twoLines && !!sentChip && cleared
     && dropState === "Drop to add to this message" && JSON.stringify(chips) === '["gizai.db"]' && dropGone && refused.includes("is a folder, not a file") && removed
     && JSON.stringify(again) === '["gizai.db"]' && textOf(sentFile) === "gizai.db" && chipsCleared && saved?.files?.[0]?.name === "gizai.db"
-    && !!reopenedChip && reopenedFile === "gizai.db" && !!opened;
-  return { ok, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
+    && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk;
+  return { ok, grows: { ok: grows, one_line: oneLine, tall }, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
+    no_drop: noDrop, on_again: on }, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
     enter_links_without_sending: enterLinks, chip_in_box: chipInBox, shift_enter_new_line: twoLines, sent_chip: sentChip?.textContent, cleared,
     drop_state: dropState, chips, drop_state_gone: dropGone, refused, removed, dropped_again: again, sent_file: textOf(sentFile), chips_cleared: chipsCleared,
     saved_files: saved?.files?.map((f) => f.name), reopened_chip: reopenedChip?.textContent, reopened_file: reopenedFile, chip_opens: opened };

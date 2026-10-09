@@ -68,6 +68,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - When a project's linked folder has dependencies behind main (`vendor/` or `node_modules/` missing, or a lock file that differs from main's), the Team Lead tells you what an update would do and, after your yes, updates it: a fast-forward to main (switching branch only if you agreed), then `composer install` or `npm ci`, never a merge, reset or the setup command
 - An org chart of your team: the Team Lead on top, then branches (Design, Development, Quality, Operations and your own), each with one empty spot that adds an agent there. Drag an agent onto a column in Team → Workflow to put it to work there
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
+- Usage (in Company): the agents' input tokens (cache included), output tokens and API cost for today, 7 days, 30 days or this month, in total with a bar per day, per agent and per project, with the Team Lead's chat on its own line. The Projects list shows each project's API cost this month. API cost is what the tokens would cost at API prices, not a bill; a CLI that reports no cost (Codex, Gemini) shows its tokens and an unknown cost
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
 - A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)
 

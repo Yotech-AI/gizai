@@ -287,7 +287,8 @@ pub struct AgentInput {
     pub instructions_md: Option<String>,
     pub permission_mode: String,
     pub allowed_tools: Vec<String>,
-    /// "manual" | "on_assign" | "heartbeat"
+    /// The Team Lead's old wake-up ("manual" | "on_assign" | "heartbeat"). Worker agents have none: the columns they are on
+    /// decide when they start (`columns`), so it changes nothing for them.
     pub wakeup: String,
     pub heartbeat_minutes: Option<i64>,
     pub budget_usd_micros: Option<i64>,
@@ -306,7 +307,6 @@ pub struct AgentInput {
     pub folders: Option<Vec<crate::folders::Folder>>,
 }
 
-/// "When a card has label <match_name>" or "enters column <match_name>" → the first idle agent with `target_role`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RuleInput {
@@ -348,6 +348,22 @@ pub struct Run {
     pub adapter: Option<String>,
     /// The commit its worktree was at when it ended (None while it runs, and for runs from before Gizai saved it).
     pub head_sha: Option<String>,
+    /// The tool calls its CLI refused because they needed an approval nobody could give (Claude Code reports them).
+    pub refused: Vec<Refusal>,
+    /// Gizai's own nudge: it continued, by itself, a run that ended without a result (trigger `nudge`). A person's
+    /// Continue is a `nudge` too, but not nudged.
+    #[serde(default)]
+    pub nudged: bool,
+}
+
+/// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI
+/// said (empty when only its result line reported it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refusal {
+    pub tool: String,
+    pub input: String,
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// An agent's runs on one UTC day.

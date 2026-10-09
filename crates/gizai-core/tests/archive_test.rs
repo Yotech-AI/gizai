@@ -39,9 +39,8 @@ impl B {
 fn only_a_card_in_done_can_be_archived_and_the_others_are_refused_plainly() {
     let b = board();
     let team_id = team::list(&b.db).unwrap()[0].id.clone();
-    // the extra columns a team can add: Deploy (GA-32) and Cancelled; neither is Done
-    team::add_state(&b.db, &b.you, &team_id, "Deploy", &b.state("Review"), "deploy", None).unwrap();
-    team::add_state(&b.db, &b.you, &team_id, "Cancelled", &b.state("Done"), "cancelled", None).unwrap();
+    // Deploy is in the seed (GA-49); Cancelled is an extra column a team can add; neither is Done
+    team::add_state(&b.db, &b.you, &team_id, "Cancelled", &b.state("Done"), "cancelled").unwrap();
     for column in ["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Cancelled"] {
         let t = b.card(column);
         let id = b.task(&t).identifier;
@@ -119,7 +118,7 @@ fn an_archived_card_is_left_out_of_the_list_the_inbox_the_counts_and_the_queue()
     assert_eq!(projects::list(&b.db).unwrap()[0].done_tasks, 1);
     assert!(workflow::waiting_for(&b.db, &be).unwrap().is_empty(), "the queue");
     assert_eq!(workflow::next_task_for(&b.db, &be).unwrap(), None, "the heartbeat");
-    assert!(!matches!(workflow::pick_agent(&b.db, &t), Ok(Some(_))), "routing never picks an agent for it");
+    assert!(!matches!(workflow::run_agent(&b.db, &t), Ok(Some(_))), "Run never picks an agent for it");
 }
 
 #[test]

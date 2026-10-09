@@ -3,11 +3,22 @@
 # environment lines in Settings → Coding CLIs) picks which: codex (codex exec --json), gemini (stream-json) or other
 # (plain text). It writes its argv, FAKE_ACCOUNT and the prompt's size to stderr, then that CLI's output for a card it
 # finished. A prompt containing FAKE_NOT_LOGGED_IN fails the way the CLI does without a login; FAKE_NO_RESULT ends
-# without the GIZAI_RESULT line.
+# without the GIZAI_RESULT line. FAKE_TEMP=1 (GA-48) also writes TMPDIR, TMP and TEMP, whether that folder is there and
+# the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty.
 prompt="$(cat)"   # the prompt on stdin (empty when it came as an argument)
 echo "argv: $*" >&2
 echo "account: ${FAKE_ACCOUNT:-none}" >&2
 echo "prompt chars: ${#prompt}" >&2
+if [ -n "${FAKE_TEMP:-}" ]; then
+  echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2
+  if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+    echo "temp exists: yes" >&2
+    mkdir -p "$TMPDIR/scratch" && echo x > "$TMPDIR/scratch/test.db" && echo y > "$TMPDIR/left.txt"
+  else
+    echo "temp exists: no" >&2
+  fi
+  printf 'prompt>>%s<<prompt\n' "${prompt:-$*}" >&2
+fi
 all="$prompt $*"
 case "$FAKE_KIND" in
 codex)

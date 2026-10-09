@@ -52,13 +52,25 @@ pub(crate) fn client(cx: &Cx, r: &str) -> Result<Client, String> {
     Ok(list.swap_remove(i))
 }
 
+/// A project by id, exact key or exact name (ignoring case), else by the start or a part of its name. One rule for keys
+/// and names: when the reference is one project's key and another project's name, it is ambiguous and the error lists
+/// both, with their ids. A key is exact or nothing: "KA" never picks KADE by prefix.
 pub(crate) fn project(cx: &Cx, r: &str) -> Result<Project, String> {
     let mut list = projects::list(cx.db()).map_err(err)?;
-    let cands: Vec<Cand> = list.iter().map(|p| Cand { id: p.id.clone(), names: vec![p.name.clone(), p.key.clone()], show: format!("{} ({})", p.name, p.key) }).collect();
-    // A key is exact or nothing: "KA" must not pick KADE by prefix when another project is called "Kale".
-    if let Some(i) = list.iter().position(|p| p.key.eq_ignore_ascii_case(r.trim())) {
+    let q = r.trim();
+    if let Some(i) = list.iter().position(|p| p.id == q) {
         return Ok(list.swap_remove(i));
     }
+    let exact: Vec<usize> = (0..list.len()).filter(|&i| list[i].key.eq_ignore_ascii_case(q) || list[i].name.eq_ignore_ascii_case(q)).collect();
+    match exact.len() {
+        0 => {}
+        1 => return Ok(list.swap_remove(exact[0])),
+        n => {
+            let shown: Vec<String> = exact.iter().map(|&i| format!("{} (key {}, id {})", list[i].name, list[i].key, list[i].id)).collect();
+            return Err(format!("\"{q}\" matches {n} projects: {}. Use the id of the one you mean.", shown.join("; ")));
+        }
+    }
+    let cands: Vec<Cand> = list.iter().map(|p| Cand { id: p.id.clone(), names: vec![p.name.clone()], show: format!("{} ({})", p.name, p.key) }).collect();
     let i = pick("project", "projects", "key", r, &cands)?;
     Ok(list.swap_remove(i))
 }
@@ -112,23 +124,25 @@ pub(crate) fn team_of(cx: &Cx, project: Option<&Project>) -> Result<Team, String
     team::get(cx.db(), &id).map_err(err)
 }
 
-/// A column by name ("to do") or category ("in_progress").
+/// A column by its name, ignoring case ("to do", "in_progress" for In progress). An unknown name is an error that lists
+/// the team's columns: never a guess by category.
 pub(crate) fn column(team: &Team, r: &str) -> Result<WorkflowState, String> {
     let q = r.trim().to_lowercase().replace('_', " ");
-    let found = team.states.iter().find(|s| s.name.to_lowercase() == q)
-        .or_else(|| team.states.iter().find(|s| s.category.replace('_', " ") == q));
+    let found = team.states.iter().find(|s| s.name.to_lowercase() == q);
     found.cloned().ok_or_else(|| {
         let names: Vec<&str> = team.states.iter().map(|s| s.name.as_str()).collect();
         format!("No column called \"{}\". Columns: {}.", r.trim(), names.join(", "))
     })
 }
 
-/// Label names → ids (exact names only: labels are few and short).
+/// Label names → ids (exact names, ignoring case: labels are few and short). Any existing label; an unknown one is an
+/// error that says how to add it.
 pub(crate) fn labels(team: &Team, names: &[String]) -> Result<Vec<String>, String> {
     names.iter().map(|n| {
         team.labels.iter().find(|l| l.name.eq_ignore_ascii_case(n.trim())).map(|l| l.id.clone()).ok_or_else(|| {
             let all: Vec<&str> = team.labels.iter().map(|l| l.name.as_str()).collect();
-            format!("No label called \"{}\". Labels: {}.", n.trim(), all.join(", "))
+            let known = if all.is_empty() { "There are no labels yet.".to_string() } else { format!("Labels: {}.", all.join(", ")) };
+            format!("there is no label {}; add it with save_label. {known}", n.trim())
         })
     }).collect()
 }

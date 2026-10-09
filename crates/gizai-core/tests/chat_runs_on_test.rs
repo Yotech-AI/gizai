@@ -326,10 +326,10 @@ fn schema_10_gives_existing_sessions_the_cli_of_their_last_turn() {
         say(&db, &id, "user", "Hi");
         (id, fresh)
     };
-    // One schema step back: 0010 hadn't run.
+    // One schema step back: 0012 hadn't run.
     let c = rusqlite::Connection::open(&path).unwrap();
     c.execute_batch("DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json;
-                     ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; PRAGMA user_version = 9;").unwrap();
+                     ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; PRAGMA user_version = 11;").unwrap();
     drop(c);
     let db = Db::open(&path).unwrap();
     assert_eq!(db.read(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)).unwrap(), db::SCHEMA_VERSION);

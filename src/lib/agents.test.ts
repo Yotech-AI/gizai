@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dollarsToMicros, microsToDollars, parseTools, ruleSentence, wakeupLabel } from "./agents";
+import { DEFAULT_TOOLS, dollarsToMicros, microsToDollars, parseTools, ruleSentence, wakeupLabel } from "./agents";
 
 describe("wakeupLabel", () => {
   it("names the three wake-ups", () => {
@@ -105,5 +105,29 @@ describe("a Team Lead with both a board check and folders (GA-35 and GA-45, merg
     expect(inputFrom(more)).toMatchObject({ boardCheckMinutes: 30, folders: [{ path: "/srv/shared", access: "read" }, { path: "/srv/out", access: "change" }] });
     // Chat off turns the check off, not the folders
     expect(inputFrom({ ...d, chat: false })).toMatchObject({ boardCheckMinutes: 0, folders: [{ path: "/srv/shared", access: "read" }] });
+  });
+});
+
+describe("DEFAULT_TOOLS", () => {
+  // GA-48: new agents also get the read-only helpers agents use in pipes (the same list as src-tauri/src/runs.rs,
+  // checked in src-tauri/tests/agent_runs_test.rs)
+  it("has the read-only helpers, after the usual commands, each once", () => {
+    for (const h of ["head", "tail", "wc", "sort", "uniq", "cut", "diff", "grep", "jq", "pwd", "which", "tree"]) {
+      expect(DEFAULT_TOOLS).toContain(`Bash(${h}:*)`);
+    }
+    for (const t of ["Bash(git status:*)", "Bash(git commit:*)", "Bash(npm:*)", "Bash(cargo:*)", "Bash(cat:*)", "Bash(rg:*)"]) {
+      expect(DEFAULT_TOOLS).toContain(t);
+    }
+    expect(DEFAULT_TOOLS).toHaveLength(29);
+    expect(new Set(DEFAULT_TOOLS).size).toBe(DEFAULT_TOOLS.length);
+  });
+  // GA-54: and sleep, so an agent can wait in the foreground between checks (CI, a release, a deploy)
+  it("lets new agents run sleep", () => {
+    expect(DEFAULT_TOOLS).toContain("Bash(sleep:*)");
+    expect(DEFAULT_TOOLS.at(-1)).toBe("Bash(sleep:*)");
+  });
+  it("is what the form for a new agent starts with", () => {
+    expect(parseTools(draftFrom().tools)).toEqual(DEFAULT_TOOLS);
+    expect(parseTools(draftFrom(null, { name: "Backend Agent", role: "backend" }).tools)).toEqual(DEFAULT_TOOLS);
   });
 });

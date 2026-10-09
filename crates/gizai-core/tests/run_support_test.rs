@@ -1,4 +1,5 @@
 use gizai_core::{db::Db, model::*, projects, runs, seed::ensure_seed, settings, tasks, team, workflow};
+use rusqlite_migration::{M, Migrations};
 
 #[test]
 fn settings_round_trip_typed_values() {
@@ -102,4 +103,85 @@ fn an_agents_runs_are_listed_newest_first() {
     }
     let listed: Vec<String> = runs::list_for_agent(&db, &a, 2).unwrap().into_iter().map(|r| r.id).collect();
     assert_eq!(listed, vec![ids[2].clone(), ids[1].clone()]);
+}
+
+#[test]
+fn a_runs_refused_tool_calls_are_saved_in_order_and_read_back_with_the_run() {
+    // GA-48: Refused in this run (table run_refusals, migration 0010)
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gizai.db");
+    let db = Db::open(&path).unwrap();
+    let s = ensure_seed(&db, "Jeffrey").unwrap();
+    let p = projects::create(&db, &s.you_id, ProjectInput { name: "Kade".into(), key: "KADE".into(), ..Default::default() }).unwrap();
+    let t = tasks::create(&db, &s.you_id, TaskInput { project_id: p.clone(), title: "CSV".into(), ..Default::default() }).unwrap();
+    let a = team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "B".into(), role_key: "backend".into(), ..Default::default() }).unwrap();
+    let r = runs::create(&db, &a, &t, "backend", "S", "/tmp", "/tmp", "b", "/tmp/l").unwrap();
+    let t2 = tasks::create(&db, &s.you_id, TaskInput { project_id: p, title: "PDF".into(), ..Default::default() }).unwrap();
+    let other = runs::create(&db, &a, &t2, "backend", "S2", "/tmp", "/tmp", "b", "/tmp/l2").unwrap();
+    assert!(runs::get(&db, &r).unwrap().refused.is_empty(), "none until the run reports any");
+
+    let list = vec![
+        Refusal { tool: "Bash".into(), input: "cat <<EOF\nhi\nEOF".into(), reason: "Heredoc with unquoted delimiter undergoes shell expansion".into() },
+        Refusal { tool: "Write".into(), input: "/tmp/x.txt".into(), reason: String::new() },
+    ];
+    runs::set_refused(&db, &r, &list).unwrap();
+    assert_eq!(runs::get(&db, &r).unwrap().refused, list);
+    assert_eq!(runs::list_for_task(&db, &t).unwrap().into_iter().find(|x| x.id == r).unwrap().refused, list);
+    assert_eq!(runs::list_for_agent(&db, &a, 10).unwrap().into_iter().find(|x| x.id == r).unwrap().refused, list);
+    assert!(runs::get(&db, &other).unwrap().refused.is_empty(), "only that run's");
+    // saved again: replaced, not added to
+    runs::set_refused(&db, &r, &list[1..]).unwrap();
+    assert_eq!(runs::get(&db, &r).unwrap().refused, list[1..]);
+    assert!(matches!(runs::set_refused(&db, "no-such-run", &list), Err(gizai_core::Error::NotFound(_))));
+    // the UI and the Team Lead get them as JSON: tool, input, reason
+    let v = serde_json::to_value(runs::get(&db, &r).unwrap()).unwrap();
+    assert_eq!(v["refused"], serde_json::json!([{"tool": "Write", "input": "/tmp/x.txt", "reason": ""}]));
+    // and they stay after the database is opened again
+    drop(db);
+    let db = Db::open(&path).unwrap();
+    assert_eq!(runs::get(&db, &r).unwrap().refused, list[1..]);
+}
+
+#[test]
+fn a_schema_9_database_gets_the_refusals_table_and_its_runs_keep_their_shape() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gizai.db");
+    // A genuine schema 9 database (v0.2.0), built from the migrations: GA-49's 0011 can't be rolled back by
+    // dropping a table, so a current database can't be stepped back to 9.
+    let (r, cols) = {
+        let mut c = rusqlite::Connection::open(&path).unwrap();
+        c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        Migrations::new(vec![
+            M::up(include_str!("../migrations/0001_init.sql")), M::up(include_str!("../migrations/0002_agents.sql")),
+            M::up(include_str!("../migrations/0003_chat.sql")), M::up(include_str!("../migrations/0004_effort.sql")),
+            M::up(include_str!("../migrations/0005_pull_requests.sql")), M::up(include_str!("../migrations/0006_worktree_prepare.sql")),
+            M::up(include_str!("../migrations/0007_card_flow.sql")), M::up(include_str!("../migrations/0008_board_check.sql")),
+            M::up(include_str!("../migrations/0009_agent_folders.sql")),
+        ]).to_latest(&mut c).unwrap();
+        c.execute_batch("
+            INSERT INTO orgs (id, created_at, updated_at, name, key) VALUES ('org', 1, 1, 'Yotech', 'YT');
+            INSERT INTO actors (id, created_at, updated_at, org_id, kind, name, handle, status) VALUES
+              ('you', 1, 1, 'org', 'person', 'Jeffrey', 'jeffrey', 'active'), ('b', 1, 1, 'org', 'agent', 'B', 'b', 'active');
+            INSERT INTO teams (id, created_at, updated_at, org_id, name, lead_actor_id) VALUES ('team', 1, 1, 'org', 'Software', 'you');
+            INSERT INTO workflow_states (id, created_at, updated_at, team_id, name, category, sort_key) VALUES ('todo', 1, 1, 'team', 'To do', 'ready', 'a0');
+            INSERT INTO tasks (id, created_at, updated_at, org_id, identifier, title, state_id, state_category, sort_key) VALUES
+              ('t', 1, 1, 'org', 'YT-1', 'CSV', 'todo', 'ready', 'a0');
+            INSERT INTO runs (id, created_at, updated_at, org_id, agent_actor_id, task_id, trigger, role_key, adapter, status, log_path, started_at) VALUES
+              ('r', 2, 2, 'org', 'b', 't', 'manual', 'backend', 'claude_code', 'succeeded', '/tmp/l', 2);").unwrap();
+        let mut st = c.prepare("SELECT name FROM pragma_table_info('runs')").unwrap();
+        let cols = st.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<String>, _>>().unwrap();
+        ("r".to_string(), cols)
+    };
+    let db = Db::open(&path).unwrap();
+    let (version, after): (i64, Vec<String>) = db.read(|c| {
+        let mut st = c.prepare("SELECT name FROM pragma_table_info('runs')")?;
+        let v = st.query_map([], |row| row.get(0))?.collect::<Result<Vec<String>, _>>()?;
+        Ok((c.query_row("PRAGMA user_version", [], |row| row.get(0))?, v))
+    }).unwrap();
+    assert_eq!(version, gizai_core::db::SCHEMA_VERSION);
+    assert_eq!(after, cols, "the runs table keeps its columns");
+    assert!(!cols.iter().any(|c| c.contains("refus")));
+    assert!(runs::get(&db, &r).unwrap().refused.is_empty(), "an older run has none");
+    runs::set_refused(&db, &r, &[Refusal { tool: "Bash".into(), input: "ls /tmp".into(), reason: String::new() }]).unwrap();
+    assert_eq!(runs::get(&db, &r).unwrap().refused.len(), 1);
 }

@@ -246,7 +246,35 @@ pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
 }
 
 pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
+    update_with_labels(db, actor, id, patch, None)
+}
+
+/// `update` and, with `label_ids`, the card's new set of labels, in one write: when anything is refused (a bad label,
+/// hold or title), nothing changes.
+pub fn update_with_labels(db: &Db, actor: &str, id: &str, patch: TaskPatch, label_ids: Option<Vec<String>>) -> Result<()> {
     db.write(Some(actor), |w| {
+        if let Some(l) = &label_ids {
+            check_labels(w.conn(), l)?;
+        }
+        update_in(w, actor, id, &patch)?;
+        match &label_ids {
+            Some(l) => set_labels_in(w, id, l),
+            None => Ok(()),
+        }
+    })
+}
+
+fn check_labels(c: &Connection, label_ids: &[String]) -> Result<()> {
+    for l in label_ids {
+        if c.query_row("SELECT count(*) FROM labels WHERE id=?1 AND deleted_at IS NULL", [l], |r| r.get::<_, i64>(0))? == 0 {
+            return Err(Error::Invalid("unknown label".into()));
+        }
+    }
+    Ok(())
+}
+
+fn update_in(w: &Writer, actor: &str, id: &str, patch: &TaskPatch) -> Result<()> {
+    {
         let c = w.conn();
         not_archived(c, id)?;
         use rusqlite::types::Value as V;
@@ -306,7 +334,10 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
             }
         }
         if cols.is_empty() {
-            return Ok(());
+            return not_archived(c, id).and_then(|_| {
+                let n: i64 = c.query_row("SELECT count(*) FROM tasks WHERE id=?1 AND deleted_at IS NULL", [id], |r| r.get(0))?;
+                if n == 0 { Err(Error::NotFound(format!("task {id}"))) } else { Ok(()) }
+            });
         }
         cols.push(("updated_at", V::Integer(ids::now_ms())));
         cols.push(("updated_by", V::Text(actor.to_string())));
@@ -318,8 +349,8 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
         if n == 0 {
             return Err(Error::NotFound(format!("task {id}")));
         }
-        w.update("tasks", id, serde_json::to_value(&patch)?)
-    })
+        w.update("tasks", id, serde_json::to_value(patch)?)
+    }
 }
 
 /// A move by hand (the board, the Team Lead's `move_task`). A person dragging a card on hold into To do or In progress
@@ -385,11 +416,7 @@ pub fn set_labels(db: &Db, actor: &str, id: &str, label_ids: Vec<String>) -> Res
 fn set_labels_in(w: &Writer, id: &str, label_ids: &[String]) -> Result<()> {
     let c = w.conn();
     let now = ids::now_ms();
-    for l in label_ids {
-        if c.query_row("SELECT count(*) FROM labels WHERE id=?1 AND deleted_at IS NULL", [l], |r| r.get::<_, i64>(0))? == 0 {
-            return Err(Error::Invalid("unknown label".into()));
-        }
-    }
+    check_labels(c, label_ids)?;
     c.execute("DELETE FROM task_labels WHERE task_id=?1", [id])?;
     for l in label_ids {
         c.execute("INSERT OR IGNORE INTO task_labels(task_id, label_id, created_at) VALUES (?1, ?2, ?3)", rusqlite::params![id, l, now])?;

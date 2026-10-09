@@ -267,6 +267,11 @@ pub async fn check_all(st: &AppState) -> Vec<Checked> {
                 if checked.changed {
                     (st.notify)(Note::RowsChanged("tasks"));
                 }
+                // A merge moved the card on: on an Auto column its agents pick it up; on a Manual one nothing starts.
+                if checked.moved_to.is_some() {
+                    let st2 = st.clone();
+                    tokio::spawn(async move { crate::runs::pull(&st2).await; });
+                }
                 out.push(checked);
             }
             Ok(Err(e)) => log_once(st, &card.task_id, &format!("checking the pull request of {} failed: {e}", card.identifier)),
@@ -277,7 +282,8 @@ pub async fn check_all(st: &AppState) -> Vec<Checked> {
 }
 
 /// Asks GitHub for the card's pull requests and brings the card up to date with the one to show (an open one first,
-/// else the one Gizai follows, else the newest). A merge moves the card to Deploy (or Done) and cleans up, once: when Gizai
+/// else the one Gizai follows, else the newest). A merge moves a Review card to Review's next column (`pulls::merged`) and
+/// cleans up, once: when Gizai
 /// followed that pull request, or when it has the branch's latest commit (so a card reopened after an earlier merge
 /// stays where it is).
 fn check_blocking(st: &AppState, gh: &Path, card: &PrCard) -> Result<Checked, String> {

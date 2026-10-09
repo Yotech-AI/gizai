@@ -22,10 +22,16 @@ fn resume(st: &State<AppState>, agent_id: &str) {
     tauri::async_runtime::spawn(async move { crate::runs::pull(&st).await; });
 }
 
-/// After a card changes, agents that wake up when a card is routed or assigned to them take their next cards.
+/// After a card changes, the agents take their next cards (a card that landed in an Auto column, or was assigned).
 fn wake(st: &State<AppState>, task_id: &str) {
     let (st, id) = (st.inner().clone(), task_id.to_string());
     tauri::async_runtime::spawn(async move { crate::runs::dispatch(&st, &id).await; });
+}
+
+/// A column changed (its agents, Auto, its cards): the agents take the cards that wait for them now.
+fn pull_soon(st: &State<AppState>) {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn(async move { crate::runs::pull(&st).await; });
 }
 
 // ---- clients and users ----
@@ -251,6 +257,9 @@ pub fn add_team(app: AppHandle, st: State<AppState>, name: String) -> R<String> 
 pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: AgentInput) -> R<String> {
     let id = team::add_agent(&st.db, &st.you_id, &team_id, input).map_err(e)?;
     changed(&app, "actors");
+    // It landed on its role's usual columns: it may take their waiting cards.
+    changed(&app, "workflow_states");
+    pull_soon(&st);
     Ok(id)
 }
 #[tauri::command]
@@ -272,25 +281,84 @@ pub fn set_agent_status(app: AppHandle, st: State<AppState>, actor_id: String, s
     resume(&st, &actor_id);
     Ok(())
 }
+/// Adds a column after `after_id` (`team::add_state`), Manual and without agents. `category` is a kind in plain words
+/// (waiting, work, testing, review, deploy, done, backlog) or a category.
 #[tauri::command]
-pub fn add_rule(app: AppHandle, st: State<AppState>, team_id: String, input: RuleInput) -> R<String> {
-    let id = team::add_rule(&st.db, &st.you_id, &team_id, input).map_err(e)?;
-    changed(&app, "routing_rules");
-    Ok(id)
-}
-#[tauri::command]
-pub fn delete_rule(app: AppHandle, st: State<AppState>, rule_id: String) -> R<()> {
-    team::delete_rule(&st.db, &st.you_id, &rule_id).map_err(e)?;
-    changed(&app, "routing_rules");
-    Ok(())
-}
-/// Adds a column after `after_id` (`team::add_state`).
-#[tauri::command]
-pub fn add_state(app: AppHandle, st: State<AppState>, team_id: String, name: String, after_id: String, category: String,
-                 owner_role: Option<String>) -> R<String> {
-    let id = team::add_state(&st.db, &st.you_id, &team_id, &name, &after_id, &category, owner_role.as_deref()).map_err(e)?;
+pub fn add_state(app: AppHandle, st: State<AppState>, team_id: String, name: String, after_id: String, category: String) -> R<String> {
+    let cat = gizai_core::columns::category_of(&category)
+        .ok_or_else(|| format!("a column is Waiting, Work, Testing, Review, Deploy, Done or Backlog, not {category}"))?;
+    let id = team::add_state(&st.db, &st.you_id, &team_id, &name, &after_id, cat).map_err(e)?;
     changed(&app, "workflow_states");
     Ok(id)
+}
+/// Sets up a column: its agents, Auto or Manual, its next column, its name and its place (`columns::set_column`).
+#[tauri::command]
+pub fn set_column(app: AppHandle, st: State<AppState>, state_id: String, input: gizai_core::columns::ColumnInput) -> R<()> {
+    gizai_core::columns::set_column(&st.db, &st.you_id, &state_id, input).map_err(e)?;
+    changed(&app, "workflow_states");
+    pull_soon(&st);
+    Ok(())
+}
+/// Puts an agent on a column (dragged from the organisation chart, or "+ Agent").
+#[tauri::command]
+pub fn add_column_agent(app: AppHandle, st: State<AppState>, state_id: String, agent_id: String) -> R<()> {
+    gizai_core::columns::add_agent(&st.db, &st.you_id, &state_id, &agent_id).map_err(e)?;
+    changed(&app, "workflow_states");
+    pull_soon(&st);
+    Ok(())
+}
+/// Takes an agent off a column (×). Its running cards finish as usual.
+#[tauri::command]
+pub fn remove_column_agent(app: AppHandle, st: State<AppState>, state_id: String, agent_id: String) -> R<()> {
+    gizai_core::columns::remove_agent(&st.db, &st.you_id, &state_id, &agent_id).map_err(e)?;
+    changed(&app, "workflow_states");
+    Ok(())
+}
+/// What removing a column does, for its confirm (`columns::removal`).
+#[tauri::command]
+pub fn column_removal(st: State<AppState>, state_id: String) -> R<gizai_core::columns::Removal> {
+    gizai_core::columns::removal(&st.db, &state_id).map_err(e)
+}
+/// Removes a column, moving its cards to `target_id` (`columns::remove_state`). On an Auto column, its agents pick them up.
+#[tauri::command]
+pub fn remove_state(app: AppHandle, st: State<AppState>, state_id: String, target_id: String) -> R<()> {
+    gizai_core::columns::remove_state(&st.db, &st.you_id, &state_id, &target_id).map_err(e)?;
+    changed(&app, "workflow_states");
+    changed(&app, "tasks");
+    pull_soon(&st);
+    Ok(())
+}
+/// Every label with the number of cards that carry it (Team → Labels).
+#[tauri::command]
+pub fn list_labels(st: State<AppState>) -> R<Vec<gizai_core::labels::LabelInfo>> { gizai_core::labels::list(&st.db).map_err(e) }
+/// Creates a label (`id` None) or renames or recolours one; returns its id. Names are unique, ignoring case.
+#[tauri::command]
+pub fn save_label(app: AppHandle, st: State<AppState>, id: Option<String>, name: String, color: Option<String>) -> R<String> {
+    let id = gizai_core::labels::save(&st.db, &st.you_id, id.as_deref(), &name, color.as_deref()).map_err(e)?;
+    changed(&app, "labels");
+    Ok(id)
+}
+/// Removes a label from every card; returns how many cards carried it.
+#[tauri::command]
+pub fn remove_label(app: AppHandle, st: State<AppState>, id: String) -> R<i64> {
+    let n = gizai_core::labels::remove(&st.db, &st.you_id, &id).map_err(e)?;
+    changed(&app, "labels");
+    changed(&app, "tasks");
+    Ok(n)
+}
+/// Adds a branch to the team's organisation chart; returns the branches.
+#[tauri::command]
+pub fn add_branch(app: AppHandle, st: State<AppState>, team_id: String, name: String) -> R<Vec<team::Branch>> {
+    let out = team::add_branch(&st.db, &st.you_id, &team_id, &name).map_err(e)?;
+    changed(&app, "teams");
+    Ok(out)
+}
+/// Removes a branch without agents from the team's organisation chart; returns the branches.
+#[tauri::command]
+pub fn remove_branch(app: AppHandle, st: State<AppState>, team_id: String, key: String) -> R<Vec<team::Branch>> {
+    let out = team::remove_branch(&st.db, &st.you_id, &team_id, &key).map_err(e)?;
+    changed(&app, "teams");
+    Ok(out)
 }
 #[tauri::command]
 pub fn rename_state(app: AppHandle, st: State<AppState>, state_id: String, name: String) -> R<()> {
@@ -344,7 +412,7 @@ pub async fn run_commits(st: State<'_, AppState>, run_id: String) -> R<Vec<gizai
 }
 #[tauri::command]
 pub fn live_runs(st: State<AppState>) -> Vec<runs::LiveRun> { runs::live(&st) }
-/// Who a Run without a chosen agent would start now (assigned agent first, then routing).
+/// Who a Run without a chosen agent would start now (the assigned agent, else the first agent on the card's column).
 #[tauri::command]
 pub fn suggest_agent(st: State<AppState>, task_id: String) -> Option<String> { runs::suggest(&st, &task_id) }
 
@@ -398,12 +466,34 @@ use crate::chat;
 pub fn list_chat_threads(st: State<AppState>) -> R<Vec<gizai_core::chat::ChatThread>> { gizai_core::chat::list_threads(&st.db).map_err(e) }
 #[tauri::command]
 pub fn chat_messages(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::ChatMessage>> { gizai_core::chat::messages(&st.db, &thread_id).map_err(e) }
-/// Sends a message (in a new thread when `thread_id` is None) and starts the Team Lead's answer. Returns the thread id.
+/// Sends a message (in a new thread when `thread_id` is None, which runs on `cli` when one was picked under the text box)
+/// and starts the Team Lead's answer; while it is answering in the thread, the message is queued. Returns the thread id.
 #[tauri::command]
-pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String) -> R<String> {
-    let (id, _done) = chat::send(&st, thread_id, text, None).await?;
+pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String, cli: Option<String>) -> R<String> {
+    let (id, _done) = chat::send_on(&st, thread_id, text, cli, None).await?;
     Ok(id)
 }
+/// The chat's queued messages: they wait while the Team Lead answers.
+#[tauri::command]
+pub fn chat_queue(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::QueuedMessage>> { chat::queue(&st, &thread_id) }
+#[tauri::command]
+pub fn edit_queued_chat(st: State<AppState>, id: String, text: String) -> R<gizai_core::chat::QueuedMessage> { chat::edit_queued(&st, &id, &text) }
+#[tauri::command]
+pub fn remove_queued_chat(st: State<AppState>, id: String) -> R<()> { chat::remove_queued(&st, &id) }
+/// Send now: the chat's queued messages go together (after the answer being written, if there is one).
+#[tauri::command]
+pub async fn send_chat_queue(st: State<'_, AppState>, thread_id: String) -> R<()> { chat::send_queue(&st, &thread_id, None).await.map(|_| ()) }
+/// Runs on under the text box: the chat's next answers run on `cli` (None: on the Team Lead's Runs on).
+#[tauri::command]
+pub fn set_chat_cli(st: State<AppState>, thread_id: String, cli: Option<String>) -> R<gizai_core::chat::ChatThread> { chat::set_cli(&st, &thread_id, cli.as_deref()) }
+/// Answer on <CLI> under a usage-limit note: the chat moves to `cli` and the message goes again there.
+#[tauri::command]
+pub async fn answer_chat_on(st: State<'_, AppState>, thread_id: String, cli: String, note_id: String) -> R<()> {
+    chat::answer_on(&st, &thread_id, &cli, &note_id, None).await.map(|_| ())
+}
+/// The coding CLIs Runs on lists under the chat's text box, with why one can't run the chat.
+#[tauri::command]
+pub fn chat_clis(st: State<AppState>) -> R<Vec<chat::ChatCli>> { chat::clis(&st) }
 #[tauri::command]
 pub fn stop_chat(st: State<AppState>, thread_id: String) { chat::stop(&st, &thread_id) }
 /// Chat answers being written right now, with their text so far.
@@ -489,4 +579,93 @@ pub fn restart_gizai(app: AppHandle, st: State<AppState>) -> R<()> {
     cmd.spawn().map_err(|e| format!("Couldn't restart Gizai: {e}"))?;
     app.exit(0);
     Ok(())
+}
+
+// ---- MCP servers (Settings → MCP servers, agent form → Tools) ----
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> R<T> + Send + 'static) -> R<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_mcp_servers(st: State<'_, AppState>) -> R<Vec<crate::mcp_servers::ServerView>> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::list(&st)).await
+}
+
+#[tauri::command]
+pub async fn save_mcp_server(app: AppHandle, st: State<'_, AppState>, input: crate::mcp_servers::ServerInput) -> R<crate::mcp_servers::ServerView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save(&st, input)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn remove_mcp_server(app: AppHandle, st: State<'_, AppState>, id: String) -> R<()> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::remove(&st, &id)).await?;
+    changed(&app, "settings");
+    Ok(())
+}
+
+/// List tools: starts or calls the server, lists its tools and stops it.
+#[tauri::command]
+pub async fn list_mcp_tools(app: AppHandle, st: State<'_, AppState>, id: String) -> R<crate::mcp_servers::ServerView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::list_tools(&st, &id)).await;
+    changed(&app, "settings");
+    out
+}
+
+/// The MCP servers in each Claude Code's config file (read only; no server is started).
+#[tauri::command]
+pub async fn scan_claude_code_mcp(st: State<'_, AppState>) -> R<crate::mcp_servers::Scan> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::scan(&st)).await
+}
+
+#[tauri::command]
+pub async fn import_mcp_servers(app: AppHandle, st: State<'_, AppState>, picks: Vec<crate::mcp_servers::Pick>) -> R<Vec<crate::mcp_servers::ServerView>> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::import(&st, picks)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// Sign in: opens the server's sign-in page in your default browser (the system opener) and waits up to 10 minutes for it.
+#[tauri::command]
+pub async fn mcp_sign_in(app: AppHandle, st: State<'_, AppState>, id: String) -> R<crate::mcp_servers::ServerView> {
+    use tauri_plugin_opener::OpenerExt;
+    let st = st.inner().clone();
+    let opener = app.clone();
+    let out = blocking(move || crate::mcp_servers::sign_in(&st, &id, |url| {
+        opener.opener().open_url(url, None::<&str>).map_err(|e| format!("Couldn't open your browser: {e}"))
+    }, crate::mcp_servers::SIGN_IN_TIMEOUT)).await;
+    changed(&app, "settings");
+    out
+}
+
+#[tauri::command]
+pub async fn mcp_sign_out(app: AppHandle, st: State<'_, AppState>, id: String) -> R<crate::mcp_servers::ServerView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::sign_out(&st, &id)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// The agent form's Tools section.
+#[tauri::command]
+pub async fn agent_mcp(st: State<'_, AppState>, agent_id: String) -> R<crate::mcp_servers::AgentMcpView> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::agent_view(&st, &agent_id)).await
+}
+
+#[tauri::command]
+pub async fn save_agent_mcp(app: AppHandle, st: State<'_, AppState>, agent_id: String, tools: gizai_core::mcp_servers::AgentTools)
+    -> R<crate::mcp_servers::AgentMcpView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save_agent(&st, &agent_id, tools)).await?;
+    changed(&app, "team");
+    Ok(out)
 }

@@ -178,7 +178,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <div className="board-wrap">
           {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
           {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={(id) => go({ page: "task", id })} onAdd={(sid) => onNewTask(sid)}
-            onArchive={onArchive} working={working} />}
+            onArchive={onArchive} working={working} members={team.members} />}
         </div>
       )}
       {bin && <ArchivedCards projectId={filter.projectId} projectName={project?.name} onClose={() => setBin(false)} />}

@@ -84,25 +84,24 @@ async fn the_concurrency_cap_refuses_extra_runs() {
 }
 
 #[tokio::test]
-async fn a_due_heartbeat_starts_the_agents_next_card() {
+async fn the_queue_starts_the_agents_next_card() {
+    // GA-49 (was: a due heartbeat starts the agent's next card). There is no worker heartbeat: the queue (`runs::pull`,
+    // also run once a minute) starts the cards of the Auto columns the agent is on, whatever its old wake-up setting.
     let tmp = tempfile::tempdir().unwrap();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE.to_string()).unwrap();
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
-    let agent = gizai_core::team::all_agents(&st.db).unwrap()[0].1.clone();
-    let mut input = gizai_core::model::AgentInput { name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(5), ..Default::default() };
-    gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, input.clone()).unwrap();
-    let started = gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await;
-    assert_eq!(started.len(), 1);
-    started.into_iter().next().unwrap().await.unwrap();
+    let started = gizai_lib::runs::pull(&st).await;
+    assert_eq!(started.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), [task.as_str()]);
+    started.into_iter().next().unwrap().1.await.unwrap();
     assert_eq!(gizai_core::tasks::get(&st.db, &task).unwrap().state_name, "Testing");
-    // not due again within its interval, and nothing happens while agents are paused
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms() + 60_000).await.is_empty());
+    // nothing else waits for it, and nothing starts while agents are paused, not even a new card in To do
+    assert!(gizai_lib::runs::pull(&st).await.is_empty());
     gizai_core::settings::set(&st.db, "agents_paused", &true).unwrap();
-    input.heartbeat_minutes = Some(1);
-    gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, input).unwrap();
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms() + 3_600_000).await.is_empty());
+    let next = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    assert!(gizai_lib::runs::pull(&st).await.is_empty());
+    assert!(gizai_core::runs::list_for_task(&st.db, &next).unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -273,9 +272,7 @@ async fn a_card_that_cannot_start_in_the_background_goes_on_hold_with_the_reason
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE.to_string()).unwrap();
     let task = gizai_lib::test_task(&st, "", "backend"); // project without a repository
     let agent = gizai_core::team::all_agents(&st.db).unwrap()[0].1.clone();
-    gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, gizai_core::model::AgentInput {
-        name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(5), ..Default::default() }).unwrap();
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await.is_empty());
+    assert!(gizai_lib::runs::pull(&st).await.is_empty());
     let t = gizai_core::tasks::get(&st.db, &task).unwrap();
     assert_eq!(t.hold.as_deref(), Some("blocked"));
     assert!(t.hold_reason.as_deref().unwrap_or("").contains("git repository"), "{:?}", t.hold_reason);
@@ -294,16 +291,15 @@ async fn a_missing_claude_holds_one_card_without_counting_a_failure_and_leaves_t
     let second = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
     let agent = gizai_core::team::all_agents(&st.db).unwrap()[0].1.clone();
     gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, gizai_core::model::AgentInput {
-        name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(1), max_runs: Some(3),
-        ..Default::default() }).unwrap();
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await.is_empty());
+        name: agent.name.clone(), role_key: agent.role_key.clone(), max_runs: Some(3), ..Default::default() }).unwrap();
+    assert!(gizai_lib::runs::pull(&st).await.is_empty());
     let t = gizai_core::tasks::get(&st.db, &first).unwrap();
     assert_eq!((t.state_name.as_str(), t.hold.as_deref(), t.fail_count), ("To do", Some("blocked"), 0));
     assert!(t.hold_reason.as_deref().unwrap_or("").contains("Claude Code not found"), "{:?}", t.hold_reason);
     let other = gizai_core::tasks::get(&st.db, &second).unwrap();
     assert_eq!((other.state_name.as_str(), other.hold.as_deref(), other.fail_count), ("To do", None, 0), "the next card isn't held too");
     assert!(gizai_lib::runs::pull_paused(&st, &agent.actor_id).is_some(), "the agent stops taking cards");
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms() + 120_000).await.is_empty(), "not on the next heartbeat either");
+    assert!(gizai_lib::runs::pull(&st).await.is_empty(), "not on the next pull either");
     assert_eq!(gizai_core::tasks::get(&st.db, &second).unwrap().hold, None);
     assert!(gizai_core::runs::list_for_task(&st.db, &second).unwrap().is_empty());
 }
@@ -414,7 +410,7 @@ async fn a_run_stopped_by_a_limit_says_which_one() {
 }
 
 #[tokio::test]
-async fn a_heartbeat_starts_as_many_cards_as_the_agent_takes() {
+async fn the_queue_starts_as_many_cards_as_the_agent_takes() {
     let tmp = tempfile::tempdir().unwrap();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
@@ -425,16 +421,23 @@ async fn a_heartbeat_starts_as_many_cards_as_the_agent_takes() {
     }
     let agent = gizai_core::team::all_agents(&st.db).unwrap()[0].1.clone();
     gizai_core::team::update_agent(&st.db, &st.you_id, &agent.actor_id, gizai_core::model::AgentInput {
-        name: agent.name.clone(), role_key: agent.role_key.clone(), wakeup: "heartbeat".into(), heartbeat_minutes: Some(1),
-        max_runs: Some(2), ..Default::default() }).unwrap();
-    let started = gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms()).await;
+        name: agent.name.clone(), role_key: agent.role_key.clone(), max_runs: Some(2), ..Default::default() }).unwrap();
+    let started = gizai_lib::runs::pull(&st).await;
     assert_eq!(started.len(), 2, "two cards at once");
     let live = gizai_lib::runs::live(&st);
     assert_eq!(live.len(), 2);
     assert_ne!(live[0].task_id, live[1].task_id, "each on its own card");
-    // full: the next heartbeat starts nothing more
-    assert!(gizai_lib::runs::heartbeat_tick(&st, gizai_core::ids::now_ms() + 120_000).await.is_empty());
+    // full: the next pull starts nothing more
+    assert!(gizai_lib::runs::pull(&st).await.is_empty());
     gizai_lib::runs::stop_all(&st, Duration::from_secs(10)).await;
+}
+
+/// Makes In progress Manual. A run stopped at a limit leaves its card there, assigned to its agent: in an Auto column the
+/// queue would start the card again on its own as the run ends, and the test Continues it by hand.
+fn in_progress_manual(st: &gizai_lib::AppState) {
+    let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
+    let state = gizai_core::team::get(&st.db, &team_id).unwrap().states.into_iter().find(|s| s.category == "in_progress").unwrap().id;
+    gizai_core::columns::set_column(&st.db, &st.you_id, &state, gizai_core::columns::ColumnInput { auto: Some(false), ..Default::default() }).unwrap();
 }
 
 #[tokio::test]
@@ -445,6 +448,7 @@ async fn continue_resumes_the_stopped_session_in_the_same_worktree() {
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE.to_string()).unwrap();
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    in_progress_manual(&st);
     gizai_lib::runs::run_once(&st, &task, None, Some(FAKE.into())).await.unwrap();
     let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
     assert_eq!(first.status, "timed_out");

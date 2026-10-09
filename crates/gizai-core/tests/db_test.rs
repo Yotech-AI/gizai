@@ -15,7 +15,7 @@ fn migrates_and_seeds_once() {
         .unwrap();
     assert_eq!(
         cols.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
-        ["Backlog", "To do", "In progress", "Testing", "Review", "Done"]
+        ["Backlog", "To do", "In progress", "Testing", "Review", "Deploy", "Done"]
     );
     let agents: i64 = db.read(|c| Ok(c.query_row("SELECT count(*) FROM actors WHERE kind='agent'", [], |r| r.get(0))?)).unwrap();
     assert_eq!(agents, 0, "no agents are seeded; Jeffrey creates them");

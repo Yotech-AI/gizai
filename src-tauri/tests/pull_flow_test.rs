@@ -113,6 +113,14 @@ fn to_review(c: &Card) {
 
 fn task(c: &Card) -> gizai_core::model::Task { gizai_core::tasks::get(&c.st.db, &c.task).unwrap() }
 
+/// GA-49: in the seed Review's next column is Deploy; a team without a deploy step links Review to Done.
+fn review_then_done(c: &Card) {
+    let team = gizai_core::team::get(&c.st.db, &gizai_core::team::list(&c.st.db).unwrap()[0].id).unwrap();
+    let id = |category: &str| team.states.iter().find(|s| s.category == category).unwrap().id.clone();
+    gizai_core::columns::set_column(&c.st.db, &c.st.you_id, &id("review"),
+        gizai_core::columns::ColumnInput { next_state_id: Some(id("done")), ..Default::default() }).unwrap();
+}
+
 #[tokio::test]
 async fn open_pull_request_pushes_the_cards_branch_and_opens_its_pull_request_with_gh() {
     let tmp = tempfile::tempdir().unwrap();
@@ -177,6 +185,7 @@ async fn a_pull_request_an_agent_opened_shows_on_the_card_and_push_branch_adds_t
 async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_the_next_check() {
     let tmp = tempfile::tempdir().unwrap();
     let c = worked_card(tmp.path()).await;
+    review_then_done(&c);
     to_review(&c);
     std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
     pulls::open(&c.st, &c.task).await.unwrap();
@@ -210,6 +219,7 @@ async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_th
 async fn a_merged_card_keeps_a_worktree_with_uncommitted_work() {
     let tmp = tempfile::tempdir().unwrap();
     let c = worked_card(tmp.path()).await;
+    review_then_done(&c);
     to_review(&c);
     std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
     pulls::open(&c.st, &c.task).await.unwrap();
@@ -276,12 +286,11 @@ async fn the_github_cli_is_a_setting_and_empty_means_find_it_when_needed() {
 
 #[tokio::test]
 async fn with_a_deploy_column_a_merge_moves_the_card_to_deploy_and_nothing_starts_on_it() {
-    // GA-32: Deploy (merged, not deployed yet) after Review; the DevOps Agent wakes up on assign and has the card.
+    // GA-32: Deploy (merged, not deployed yet) after Review, in the seed since GA-49 (Review's next column, Manual); the
+    // DevOps Agent is on it and has the card.
     let tmp = tempfile::tempdir().unwrap();
     let c = worked_card(tmp.path()).await;
     let team = gizai_core::team::get(&c.st.db, &gizai_core::team::list(&c.st.db).unwrap()[0].id).unwrap();
-    let review = team.states.iter().find(|s| s.category == "review").unwrap().id.clone();
-    gizai_core::team::add_state(&c.st.db, &c.st.you_id, &team.id, "Deploy", &review, "deploy", None).unwrap();
     let ops = gizai_core::team::add_agent(&c.st.db, &c.st.you_id, &team.id, gizai_core::model::AgentInput { name: "DevOps Agent".into(),
         role_key: "devops".into(), wakeup: "on_assign".into(), ..Default::default() }).unwrap();
     to_review(&c);

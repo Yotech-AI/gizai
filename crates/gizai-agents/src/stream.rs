@@ -13,6 +13,20 @@ pub enum RunEvent {
     Other { raw_type: String },
     /// A note from Gizai in the run log, such as a folder the run goes without (`cli::note_line`).
     Note { text: String },
+    /// A tool call the CLI refused because it needed an approval nobody can give in a headless run: the tool, what it
+    /// asked for (the command, the file) and why, when the CLI said. Claude Code lists them in its result line
+    /// (`permission_denials`, without a reason); `cli::Parser` also shows each one as it happens, with its reason.
+    Refused { tool: String, input: String, reason: String },
+    /// The MCP servers Claude Code's init line names (Gizai's own `gizai` left out): each one's name and status, like
+    /// connected, failed or needs-auth (`cli::Claude`).
+    McpServers { servers: Vec<McpState> },
+}
+
+/// One MCP server in a run's init line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpState {
+    pub name: String,
+    pub status: String,
 }
 
 fn s(v: &Value) -> String {
@@ -25,6 +39,23 @@ pub(crate) fn cut(text: &str, n: usize) -> String {
         Some((i, _)) => format!("{}…", &text[..i]),
         None => text.to_string(),
     }
+}
+
+/// What a refused tool call asked for: its command, file, URL or query, else its input, at most 300 characters.
+pub fn refused_input(input: &Value) -> String {
+    for k in ["command", "file_path", "path", "notebook_path", "url", "query", "pattern"] {
+        if let Some(v) = input.get(k).and_then(Value::as_str) {
+            return cut(v, 300);
+        }
+    }
+    cut(&input.to_string(), 300)
+}
+
+/// The refused tool calls in a Claude Code result line (`permission_denials`: tool_name, tool_use_id, tool_input).
+fn refusals(v: &Value) -> Vec<RunEvent> {
+    v.get("permission_denials").and_then(Value::as_array).into_iter().flatten()
+        .map(|d| RunEvent::Refused { tool: s(&d["tool_name"]), input: refused_input(&d["tool_input"]), reason: String::new() })
+        .collect()
 }
 
 /// What a tool call is about: its file, command, pattern or URL, else the start of its input.
@@ -81,7 +112,9 @@ pub fn parse_line(line: &str) -> Vec<RunEvent> {
             let subtype = s(&v["subtype"]);
             let u = &v["usage"];
             let n = |k: &str| u.get(k).and_then(Value::as_i64).unwrap_or(0);
-            vec![RunEvent::Result {
+            // What was refused, then the result.
+            let mut out = refusals(&v);
+            out.push(RunEvent::Result {
                 is_error: v.get("is_error").and_then(Value::as_bool).unwrap_or(subtype != "success"),
                 text: s(&v["result"]),
                 cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
@@ -90,7 +123,8 @@ pub fn parse_line(line: &str) -> Vec<RunEvent> {
                 output_tokens: n("output_tokens"),
                 num_turns: v.get("num_turns").and_then(Value::as_i64).unwrap_or(0),
                 subtype,
-            }]
+            });
+            out
         }
         "gizai_note" => vec![RunEvent::Note { text: s(&v["text"]) }],
         other => vec![RunEvent::Other { raw_type: other.into() }],

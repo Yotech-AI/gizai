@@ -1,5 +1,5 @@
-//! First start: the organisation, the user, one team with the six workflow columns and four labels.
-//! No agents and no routing rules: Jeffrey sets those up himself (revision 2026-10-06).
+//! First start: the organisation, the user, one team with the seven workflow columns and four labels.
+//! No agents: Jeffrey adds them and puts them on the columns (Team → Workflow).
 use crate::db::Db;
 use crate::{ids, Result};
 use rusqlite::OptionalExtension;
@@ -12,14 +12,15 @@ pub struct SeedIds {
     pub team_id: String,
 }
 
-/// (name, category, owner_role) in board order.
-pub const DEFAULT_COLUMNS: [(&str, &str, Option<&str>); 6] = [
-    ("Backlog", "backlog", None),
-    ("To do", "ready", Some("implementer")),
-    ("In progress", "in_progress", Some("implementer")),
-    ("Testing", "testing", Some("qa")),
-    ("Review", "review", Some("human")),
-    ("Done", "done", None),
+/// (name, category, auto) in board order. Each links to the next one, except Backlog and Done.
+pub const DEFAULT_COLUMNS: [(&str, &str, bool); 7] = [
+    ("Backlog", "backlog", false),
+    ("To do", "ready", true),
+    ("In progress", "in_progress", true),
+    ("Testing", "testing", true),
+    ("Review", "review", false),
+    ("Deploy", "deploy", false),
+    ("Done", "done", false),
 ];
 
 pub const DEFAULT_LABELS: [(&str, &str); 4] =
@@ -104,17 +105,21 @@ pub fn ensure_seed(db: &Db, you_name: &str) -> Result<SeedIds> {
     })
 }
 
-/// The six default columns, used by the seed and by "New team".
+/// The seven default columns, used by the seed and by "New team": Backlog, To do, In progress, Testing, Review, Deploy
+/// and Done, each linked to the next (Backlog and Done unlinked), with To do, In progress and Testing on Auto.
 pub fn insert_default_columns(w: &crate::db::Writer, team_id: &str, now: i64) -> Result<()> {
-    for (i, (name, category, owner)) in DEFAULT_COLUMNS.iter().enumerate() {
-        let id = ids::new_id();
-        let sort_key = format!("a{i}");
+    let ids: Vec<String> = DEFAULT_COLUMNS.iter().map(|_| ids::new_id()).collect();
+    // Inserted last to first, so each column's next one exists already.
+    for (i, (name, category, auto)) in DEFAULT_COLUMNS.iter().enumerate().rev() {
+        let next = (*category != "backlog" && *category != "done").then(|| ids.get(i + 1)).flatten();
         w.conn().execute(
-            "INSERT INTO workflow_states(id, created_at, updated_at, team_id, name, category, owner_role, sort_key)
-             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![id, now, team_id, name, category, owner, sort_key],
+            "INSERT INTO workflow_states(id, created_at, updated_at, team_id, name, category, sort_key, auto, next_state_id)
+             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![ids[i], now, team_id, name, category, format!("a{i}"), *auto as i64, next],
         )?;
-        w.insert("workflow_states", &id, json!({"name": name, "category": category, "owner_role": owner}))?;
+    }
+    for (i, (name, category, auto)) in DEFAULT_COLUMNS.iter().enumerate() {
+        w.insert("workflow_states", &ids[i], json!({"name": name, "category": category, "auto": auto}))?;
     }
     Ok(())
 }
@@ -129,7 +134,7 @@ pub fn role_template(role: &str) -> String {
             "You are the Team Lead in Gizai's Software team.\n\
              You talk with the user on Gizai's Chat page and run the team's work for them with Gizai's tools:\n\
              - Turn requests into clients, projects and tasks; give every task a clear description and acceptance criteria.\n\
-             - Hand code work to the developer agents as tasks (label it frontend or backend so routing picks it up, or assign an agent); don't write code yourself.\n\
+             - Hand code work to the developer agents as tasks: a card in an Auto column is picked up by the agents on that column, and assigning an agent makes only that agent start it. Labels are tags for people; they don't route. Don't write code yourself.\n\
              - Set up and adjust agents when asked, and keep the board tidy.\n\
              - Say briefly what you changed, with task identifiers.\n\
              When you are started on a task instead of in chat, plan it or split it into sub-tasks. Allowed outcomes: needs_decision.\n\

@@ -46,6 +46,12 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
             return Err("an agent can't be allowed to run any command from chat; name the commands, like Bash(npm test:*) or Bash(git commit:*)".into());
         }
     }
+    // MCP servers and their tools: only the user switches them, in the agent form → Tools.
+    for k in ["mcp_servers", "mcp", "tools", "mcp_tools"] {
+        if a.0.get(k).is_some_and(|v| !v.is_null()) {
+            return Err("an agent's MCP servers and their tools can't be switched from chat: only the user does that, in the agent form → Tools".into());
+        }
+    }
     // The folders an agent may read or change: only the user sets them, in the agent form.
     if a.0.get("folders").is_some_and(|v| !v.is_null()) {
         return Err("an agent's folders can't be changed from chat: the user sets them in the agent form (Team page → the agent → Permissions → Folders). Nothing changed.".into());
@@ -245,11 +251,12 @@ pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
     if nothing {
         return Err("nothing to change: give a field to update".into());
     }
-    tasks::update(cx.db(), cx.actor, &t.id, patch).map_err(err)?;
-    if let Some(l) = labels {
-        let team = resolve::team_of(cx, t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok()).as_ref())?;
-        tasks::set_labels(cx.db(), cx.actor, &t.id, resolve::labels(&team, &l)?).map_err(err)?;
-    }
+    // Everything given is checked before anything changes: a bad label (or hold, title, …) changes nothing.
+    let label_ids = match labels {
+        Some(l) => Some(resolve::labels(&resolve::team_of(cx, t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok()).as_ref())?, &l)?),
+        None => None,
+    };
+    tasks::update_with_labels(cx.db(), cx.actor, &t.id, patch, label_ids).map_err(err)?;
     task_done(cx, &t.id, "updated")
 }
 
@@ -285,7 +292,8 @@ fn budget(a: &Args, cur: Option<i64>) -> Result<Option<i64>, String> {
 fn agent_result(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
     cx.changed("actors");
     let m = team::agent(cx.db(), id).map_err(err)?;
-    Ok(json!({"ok": true, "done": what, "agent": {"id": m.actor_id, "name": m.name, "role": m.role_key, "status": m.status, "wakeup": m.wakeup},
+    let columns = gizai_core::columns::of_agent(cx.db(), &m.actor_id).unwrap_or_default();
+    Ok(json!({"ok": true, "done": what, "agent": {"id": m.actor_id, "name": m.name, "role": m.role_key, "status": m.status, "columns": columns},
               "link": link("agent", &m.actor_id, &m.name)}))
 }
 
@@ -315,8 +323,8 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
     let id = team::add_agent(cx.db(), cx.actor, &team_id, AgentInput {
         name: a.req("name")?, role_key: a.req("role")?, title: a.opt("title"), adapter: cli.map(|c| c.id).unwrap_or_default(), model: a.opt("model"),
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
-        allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: a.opt("wakeup").unwrap_or_default(),
-        heartbeat_minutes: a.int("heartbeat_minutes")?, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
+        allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: String::new(),
+        heartbeat_minutes: None, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
         max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;
     agent_result(cx, &id, "created")
@@ -343,8 +351,8 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         title: keep(a, "title", &m.title), adapter: adapter.unwrap_or_default(), model,
         instructions_md: a.opt("instructions_md"), permission_mode,
         allowed_tools: a.list("allowed_tools").unwrap_or(m.allowed_tools.clone()),
-        wakeup: a.opt("wakeup").or(m.wakeup.clone()).unwrap_or_default(),
-        heartbeat_minutes: a.int("heartbeat_minutes")?.or(m.heartbeat_minutes),
+        wakeup: m.wakeup.clone().unwrap_or_default(),
+        heartbeat_minutes: m.heartbeat_minutes,
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
         board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;
@@ -359,29 +367,82 @@ pub(crate) fn set_agent_status(cx: &Cx, a: &Args) -> Result<Value, String> {
     agent_result(cx, &m.actor_id, "status changed")
 }
 
+/// The setup a tool gives for a column (agents by name, auto, next column by name, a new name, the column it goes after),
+/// as a `ColumnInput`. "none" (or empty) as next clears it.
+fn column_input(cx: &Cx, t: &team::Team, a: &Args, renaming: bool) -> Result<gizai_core::columns::ColumnInput, String> {
+    let agent_ids = match a.list("agents") {
+        Some(names) => Some(names.iter().map(|n| resolve::agent(cx, n).map(|m| m.actor_id)).collect::<Result<Vec<_>, String>>()?),
+        None => None,
+    };
+    let next_state_id = match a.text("next") {
+        Some(n) if n.is_empty() || n.eq_ignore_ascii_case("none") => Some(String::new()),
+        Some(n) => Some(resolve::column(t, &n)?.id),
+        None => None,
+    };
+    let after_id = match a.opt("after") { Some(n) => Some(resolve::column(t, &n)?.id), None => None };
+    Ok(gizai_core::columns::ColumnInput {
+        name: if renaming { a.opt("new_name") } else { None }, agent_ids, auto: a.flag("auto"), next_state_id, after_id,
+    })
+}
+
+fn workflow_done(cx: &Cx, what: &str) -> Result<Value, String> {
+    cx.changed("workflow_states");
+    let t = resolve::team_of(cx, None)?;
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let st = cx.st.clone();
+        tokio::spawn(async move { crate::runs::pull(&st).await; });
+    }
+    let columns: Vec<String> = t.states.iter().map(|s| format!("{}: {}", s.name, super::read::column_line(s, &t))).collect();
+    Ok(json!({"ok": true, "done": what, "columns": columns, "link": {"page": "team", "id": t.id, "label": "Workflow"}}))
+}
+
 pub(crate) fn add_column(cx: &Cx, a: &Args) -> Result<Value, String> {
     let t = resolve::team_of(cx, None)?;
     let after = resolve::column(&t, &a.req("after")?)?;
-    let category = a.req("category")?.trim().to_lowercase().replace([' ', '-'], "_");
-    let category = match category.as_str() { "to_do" | "todo" => "ready".to_string(), _ => category };
-    let worker = a.opt("worked_by").map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty() && w != "nobody");
-    let worker = worker.map(|w| if matches!(w.as_str(), "you" | "the user" | "user" | "me") { "human".to_string() } else { w });
-    team::add_state(cx.db(), cx.actor, &t.id, &a.req("name")?, &after.id, &category, worker.as_deref()).map_err(err)?;
-    cx.changed("workflow_states");
-    let t = resolve::team_of(cx, None)?;
-    let columns: Vec<String> = t.states.iter().map(|s| s.name.clone()).collect();
-    Ok(json!({"ok": true, "done": "column added", "columns": columns, "link": {"page": "team", "id": t.id, "label": "Workflow"}}))
+    let kind = a.req("kind").or_else(|_| a.req("category"))?;
+    let category = gizai_core::columns::category_of(&kind)
+        .ok_or_else(|| format!("a column is waiting, work, testing, review, deploy, done or backlog, not {kind}"))?;
+    let setup = column_input(cx, &t, a, false)?;
+    let name = a.req("name")?;
+    // Checked before the column is added: nothing changes when its setup is refused.
+    if setup.agent_ids.as_ref().is_some_and(|l| !l.is_empty()) && !gizai_core::columns::takes_agents(category) {
+        return Err(format!("a {kind} column takes no agents: Backlog, Review, Done and Cancelled columns are for people"));
+    }
+    if setup.auto == Some(true) && setup.next_state_id.as_deref().is_none_or(str::is_empty) {
+        return Err("an Auto column needs a next column, so a finished card isn't picked up again: give next".into());
+    }
+    let id = team::add_state(cx.db(), cx.actor, &t.id, &name, &after.id, category).map_err(err)?;
+    let setup = gizai_core::columns::ColumnInput { after_id: None, ..setup };
+    if let Err(e) = gizai_core::columns::set_column(cx.db(), cx.actor, &id, setup) {
+        cx.changed("workflow_states");
+        return Err(format!("{name} was added after {}, but its setup was refused: {}", after.name, err(e)));
+    }
+    workflow_done(cx, "column added")
 }
 
-pub(crate) fn add_rule(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) fn set_column(cx: &Cx, a: &Args) -> Result<Value, String> {
     let t = resolve::team_of(cx, None)?;
-    team::add_rule(cx.db(), cx.actor, &t.id, RuleInput {
-        kind: a.req("kind")?, match_name: a.req("match")?, target_role: a.req("role")?, priority: a.int("priority")?.unwrap_or(10),
-    }).map_err(err)?;
-    cx.changed("routing_rules");
-    let t = resolve::team_of(cx, None)?;
-    let rules: Vec<String> = t.rules.iter().map(|r| super::read::rule_sentence(r, &t)).collect();
-    Ok(json!({"ok": true, "done": "rule added", "rules": rules, "link": {"page": "team", "id": t.id, "label": "Routing rules"}}))
+    let col = resolve::column(&t, &a.req("column")?)?;
+    let input = column_input(cx, &t, a, true)?;
+    let nothing = input.name.is_none() && input.agent_ids.is_none() && input.auto.is_none() && input.next_state_id.is_none() && input.after_id.is_none();
+    if nothing {
+        return Err("nothing to change: give agents, auto, next, new_name or after".into());
+    }
+    gizai_core::columns::set_column(cx.db(), cx.actor, &col.id, input).map_err(err)?;
+    workflow_done(cx, "column changed")
+}
+
+pub(crate) fn save_label(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let current = match a.opt("label") {
+        Some(n) => Some(gizai_core::labels::find(cx.db(), &n).map_err(err)?.ok_or_else(|| format!("there is no label {n}: leave label out to add a new one"))?),
+        None => None,
+    };
+    let name = a.opt("name").or_else(|| current.as_ref().map(|l| l.name.clone())).ok_or("missing \"name\"")?;
+    let id = gizai_core::labels::save(cx.db(), cx.actor, current.as_ref().map(|l| l.id.as_str()), &name, a.opt("color").as_deref()).map_err(err)?;
+    cx.changed("labels");
+    let labels: Vec<String> = gizai_core::labels::list(cx.db()).map_err(err)?.into_iter().map(|l| l.name).collect();
+    Ok(json!({"ok": true, "done": if current.is_some() { "label changed" } else { "label added" }, "label": {"id": id, "name": name},
+              "labels": labels, "link": {"page": "team", "id": resolve::team_of(cx, None)?.id, "label": "Labels"}}))
 }
 
 /// A board check never starts more runs than the agent's free slots allow ("Runs at once" is checked by every start).

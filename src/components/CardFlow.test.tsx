@@ -11,10 +11,11 @@ import { needsYou } from "../lib/inbox";
 import type { Run, Task, Team } from "../types";
 
 const team: Team = {
-  id: "team", name: "Software", members: [], labels: [], rules: [],
+  id: "team", name: "Software", members: [], labels: [],
   states: [
-    { id: "s-review", name: "Review", category: "review", ownerRole: "human", sortKey: "a4" },
-    { id: "s-deploy", name: "Deploy", category: "deploy", ownerRole: "human", sortKey: "a4V" },
+    { id: "s-review", name: "Review", category: "review", sortKey: "a4", nextStateId: "s-deploy" },
+    // GA-49: the column decides: Deploy is Manual, with the DevOps Agent on it.
+    { id: "s-deploy", name: "Deploy", category: "deploy", sortKey: "a4V", auto: false, agentIds: ["devops"], nextStateId: "s-done" },
     { id: "s-done", name: "Done", category: "done", sortKey: "a5" },
   ],
 };
@@ -58,10 +59,15 @@ describe("Deploy", () => {
     expect(at("Review")).toBeLessThan(at("Deploy"));
     expect(at("Deploy")).toBeLessThan(at("Done"));
     const deployCol = html.slice(at("Deploy"), at("Done"));
-    expect(deployCol).toContain('<div class="col-note">Merged: deploy it, or press Run for the DevOps Agent</div>');
+    // GA-49: the note follows the column (Manual, its agents), not GA-32's "press Run for the DevOps Agent".
+    expect(deployCol).toContain('<div class="col-note">Manual: press Run on a card</div>');
     expect(deployCol).not.toContain("Waiting for your review");
     expect(deployCol).toContain("Fix a typo");
     expect(html.slice(at("Review"), at("Deploy"))).toContain("Waiting for your review");
+    // a Deploy column without agents says nothing about Run or review
+    const bare = renderToStaticMarkup(<Board tasks={[task({})]} states={team.states.map((s) => s.id === "s-deploy" ? { ...s, agentIds: [] } : s)} onMove={() => {}} onOpen={() => {}} />);
+    const bareDeploy = bare.slice(bare.indexOf('data-col="Deploy"'), bare.indexOf('data-col="Done"'));
+    expect(bareDeploy).not.toContain("col-note");
   });
 
   it("puts a Deploy card assigned to you in the inbox, like a Review card", () => {

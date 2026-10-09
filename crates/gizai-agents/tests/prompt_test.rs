@@ -63,3 +63,179 @@ fn includes_the_project_goal_the_project_page_promises() {
     assert!(p[goal..].contains("Read CLAUDE.md first.") && goal < p.find("## Description").unwrap(), "{p}");
     assert!(!build(&ctx(), "R").contains("## Project goal"));
 }
+
+// GA-48: "How this run works" at the end of every task prompt.
+use gizai_agents::cli::Kind;
+use gizai_agents::prompt::{answered_prompt, rules_section, with_rules, RunRules};
+
+fn rules(kind: Kind, mode: &str) -> RunRules {
+    RunRules { kind, mode: mode.into(), allowed_tools: vec!["Bash(git status:*)".into(), "Bash(npm test)".into(), "Bash(./vendor/bin/*)".into(),
+        "WebFetch(domain:docs.rs)".into()], folders: vec!["/home/u/notes".into()], temp_dir: Some("/w/KADE-1/.gizai-tmp".into()) }
+}
+
+fn bullets(s: &str) -> usize {
+    s.lines().filter(|l| l.starts_with("- ")).count()
+}
+
+#[test]
+fn every_task_prompt_new_continued_and_answered_ends_with_how_this_run_works() {
+    let r = rules(Kind::ClaudeCode, "");
+    for p in [build(&ctx(), "You are the Backend Agent."), continue_prompt("stopped at the limit of 200 tool calls per run", None),
+              answered_prompt("Use semicolons.", None)] {
+        let full = with_rules(&p, &r);
+        assert!(full.starts_with(p.trim_end()), "the prompt comes first: {full}");
+        assert!(full.trim_end().ends_with(rules_section(&r).trim_end()), "the section comes last: {full}");
+        assert_eq!(full.matches("## How this run works").count(), 1);
+    }
+}
+
+#[test]
+fn claude_code_in_accept_edits_hears_its_commands_the_checked_shell_rules_and_the_temp_path() {
+    for mode in ["", "acceptEdits"] {
+        let s = rules_section(&rules(Kind::ClaudeCode, mode));
+        for want in ["## How this run works", "Nobody can approve anything during this run: a command or tool that needs approval is refused.",
+                     "`git status`", "`npm test` (exact)", "`./vendor/bin/*`", "Also allowed: `WebFetch(domain:docs.rs)`",
+                     "this worktree and your folders (`/home/u/notes`)", "`/tmp`", "`$(…)`", "backticks", "`$TMPDIR`", "`<<EOF`",
+                     "Pipes, `2>&1`", "Make files with the Write tool.", "`/w/KADE-1/.gizai-tmp`", "write this path, not `$TMPDIR`",
+                     "never in `/tmp`", "never committed", "don't try other spellings of it", "under what you could not check"] {
+            assert!(s.contains(want), "{mode:?}: {want} missing in {s}");
+        }
+        // checked against Claude Code 2.1.289 and false there, so left out
+        assert!(!s.contains("One plain command per Bash call"), "{s}");
+        assert!(!s.contains("redirects (`>`, `>>`, `2> file`)") && !s.to_lowercase().contains("redirects are refused"), "{s}");
+        assert!(bullets(&s) <= 12, "at most about 12 lines: {s}");
+    }
+}
+
+#[test]
+fn only_rules_that_hold_for_the_mode_and_the_cli_go_in() {
+    // bypassPermissions: no list and no shell rules (nothing is refused for them)
+    let s = rules_section(&rules(Kind::ClaudeCode, "bypassPermissions"));
+    assert!(!s.contains("The commands you may run") && !s.contains("`$(…)`"), "{s}");
+    assert!(s.contains("`/w/KADE-1/.gizai-tmp`") && s.contains("Make files with the Write tool."), "{s}");
+    // a stricter mode: the list, but none of the shell rules checked in acceptEdits, and no Write tool to make files
+    let s = rules_section(&rules(Kind::ClaudeCode, "default"));
+    assert!(s.contains("`git status`") && !s.contains("`$(…)`") && !s.contains("Write tool"), "{s}");
+    let s = rules_section(&RunRules { allowed_tools: vec!["Write".into()], ..rules(Kind::ClaudeCode, "default") });
+    assert!(s.contains("No commands are allowed for you.") && s.contains("Make files with the Write tool."), "{s}");
+    // Codex: no allowed list (its sandbox decides), no Claude Code shell rules
+    let s = rules_section(&rules(Kind::Codex, ""));
+    assert!(s.contains("Nobody can approve anything") && s.contains("`/w/KADE-1/.gizai-tmp`") && s.contains("don't try other spellings"), "{s}");
+    assert!(!s.contains("The commands you may run") && !s.contains("`$(…)`") && !s.contains("Write tool"), "{s}");
+    // Gemini: its commands (the Bash rules it is given), its own file tool
+    let s = rules_section(&rules(Kind::Gemini, ""));
+    assert!(s.contains("`git status`") && s.contains("write_file tool") && !s.contains("WebFetch") && !s.contains("`$(…)`"), "{s}");
+    assert!(!rules_section(&rules(Kind::Gemini, "yolo")).contains("The commands you may run"));
+    // another CLI: no approvals, the temp folder
+    let s = rules_section(&rules(Kind::Other, ""));
+    assert!(s.contains("Nobody can approve anything during this run.") && s.contains("`/w/KADE-1/.gizai-tmp`") && !s.contains("commands"), "{s}");
+    // without a temp folder (Gizai couldn't make it): no path, still not /tmp
+    let s = rules_section(&RunRules { temp_dir: None, ..rules(Kind::ClaudeCode, "") });
+    assert!(s.contains("Throwaway files never go in `/tmp`") && !s.contains(".gizai-tmp") && !s.contains("TMPDIR, TMP and TEMP point"), "{s}");
+}
+
+// GA-54: the waiting rule in "How this run works", and Gizai's nudge.
+use gizai_agents::prompt::nudge_prompt;
+
+const ENDS: &str = "Ending your message ends the run: nothing wakes you up later";
+const WAIT: &str = "To wait for something outside this run (a CI run, a release or deploy workflow, a pull request's checks)";
+const LIMIT: &str = "If it won't be done before the limit, don't wait for it: end with your GIZAI_RESULT line, and say in your summary what to \
+check and what is left.";
+
+fn with_tools(kind: Kind, mode: &str, tools: &[&str]) -> RunRules {
+    RunRules { allowed_tools: tools.iter().map(|t| t.to_string()).collect(), ..rules(kind, mode) }
+}
+
+/// Gizai's default list (`DEFAULT_TOOLS` in src-tauri/src/runs.rs), which has `sleep` since GA-54.
+fn default_list(kind: Kind, mode: &str) -> RunRules {
+    with_tools(kind, mode, &["Bash(git status:*)", "Bash(git commit:*)", "Bash(npm:*)", "Bash(cargo:*)", "Bash(ls:*)", "Bash(cat:*)",
+                             "Bash(head:*)", "Bash(grep:*)", "Bash(pwd:*)", "Bash(tree:*)", "Bash(sleep:*)"])
+}
+
+fn names_sleep(r: &RunRules) -> bool {
+    let s = rules_section(r);
+    let named = s.contains("`<check>; sleep 45`");
+    assert_eq!(named, s.contains("about once a minute") && s.contains("then the sleep in one command"), "{s}");
+    // without it, sleep isn't named anywhere (an allowed `sleeper` is only the agent's own list)
+    assert_eq!(named, s.replace("`sleeper`", "").contains("sleep"), "sleep is named in the waiting rule or not at all: {s}");
+    named
+}
+
+#[test]
+fn every_task_prompt_new_continued_answered_and_nudged_has_the_waiting_rule_on_every_cli() {
+    let limits = Some(RunLimits { minutes: 90, tool_calls: 200 });
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        for r in [rules(kind, ""), default_list(kind, "")] {
+            for (which, p) in [("new", build(&TaskContext { limits, ..ctx() }, "You are the DevOps Agent.")),
+                               ("continued", continue_prompt("stopped at the limit of 200 tool calls per run", limits)),
+                               ("answered", answered_prompt("Release 1.11.0, please.", limits)), ("nudged", nudge_prompt(limits))] {
+                let full = with_rules(&p, &r);
+                let sec = &full[full.find("## How this run works").unwrap_or_else(|| panic!("{kind:?} {which}: no section in {full}"))..];
+                for want in [ENDS, WAIT, "in the foreground", LIMIT] {
+                    assert!(sec.contains(want), "{kind:?} {which}: {want} missing in {sec}");
+                }
+                assert_eq!(full.matches(ENDS).count(), 1, "{kind:?} {which}: once: {full}");
+                // it goes before the last line, about refusals, and the section stays about 12 lines
+                assert!(sec.find(LIMIT).unwrap() < sec.find("don't try other spellings").unwrap(), "{kind:?} {which}: {sec}");
+                assert!(bullets(sec) <= 12, "{kind:?} {which}: at most about 12 lines: {sec}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_waiting_rule_names_sleep_only_when_the_agent_may_run_it() {
+    // Claude Code: its list allows sleep with any arguments, or every command; or its mode runs everything
+    for tools in [&["Bash(git status:*)", "Bash(sleep:*)"][..], &["Bash(sleep *)"], &["Bash(sleep*)"], &["Bash"], &["Bash(*)"], &[" Bash( sleep:* ) "]] {
+        assert!(names_sleep(&with_tools(Kind::ClaudeCode, "", tools)), "{tools:?}");
+    }
+    assert!(names_sleep(&default_list(Kind::ClaudeCode, "acceptEdits")));
+    assert!(names_sleep(&rules(Kind::ClaudeCode, "bypassPermissions")), "every command runs");
+    for tools in [&["Bash(git status:*)", "Bash(npm test)"][..], &["Bash(sleeper:*)"], &["Bash(git:*)"], &["Write", "Edit"], &[]] {
+        assert!(!names_sleep(&with_tools(Kind::ClaudeCode, "", tools)), "{tools:?}");
+    }
+    // Codex has no list (its sandbox decides): always
+    assert!(names_sleep(&rules(Kind::Codex, "")) && names_sleep(&with_tools(Kind::Codex, "", &[])));
+    // Gemini: its list (as run_shell_command rules) or yolo; a bare Bash is no Gemini rule
+    assert!(names_sleep(&default_list(Kind::Gemini, "")) && names_sleep(&rules(Kind::Gemini, "yolo")));
+    assert!(!names_sleep(&rules(Kind::Gemini, "")) && !names_sleep(&with_tools(Kind::Gemini, "", &["Bash"])));
+    // another CLI: Gizai doesn't know what it may run
+    assert!(!names_sleep(&default_list(Kind::Other, "")) && !names_sleep(&rules(Kind::Other, "")));
+    // without sleep the agent still hears to check again in the foreground
+    let s = rules_section(&rules(Kind::ClaudeCode, ""));
+    assert!(s.contains("check it again in the foreground until it is done, within this run's limits"), "{s}");
+}
+
+#[test]
+fn claude_code_also_hears_what_was_checked_against_it_and_other_clis_do_not() {
+    let s = rules_section(&default_list(Kind::ClaudeCode, ""));
+    for want in ["a command still running in the background (run_in_background) is stopped", "Don't write a loop (`for`, `while`, `until`)",
+                 "A command that starts with a sleep longer than 20 seconds is blocked.", "longer than 2 minutes", "at most 10 minutes",
+                 "is moved to the background", "one check and then the sleep in one command"] {
+        assert!(s.contains(want), "{want} missing in {s}");
+    }
+    assert!(!s.contains("Monitor"), "the rule doesn't offer a Monitor: {s}");
+    // without sleep: the loop and timeout lines, not the 20-second block
+    let s = rules_section(&rules(Kind::ClaudeCode, ""));
+    assert!(s.contains("Don't write a loop") && s.contains("2 minutes") && !s.contains("20 seconds"), "{s}");
+    for kind in [Kind::Codex, Kind::Gemini, Kind::Other] {
+        let s = rules_section(&default_list(kind, "yolo"));
+        assert!(s.contains("anything still running in the background is stopped"), "{kind:?}: {s}");
+        for not in ["run_in_background", "Don't write a loop", "20 seconds", "2 minutes", "10 minutes"] {
+            assert!(!s.contains(not), "{kind:?}: {not} is Claude Code's only: {s}");
+        }
+    }
+}
+
+#[test]
+fn the_nudge_says_the_run_ended_without_its_result_and_to_check_in_the_foreground_now() {
+    let p = nudge_prompt(Some(RunLimits { minutes: 90, tool_calls: 200 }));
+    for want in ["Your run ended without your GIZAI_RESULT line", "nothing wakes you up later", "If you were waiting for something",
+                 "check it in the foreground now", "End with your GIZAI_RESULT line.", "## Limits of this run", "200 tool calls", "90 minutes"] {
+        assert!(p.contains(want), "{want} missing in {p}");
+    }
+    assert!(p.starts_with("Your run ended") && p.ends_with('\n') && !p.ends_with("\n\n"), "{p:?}");
+    let short = nudge_prompt(None);
+    assert!(!short.contains("## Limits") && short.contains("check it in the foreground now"), "{short}");
+    assert!(!p.contains("was stopped") && !p.contains("asking for a decision"), "not Continue's or an answer's words: {p}");
+}

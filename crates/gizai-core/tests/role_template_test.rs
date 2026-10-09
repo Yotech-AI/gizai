@@ -19,7 +19,8 @@ fn qa_and_lead_get_their_own_rules() {
     let lead = role_template("lead");
     assert!(lead.starts_with("You are the Team Lead"));
     assert!(lead.contains("Chat page"));
-    assert!(lead.contains("don't write code yourself"));
+    assert!(lead.contains("Don't write code yourself"));
+    assert!(!lead.contains("routing"), "labels don't route any more (GA-49): {lead}");
 }
 
 #[test]

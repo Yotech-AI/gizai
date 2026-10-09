@@ -1,3 +1,4 @@
+use gizai_core::columns::{self, ColumnInput};
 use gizai_core::{db::Db, model::*, projects, runs, seed::ensure_seed, tasks, workflow};
 
 fn setup() -> (Db, gizai_core::seed::SeedIds, String) {
@@ -9,11 +10,10 @@ fn setup() -> (Db, gizai_core::seed::SeedIds, String) {
     tasks::set_labels(&db, &s.you_id, &t, vec![be]).unwrap();
     let todo = state(&db, "To do");
     tasks::move_to(&db, &s.you_id, &t, &todo, "a1").unwrap();
+    // add_agent puts each on its role's usual columns: the Backend Agent on To do and In progress, the QA Agent on Testing
     for (name, role) in [("Backend Agent", "backend"), ("QA Agent", "qa")] {
         gizai_core::team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: name.into(), role_key: role.into(), ..Default::default() }).unwrap();
     }
-    gizai_core::team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "label".into(), match_name: "backend".into(), target_role: "backend".into(), priority: 10 }).unwrap();
-    gizai_core::team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "column".into(), match_name: "Testing".into(), target_role: "qa".into(), priority: 20 }).unwrap();
     (db, s, t)
 }
 
@@ -29,6 +29,13 @@ fn run(db: &Db, agent: &str, task: &str, role: &str) -> String {
     runs::create(db, agent, task, role, "S", "/tmp", "/tmp", "gizai/x", "/tmp/r.jsonl").unwrap()
 }
 
+/// A run that really started, as the app does it: a card in To do moves on to In progress (`move_on_start`).
+fn start(db: &Db, agent: &str, task: &str, role: &str) -> String {
+    let r = run(db, agent, task, role);
+    workflow::move_on_start(db, agent, task).unwrap();
+    r
+}
+
 fn out(o: &str) -> Outcome {
     Outcome { outcome: o.into(), summary: format!("summary for {o}"), issues: vec![] }
 }
@@ -36,12 +43,12 @@ fn out(o: &str) -> Outcome {
 #[test]
 fn backend_then_qa_then_review() {
     let (db, _s, t) = setup();
-    let (agent, role) = workflow::pick_agent(&db, &t).unwrap().unwrap();
+    let (agent, role) = workflow::run_agent(&db, &t).unwrap().unwrap();
     assert_eq!(role, "backend");
-    let r1 = run(&db, &agent, &t, &role);
+    let r1 = start(&db, &agent, &t, &role);
     workflow::apply_outcome(&db, &r1, Some(&Outcome { outcome: "ready_for_testing".into(), summary: "done".into(), issues: vec![] })).unwrap();
     assert_eq!(tasks::get(&db, &t).unwrap().state_name, "Testing");
-    let (qa, qrole) = workflow::pick_agent(&db, &t).unwrap().unwrap();
+    let (qa, qrole) = workflow::run_agent(&db, &t).unwrap().unwrap();
     assert_eq!(qrole, "qa");
     let r2 = run(&db, &qa, &t, &qrole);
     workflow::apply_outcome(&db, &r2, Some(&Outcome { outcome: "qa_pass".into(), summary: "ok".into(), issues: vec![] })).unwrap();
@@ -55,31 +62,33 @@ fn backend_then_qa_then_review() {
 fn three_bounces_put_the_card_on_hold() {
     let (db, _s, t) = setup();
     for _ in 0..3 {
-        let (a, role) = workflow::pick_agent(&db, &t).unwrap().unwrap();
-        let r = run(&db, &a, &t, &role);
+        let (a, role) = workflow::run_agent(&db, &t).unwrap().unwrap();
+        let r = start(&db, &a, &t, &role);
         workflow::apply_outcome(&db, &r, Some(&Outcome { outcome: "ready_for_testing".into(), summary: "".into(), issues: vec![] })).unwrap();
-        let (qa, qrole) = workflow::pick_agent(&db, &t).unwrap().unwrap();
-        let q = run(&db, &qa, &t, &qrole);
+        let (qa, qrole) = workflow::run_agent(&db, &t).unwrap().unwrap();
+        let q = start(&db, &qa, &t, &qrole);
         workflow::apply_outcome(&db, &q, Some(&Outcome { outcome: "qa_fail".into(), summary: "".into(), issues: vec!["1. broken".into()] })).unwrap();
     }
     let task = tasks::get(&db, &t).unwrap();
     assert_eq!((task.bounce_count, task.hold.as_deref()), (3, Some("needs_decision")));
     assert_eq!(task.hold_reason.as_deref(), Some("3 QA bounces"));
-    assert_eq!(workflow::pick_agent(&db, &t).unwrap(), None, "held cards are not dispatched");
+    for a in ["Backend Agent", "QA Agent"] {
+        assert!(workflow::waiting_for(&db, &agent(&db, a)).unwrap().is_empty(), "held cards are not dispatched ({a})");
+    }
 }
 
 #[test]
 fn qa_fail_goes_back_to_the_implementer_with_the_issues() {
     let (db, _s, t) = setup();
     let be = agent(&db, "Backend Agent");
-    let r = run(&db, &be, &t, "backend");
+    let r = start(&db, &be, &t, "backend");
     workflow::apply_outcome(&db, &r, Some(&out("ready_for_testing"))).unwrap();
-    let q = run(&db, &agent(&db, "QA Agent"), &t, "qa");
+    let q = start(&db, &agent(&db, "QA Agent"), &t, "qa");
     let g = workflow::apply_outcome(&db, &q, Some(&Outcome { outcome: "qa_fail".into(), summary: "Two problems.".into(), issues: vec!["Pin overlaps the header".into()] })).unwrap();
     assert_eq!(g.moved_to.as_deref(), Some("In progress"));
     let task = tasks::get(&db, &t).unwrap();
     assert_eq!(task.assignee_id.as_deref(), Some(be.as_str()));
-    assert_eq!(workflow::pick_agent(&db, &t).unwrap().unwrap().0, be);
+    assert_eq!(workflow::run_agent(&db, &t).unwrap().unwrap().0, be);
     let notes = gizai_core::comments::list(&db, &t).unwrap();
     assert!(notes.iter().any(|c| c.author_name == "QA Agent" && c.body_md.contains("Pin overlaps the header")));
 }
@@ -133,12 +142,12 @@ fn a_task_has_one_active_run_at_a_time() {
 }
 
 #[test]
-fn heartbeats_find_work_for_each_role() {
+fn the_queue_finds_work_for_each_role() {
     let (db, s, t) = setup();
     let (be, qa) = (agent(&db, "Backend Agent"), agent(&db, "QA Agent"));
     assert_eq!(workflow::next_task_for(&db, &be).unwrap().as_deref(), Some(t.as_str()));
     assert_eq!(workflow::next_task_for(&db, &qa).unwrap(), None);
-    let r = run(&db, &be, &t, "backend");
+    let r = start(&db, &be, &t, "backend");
     assert_eq!(workflow::next_task_for(&db, &be).unwrap(), None, "claimed and busy");
     workflow::apply_outcome(&db, &r, Some(&out("ready_for_testing"))).unwrap();
     assert_eq!(workflow::next_task_for(&db, &qa).unwrap().as_deref(), Some(t.as_str()));
@@ -149,7 +158,7 @@ fn heartbeats_find_work_for_each_role() {
 #[test]
 fn interrupted_runs_are_recovered_on_start() {
     let (db, _s, t) = setup();
-    let (a, role) = workflow::pick_agent(&db, &t).unwrap().unwrap();
+    let (a, role) = workflow::run_agent(&db, &t).unwrap().unwrap();
     let r = run(&db, &a, &t, &role);
     runs::set_running(&db, &r, 4242).unwrap();
     assert_eq!(runs::recover_interrupted(&db).unwrap(), 1);
@@ -159,11 +168,12 @@ fn interrupted_runs_are_recovered_on_start() {
 }
 
 #[test]
-fn rules_must_name_a_real_label_or_column() {
+fn a_column_must_name_real_agents_and_a_real_next_column() {
     let (db, s, _t) = setup();
-    let bad = gizai_core::team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "label".into(), match_name: "nope".into(), target_role: "qa".into(), priority: 1 });
+    let testing = state(&db, "Testing");
+    let bad = columns::set_column(&db, &s.you_id, &testing, ColumnInput { agent_ids: Some(vec!["nope".into()]), ..Default::default() });
     assert!(bad.is_err());
-    let bad = gizai_core::team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "planet".into(), match_name: "Testing".into(), target_role: "qa".into(), priority: 1 });
+    let bad = columns::set_column(&db, &s.you_id, &testing, ColumnInput { next_state_id: Some("nope".into()), ..Default::default() });
     assert!(bad.is_err());
 }
 
@@ -185,23 +195,24 @@ fn a_failed_run_keeps_its_error_outcome_after_the_gate() {
 }
 
 #[test]
-fn label_rules_only_route_to_do_and_in_progress_cards() {
+fn a_testing_card_goes_to_the_qa_agent_never_the_builder_and_review_is_the_human_gate() {
     let db = Db::open_in_memory().unwrap();
     let s = ensure_seed(&db, "Jeffrey").unwrap();
     let p = projects::create(&db, &s.you_id, ProjectInput { name: "Kade".into(), key: "KADE".into(), ..Default::default() }).unwrap();
     let t = tasks::create(&db, &s.you_id, TaskInput { project_id: p, title: "CSV".into(), ..Default::default() }).unwrap();
     let be: String = db.read(|c| Ok(c.query_row("SELECT id FROM labels WHERE name='backend'", [], |r| r.get(0))?)).unwrap();
     tasks::set_labels(&db, &s.you_id, &t, vec![be]).unwrap();
+    // the Backend Agent goes on To do and In progress; the card's backend label routes nothing
     gizai_core::team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "Backend Agent".into(), role_key: "backend".into(), ..Default::default() }).unwrap();
-    gizai_core::team::add_rule(&db, &s.you_id, &s.team_id, RuleInput { kind: "label".into(), match_name: "backend".into(), target_role: "backend".into(), priority: 10 }).unwrap();
     tasks::move_to(&db, &s.you_id, &t, &state(&db, "Testing"), "").unwrap();
-    assert_eq!(workflow::pick_agent(&db, &t).unwrap(), None, "no QA agent: nobody, and never the builder");
+    assert_eq!(workflow::run_agent(&db, &t).unwrap(), None, "no QA agent: nobody, and never the builder");
+    assert_eq!(workflow::next_task_for(&db, &agent(&db, "Backend Agent")).unwrap(), None, "never the builder");
     gizai_core::team::add_agent(&db, &s.you_id, &s.team_id, AgentInput { name: "QA Agent".into(), role_key: "qa".into(), ..Default::default() }).unwrap();
     let qa = agent(&db, "QA Agent");
-    assert_eq!(workflow::pick_agent(&db, &t).unwrap(), Some((qa.clone(), "qa".into())), "Testing's owner role is qa, even without a column rule");
+    assert_eq!(workflow::run_agent(&db, &t).unwrap(), Some((qa.clone(), "qa".into())), "a new QA agent goes on Testing");
     assert_eq!(workflow::next_task_for(&db, &qa).unwrap().as_deref(), Some(t.as_str()));
     tasks::move_to(&db, &s.you_id, &t, &state(&db, "Review"), "").unwrap();
-    assert_eq!(workflow::pick_agent(&db, &t).unwrap(), None, "Review is the human gate");
+    assert_eq!(workflow::run_agent(&db, &t).unwrap(), None, "Review is the human gate");
 }
 
 #[test]
@@ -243,4 +254,64 @@ fn clearing_the_hold_gives_the_card_fresh_tries() {
     workflow::apply_outcome(&db, &r, None).unwrap();
     let task = tasks::get(&db, &t).unwrap();
     assert_eq!((task.fail_count, task.hold.as_deref()), (1, None), "one more failure doesn't stall it again");
+}
+
+// GA-54: Gizai's nudge continues a run that ended without a result once; when it too ends without one, the card is held.
+fn nudge(db: &Db, agent: &str, task: &str, role: &str) -> String {
+    runs::create_nudge(db, agent, task, role, "S", "/tmp", "/tmp", "gizai/x", "/tmp/n.jsonl").unwrap()
+}
+
+#[test]
+fn a_nudge_that_ends_without_a_result_too_holds_the_card_stalled() {
+    let (db, _s, t) = setup();
+    let be = agent(&db, "Backend Agent");
+    let first = start(&db, &be, &t, "backend");
+    runs::finish(&db, &first, "succeeded", None, 0, 0, 0, None).unwrap();
+    assert_eq!(workflow::apply_outcome(&db, &first, None).unwrap().hold, None);
+    let task = tasks::get(&db, &t).unwrap();
+    assert_eq!((task.state_name.as_str(), task.fail_count, task.hold.as_deref()), ("In progress", 1, None));
+    assert!(!runs::get(&db, &first).unwrap().nudged);
+
+    let n = nudge(&db, &be, &t, "backend");
+    let run = runs::get(&db, &n).unwrap();
+    assert_eq!((run.trigger.as_str(), run.nudged, run.session_id.as_deref()), ("nudge", true, Some("S")));
+    assert!(runs::list_for_task(&db, &t).unwrap().iter().any(|r| r.id == n && r.nudged), "listed as nudged too");
+    runs::finish(&db, &n, "succeeded", None, 0, 0, 0, None).unwrap();
+    let g = workflow::apply_outcome(&db, &n, None).unwrap();
+    assert_eq!((g.hold.as_deref(), g.moved_to.as_deref()), (Some("stalled"), None));
+    let task = tasks::get(&db, &t).unwrap();
+    assert_eq!((task.state_name.as_str(), task.fail_count, task.hold.as_deref()), ("In progress", 2, Some("stalled")));
+    assert_eq!(task.hold_reason.as_deref(), Some(workflow::NUDGE_STALLED));
+    assert_eq!(runs::get(&db, &n).unwrap().outcome.as_deref(), Some("no_result"));
+    // held: the queue doesn't start it again
+    assert!(workflow::waiting_for(&db, &be).unwrap().is_empty());
+}
+
+#[test]
+fn a_nudge_that_fails_hits_a_limit_or_finishes_counts_as_usual_and_a_persons_continue_is_not_a_nudge() {
+    for status in ["failed", "timed_out"] {
+        let (db, _s, t) = setup();
+        let be = agent(&db, "Backend Agent");
+        let n = nudge(&db, &be, &t, "backend");
+        runs::finish(&db, &n, status, None, 0, 0, 0, Some("stopped at the limit of 200 tool calls per run")).unwrap();
+        assert_eq!(workflow::apply_outcome(&db, &n, None).unwrap().hold, None, "{status}");
+        let task = tasks::get(&db, &t).unwrap();
+        assert_eq!((task.fail_count, task.hold.as_deref()), (1, None), "{status}");
+    }
+    // a person's Continue is recorded as a nudge too, but not nudged: no hold
+    let (db, _s, t) = setup();
+    let be = agent(&db, "Backend Agent");
+    let c = runs::create_with_trigger(&db, &be, &t, "backend", "nudge", "S", "/tmp", "/tmp", "gizai/x", "/tmp/c.jsonl").unwrap();
+    assert!(!runs::get(&db, &c).unwrap().nudged);
+    runs::finish(&db, &c, "succeeded", None, 0, 0, 0, None).unwrap();
+    assert_eq!(workflow::apply_outcome(&db, &c, None).unwrap().hold, None);
+    // the nudge ends with a result: the card moves on as usual
+    let (db, _s, t) = setup();
+    let be = agent(&db, "Backend Agent");
+    let first = start(&db, &be, &t, "backend");
+    workflow::apply_outcome(&db, &first, None).unwrap();
+    let n = nudge(&db, &be, &t, "backend");
+    runs::finish(&db, &n, "succeeded", Some(&out("ready_for_testing")), 0, 0, 0, None).unwrap();
+    let g = workflow::apply_outcome(&db, &n, Some(&out("ready_for_testing"))).unwrap();
+    assert_eq!((g.moved_to.as_deref(), g.hold.as_deref()), (Some("Testing"), None));
 }

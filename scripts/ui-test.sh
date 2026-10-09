@@ -3,10 +3,17 @@
 #  1. board: drags a To do card into In progress with pointer events; checks the database.
 #  2. task page: opens the description editor, types, saves with Ctrl+Enter; checks the database.
 #  3. doc page: saves with Ctrl+S, then forces a conflict and keeps our text.
-#  4. team page: adds an agent with a heartbeat through the dialog and the usual routing rules.
+#  4. team page (GA-53): Design first and one empty spot per branch; the Development spot opens the agent form with its
+#     role and no wake-up, and the agent lands on To do and In progress; its card dragged from the chart onto Testing (and
+#     not onto Review), "+ Agent" and ×; Manual and Auto; the next column
+#     and the backend's refusals (a link to itself, Auto without a next column); Review; Add column; dragging a column by
+#     its grip; the bins of the last Backlog and Done; the removal confirm and removing a column; a new label, a name in use
+#     and removing a label; a new branch with its empty spot, removed again; "New label…" in Properties and the New task drawer.
 #  5. agent run: Run on a task with the fake Claude Code, watch it live, Stop, Run again → card in Testing.
 #  6. chat: set up the Team Lead from the Chat page, send a message; the fake Claude Code calls Gizai's tools
-#     through the real gizai-mcp shim and socket, and the answer links the task it created.
+#     through the real gizai-mcp shim and socket, and the answer links the task it created. Then Runs on under the
+#     text box: it lists the Claude Code accounts (Codex disabled, with why) and picking Claude Code 2 saves it; while a
+#     slow answer is written, Enter queues a message, which shows as queued and goes by itself when the answer is done.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail

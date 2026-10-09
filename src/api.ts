@@ -60,17 +60,51 @@ export const updateAgent = (actorId: string, input: T.AgentInput) => invoke<void
 export const setAgentStatus = (actorId: string, status: "active" | "paused") => invoke<void>("set_agent_status", { actorId, status });
 /** The agent form's Folders: why each one is refused, or a warning. */
 export const checkAgentFolders = (folders: T.AgentFolder[]) => invoke<T.FolderCheck[]>("check_agent_folders", { folders });
-export const addRule = (teamId: string, input: T.RuleInput) => invoke<string>("add_rule", { teamId, input });
-export const deleteRule = (ruleId: string) => invoke<void>("delete_rule", { ruleId });
 export const renameState = (stateId: string, name: string) => invoke<void>("rename_state", { stateId, name });
-/** A new column right after `afterId`; resolves with its id. ownerRole: null = nobody, a role key ("qa", "backend"), or "human" (you,
- * always for a Deploy column). Fails with "this team already has a column called X" for a name in use. */
-export const addState = (teamId: string, name: string, afterId: string, category: T.StateCategory, ownerRole: string | null) =>
-  invoke<string>("add_state", { teamId, name, afterId, category, ownerRole });
+/** A new column right after `afterId`, Manual and without agents; resolves with its id. `kind`: waiting (like To do), work (like In
+ * progress), testing, review, deploy, done or backlog (a category works too). Fails with "this team already has a column called X". */
+export const addState = (teamId: string, name: string, afterId: string, kind: string) =>
+  invoke<string>("add_state", { teamId, name, afterId, category: kind });
+/** Sets up a column: its agents (the full list), Auto or Manual, its next column, its name or its place (afterId). Refuses agents on
+ * Backlog, Review, Done and Cancelled, a link to itself and Auto without a next column, each with a reason. */
+export const setColumn = (stateId: string, input: T.ColumnInput) => invoke<void>("set_column", { stateId, input });
+/** Puts an agent on a column (a drag from the organisation chart, or "+ Agent"). */
+export const addColumnAgent = (stateId: string, agentId: string) => invoke<void>("add_column_agent", { stateId, agentId });
+/** Takes an agent off a column (×). */
+export const removeColumnAgent = (stateId: string, agentId: string) => invoke<void>("remove_column_agent", { stateId, agentId });
+/** What removing a column does: its cards (archived ones included), the default target, the columns relinked or unlinked, or why not. */
+export const columnRemoval = (stateId: string) => invoke<T.ColumnRemoval>("column_removal", { stateId });
+/** Removes a column; its cards move to `targetId`. */
+export const removeState = (stateId: string, targetId: string) => invoke<void>("remove_state", { stateId, targetId });
+/** Every label with its number of cards. */
+export const listLabels = () => invoke<T.LabelInfo[]>("list_labels");
+/** Creates a label (id null) or renames or recolours one; resolves with its id. Fails for a name in use, ignoring case. */
+export const saveLabel = (id: string | null, name: string, color?: string | null) => invoke<string>("save_label", { id, name, color: color ?? null });
+/** Removes a label from every card; resolves with how many cards carried it. */
+export const removeLabel = (id: string) => invoke<number>("remove_label", { id });
+/** Adds a branch to the team's organisation chart (its role key is made from the name); resolves with the branches. */
+export const addBranch = (teamId: string, name: string) => invoke<T.Branch[]>("add_branch", { teamId, name });
+/** Removes a branch without agents; resolves with the branches. */
+export const removeBranch = (teamId: string, key: string) => invoke<T.Branch[]>("remove_branch", { teamId, key });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
 /** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
  * CLI (a second account); other kinds of CLI have no list. */
 export const claudeModels = (refresh = false, cli: string | null = null) => invoke<T.ModelOption[]>("claude_models", { refresh, cli });
+// Settings → MCP servers and the agent form's Tools. Values of environment and header lines go in once and stay in the keychain.
+export const listMcpServers = () => invoke<T.McpServerView[]>("list_mcp_servers");
+export const saveMcpServer = (input: T.McpServerInput) => invoke<T.McpServerView>("save_mcp_server", { input });
+export const removeMcpServer = (id: string) => invoke<void>("remove_mcp_server", { id });
+/** Starts or calls the server, lists its tools and stops it (up to 2 minutes: an npx server downloads its package once). */
+export const listMcpTools = (id: string) => invoke<T.McpServerView>("list_mcp_tools", { id });
+/** The MCP servers in each Claude Code's config file; reads only, starts nothing. */
+export const scanClaudeCodeMcp = () => invoke<T.McpScan>("scan_claude_code_mcp");
+export const importMcpServers = (picks: T.McpPick[]) => invoke<T.McpServerView[]>("import_mcp_servers", { picks });
+/** Opens the sign-in page in your default browser and waits (up to 10 minutes) until you come back. */
+export const mcpSignIn = (id: string) => invoke<T.McpServerView>("mcp_sign_in", { id });
+export const mcpSignOut = (id: string) => invoke<T.McpServerView>("mcp_sign_out", { id });
+export const agentMcp = (agentId: string) => invoke<T.AgentMcpView>("agent_mcp", { agentId });
+export const saveAgentMcp = (agentId: string, tools: T.AgentTools) => invoke<T.AgentMcpView>("save_agent_mcp", { agentId, tools });
+
 /** Settings → Coding CLIs. */
 export const listClis = () => invoke<T.CliStatus[]>("list_clis");
 export const saveClis = (clis: T.Cli[]) => invoke<T.CliStatus[]>("save_clis", { clis });
@@ -140,7 +174,18 @@ export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> 
 export const listChatThreads = () => invoke<T.ChatThread[]>("list_chat_threads");
 export const chatMessages = (threadId: string) => invoke<T.ChatMessage[]>("chat_messages", { threadId });
 /** Sends a message (a new thread when threadId is null) and starts the answer; resolves with the thread id. */
-export const sendChat = (threadId: string | null, text: string) => invoke<string>("send_chat", { threadId, text });
+/** Sends a message (queued while the Team Lead answers in the chat); a new chat runs on `cli` when one was picked. */
+export const sendChat = (threadId: string | null, text: string, cli?: string | null) => invoke<string>("send_chat", { threadId, text, cli: cli ?? null });
+export const chatQueue = (threadId: string) => invoke<T.QueuedMessage[]>("chat_queue", { threadId });
+export const editQueuedChat = (id: string, text: string) => invoke<T.QueuedMessage>("edit_queued_chat", { id, text });
+export const removeQueuedChat = (id: string) => invoke<void>("remove_queued_chat", { id });
+/** Send now: the chat's queued messages go together. */
+export const sendChatQueue = (threadId: string) => invoke<void>("send_chat_queue", { threadId });
+/** Runs on under the text box; null: the Team Lead's Runs on. */
+export const setChatCli = (threadId: string, cli: string | null) => invoke<T.ChatThread>("set_chat_cli", { threadId, cli });
+/** Answer on <CLI> under a usage-limit note. */
+export const answerChatOn = (threadId: string, cli: string, noteId: string) => invoke<void>("answer_chat_on", { threadId, cli, noteId });
+export const chatClis = () => invoke<T.ChatCli[]>("chat_clis");
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
 /** × on a Team Lead chat in the Inbox: it no longer waits for you. */
 export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });

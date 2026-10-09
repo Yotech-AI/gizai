@@ -1,20 +1,24 @@
 //! Chat with the Team Lead. One message is one turn: `claude -p` resumes the thread's session with the
 //! message on stdin, Gizai's tools reachable through the MCP shim (a per-turn token and 0600 config), text
 //! streamed to the Chat page as it is written, every finished block and tool call saved as a message, and
-//! the turn recorded as a `chat` run so its cost counts for the agent. Usable without Tauri (tests): the UI
-//! hears everything through `AppState::notify`.
+//! the turn recorded as a `chat` run so its cost counts for the agent. Each chat runs on its own coding CLI (Runs on
+//! under the text box, else the Team Lead's); a session lives in one CLI's account, so a chat that moves to another
+//! starts a new session there with a hand-over of the conversation. Messages sent while the Team Lead answers wait in
+//! the chat's queue and go together when the answer is done. Usable without Tauri (tests): the UI hears everything
+//! through `AppState::notify`.
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use gizai_agents::chat_stream::ChatEvent;
+use gizai_agents::chat_stream::{self, ChatEvent, UsageLimit};
 use gizai_agents::claude::ClaudeArgs;
 use gizai_agents::cli::CliSpec;
 use gizai_agents::process::{self, Caps, StopHandle};
-use gizai_core::chat::{self, ChatMessage, ChatThread, NewMessage, Totals};
+use gizai_core::chat::{self, ChatMessage, ChatThread, NewMessage, QueuedMessage, Totals};
+use gizai_core::clis::{self as core_clis, Cli};
 use gizai_core::team::Member;
 use gizai_core::{ids, runs as core_runs, team, tokens};
 use serde::Serialize;
@@ -26,18 +30,16 @@ use crate::runs::Note;
 /// Per-turn limits: a chat answer is short work.
 pub const CAPS: Caps = Caps { max_time: std::time::Duration::from_secs(15 * 60), max_tool_calls: 60 };
 const TOKEN_TTL_MS: i64 = 30 * 60 * 1000;
-/// Messages carried into a new session when the old one can't be resumed.
-const CONTEXT_MESSAGES: usize = 20;
 const MAX_TOOL_RESULT: usize = 4000;
 
 /// What the Chat page hears while a turn runs.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatUiEvent {
-    /// Text being written (not saved yet).
-    Delta { text: String },
-    /// A new text block starts: drop the draft.
-    Block,
+    /// Text being written (not saved yet). `seq` numbers each change to the text being written (see `ChatStatus::seq`).
+    Delta { text: String, seq: u64 },
+    /// A new text block starts, or the one being written was saved: drop the draft.
+    Block { seq: u64 },
     /// A tool is running.
     Tool { name: String },
     /// A message was saved or changed (a tool's result arrived).
@@ -52,8 +54,13 @@ pub struct ChatStatus {
     pub run_id: String,
     pub draft: String,
     pub tool: Option<String>,
+    /// The last change to the text being written that `draft` holds. The Chat page adds the changes it heard after it
+    /// (`Delta`, `Block`), also those that arrived while it asked for this, so no words go missing.
+    pub seq: u64,
 }
 
+/// How a turn ended (`status` succeeded, failed, cancelled or timed_out), or "queued" for a message that waits in the
+/// chat's queue because the Team Lead is still answering.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnSummary {
@@ -62,22 +69,64 @@ pub struct TurnSummary {
     pub error: Option<String>,
 }
 
+#[derive(Default)]
 struct LiveTurn {
     run_id: String,
     stop: Option<StopHandle>,
     draft: String,
     tool: Option<String>,
+    seq: u64,
 }
 
 #[derive(Default)]
 pub struct ChatManager {
-    /// Thread id → its running turn (at most one per thread).
+    /// Thread id → its running turn (at most one per thread). A message sent to a thread in here is queued; a turn
+    /// starts, and the queue is taken or held, only while holding this lock, so no queued message is left behind.
     live: Mutex<HashMap<String, LiveTurn>>,
+    /// Numbers every change to a live draft, in any chat.
+    seq: AtomicU64,
     /// Threads whose turn the user stopped.
     stopped: Mutex<HashSet<String>>,
     /// A board check is running (one at a time), with its Claude Code once it has started.
     checking: AtomicBool,
     check: Mutex<Option<StopHandle>>,
+    /// Threads whose answer under way used a tool from outside Gizai (an MCP server of its own, later the web or the
+    /// browser): Gizai's tools that act refuse the rest of that answer (`tools::NOT_AFTER_OUTSIDE`).
+    outside: Mutex<HashMap<String, String>>,
+}
+
+/// The agent's own MCP servers in a turn's init line: their state in its last run, and a chat note for each that didn't connect.
+fn mcp_states(st: &AppState, thread_id: &str, agent_id: &str, log_path: &Path) {
+    let Ok(text) = std::fs::read_to_string(log_path) else { return };
+    let Some(init) = text.lines().filter(|l| l.contains("\"init\"") && l.contains("\"mcp_servers\""))
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v.get("subtype").and_then(|s| s.as_str()) == Some("init")) else { return };
+    let states: Vec<gizai_agents::stream::McpState> = gizai_agents::mcp_run::init_states(&init).unwrap_or_default().into_iter()
+        .filter(|(n, _)| n != "gizai").map(|(name, status)| gizai_agents::stream::McpState { name, status }).collect();
+    for s in &states {
+        if let Some(note) = gizai_agents::mcp_run::not_connected(&s.name, &s.status) {
+            system(st, thread_id, &note);
+        }
+    }
+    crate::mcp_servers::record_states(st, agent_id, &states);
+}
+
+/// Tools that read nothing from outside: Claude Code's file tools and Gizai's own. A name that only looks like Gizai's
+/// own, as the tools of a server called "gizai_" or "gizai__notes" would (`mcp__gizai___x`, `mcp__gizai__notes__x`),
+/// counts as outside. Such server names can't be saved, but this doesn't count on that.
+pub fn is_outside_tool(name: &str) -> bool {
+    let gizais = name.strip_prefix("mcp__gizai__").is_some_and(|t| !t.is_empty() && !t.starts_with('_') && !t.contains("__"));
+    !matches!(name, "Read" | "Glob" | "Grep") && !gizais
+}
+
+/// The outside tool this thread's answer under way used, if any.
+pub fn used_outside(st: &AppState, thread_id: &str) -> Option<String> {
+    st.chat.outside.lock().unwrap().get(thread_id).cloned()
+}
+
+/// Marks the answer under way as having used `tool` from outside Gizai (kept until the next message).
+pub fn mark_outside(st: &AppState, thread_id: &str, tool: &str) {
+    st.chat.outside.lock().unwrap().entry(thread_id.to_string()).or_insert_with(|| tool.to_string());
 }
 
 /// Whether a board check is running.
@@ -110,7 +159,7 @@ impl Drop for Checking {
 
 pub fn live(st: &AppState) -> Vec<ChatStatus> {
     st.chat.live.lock().unwrap().iter()
-        .map(|(t, l)| ChatStatus { thread_id: t.clone(), run_id: l.run_id.clone(), draft: l.draft.clone(), tool: l.tool.clone() })
+        .map(|(t, l)| ChatStatus { thread_id: t.clone(), run_id: l.run_id.clone(), draft: l.draft.clone(), tool: l.tool.clone(), seq: l.seq })
         .collect()
 }
 
@@ -180,17 +229,25 @@ pub(crate) fn system(st: &AppState, thread_id: &str, text: &str) {
     save(st, NewMessage { thread_id: thread_id.into(), role: "system".into(), body_md: Some(text.into()), ..Default::default() });
 }
 
-/// Sends `text` in a thread (a new one when None) and starts the Team Lead's answer. Returns the thread id at
-/// once, and a handle that resolves when the turn has ended.
-pub async fn send(st: &AppState, thread_id: Option<String>, text: String, bin_override: Option<String>)
-    -> Result<(String, tokio::task::JoinHandle<TurnSummary>), String> {
-    let text = text.trim().to_string();
-    if text.is_empty() {
-        return Err("Type a message first".into());
-    }
-    if crate::runs::is_closing(st) {
-        return Err("Gizai is quitting".into());
-    }
+/// What a turn runs with: the Team Lead, the coding CLI the chat runs on now, its program, and the MCP helper.
+struct Plan {
+    agent: Member,
+    cli: Cli,
+    bin: CliSpec,
+    shim: PathBuf,
+}
+
+/// The messages a turn answers (saved already) and the text that goes to the Team Lead for them.
+struct NewTurn {
+    ids: Vec<String>,
+    text: String,
+}
+
+const ANSWERING: &str = "The Team Lead is still answering in this chat: wait for it, or press Stop";
+
+/// Checks that the Team Lead can answer now and finds what the turn runs on: `thread`'s Runs on, or for a new chat
+/// `new_cli` (picked under the text box before its first message), else the Team Lead's.
+fn prepare(st: &AppState, thread: Option<&ChatThread>, new_cli: Option<&str>, bin_override: Option<String>) -> Result<Plan, String> {
     let agent = team::chat_agent(&st.db).map_err(|e| e.to_string())?
         .ok_or("Set up the Team Lead first: an agent with Chat turned on (Team page → Add agent).")?;
     if agent.status != "active" {
@@ -203,82 +260,392 @@ pub async fn send(st: &AppState, thread_id: Option<String>, text: String, bin_ov
                                agent.name, spent as f64 / 1e6, budget as f64 / 1e6));
         }
     }
-    // The Team Lead's own Claude Code CLI (another account, say); chat needs Claude Code's MCP and stream support.
-    let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
-    if cli.kind != "claude_code" {
-        return Err(format!("{} runs on {}: Chat needs a Claude Code CLI (agent settings → Runs on)", agent.name, cli.name));
+    // The chat's own CLI (another account, say), else the Team Lead's; chat needs Claude Code's MCP and stream support.
+    let new_cli = new_cli.filter(|c| !c.trim().is_empty());
+    let cli = match (thread, new_cli) {
+        (Some(t), _) => chat::runs_on(&st.db, t, agent.adapter.as_deref()),
+        (None, Some(id)) => core_clis::get(&st.db, id),
+        (None, None) => core_clis::get(&st.db, agent.adapter.as_deref().unwrap_or_default()),
+    }.map_err(|e| e.to_string())?;
+    if core_clis::chat_problem(&cli).is_some() {
+        let own = thread.is_some_and(|t| t.cli.as_deref() == Some(cli.id.as_str())) || new_cli.is_some();
+        return Err(if own {
+            format!("This chat runs on {}: Chat needs a Claude Code CLI (Runs on, under the text box)", cli.name)
+        } else {
+            format!("{} runs on {}: Chat needs a Claude Code CLI (agent settings → Runs on, or Runs on under the text box)", agent.name, cli.name)
+        });
     }
     let bin = crate::clis::spec(st, &cli, bin_override)?;
     let shim = st.mcp_shim.clone().filter(|p| p.is_file())
         .ok_or("The gizai-mcp helper is missing next to Gizai: rebuild with scripts/run.sh")?;
+    Ok(Plan { agent, cli, bin, shim })
+}
+
+/// A handle for a message that waits in the queue: there is no turn of its own to wait for.
+fn queued() -> tokio::task::JoinHandle<TurnSummary> {
+    tokio::spawn(async { TurnSummary { run_id: String::new(), status: "queued".into(), error: None } })
+}
+
+/// While the Team Lead is answering in the thread: queues `text` (Some), or refuses when there is none to queue.
+/// Otherwise the thread is marked as answering from now on (None), and its old Stop is forgotten.
+fn begin_or_queue(st: &AppState, thread_id: &str, text: Option<&str>) -> Result<Option<QueuedMessage>, String> {
+    let mut live = st.chat.live.lock().unwrap();
+    if live.contains_key(thread_id) {
+        let text = text.ok_or(ANSWERING)?;
+        let q = chat::enqueue(&st.db, &st.you_id, thread_id, text).map_err(|e| e.to_string())?;
+        drop(live);
+        (st.notify)(Note::ChatChanged);
+        return Ok(Some(q));
+    }
+    live.insert(thread_id.to_string(), LiveTurn::default());
+    drop(live);
+    st.chat.stopped.lock().unwrap().remove(thread_id);
+    Ok(None)
+}
+
+/// A turn that couldn't start after all: the thread is no longer answering.
+fn end_live(st: &AppState, thread_id: &str) {
+    st.chat.live.lock().unwrap().remove(thread_id);
+    (st.notify)(Note::ChatChanged);
+}
+
+/// Where the chat moves to another coding CLI (its session is in another account): a note before the messages that go
+/// there. `always`: also when there is no session to move (Answer on after a usage limit).
+fn switch_note(st: &AppState, thread: &ChatThread, plan: &Plan, always: bool) {
+    let moved = thread.session_id.is_some() && thread.session_cli.as_deref().is_some_and(|c| c != plan.cli.id);
+    if !moved && !always {
+        return;
+    }
+    let text = if moved { format!("Now on {}. The conversation so far was handed over.", plan.cli.name) } else { format!("Now on {}.", plan.cli.name) };
+    save(st, NewMessage { thread_id: thread.id.clone(), role: "system".into(), body_md: Some(text),
+                          meta: Some(json!({"kind": "switch", "cli": plan.cli.id, "cliName": plan.cli.name, "from": thread.session_cli})), ..Default::default() });
+}
+
+fn start_chain(st: &AppState, thread_id: &str, plan: Plan, new: NewTurn, bin_override: Option<String>) -> tokio::task::JoinHandle<TurnSummary> {
+    let (st2, tid) = (st.clone(), thread_id.to_string());
+    tokio::spawn(async move { chain(&st2, &tid, plan, new, bin_override).await })
+}
+
+/// Sends `text` in a thread (a new one when None) and starts the Team Lead's answer. Returns the thread id at once,
+/// and a handle that resolves when the answer has ended, together with the answers to messages queued meanwhile (the
+/// last one's summary). While the Team Lead is answering in the thread, the message waits in its queue instead
+/// (status "queued").
+pub async fn send(st: &AppState, thread_id: Option<String>, text: String, bin_override: Option<String>)
+    -> Result<(String, tokio::task::JoinHandle<TurnSummary>), String> {
+    send_on(st, thread_id, text, None, bin_override).await
+}
+
+/// `send`, and a new chat runs on `cli` (Runs on, picked under the text box before its first message; None: the Team
+/// Lead's). An existing chat keeps its own Runs on (`set_cli`): `cli` is ignored there.
+pub async fn send_on(st: &AppState, thread_id: Option<String>, text: String, cli: Option<String>, bin_override: Option<String>)
+    -> Result<(String, tokio::task::JoinHandle<TurnSummary>), String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Type a message first".into());
+    }
+    if crate::runs::is_closing(st) {
+        return Err("Gizai is quitting".into());
+    }
+    let thread = match &thread_id {
+        Some(id) => Some(chat::get_thread(&st.db, id).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    // The Team Lead is answering in this chat: the message waits, and goes when the answer is done.
     if let Some(id) = &thread_id {
-        chat::get_thread(&st.db, id).map_err(|e| e.to_string())?;
-        if st.chat.live.lock().unwrap().contains_key(id) {
-            return Err("The Team Lead is still answering in this chat: wait for it, or press Stop".into());
+        let live = st.chat.live.lock().unwrap();
+        if live.contains_key(id) {
+            chat::enqueue(&st.db, &st.you_id, id, &text).map_err(|e| e.to_string())?;
+            drop(live);
+            (st.notify)(Note::ChatChanged);
+            return Ok((id.clone(), queued()));
         }
     }
+    let plan = prepare(st, thread.as_ref(), if thread.is_none() { cli.as_deref() } else { None }, bin_override.clone())?;
     let thread_id = match thread_id {
         Some(id) => id,
         None => {
-            let id = chat::create_thread(&st.db, &st.you_id, &agent.actor_id, &text).map_err(|e| e.to_string())?;
+            let id = chat::create_thread_on(&st.db, &st.you_id, &plan.agent.actor_id, &text, cli.as_deref()).map_err(|e| e.to_string())?;
             (st.notify)(Note::RowsChanged("chat_threads"));
             id
         }
     };
-    {
-        let mut live = st.chat.live.lock().unwrap();
-        if live.contains_key(&thread_id) {
-            return Err("The Team Lead is still answering in this chat: wait for it, or press Stop".into());
-        }
-        live.insert(thread_id.clone(), LiveTurn { run_id: String::new(), stop: None, draft: String::new(), tool: None });
+    if begin_or_queue(st, &thread_id, Some(&text))?.is_some() {
+        return Ok((thread_id, queued()));
     }
-    st.chat.stopped.lock().unwrap().remove(&thread_id);
-    save(st, NewMessage { thread_id: thread_id.clone(), role: "user".into(), author_id: Some(st.you_id.clone()), body_md: Some(text.clone()), ..Default::default() });
+    let Ok(thread) = chat::get_thread(&st.db, &thread_id) else {
+        end_live(st, &thread_id);
+        return Err("the chat was deleted".into());
+    };
+    switch_note(st, &thread, &plan, false);
+    let Some(msg) = save(st, NewMessage { thread_id: thread_id.clone(), role: "user".into(), author_id: Some(st.you_id.clone()), body_md: Some(text.clone()), ..Default::default() }) else {
+        end_live(st, &thread_id);
+        return Err("Your message couldn't be saved".into());
+    };
     (st.notify)(Note::ChatChanged);
-    let (st2, tid) = (st.clone(), thread_id.clone());
-    let done = tokio::spawn(async move {
-        let summary = turn(&st2, &tid, &agent, &text, &bin, &shim).await;
-        st2.chat.live.lock().unwrap().remove(&tid);
-        st2.chat.stopped.lock().unwrap().remove(&tid);
-        (st2.notify)(Note::ChatChanged);
-        (st2.notify)(Note::RowsChanged("runs"));
-        (st2.notify)(Note::RowsChanged("chat_threads"));
-        summary
-    });
+    let done = start_chain(st, &thread_id, plan, NewTurn { ids: vec![msg.id], text }, bin_override);
     Ok((thread_id, done))
 }
 
-/// One turn, with one retry in a new session when the old session can't be resumed. A thread that has
-/// history but no session to resume (its first answer crashed before Claude Code started) also starts a new
-/// session that carries the recent messages. The thread's session is only replaced by one that started.
-async fn turn(st: &AppState, thread_id: &str, agent: &Member, text: &str, bin: &CliSpec, shim: &Path) -> TurnSummary {
+/// A coding CLI in Runs on under the chat's text box.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCli {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    /// Why it can't run the chat (it isn't Claude Code, or its program isn't found); None: it can.
+    pub problem: Option<String>,
+}
+
+/// Every coding CLI from Settings, Claude Code first, with why it can't run the Team Lead's chat.
+pub fn clis(st: &AppState) -> Result<Vec<ChatCli>, String> {
+    Ok(crate::clis::list(st)?.into_iter()
+        .map(|c| ChatCli { problem: core_clis::chat_problem(&c.cli).or(c.problem), id: c.cli.id, name: c.cli.name, kind: c.cli.kind })
+        .collect())
+}
+
+/// The chat's queued messages, in the order they were written.
+pub fn queue(st: &AppState, thread_id: &str) -> Result<Vec<QueuedMessage>, String> {
+    chat::queue(&st.db, thread_id).map_err(|e| e.to_string())
+}
+
+/// Changes a queued message, until it goes.
+pub fn edit_queued(st: &AppState, id: &str, text: &str) -> Result<QueuedMessage, String> {
+    let q = chat::edit_queued(&st.db, &st.you_id, id, text).map_err(|e| e.to_string())?;
+    (st.notify)(Note::ChatChanged);
+    Ok(q)
+}
+
+/// Removes a queued message, until it goes.
+pub fn remove_queued(st: &AppState, id: &str) -> Result<(), String> {
+    chat::remove_queued(&st.db, &st.you_id, id).map_err(|e| e.to_string())?;
+    (st.notify)(Note::ChatChanged);
+    Ok(())
+}
+
+/// Send now on a chat's queue: every queued message goes, together in one turn and in the order written, on the chat's
+/// Runs on as it is now. While the Team Lead is answering, they go when that answer is done instead (status "queued").
+pub async fn send_queue(st: &AppState, thread_id: &str, bin_override: Option<String>) -> Result<tokio::task::JoinHandle<TurnSummary>, String> {
+    if crate::runs::is_closing(st) {
+        return Err("Gizai is quitting".into());
+    }
+    let thread = chat::get_thread(&st.db, thread_id).map_err(|e| e.to_string())?;
+    let release = || {
+        let _ = chat::release_queue(&st.db, thread_id);
+        (st.notify)(Note::ChatChanged);
+        queued()
+    };
+    {
+        let live = st.chat.live.lock().unwrap();
+        if live.contains_key(thread_id) {
+            drop(live);
+            return Ok(release());
+        }
+    }
+    if chat::queue(&st.db, thread_id).map_err(|e| e.to_string())?.is_empty() {
+        return Err("Nothing is queued in this chat".into());
+    }
+    let plan = prepare(st, Some(&thread), None, bin_override.clone())?;
+    if begin_or_queue(st, thread_id, None).is_err() {
+        return Ok(release());
+    }
+    switch_note(st, &thread, &plan, false);
+    let msgs = match chat::send_queued(&st.db, thread_id, true) {
+        Ok(m) if !m.is_empty() => m,
+        Ok(_) => { end_live(st, thread_id); return Err("Nothing is queued in this chat".into()); }
+        Err(e) => { end_live(st, thread_id); return Err(e.to_string()); }
+    };
+    let new = sent(st, thread_id, msgs);
+    (st.notify)(Note::ChatChanged);
+    Ok(start_chain(st, thread_id, plan, new, bin_override))
+}
+
+/// Queued messages that became your messages: the Chat page hears them, and they are one turn's messages.
+fn sent(st: &AppState, thread_id: &str, msgs: Vec<ChatMessage>) -> NewTurn {
+    for m in &msgs {
+        emit(st, thread_id, ChatUiEvent::Message { message: m.clone() });
+    }
+    (st.notify)(Note::RowsChanged("chat_messages"));
+    let text = chat::joined(&msgs.iter().map(|m| m.body_md.clone().unwrap_or_default()).collect::<Vec<_>>());
+    NewTurn { ids: msgs.into_iter().map(|m| m.id).collect(), text }
+}
+
+/// Runs on under the text box: the chat's next answers run on `cli` (None: on the Team Lead's Runs on again). Not while
+/// the Team Lead is answering in it; a change applies from the next message.
+pub fn set_cli(st: &AppState, thread_id: &str, cli: Option<&str>) -> Result<ChatThread, String> {
+    if st.chat.live.lock().unwrap().contains_key(thread_id) {
+        return Err("The Team Lead is answering in this chat: change Runs on when it is done".into());
+    }
+    let t = chat::set_cli(&st.db, &st.you_id, thread_id, cli).map_err(|e| e.to_string())?;
+    (st.notify)(Note::RowsChanged("chat_threads"));
+    (st.notify)(Note::ChatChanged);
+    Ok(t)
+}
+
+/// Answer on <CLI>, under a note that an answer hit a usage limit (`note_id`): the chat runs on `cli` from now on, and
+/// the messages of that answer go again there, in a new session that gets the conversation handed over.
+pub async fn answer_on(st: &AppState, thread_id: &str, cli: &str, note_id: &str, bin_override: Option<String>)
+    -> Result<tokio::task::JoinHandle<TurnSummary>, String> {
+    if crate::runs::is_closing(st) {
+        return Err("Gizai is quitting".into());
+    }
+    if st.chat.live.lock().unwrap().contains_key(thread_id) {
+        return Err(ANSWERING.into());
+    }
+    let note = chat::message(&st.db, note_id).map_err(|e| e.to_string())?;
+    let meta = note.meta.clone().unwrap_or_default();
+    if note.thread_id != thread_id || meta["kind"] != "limit" {
+        return Err("That note isn't about a usage limit in this chat".into());
+    }
+    let ids: Vec<String> = meta["messageIds"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+    let msgs: Vec<ChatMessage> = chat::messages(&st.db, thread_id).map_err(|e| e.to_string())?.into_iter().filter(|m| ids.contains(&m.id)).collect();
+    if msgs.is_empty() {
+        return Err("The message that hit the limit is gone: send it again".into());
+    }
+    let thread = set_cli(st, thread_id, Some(cli))?;
+    let plan = prepare(st, Some(&thread), None, bin_override.clone())?;
+    begin_or_queue(st, thread_id, None)?;
+    switch_note(st, &thread, &plan, true);
+    (st.notify)(Note::ChatChanged);
+    let text = chat::joined(&msgs.iter().map(|m| m.body_md.clone().unwrap_or_default()).collect::<Vec<_>>());
+    Ok(start_chain(st, thread_id, plan, NewTurn { ids: msgs.into_iter().map(|m| m.id).collect(), text }, bin_override))
+}
+
+/// A turn, and while each answer is done and messages were queued meanwhile, the next turn with them. Ends with the
+/// thread no longer answering; returns the last turn's summary.
+async fn chain(st: &AppState, thread_id: &str, mut plan: Plan, mut new: NewTurn, bin_override: Option<String>) -> TurnSummary {
+    loop {
+        let summary = turn(st, thread_id, &plan, &new).await;
+        let next = next_turn(st, thread_id, &summary, bin_override.clone());
+        (st.notify)(Note::ChatChanged);
+        (st.notify)(Note::RowsChanged("runs"));
+        (st.notify)(Note::RowsChanged("chat_threads"));
+        match next {
+            Some((p, n)) => (plan, new) = (p, n),
+            None => return summary,
+        }
+    }
+}
+
+/// After a turn: when its answer is done and messages were queued meanwhile, they go together in the next turn, on the
+/// chat's Runs on as it is now (Some). Otherwise the thread stops answering (None), and messages still queued wait for
+/// Send now (after a stopped or failed answer, or when the Team Lead can't answer now).
+fn next_turn(st: &AppState, thread_id: &str, summary: &TurnSummary, bin_override: Option<String>) -> Option<(Plan, NewTurn)> {
+    let done = summary.status == "succeeded" && !crate::runs::is_closing(st);
+    loop {
+        let ready = done && chat::queue_ready(&st.db, thread_id).unwrap_or(false);
+        let plan = if ready {
+            match chat::get_thread(&st.db, thread_id).map_err(|e| e.to_string()).and_then(|t| prepare(st, Some(&t), None, bin_override.clone())) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    if chat::hold_queue(&st.db, thread_id).unwrap_or(0) > 0 {
+                        system(st, thread_id, &format!("Your queued messages wait, because the Team Lead can't answer now: {e}"));
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        // Taken or held under the live lock: a message sent from now on starts an answer of its own.
+        let mut live = st.chat.live.lock().unwrap();
+        if let Some(plan) = plan {
+            if let Ok(thread) = chat::get_thread(&st.db, thread_id) {
+                if chat::queue_ready(&st.db, thread_id).unwrap_or(false) {
+                    switch_note(st, &thread, &plan, false);
+                }
+            }
+            match chat::send_queued(&st.db, thread_id, false) {
+                Ok(msgs) if !msgs.is_empty() => {
+                    if let Some(l) = live.get_mut(thread_id) {
+                        l.run_id.clear();
+                        l.stop = None;
+                        l.tool = None;
+                    }
+                    // A Stop pressed as the answer finished was too late for it, and doesn't stop the next one.
+                    st.chat.stopped.lock().unwrap().remove(thread_id);
+                    drop(live);
+                    return Some((plan, sent(st, thread_id, msgs)));
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("gizai: sending the queued chat messages failed: {e}"),
+            }
+        } else if done && !ready && chat::queue_ready(&st.db, thread_id).unwrap_or(false) {
+            // A message was queued just after the look above: go round once more.
+            drop(live);
+            continue;
+        }
+        let _ = chat::hold_queue(&st.db, thread_id);
+        live.remove(thread_id);
+        drop(live);
+        st.chat.stopped.lock().unwrap().remove(thread_id);
+        return None;
+    }
+}
+
+/// One turn. It resumes the chat's session when that is on the CLI the chat runs on now; otherwise (another CLI's account
+/// holds it, or the chat has history but no session) it starts a new session at once, with a hand-over of the
+/// conversation. A session that can't be resumed for another reason gets one more try in a new session with the same
+/// hand-over. The thread's session is only replaced by one that started.
+async fn turn(st: &AppState, thread_id: &str, plan: &Plan, new: &NewTurn) -> TurnSummary {
+    // A new message: Gizai's tools that act work again until this answer uses an outside tool.
+    st.chat.outside.lock().unwrap().remove(thread_id);
     let Ok(thread) = chat::get_thread(&st.db, thread_id) else {
         return TurnSummary { run_id: String::new(), status: "failed".into(), error: Some("the chat was deleted".into()) };
     };
-    let earlier = chat::messages(&st.db, thread_id).unwrap_or_default().iter().filter(|m| m.role == "user" || m.role == "agent").count() > 1;
+    // The conversation before this turn's own messages; Gizai's notes aren't part of it.
+    let earlier: Vec<ChatMessage> = chat::messages(&st.db, thread_id).unwrap_or_default().into_iter()
+        .filter(|m| m.role != "system" && !new.ids.contains(&m.id)).collect();
+    let history = earlier.iter().any(|m| m.role == "user" || m.role == "agent");
+    // A session lives in one CLI's account (its CLAUDE_CONFIG_DIR): another one can't resume it, so it doesn't try.
+    let resumable = thread.session_id.is_some() && thread.session_cli.as_deref().is_none_or(|c| c == plan.cli.id);
     // The Team Lead's copies of the code, refreshed (at most 10 s): the prompt starts with the line that says where
     // each copy stands, which isn't saved as a chat message.
     let code = crate::code::before_turn(st, thread_id).await;
     let with_line = |p: String| if code.line.is_empty() { p } else { format!("{}\n\n{p}", code.line) };
-    let mut prompt = with_line(if thread.session_id.is_none() && earlier { context_prompt(st, thread_id, text) } else { text.to_string() });
+    let why = if thread.session_id.is_some() && !resumable {
+        format!("This chat moved to {}, in a new session.", plan.cli.name)
+    } else {
+        "This chat's earlier session could not be resumed, so this is a new one.".to_string()
+    };
+    let mut prompt = with_line(if !resumable && history { handover_prompt(st, thread_id, &earlier, &new.text, &why) } else { new.text.clone() });
     for attempt in 0..2 {
-        let fresh = attempt == 1 || thread.session_id.is_none();
-        let a = attempt_once(st, &thread, agent, &prompt, bin, shim, fresh, &code.dirs).await;
+        let fresh = attempt == 1 || !resumable;
+        let a = attempt_once(st, &thread, plan, &prompt, fresh, &code.dirs).await;
         if !fresh && !a.saw_init && a.summary.status == "failed" {
             // The session can't be resumed (its file is gone, or Claude Code refused to start): try once in a new
             // session that knows the conversation. The old session stays recorded until a new one starts.
-            prompt = with_line(context_prompt(st, thread_id, text));
+            prompt = with_line(handover_prompt(st, thread_id, &earlier, &new.text,
+                                               "This chat's earlier session could not be resumed, so this is a new one."));
             continue;
         }
         match a.summary.status.as_str() {
             "cancelled" if crate::runs::is_closing(st) => system(st, thread_id, crate::runs::STOPPED_BY_QUIT),
             "cancelled" => system(st, thread_id, "Stopped."),
             "succeeded" => {}
-            _ => system(st, thread_id, &format!("The Team Lead couldn't answer: {}", a.summary.error.clone().unwrap_or_else(|| "unknown error".into()))),
+            _ => match &a.limit {
+                Some(limit) => limit_note(st, thread_id, plan, limit, &new.ids),
+                None => system(st, thread_id, &format!("The Team Lead couldn't answer: {}", a.summary.error.clone().unwrap_or_else(|| "unknown error".into()))),
+            },
         }
         return a.summary;
     }
     unreachable!("the second attempt is always fresh, so it returns")
+}
+
+/// An answer that hit the account's usage limit: a note that says so in plain words, with the reset time when Claude
+/// Code gave one. The Chat page offers Answer on each other Claude Code entry under it (`answer_on`), which sends this
+/// turn's messages (`ids`) again there.
+fn limit_note(st: &AppState, thread_id: &str, plan: &Plan, limit: &UsageLimit, ids: &[String]) {
+    let resets = limit.resets.clone().or_else(|| limit.resets_at.map(|ms| {
+        format!("{} at {:02}:{:02} UTC", crate::tools::ymd(ms), ms.rem_euclid(86_400_000) / 3_600_000, ms.rem_euclid(3_600_000) / 60_000)
+    }));
+    let text = format!("{} has hit its {}, so the Team Lead couldn't answer.{}", plan.cli.name, limit.limit,
+                       resets.as_ref().map(|r| format!(" It resets {r}.")).unwrap_or_default());
+    save(st, NewMessage { thread_id: thread_id.into(), role: "system".into(), body_md: Some(text),
+                          meta: Some(json!({"kind": "limit", "cli": plan.cli.id, "cliName": plan.cli.name, "limit": limit.limit, "resets": resets,
+                                            "messageIds": ids})),
+                          ..Default::default() });
 }
 
 /// What a chat the Team Lead started is about: that it started it during a board check, and its cards as they are now
@@ -305,26 +672,17 @@ fn lead_preface(st: &AppState, thread_id: &str) -> Option<String> {
     Some(p)
 }
 
-/// The conversation so far (without the new message), then the new message.
-fn context_prompt(st: &AppState, thread_id: &str, text: &str) -> String {
-    let msgs = chat::messages(&st.db, thread_id).unwrap_or_default();
-    let earlier: Vec<&ChatMessage> = msgs.iter().filter(|m| m.role != "system").collect();
-    let earlier = &earlier[..earlier.len().saturating_sub(1)]; // the last one is the new message itself
-    let from = earlier.len().saturating_sub(CONTEXT_MESSAGES);
+/// The prompt of a new session that can't resume the chat's old one: the conversation so far (`earlier`, handed over
+/// as `chat::handover` writes it, up to its size cap), then the new message. `why` says why it is a new session; a
+/// chat the Team Lead started says what it is about instead.
+fn handover_prompt(st: &AppState, thread_id: &str, earlier: &[ChatMessage], text: &str, why: &str) -> String {
     let mut p = match lead_preface(st, thread_id) {
         Some(pre) => format!("{pre}(The chat so far, oldest first:)\n\n"),
-        None => String::from("(This chat's earlier session could not be resumed. Its last messages, oldest first:)\n\n"),
+        None => format!("({why} The conversation so far, oldest first. Tool calls show what they were called on and the start of \
+                         their result: look things up again when you need more.)\n\n"),
     };
-    for m in &earlier[from..] {
-        let line = match m.role.as_str() {
-            "user" => format!("User: {}", m.body_md.clone().unwrap_or_default()),
-            "agent" => format!("You: {}", m.body_md.clone().unwrap_or_default()),
-            _ => format!("(tool {} was called)", m.tool_name.clone().unwrap_or_default().trim_start_matches("mcp__gizai__")),
-        };
-        p.push_str(&line);
-        p.push_str("\n\n");
-    }
-    p.push_str("(New message:)\n");
+    p.push_str(&chat::handover(earlier, chat::HANDOVER_CAP));
+    p.push_str("\n\n(New message:)\n");
     p.push_str(text);
     p
 }
@@ -332,6 +690,8 @@ fn context_prompt(st: &AppState, thread_id: &str, text: &str) -> String {
 struct Attempt {
     summary: TurnSummary,
     saw_init: bool,
+    /// It failed because the account hit a usage limit.
+    limit: Option<UsageLimit>,
 }
 
 fn system_prompt(st: &AppState, agent: &Member) -> String {
@@ -388,10 +748,96 @@ fn cut(s: &str, n: usize) -> String {
     }
 }
 
+/// A tool's result, at most `n` characters. A JSON result stays valid JSON when it is too long: its longest strings are
+/// shortened and its longest lists lose items from the end until it fits, and `"cut"` says it was cut. Other text is cut
+/// with an ellipsis.
+pub(crate) fn cut_result(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(s) else { return cut(s, n) };
+    const NOTE: &str = "This result was too long and was cut: ask for less (a filter, a limit or one item).";
+    let size = |v: &serde_json::Value| v.to_string().chars().count();
+    let note = |v: serde_json::Value| -> serde_json::Value {
+        match v {
+            serde_json::Value::Object(mut m) => { m.insert("cut".into(), NOTE.into()); serde_json::Value::Object(m) }
+            other => serde_json::json!({"result": other, "cut": NOTE}),
+        }
+    };
+    v = note(v);
+    for _ in 0..400 {
+        if size(&v) <= n {
+            return v.to_string();
+        }
+        if !shrink(&mut v) {
+            break;
+        }
+    }
+    // Nothing left to shorten: the start of the text, as a string.
+    let mut keep = n.saturating_sub(NOTE.len() + 40);
+    loop {
+        let out = serde_json::json!({"cut": NOTE, "start": cut(s, keep)}).to_string();
+        if out.chars().count() <= n || keep == 0 {
+            return out;
+        }
+        keep = keep * 3 / 4;
+    }
+}
+
+/// Makes the biggest part of a JSON value smaller: its longest string loses half, or its longest list loses the second
+/// half of its items. False when nothing can shrink.
+fn shrink(v: &mut serde_json::Value) -> bool {
+    fn biggest(v: &serde_json::Value, at: String, best: &mut Option<(usize, String)>) {
+        let size = v.to_string().len();
+        let better = |best: &Option<(usize, String)>| best.as_ref().is_none_or(|(b, _)| size > *b);
+        match v {
+            serde_json::Value::String(t) if t.chars().count() > 40 && better(best) => *best = Some((size, at)),
+            serde_json::Value::Array(items) => {
+                if items.len() > 1 && better(best) {
+                    *best = Some((size, at.clone()));
+                }
+                for (i, x) in items.iter().enumerate() {
+                    biggest(x, format!("{at}/{i}"), best);
+                }
+            }
+            serde_json::Value::Object(m) => {
+                for (k, x) in m.iter().filter(|(k, _)| k.as_str() != "cut") {
+                    biggest(x, format!("{at}/{}", k.replace('~', "~0").replace('/', "~1")), best);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut best = None;
+    biggest(v, String::new(), &mut best);
+    let Some(target) = best.and_then(|(_, at)| v.pointer_mut(&at)) else { return false };
+    match target {
+        serde_json::Value::String(t) => {
+            let keep = t.chars().count() / 2;
+            *t = format!("{}…", t.chars().take(keep).collect::<String>());
+        }
+        serde_json::Value::Array(items) => items.truncate(items.len() / 2),
+        _ => return false,
+    }
+    true
+}
+
 fn set_live(st: &AppState, thread_id: &str, f: impl FnOnce(&mut LiveTurn)) {
     if let Some(l) = st.chat.live.lock().unwrap().get_mut(thread_id) {
         f(l);
     }
+}
+
+/// Changes the text being written in the thread's live turn, numbered (`ChatStatus::seq`) under the same lock as the
+/// change, so a snapshot holds exactly the changes up to its number. Returns the change's number.
+fn draft_change(st: &AppState, thread_id: &str, f: impl FnOnce(&mut String)) -> u64 {
+    let mut live = st.chat.live.lock().unwrap();
+    let seq = st.chat.seq.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(l) = live.get_mut(thread_id) {
+        f(&mut l.draft);
+        l.seq = seq;
+    }
+    seq
 }
 
 /// The folders the Team Lead may read, for `--add-dir` in a chat turn and in a board check: `copies` (its copies of the
@@ -406,12 +852,12 @@ fn lead_dirs(st: &AppState, agent: &Member, copies: &[String]) -> Vec<String> {
     dirs
 }
 
-/// One `claude -p` run for a turn: resuming the thread's session, or `fresh` in a new one. `add_dirs`: the folders the
-/// Team Lead may read (its copies of the code); its own folders from the agent form are added here.
-#[allow(clippy::too_many_arguments)]
-async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt: &str, bin: &CliSpec, shim: &Path, fresh: bool,
-                      add_dirs: &[String]) -> Attempt {
-    let fail = |run_id: &str, msg: String| Attempt { summary: TurnSummary { run_id: run_id.into(), status: "failed".into(), error: Some(msg) }, saw_init: false };
+/// One `claude -p` run for a turn on the plan's CLI: resuming the thread's session, or `fresh` in a new one. `add_dirs`:
+/// the folders the Team Lead may read (its copies of the code); its own folders from the agent form are added here.
+async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &str, fresh: bool, add_dirs: &[String]) -> Attempt {
+    let (agent, bin, shim) = (&plan.agent, &plan.bin, plan.shim.as_path());
+    let fail = |run_id: &str, msg: String| Attempt { summary: TurnSummary { run_id: run_id.into(), status: "failed".into(), error: Some(msg) },
+                                                     saw_init: false, limit: None };
     let chat_dir = st.data_dir.join("chat");
     let cwd = st.data_dir.join("lead");
     if let Err(e) = std::fs::create_dir_all(&chat_dir).and_then(|_| std::fs::create_dir_all(&cwd)) {
@@ -422,7 +868,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         _ => (ids::new_id(), false, Totals::default()),
     };
     let log_path = chat_dir.join(format!("{}.jsonl", ids::new_id()));
-    let run_id = match core_runs::create_chat(&st.db, &agent.actor_id, &thread.id, &session, &cwd.to_string_lossy(), &log_path.to_string_lossy()) {
+    // The run records the CLI it runs on: the chat's, which may not be the Team Lead's own.
+    let run_id = match core_runs::create_chat_on(&st.db, &agent.actor_id, &thread.id, Some(&plan.cli.id), &session, &cwd.to_string_lossy(),
+                                                 &log_path.to_string_lossy()) {
         Ok(r) => r,
         Err(e) => return fail("", e.to_string()),
     };
@@ -431,8 +879,18 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         Err(e) => { let _ = core_runs::finish_chat(&st.db, &run_id, "failed", 0, 0, 0, Some(&e.to_string())); return fail(&run_id, e.to_string()); }
     };
     let config_path = chat_dir.join(format!("{run_id}.mcp.json"));
-    let config = json!({"mcpServers": {"gizai": {"type": "stdio", "command": shim.display().to_string(), "args": [],
-        "env": {"GIZAI_SOCKET": st.mcp_socket.display().to_string(), "GIZAI_TOKEN": token}}}});
+    // The Team Lead's own MCP servers (agent form → Tools) next to Gizai's; one it can't use is left out, and the chat says why.
+    let (servers, left_out) = {
+        let (st2, a2) = (st.clone(), agent.clone());
+        tokio::task::spawn_blocking(move || crate::mcp_servers::for_run(&st2, &a2, CAPS.max_time)).await.unwrap_or_default()
+    };
+    for n in &left_out {
+        system(st, &thread.id, n);
+    }
+    let gizai = json!({"type": "stdio", "command": shim.display().to_string(), "args": [],
+        "env": {"GIZAI_SOCKET": st.mcp_socket.display().to_string(), "GIZAI_TOKEN": token}});
+    let config = gizai_agents::mcp_run::config(vec![("gizai".into(), gizai)], &servers);
+    let (mcp_allowed, mcp_refused) = gizai_agents::mcp_run::permissions(&servers);
     let cleanup = |token: &str| {
         let _ = tokens::revoke(&st.db, token);
         let _ = std::fs::remove_file(&config_path);
@@ -445,11 +903,13 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
     let settings = crate::runs::get_settings(st);
     let args = ClaudeArgs {
         bin: bin.bin.clone(), env: bin.env.clone(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
-        allowed_tools: vec!["mcp__gizai".into()], append_system_prompt: Some(system_prompt(st, agent)), model: agent.model.clone(),
+        allowed_tools: std::iter::once("mcp__gizai".to_string()).chain(mcp_allowed).collect(),
+        append_system_prompt: Some(if servers.is_empty() { system_prompt(st, agent) } else { format!("{}\n\n{}", system_prompt(st, agent), gizai_agents::mcp_run::UNTRUSTED) }),
+        model: agent.model.clone(),
         max_budget_usd: settings.max_run_usd, resume, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
         tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, add_dirs),
         no_session_persistence: std::env::var("GIZAI_CHAT_NO_PERSIST").is_ok_and(|v| v == "1"),
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: vec![],
+        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
     let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
         Ok(h) => h,
@@ -461,7 +921,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
     };
     let _ = core_runs::set_running(&st.db, &run_id, handle.pid);
     let stopped_early = st.chat.stopped.lock().unwrap().contains(&thread.id);
-    set_live(st, &thread.id, |l| { l.run_id = run_id.clone(); l.stop = Some(handle.stop.clone()); l.draft.clear(); l.tool = None; });
+    set_live(st, &thread.id, |l| { l.run_id = run_id.clone(); l.stop = Some(handle.stop.clone()); l.tool = None; });
+    let seq = draft_change(st, &thread.id, String::clear);
+    emit(st, &thread.id, ChatUiEvent::Block { seq });
     if stopped_early {
         handle.stop.stop();
     }
@@ -489,22 +951,27 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
             }
             ChatEvent::BlockStart => {
                 draft.clear();
-                set_live(st, &thread.id, |l| l.draft.clear());
-                emit(st, &thread.id, ChatUiEvent::Block);
+                let seq = draft_change(st, &thread.id, String::clear);
+                emit(st, &thread.id, ChatUiEvent::Block { seq });
             }
             ChatEvent::Delta { text } => {
                 draft.push_str(&text);
-                set_live(st, &thread.id, |l| l.draft.push_str(&text));
-                emit(st, &thread.id, ChatUiEvent::Delta { text });
+                let seq = draft_change(st, &thread.id, |d| d.push_str(&text));
+                emit(st, &thread.id, ChatUiEvent::Delta { text, seq });
             }
             ChatEvent::Text { text } => {
                 draft.clear();
-                set_live(st, &thread.id, |l| l.draft.clear());
                 if !text.trim().is_empty() {
                     save(st, NewMessage { body_md: Some(text.trim().to_string()), ..base("agent") });
                 }
+                // The block is saved: the text being written starts again.
+                let seq = draft_change(st, &thread.id, String::clear);
+                emit(st, &thread.id, ChatUiEvent::Block { seq });
             }
             ChatEvent::ToolUse { id, name, input } => {
+                if is_outside_tool(&name) {
+                    mark_outside(st, &thread.id, &name);
+                }
                 set_live(st, &thread.id, |l| l.tool = Some(name.clone()));
                 emit(st, &thread.id, ChatUiEvent::Tool { name: name.clone() });
                 if let Some(m) = save(st, NewMessage { tool_name: Some(name), tool: Some(json!({"id": id, "input": input})), ..base("tool") }) {
@@ -514,7 +981,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
             ChatEvent::ToolResult { tool_use_id, is_error, text } => {
                 set_live(st, &thread.id, |l| l.tool = None);
                 if let Some(mid) = tool_msgs.get(&tool_use_id) {
-                    if let Ok(m) = chat::set_tool_result(&st.db, mid, &cut(&text, MAX_TOOL_RESULT), is_error) {
+                    if let Ok(m) = chat::set_tool_result(&st.db, mid, &cut_result(&text, MAX_TOOL_RESULT), is_error) {
                         emit(st, &thread.id, ChatUiEvent::Message { message: m });
                         (st.notify)(Note::RowsChanged("chat_messages"));
                     }
@@ -531,6 +998,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         save(st, NewMessage { body_md: Some(draft.trim().to_string()), ..base("agent") });
     }
     cleanup(&token);
+    if !servers.is_empty() {
+        mcp_states(st, &thread.id, &agent.actor_id, &log_path);
+    }
     let stopped = st.chat.stopped.lock().unwrap().contains(&thread.id);
     let (now_totals, ok) = match &result {
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, .. }) => (
@@ -540,10 +1010,12 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
     };
     let own = chat::turn_cost(prev, now_totals);
     let finished = ok && exit == "exit:0";
+    // An answer that finished is done, also when Stop was pressed (or Gizai began quitting) just as it ended: Stop
+    // came too late for it, and the messages queued meanwhile go.
     // While Gizai quits, an answer that didn't finish was stopped by the quit, also when Claude Code ended first:
     // logging out sends SIGTERM to the agents as well as to Gizai. It isn't retried in a new session either.
-    let quit = crate::runs::is_closing(st) && (stopped || !finished);
-    let status = if stopped || quit { "cancelled" } else if capped { "timed_out" } else if finished { "succeeded" } else { "failed" };
+    let quit = crate::runs::is_closing(st) && !finished;
+    let status = if finished && !capped { "succeeded" } else if stopped || quit { "cancelled" } else if capped { "timed_out" } else { "failed" };
     let error = match status {
         "cancelled" => Some(if quit { crate::runs::STOPPED_BY_QUIT } else { "stopped" }.to_string()),
         "timed_out" => Some(format!("it stopped at the limit ({} min or {} tool calls)", CAPS.max_time.as_secs() / 60, CAPS.max_tool_calls)),
@@ -558,12 +1030,19 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         _ => None,
     };
     let _ = core_runs::finish_chat(&st.db, &run_id, status, own.cost_usd_micros, own.input_tokens, own.output_tokens, error.as_deref());
-    // Any run that got as far as starting its session is the thread's session now, stopped or failed included,
-    // so the next message continues it. Its cumulative totals move on when it reported them.
+    // Any run that got as far as starting its session is the thread's session now, on this CLI's account, stopped or
+    // failed included, so the next message continues it. Its cumulative totals move on when it reported them (a total
+    // it left out keeps the earlier one).
     if saw_init {
-        let _ = chat::record_session(&st.db, &thread.id, &session_seen, if result.is_some() { now_totals } else { prev });
+        let totals = if result.is_some() { now_totals.at_least(prev) } else { prev };
+        let _ = chat::record_session_on(&st.db, &thread.id, &session_seen, &plan.cli.id, totals);
     }
-    Attempt { summary: TurnSummary { run_id, status: status.into(), error }, saw_init }
+    // Claude Code says so when the account hit its usage limit: in its result, else on stderr.
+    let limit = (status == "failed").then(|| match &result {
+        Some(ChatEvent::Result { text, .. }) => chat_stream::usage_limit(text),
+        _ => None,
+    }.or_else(|| chat_stream::usage_limit(&stderr_tail(&log_path)))).flatten();
+    Attempt { summary: TurnSummary { run_id, status: status.into(), error }, saw_init, limit }
 }
 
 /// The Team Lead's rules for a board check (instead of "You are chatting with …").
@@ -581,7 +1060,7 @@ fn check_system_prompt(st: &AppState, agent: &Member) -> String {
          - held, no answer: answer it yourself only when it is a fact you can check (the repository, docs, other cards), and say so in a comment \
          before you release it. Scope, product choices, money, keys and passwords, deploys and deleting go to {you} in a chat (start_chat), with \
          your recommendation. Holds blocked and stalled: find the cause in the card's runs and clear the hold only when the cause is gone; otherwise ask.\n\
-         - waiting: an agent with a free slot: start it on the card (start_agent_run). Nothing routes it: add the label or agent the card \
+         - waiting: an agent with a free slot: start it on the card (start_agent_run). No agent is on its column: assign the agent the card \
          clearly calls for (update_task), otherwise ask. A paused agent, a used budget, a paused pull or a full \"Runs at once\": ask.\n\
          - stopped: a run that hit the time or tool-call limit gets one Continue (continue_agent_run), not another when that run was already a \
          Continue (trigger nudge). A run a person stopped: leave it. A failed run: a passing problem (rate limit, network) gets one more \
@@ -750,10 +1229,13 @@ fn stderr_tail(log_path: &Path) -> String {
 
 /// At start-up: MCP configs a crashed Gizai left behind hold tokens; remove them (the tokens expire anyway).
 pub fn remove_stray_configs(data_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(data_dir.join("chat")) else { return };
-    for e in entries.flatten() {
-        if e.file_name().to_string_lossy().ends_with(".mcp.json") {
-            let _ = std::fs::remove_file(e.path());
+    // Chat turns' configs, and task runs' (with the secrets of the agent's MCP servers).
+    for dir in ["chat", "runs"] {
+        let Ok(entries) = std::fs::read_dir(data_dir.join(dir)) else { continue };
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().ends_with(".mcp.json") {
+                let _ = std::fs::remove_file(e.path());
+            }
         }
     }
 }

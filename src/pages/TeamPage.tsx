@@ -1,135 +1,33 @@
 import { useEffect, useState } from "react";
+import {
+  DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors,
+  type CollisionDetection, type DragEndEvent, type DragOverEvent, type DragStartEvent,
+} from "@dnd-kit/core";
+import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
-import { addState, addTeam, getTeam, listTeams, renameState } from "../api";
-import { go, href } from "../router";
+import { addColumnAgent, addTeam, getTeam, listTeams, setColumn } from "../api";
+import { go } from "../router";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
-import { relTime } from "../lib/format";
-import { ROLES, roleLabel, wakeupLabel } from "../lib/agents";
+import { afterIdAt, boardOrder } from "../lib/columns";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { useDrawer } from "../lib/drawers";
-import type { Member, StateCategory, Team, WorkflowState } from "../types";
+import type { Member } from "../types";
 import { Avatar } from "../components/Avatar";
-import { CATEGORIES, CATEGORY_NAMES, StatusIcon } from "../components/StatusIcon";
 import { Drawer } from "../components/Drawer";
 import { Field, FormSection } from "../components/Form";
-import { RulesEditor } from "../components/RulesEditor";
-import { OrgChart } from "../components/OrgChart";
+import { OrgChart, type AgentDrag } from "../components/OrgChart";
+import { ColumnEditor, type ColumnDrag, type ColumnError } from "../components/ColumnEditor";
+import { LabelsEditor } from "../components/LabelsEditor";
 import { useChatLive } from "../components/chat/useChat";
 
-/** Who works a column, from its owner role: "implementer" (by label), a role key, "human" (you); none = anyone. */
-function workedBy(role: string | null | undefined): string {
-  if (!role) return "Anyone";
-  if (role === "implementer") return "The agent matching the label";
-  if (role === "human") return "You";
-  return role === "lead" ? roleLabel(role) : `${roleLabel(role)} agent`;
-}
-
-const HINTS: Record<string, string> = {
-  backlog: "Not picked up",
-  testing: "Fail → back to In progress; 3 fails → hold",
-  review: "Your gate: check and merge",
-  deploy: "Merged, not deployed yet. Press Run for the DevOps Agent, or deploy it yourself and drag it to Done.",
-  done: "Only people move cards here",
-};
-
-function Stage({ s, onError }: { s: WorkflowState; onError: (m: string) => void }) {
-  const [name, setName] = useState(s.name);
-  useEffect(() => setName(s.name), [s.name]);
-  const save = () => { const n = name.trim(); if (!n) setName(s.name); else if (n !== s.name) renameState(s.id, n).catch((e) => { setName(s.name); onError(String(e)); }); };
+function PersonCard({ m }: { m: Member }) {
   return (
-    <div className="stage">
-      <div className="nm"><StatusIcon category={s.category} />
-        <input className="stage-name" aria-label={`Rename ${s.name}`} value={name} onChange={(e) => setName(e.target.value)} onBlur={save}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setName(s.name); (e.target as HTMLInputElement).blur(); } }} />
-      </div>
-      <div className="by">{s.category === "deploy" ? "You (deploy, or press Run for the DevOps Agent)" : workedBy(s.ownerRole)}</div>
-      <div className="lim">{HINTS[s.category] ?? ""}</div>
+    <div className="member">
+      <div className="h"><Avatar name={m.name} kind={m.kind} size="lg" role={m.roleKey} />
+        <div><b>{m.name}</b><span className="fn">{m.roleKey === "reviewer" ? "Reviewer · merges" : m.roleKey}</span></div></div>
     </div>
   );
-}
-
-/** Who usually works a new column of this type (as in the usual columns). A Deploy column is always yours. */
-const USUAL_WORKER: Partial<Record<StateCategory, string>> = { ready: "implementer", in_progress: "implementer", testing: "qa", review: "human", deploy: "human" };
-
-/** Add column: its name, the column it goes after, its type (what the column does) and who works it. */
-function AddColumn({ team, onAdded, onCancel }: { team: Team; onAdded: () => void; onCancel: () => void }) {
-  const states = [...team.states].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
-  const firstType: StateCategory = states.some((s) => s.category === "deploy") ? "ready" : "deploy";
-  const [name, setName] = useState("");
-  const [after, setAfter] = useState(() => {
-    const open = states.filter((s) => s.category !== "done" && s.category !== "cancelled");
-    return (states.find((s) => s.category === "review") ?? open[open.length - 1] ?? states[states.length - 1])?.id ?? "";
-  });
-  const [category, setCategory] = useState<StateCategory>(firstType);
-  const [worker, setWorker] = useState(USUAL_WORKER[firstType] ?? "");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const teamRoles = team.members.filter((m) => m.kind === "agent").map((m) => m.roleKey);
-  const roles = [...new Set([...ROLES, ...teamRoles])].filter((r) => r !== "lead");
-  const deploy = category === "deploy";
-  const add = async () => {
-    setBusy(true); setErr(null);
-    try {
-      await addState(team.id, name.trim() || CATEGORY_NAMES[category], after, category, deploy ? "human" : worker || null);
-      onAdded();
-    } catch (e) { setErr(String(e)); setBusy(false); }
-  };
-  return (
-    <div className="panel col-add">
-      <div className="rule-add">
-        <input className="input" aria-label="Column name" autoFocus style={{ width: 150 }} value={name} placeholder={CATEGORY_NAMES[category]}
-          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !busy) add(); if (e.key === "Escape") onCancel(); }} />
-        <span>after</span>
-        <select className="select" aria-label="After column" value={after} onChange={(e) => setAfter(e.target.value)}>
-          {states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <span>type</span>
-        <select className="select" aria-label="Column type" value={category}
-          onChange={(e) => { const c = e.target.value as StateCategory; setCategory(c); setWorker(USUAL_WORKER[c] ?? ""); }}>
-          {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_NAMES[c]}</option>)}
-        </select>
-        <span>worked by</span>
-        {deploy ? (
-          <select className="select" aria-label="Worked by" value="human" disabled title="A Deploy column is always worked by you">
-            <option value="human">{workedBy("human")}</option>
-          </select>
-        ) : (
-          <select className="select" aria-label="Worked by" value={worker} onChange={(e) => setWorker(e.target.value)}>
-            <option value="">{workedBy(null)}</option>
-            <option value="implementer">{workedBy("implementer")}</option>
-            {roles.map((r) => <option key={r} value={r}>{workedBy(r)}</option>)}
-            <option value="human">{workedBy("human")}</option>
-          </select>
-        )}
-        <span className="grow" />
-        <button className="btn ghost" onClick={onCancel}>Cancel</button>
-        <button className="btn primary" disabled={busy || !after} onClick={add}><Plus className="icon" />Add column</button>
-      </div>
-      {err && <div className="col-add-err" role="alert">{err}</div>}
-    </div>
-  );
-}
-
-function MemberCard({ m, live }: { m: Member; live: number }) {
-  const agent = m.kind === "agent";
-  const inner = (
-    <>
-      <div className="h"><Avatar name={m.name} kind={m.kind} size={agent ? "xl" : "lg"} role={m.roleKey} />
-        <div><b>{m.name}</b><span className="fn">{agent ? `${m.roleKey === "qa" ? "QA" : m.roleKey} agent` : m.roleKey === "reviewer" ? "Reviewer · merges" : m.roleKey}</span></div></div>
-      {agent && (
-        <>
-          <div className="now">
-            {live > 0 ? <span className="badge live"><span className="pulse" />{live} live</span> : <span className={`state ${m.status === "active" ? "" : "paused"}`}>{m.status === "active" ? "idle" : "paused"}</span>}
-            <span>{wakeupLabel(m.wakeup, m.heartbeatMinutes)}</span>
-            {m.lastHeartbeatAt ? <span className="faint">· woke {relTime(m.lastHeartbeatAt)}</span> : null}
-          </div>
-          <div className="tags"><span className="label-pill">Claude Code</span>{m.model && <span className="label-pill">{m.model}</span>}<span className="label-pill">{m.permissionMode}</span></div>
-        </>
-      )}
-    </>
-  );
-  return agent ? <a className="member" href={href({ page: "agent", id: m.actorId })}>{inner}</a> : <div className="member">{inner}</div>;
 }
 
 function NewTeamDrawer({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
@@ -137,7 +35,7 @@ function NewTeamDrawer({ onClose, onCreated }: { onClose: () => void; onCreated:
   const [err, setErr] = useState<string | null>(null);
   const make = async () => { try { onCreated(await addTeam(name)); } catch (e) { setErr(String(e)); } };
   return (
-    <Drawer title="New team" subtitle="A new team gets the six usual columns and no agents. New projects still join your first team for now." onClose={onClose} dirty={!!name} error={err}
+    <Drawer title="New team" subtitle="A new team gets the seven usual columns and no agents. New projects still join your first team for now." onClose={onClose} dirty={!!name} error={err}
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!name.trim()} onClick={make}>Create team</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); make(); }}>
         <FormSection title="Team"><Field label="Name" htmlFor="tm-name"><input id="tm-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Mobile team" /></Field></FormSection>
@@ -147,21 +45,66 @@ function NewTeamDrawer({ onClose, onCreated }: { onClose: () => void; onCreated:
   );
 }
 
+/** An agent card dragged from the organisation chart lands only on columns that take agents; a column dragged by its grip
+ * goes between the other columns. */
+const collision: CollisionDetection = (args) => {
+  const type = (args.active.data.current as AgentDrag | ColumnDrag | undefined)?.type;
+  const columns = args.droppableContainers.filter((c) => {
+    const d = c.data.current as ColumnDrag | undefined;
+    return d?.type === "column" && (type !== "agent" || d.takesAgents);
+  });
+  return type === "agent" ? pointerWithin({ ...args, droppableContainers: columns }) : closestCenter({ ...args, droppableContainers: columns });
+};
+
 export function TeamPage() {
   const [teamId, setTeamId] = useCurrentTeam();
   const { data: teams } = useData(() => listTeams());
-  const { data: team, error, reload } = useData(() => getTeam(teamId), [teamId]);
+  const { data: team, error } = useData(() => getTeam(teamId), [teamId]);
   const open = useDrawer();
   const live = useLiveRuns();
   const chatLive = useChatLive();
   const [newTeam, setNewTeam] = useState(false);
   const [addingColumn, setAddingColumn] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [colErr, setColErr] = useState<ColumnError>(null);
+  // The columns in board order. A column dropped in a new place keeps it while it saves, until the saved order is back.
+  const stateKey = team ? boardOrder(team.states).map((s) => s.id).join(",") : "";
+  const [moved, setMoved] = useState<string[] | null>(null);
+  useEffect(() => setMoved(null), [stateKey]);
+  const order = moved ?? (stateKey ? stateKey.split(",") : []);
+  const [dragging, setDragging] = useState<AgentDrag | ColumnDrag | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   if (error) return <div className="error-banner">{error}</div>;
   if (!team) return null;
   const agents = team.members.filter((m) => m.kind === "agent");
   const people = team.members.filter((m) => m.kind !== "agent");
-  const states = [...team.states].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
+
+  const onDragStart = ({ active }: DragStartEvent) => { setDragging((active.data.current as AgentDrag | ColumnDrag) ?? null); setColErr(null); };
+  const onDragOver = ({ active, over }: DragOverEvent) => {
+    setOverId((active.data.current as AgentDrag | undefined)?.type === "agent" && over ? String(over.id) : null);
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    const drag = active.data.current as AgentDrag | ColumnDrag | undefined;
+    setDragging(null);
+    setOverId(null);
+    if (!drag || !over) return;
+    const to = String(over.id);
+    if (drag.type === "agent") {
+      addColumnAgent(to, drag.agentId).catch((e) => setColErr({ id: to, text: String(e) }));
+      return;
+    }
+    const id = String(active.id);
+    const from = order.indexOf(id), at = order.indexOf(to);
+    if (from < 0 || at < 0 || from === at) return;
+    const next = arrayMove(order, from, at);
+    setMoved(next);
+    setColumn(id, { afterId: afterIdAt(next, at) }).catch((e) => { setMoved(null); setColErr({ id, text: String(e) }); });
+  };
+
   return (
     <>
       <div className="topbar">
@@ -179,27 +122,39 @@ export function TeamPage() {
       {err && <div className="error-banner" role="alert">{err}<button className="btn ghost sm" onClick={() => setErr(null)}>Dismiss</button></div>}
       <div className="content">
         <div className="page">
+          <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}
+            onDragCancel={() => { setDragging(null); setOverId(null); }}>
+            <section>
+              <div className="section-head"><h3>Organisation</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>
+                {agents.length === 0 ? "Start with the Team Lead: the agent you chat with. Click an empty spot to add an agent there."
+                  : "Click an agent to open it, an empty spot to add one; drag an agent onto a column below to put it there"}</span></div>
+              <div className="panel org-panel">
+                <OrgChart members={team.members} teamId={team.id} branches={team.branches} onError={setErr}
+                  working={(id) => live.some((r) => r.agentId === id) || (chatLive.length > 0 && !!agents.find((a) => a.actorId === id)?.chatEnabled)} />
+              </div>
+            </section>
+            <section>
+              <div className="section-head"><h3>Workflow</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>
+                The columns in board order: who takes their cards, and where cards go next. Drag a column by its grip to move it.</span>
+                {!addingColumn && <button className="btn ghost sm" style={{ marginLeft: "auto" }} onClick={() => setAddingColumn(true)}><Plus className="icon" />Add column</button>}</div>
+              <ColumnEditor team={team} order={order} error={colErr} onError={setColErr} overId={overId}
+                adding={addingColumn} onAddingDone={() => setAddingColumn(false)} />
+            </section>
+            <DragOverlay dropAnimation={null}>
+              {dragging?.type === "agent" ? <span className="agent-chip drag-chip"><Avatar name={dragging.name} kind="agent" size="sm" /><span className="nm">{dragging.name}</span></span> : null}
+            </DragOverlay>
+          </DndContext>
           <section>
-            <div className="section-head"><h3>Organisation</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>
-              {agents.length === 0 ? "Start with the Team Lead: the agent you chat with. Click an empty place to add that agent." : "Click an agent to open it, or an empty place to add one"}</span></div>
-            <div className="panel org-panel">
-              <OrgChart members={team.members} teamId={team.id}
-                working={(id) => live.some((r) => r.agentId === id) || (chatLive.length > 0 && !!agents.find((a) => a.actorId === id)?.chatEnabled)} />
-            </div>
+            <div className="section-head"><h3>Labels</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>
+              Tags for people, like Must have and Could have: they don't start or assign anything</span></div>
+            <LabelsEditor />
           </section>
           <section>
             <div className="section-head"><h3>People</h3></div>
             <div className="members">
-              {people.map((m) => <MemberCard key={m.actorId} m={m} live={0} />)}
+              {people.map((m) => <PersonCard key={m.actorId} m={m} />)}
             </div>
           </section>
-          <section>
-            <div className="section-head"><h3>Workflow</h3><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>Click a column name to rename it</span>
-              {!addingColumn && <button className="btn ghost sm" style={{ marginLeft: "auto" }} onClick={() => setAddingColumn(true)}><Plus className="icon" />Add column</button>}</div>
-            <div className="flow">{states.map((s) => <Stage key={s.id} s={s} onError={setErr} />)}</div>
-            {addingColumn && <AddColumn key={team.id} team={team} onAdded={() => { setAddingColumn(false); reload(); }} onCancel={() => setAddingColumn(false)} />}
-          </section>
-          <RulesEditor team={team} onError={setErr} />
         </div>
       </div>
       {newTeam && <NewTeamDrawer onClose={() => setNewTeam(false)} onCreated={(id) => { setNewTeam(false); setTeamId(id); }} />}

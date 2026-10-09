@@ -377,3 +377,122 @@ fn only_commit_ids_are_read_never_options_or_names() {
     }
     assert!(worktree::commits(&repo, &head, "0123456789abcdef0123456789abcdef01234567").is_err(), "an unknown commit is an error");
 }
+
+// GA-48: the run's temp folder at the worktree root.
+
+fn status(dir: &std::path::Path) -> String {
+    String::from_utf8(Command::new("git").args(["status", "--porcelain", "--untracked-files=all"]).current_dir(dir).output().unwrap().stdout).unwrap()
+}
+
+fn exclude_of(repo: &std::path::Path) -> String {
+    std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default()
+}
+
+#[test]
+fn the_temp_folder_is_made_empty_and_ignored_by_every_checkout_without_touching_gitignore() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
+    git(&repo, &["add", ".gitignore"]);
+    git(&repo, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "ignore"]);
+    let base = tmp.path().join("wt");
+    let a = worktree::ensure(&repo, &base, "KADE-1", "One", "main").unwrap();
+    let b = worktree::ensure(&repo, &base, "KADE-2", "Two", "main").unwrap();
+
+    let dir = worktree::prepare_temp(&a.path).unwrap();
+    assert_eq!(dir, a.path.join(".gizai-tmp"));
+    assert!(dir.is_dir());
+    std::fs::create_dir_all(dir.join("deep/er")).unwrap();
+    std::fs::write(dir.join("deep/er/x.db"), "x").unwrap();
+    assert_eq!(status(&a.path), "", "the worktree's git status doesn't show it");
+    // again, from another worktree of the same repository: one line in the shared info/exclude
+    worktree::prepare_temp(&b.path).unwrap();
+    worktree::prepare_temp(&a.path).unwrap();
+    assert_eq!(exclude_of(&repo).lines().filter(|l| *l == "/.gizai-tmp/").count(), 1, "{}", exclude_of(&repo));
+    assert!(std::fs::read_dir(&dir).unwrap().next().is_none(), "a run starts with it empty");
+    assert_eq!(std::fs::read_to_string(a.path.join(".gitignore")).unwrap(), "target/\n");
+    assert_eq!(std::fs::read_to_string(repo.join(".gitignore")).unwrap(), "target/\n", ".gitignore untouched");
+    // the main checkout ignores one of its own as well
+    std::fs::create_dir_all(repo.join(".gizai-tmp")).unwrap();
+    std::fs::write(repo.join(".gizai-tmp/y"), "y").unwrap();
+    for d in [&repo, &a.path, &b.path] {
+        assert_eq!(status(d), "", "{}", d.display());
+    }
+    // a file in a subfolder named like it is not hidden: the line only matches the root
+    std::fs::create_dir_all(a.path.join("src/.gizai-tmp")).unwrap();
+    std::fs::write(a.path.join("src/.gizai-tmp/z"), "z").unwrap();
+    assert!(status(&a.path).contains("src/.gizai-tmp/z"), "{}", status(&a.path));
+}
+
+#[test]
+fn the_exclude_line_goes_on_a_line_of_its_own_and_only_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let common = tmp.path().join("git");
+    // no info folder yet
+    worktree::exclude_temp(&common).unwrap();
+    assert_eq!(std::fs::read_to_string(common.join("info/exclude")).unwrap(), "/.gizai-tmp/\n");
+    // a file without a newline at its end
+    std::fs::write(common.join("info/exclude"), "*.swp").unwrap();
+    worktree::exclude_temp(&common).unwrap();
+    worktree::exclude_temp(&common).unwrap();
+    assert_eq!(std::fs::read_to_string(common.join("info/exclude")).unwrap(), "*.swp\n/.gizai-tmp/\n");
+    // a line someone wrote with spaces around it counts
+    std::fs::write(common.join("info/exclude"), "  /.gizai-tmp/  \n").unwrap();
+    worktree::exclude_temp(&common).unwrap();
+    assert_eq!(std::fs::read_to_string(common.join("info/exclude")).unwrap(), "  /.gizai-tmp/  \n");
+}
+
+#[test]
+fn emptying_the_temp_folder_removes_links_and_never_follows_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let wt = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-3", "Three", "main").unwrap().path;
+    // nothing to empty yet
+    worktree::empty_temp(&wt).unwrap();
+    let dir = worktree::prepare_temp(&wt).unwrap();
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(outside.join("sub")).unwrap();
+    std::fs::write(outside.join("sub/keep.txt"), "mine").unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::create_dir_all(dir.join("b/c")).unwrap();
+    std::fs::write(dir.join("b/c/d.txt"), "d").unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("link-to-dir")).unwrap();
+    std::os::unix::fs::symlink(outside.join("sub/keep.txt"), dir.join("link-to-file")).unwrap();
+    worktree::empty_temp(&wt).unwrap();
+    assert!(dir.is_dir() && std::fs::read_dir(&dir).unwrap().next().is_none(), "emptied, the folder stays");
+    assert_eq!(std::fs::read_to_string(outside.join("sub/keep.txt")).unwrap(), "mine", "links aren't followed");
+
+    // a link in the folder's place: prepare removes the link and makes a real folder
+    std::fs::remove_dir(&dir).unwrap();
+    std::os::unix::fs::symlink(&outside, &dir).unwrap();
+    let made = worktree::prepare_temp(&wt).unwrap();
+    assert!(!std::fs::symlink_metadata(&made).unwrap().file_type().is_symlink() && made.is_dir());
+    assert!(outside.join("sub/keep.txt").is_file(), "the link's target is left alone");
+    // and emptying removes one (a file too) without following it
+    std::fs::remove_dir(&dir).unwrap();
+    std::os::unix::fs::symlink(&outside, &dir).unwrap();
+    worktree::empty_temp(&wt).unwrap();
+    assert!(std::fs::symlink_metadata(&dir).is_err() && outside.join("sub/keep.txt").is_file());
+}
+
+#[test]
+fn the_temp_folder_goes_with_the_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = repo(tmp.path());
+    let base = tmp.path().join("wt");
+    let w = worktree::ensure(&repo, &base, "KADE-4", "Four", "main").unwrap();
+    let dir = worktree::prepare_temp(&w.path).unwrap();
+    std::fs::create_dir_all(dir.join("left/over")).unwrap();
+    std::fs::write(dir.join("left/over/db.sqlite"), "x").unwrap();
+    // never by force: the folder is ignored, not untracked, so git removes the worktree with it
+    let out = worktree::remove_card_worktree(&repo, &base, &w.branch, false);
+    assert_eq!(out.removed.as_deref(), Some(w.path.as_path()), "{:?}", out.kept);
+    assert!(!w.path.exists() && !dir.exists());
+}
+
+#[test]
+fn the_temp_environment_is_tmpdir_tmp_and_temp() {
+    let env = worktree::temp_env(std::path::Path::new("/w/KADE-5/.gizai-tmp"));
+    assert_eq!(env, [("TMPDIR", "/w/KADE-5/.gizai-tmp"), ("TMP", "/w/KADE-5/.gizai-tmp"), ("TEMP", "/w/KADE-5/.gizai-tmp")]
+        .map(|(k, v)| (k.to_string(), v.to_string())));
+}

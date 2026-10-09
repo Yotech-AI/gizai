@@ -31,6 +31,14 @@ fn put_agent_on(st: &gizai_lib::AppState, cli: &str, extra: AgentInput) -> Strin
     agent.actor_id
 }
 
+/// Makes In progress Manual. A run stopped at a limit leaves its card there, assigned to its agent: in an Auto column the
+/// queue would start the card again on its own as the run ends, and these tests Continue it by hand.
+fn in_progress_manual(st: &gizai_lib::AppState) {
+    let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
+    let state = gizai_core::team::get(&st.db, &team_id).unwrap().states.into_iter().find(|s| s.category == "in_progress").unwrap().id;
+    gizai_core::columns::set_column(&st.db, &st.you_id, &state, gizai_core::columns::ColumnInput { auto: Some(false), ..Default::default() }).unwrap();
+}
+
 fn describe(st: &gizai_lib::AppState, task: &str, text: &str) {
     gizai_core::tasks::update(&st.db, &st.you_id, task, TaskPatch { description_md: Some(text.into()), ..Default::default() }).unwrap();
 }
@@ -84,6 +92,7 @@ async fn continue_resumes_codexs_thread() {
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
     let codex = add_cli(&st, "Codex", "codex", FAKE_CLI, &["FAKE_KIND=codex"], "");
     put_agent_on(&st, &codex, AgentInput::default());
+    in_progress_manual(&st);
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
@@ -112,6 +121,7 @@ async fn continue_after_moving_the_agent_to_another_cli_does_not_resume_on_the_w
     let codex = add_cli(&st, "Codex", "codex", FAKE_CLI, &["FAKE_KIND=codex"], "");
     let other = add_cli(&st, "Plain", "other", FAKE_CLI, &["FAKE_KIND=other"], "");
     put_agent_on(&st, &codex, AgentInput::default());
+    in_progress_manual(&st);
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
@@ -148,6 +158,7 @@ async fn continue_stays_on_the_account_that_ran_the_session() {
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE_CLAUDE.to_string()).unwrap();
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
     let claude2 = add_cli(&st, "Claude Code (2nd account)", "claude_code", FAKE_CLAUDE, &["CLAUDE_CONFIG_DIR=~/.claude-2"], "");
+    in_progress_manual(&st);
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let first = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);

@@ -4,6 +4,7 @@ import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
+import { McpSettings } from "../components/McpSettings";
 import { OldWorktrees } from "../components/OldWorktrees";
 import { UpdateSettings } from "../components/UpdateSettings";
 
@@ -43,13 +44,16 @@ export function SettingsPage() {
                 <button className="btn" onClick={detect} disabled={detecting}>{detecting ? "Looking…" : "Detect"}</button></div></Field>
             <Field label="More CLIs" wide hint="Saved as soon as you add, change or remove one."><CliSettings /></Field>
           </FormSection>
+          <FormSection title="MCP servers" text="Outside services your agents can use, like Otus OS: one list for all agents, switched on per agent in its form → Tools. Values of environment and header lines and sign-ins stay in your keychain.">
+            <Field label="Servers" wide hint="Saved as soon as you add, change or remove one. Only you add, import, sign in to and switch on servers: the Team Lead can't."><McpSettings /></Field>
+          </FormSection>
           <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
           <FormSection title="Runs" text="Each run is a process of the agent's coding CLI in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
             <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
             <Field label="Spend per run ($)" htmlFor="s-usd" hint="Claude Code stops a run that reaches this amount; other CLIs don't report cost"><input id="s-usd" className="input" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="No limit" /></Field>
             <Field label="Minutes per run" htmlFor="s-min" hint="5 to 480"><input id="s-min" className="input" type="number" min={5} max={480} value={s.maxRunMinutes} onChange={(e) => setS({ ...s, maxRunMinutes: Number(e.target.value) })} /></Field>
             <Field label="Tool calls per run" htmlFor="s-calls" hint="20 to 2000. Every file read, edit and command is one."><input id="s-calls" className="input" type="number" min={20} max={2000} value={s.maxRunToolCalls} onChange={(e) => setS({ ...s, maxRunToolCalls: Number(e.target.value) })} /></Field>
-            <Field label="Pause all agents" wide hint={s.agentsPaused ? "Paused: no heartbeats and no automatic starts. Run still works by hand." : "Agents wake up on their own (heartbeats, assignments)."}>
+            <Field label="Pause all agents" wide hint={s.agentsPaused ? "Paused: no automatic starts from Auto columns. Run still works by hand." : "The agents on Auto columns take their cards by themselves."}>
               <label className="check"><input type="checkbox" checked={s.agentsPaused} onChange={(e) => { const next = { ...s, agentsPaused: e.target.checked }; setS(next); save(next); }} />Pause all agents</label></Field>
           </FormSection>
           <FormSection title="Data" text="Everything Gizai stores lives in this folder on this computer.">

@@ -5,6 +5,7 @@ import type { Person, Project, Team } from "../types";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { NewLabel } from "./NewLabel";
 import { PRIORITY_NAMES } from "./StatusIcon";
 
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
@@ -56,7 +57,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   const dirty = !!(title.trim() || description.trim() || acceptance.trim());
 
   return (
-    <Drawer title="New task" subtitle="Labels decide which agent picks it up; the column decides when." onClose={onClose} dirty={dirty} error={err}
+    <Drawer title="New task" subtitle="Its column decides which agents pick it up, and when." onClose={onClose} dirty={dirty} error={err}
       hint={noProjects ? undefined : "Ctrl+Enter creates"}
       actions={noProjects ? <button className="btn ghost" onClick={onClose}>Close</button>
         : <><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy} onClick={create}>Create task</button></>}>
@@ -72,18 +73,22 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
               {states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
             <Field label="Priority" htmlFor="t-priority"><select id="t-priority" className="select" value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
               {[0, 1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORITY_NAMES[p]}</option>)}</select></Field>
-            <Field label="Assignee" htmlFor="t-assignee" hint={assigneeId ? undefined : "Leave empty to let the routing rules choose"}>
+            <Field label="Assignee" htmlFor="t-assignee" hint={assigneeId ? undefined : "Leave empty: the agents on its column take it"}>
               <select id="t-assignee" className="select" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
                 <option value="">Unassigned</option>
                 <optgroup label="People">{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>
                 {agents.length > 0 && <optgroup label="Agents">{agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}</optgroup>}
               </select></Field>
-            <Field label="Labels" wide hint="Labels route the task to an agent with that role">
+            <Field label="Labels" wide hint="Tags for people, like Must have: they don't start or assign anything">
               <div className="chips">{(team?.labels ?? []).map((l) => {
                 const on = labelIds.includes(l.id);
                 return <button key={l.id} type="button" className="label-pill" aria-pressed={on} onClick={() => setLabelIds((ids) => on ? ids.filter((x) => x !== l.id) : [...ids, l.id])}>
                   <span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</button>;
-              })}</div></Field>
+              })}
+              <NewLabel className="label-pill" labels={team?.labels ?? []} onCreated={(l) => {
+                setTeam((t) => (t ? { ...t, labels: [...t.labels, l] } : t));
+                setLabelIds((ids) => [...ids, l.id]);
+              }} /></div></Field>
             <Field label="Testing" htmlFor="t-testing" wide
               hint="On: the QA Agent tests the card before Review. Turn it off for a small UI fix or a bug fix that doesn't need a full test sweep.">
               <label className="check"><input id="t-testing" type="checkbox" checked={testing} onChange={(e) => setTesting(e.target.checked)} />Test before Review</label>

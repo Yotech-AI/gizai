@@ -77,5 +77,28 @@ export const SUGGESTIONS: { label: string; text: string }[] = [
   { label: "What needs my attention?", text: "What needs my attention today?" },
   { label: "Add a client", text: "Add a client: " },
   { label: "Plan a project", text: "Plan a new project for " },
-  { label: "Set up my team", text: "Set up my software team: a Frontend, a Backend and a QA agent, with the usual routing rules." },
+  { label: "Set up my team", text: "Set up my software team: a Frontend, a Backend and a QA agent, on their usual columns." },
 ];
+
+/** The text being written, and the last change to it that it holds (ChatStatus.seq). */
+export type LiveDraft = { text: string; seq: number };
+/** A change to the text being written: words added, or a new block (the draft starts again). */
+export type DraftChange = { kind: "delta"; text: string; seq: number } | { kind: "block"; seq: number };
+
+/** Applies a change once: one the draft already holds (it came from a snapshot taken after it) is skipped. */
+export function applyDraft(d: LiveDraft, c: DraftChange): LiveDraft {
+  if (c.seq <= d.seq) return d;
+  return c.kind === "delta" ? { text: d.text + c.text, seq: c.seq } : { text: "", seq: c.seq };
+}
+
+/** A snapshot of the text being written (chat_live) joined with the changes heard after it, also those that arrived while
+ *  it was asked for: no words go missing, and none come twice. */
+export function withSnapshot(snap: LiveDraft, heard: DraftChange[]): LiveDraft {
+  return heard.filter((c) => c.seq > snap.seq).sort((a, b) => a.seq - b.seq).reduce(applyDraft, snap);
+}
+
+/** The coding CLI a chat runs on: its own pick while that is still in Settings, else the Team Lead's Runs on. */
+export function chatRunsOn(chatCli: string | null | undefined, leadCli: string | null | undefined, clis: { id: string }[] | null): string {
+  if (chatCli && (!clis || clis.some((c) => c.id === chatCli))) return chatCli;
+  return leadCli || "claude_code";
+}

@@ -36,11 +36,15 @@ export function ToolCard({ m }: { m: ChatMessage }) {
   );
 }
 
-export function MessageGroup({ g, agentRole, live }: { g: Group; agentRole?: string | null; live?: React.ReactNode }) {
+/** `noteActions`: what a note of Gizai's offers under it (Answer on another CLI after a usage limit). */
+export function MessageGroup({ g, agentRole, live, noteActions }: { g: Group; agentRole?: string | null; live?: React.ReactNode;
+  noteActions?: (m: ChatMessage) => React.ReactNode }) {
   if (g.side === "system") {
     const m = g.items[0];
-    const bad = (m.bodyMd ?? "").startsWith("The Team Lead couldn't") || (m.bodyMd ?? "").startsWith("Gizai's tools didn't");
-    return <div className={`chat-note${bad ? " bad" : ""}`} role={bad ? "alert" : undefined}>{bad ? <CircleAlert className="icon sm" /> : <Info className="icon sm" />}<span>{m.bodyMd}</span></div>;
+    const bad = m.meta?.kind === "limit" || (m.bodyMd ?? "").startsWith("The Team Lead couldn't") || (m.bodyMd ?? "").startsWith("Gizai's tools didn't");
+    const actions = noteActions?.(m);
+    const note = <div className={`chat-note${bad ? " bad" : ""}${actions ? " has-actions" : ""}`} role={bad ? "alert" : undefined}>{bad ? <CircleAlert className="icon sm" /> : <Info className="icon sm" />}<span>{m.bodyMd}</span></div>;
+    return actions ? <>{note}<div className="chat-note-actions">{actions}</div></> : note;
   }
   if (g.side === "user") {
     return (

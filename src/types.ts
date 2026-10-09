@@ -77,6 +77,8 @@ export type Member = {
   boardCheckPaused?: string | null;
   /** Folders besides its worktree its file tools may read, or read and change. */
   folders?: AgentFolder[];
+  /** Its MCP servers switched on or off, with the tools switched off of each (agent form → Tools). */
+  tools?: AgentTools;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -113,12 +115,25 @@ export type AgentInput = {
   /** Its folders; null/absent leaves them unchanged on update (none for a new agent). */
   folders?: AgentFolder[] | null;
 };
-export type RuleInput = { kind: "label" | "column"; matchName: string; targetRole: string; priority: number };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
 export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";
-export type WorkflowState = { id: string; name: string; category: string; ownerRole?: string | null; wipLimit?: number | null; color?: string | null; sortKey: string };
-export type RoutingRule = { id: string; kind: string; matchLabelId?: string | null; matchStateId?: string | null; targetRole?: string | null; targetActorId?: string | null; priority: number; enabled: boolean };
-export type Team = { id: string; name: string; members: Member[]; states: WorkflowState[]; labels: Label[]; rules: RoutingRule[] };
+/** A board column. auto: the agents on it (agentIds, in order) pick up its cards by themselves; Manual: only Run starts one.
+ * nextStateId: the column its cards go to next. Backlog, Review, Done and Cancelled columns take no agents and are never Auto. */
+export type WorkflowState = { id: string; name: string; category: string; wipLimit?: number | null; color?: string | null; sortKey: string;
+  auto?: boolean; nextStateId?: string | null; agentIds?: string[];
+  /** Gone with label routing (GA-49): Gizai no longer sends it; only older test fixtures still carry it. */
+  ownerRole?: string | null };
+/** A branch of the organisation chart: the team's agents with one of its roles. */
+export type Branch = { key: string; name: string; roles: string[] };
+export type Team = { id: string; name: string; members: Member[]; states: WorkflowState[]; labels: Label[]; branches?: Branch[];
+  /** Gone with label routing (GA-49): Gizai no longer sends routing rules; only older test fixtures still carry it. */
+  rules?: unknown[] };
+/** Changes to a column; only what is given changes. nextStateId "" clears it; afterId "" moves it to the front. */
+export type ColumnInput = { name?: string; agentIds?: string[]; auto?: boolean; nextStateId?: string; afterId?: string };
+/** What removing a column does, for its confirm. blocked: why it can't be removed now (the bin's tooltip). */
+export type ColumnRemoval = { cards: number; archived: number; defaultTarget?: string | null; relinked: string[]; unlinked: string[]; blocked?: string | null };
+/** A label with the number of cards that carry it. */
+export type LabelInfo = { id: string; name: string; color?: string | null; cards: number };
 export type AppInfo = { version: string; data_dir: string; selftest: boolean; you_id: string; start_route?: string | null; selftest_mode?: string | null; data_label?: string | null };
 export type Doc = { id: string; projectId?: string | null; title: string; bodyMd: string; currentVersion: number; updatedAt: number };
 export type DocVersion = { version: number; authorName?: string | null; createdAt: number };
@@ -134,7 +149,11 @@ export type RunEvent =
   | { kind: "result"; is_error: boolean; subtype: string; text: string; cost_usd?: number | null; input_tokens: number; output_tokens: number; num_turns: number }
   | { kind: "other"; raw_type: string }
   /** A note from Gizai, such as a folder the run goes without. */
-  | { kind: "note"; text: string };
+  | { kind: "note"; text: string }
+  /** The MCP servers Claude Code's init line names, with their state (connected, failed, needs-auth). */
+  | { kind: "mcp_servers"; servers: { name: string; status: string }[] }
+  /** A tool call the CLI refused: it needed an approval nobody can give in a headless run. */
+  | { kind: "refused"; tool: string; input: string; reason: string };
 export type SeqEvent = { seq: number; event: RunEvent };
 /** How a run ended, from its GIZAI_RESULT line; `deployed` is the DevOps Agent's. */
 export type RunOutcome = "ready_for_testing" | "qa_pass" | "qa_fail" | "needs_decision" | "deployed" | "no_result" | "error";
@@ -149,7 +168,11 @@ export type Run = {
   adapter?: string | null;
   /** The commit its worktree was at when it ended; null while it runs and for runs from before Gizai saved it. */
   headSha?: string | null;
+  /** The tool calls its CLI refused (Refused in this run): Claude Code reports them, other CLIs don't. */
+  refused?: Refusal[];
 };
+/** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
+export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */
 export type Commit = { sha: string; subject: string };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
@@ -235,13 +258,78 @@ export type ChatThread = { id: string; agentId: string; title: string; sessionId
   tasks?: string[];
   answeredAt?: number | null; dismissedAt?: number | null;
   /** A Team Lead chat that still waits for you (it is in the Inbox). */
-  waiting?: boolean };
+  waiting?: boolean;
+  /** The chat's own Runs on (a coding CLI's id); null: it follows the Team Lead's. */
+  cli?: string | null;
+  /** The coding CLI whose account holds the chat's session. */
+  sessionCli?: string | null };
 /** role: user | agent | tool | system. Tool messages carry `tool` = {id, input, result?, isError?}. */
 export type ChatMessage = { id: string; threadId: string; role: string; authorId?: string | null; authorName?: string | null;
-  bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number };
-export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null };
+  bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number;
+  /** A note's details: {kind: "switch", cli, cliName} where the chat moved to another CLI, {kind: "limit", cli, cliName, limit, resets?, messageIds}
+   *  where an answer hit a usage limit. */
+  meta?: ChatNoteMeta | null };
+export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
+/** `seq`: the last change to the text being written that `draft` holds. */
+export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
+/** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */
+export type QueuedMessage = { id: string; threadId: string; bodyMd: string; createdAt: number; updatedAt: number; held: boolean };
+/** A coding CLI in Runs on under the chat's text box; `problem`: why it can't run the chat. */
+export type ChatCli = { id: string; name: string; kind: CliKind; problem?: string | null };
 export type ChatEvent =
-  | { kind: "delta"; threadId: string; text: string }
-  | { kind: "block"; threadId: string }
+  | { kind: "delta"; threadId: string; text: string; seq: number }
+  | { kind: "block"; threadId: string; seq: number }
   | { kind: "tool"; threadId: string; name: string }
   | { kind: "message"; threadId: string; message: ChatMessage };
+
+// ---- MCP servers (Settings → MCP servers, agent form → Tools) ----
+
+/** A server in Settings → MCP servers: names of its lines, never their values (those live in the keychain). */
+export type McpServer = {
+  id: string; name: string;
+  /** stdio (a command) | http | sse (an address) */
+  transport: string;
+  command: string; args: string[]; envNames: string[];
+  url: string; headerNames: string[];
+  /** A client id for sign-in, for a server that doesn't let Gizai register itself. */
+  clientId: string;
+  /** Where it was imported from; empty when added by hand. */
+  source: string;
+};
+/** A secret line as the form saves it: value only when typed in now; null keeps the one in the keychain. */
+export type SecretLine = { name: string; value: string | null };
+export type McpServerInput = { server: McpServer; env: SecretLine[]; headers: SecretLine[] };
+export type McpParam = { name: string; ty: string; required: boolean; description: string };
+export type McpHints = { readOnly: boolean; destructive: boolean; idempotent: boolean; openWorld: boolean };
+/** One tool in plain words: what it does, its parameters, what the server says about it, and its risk. */
+export type McpToolView = {
+  name: string; title?: string | null; description: string; params: McpParam[];
+  hints: McpHints; hintsSent: string[];
+  /** low | medium | high */
+  risk: string; summary: string; notes: string[];
+};
+export type McpListed = { serverName: string; serverVersion: string; listedAt: number; tools: McpToolView[] };
+export type McpServerView = McpServer & {
+  /** signed_in | needs_sign_in | "" */
+  signIn: string;
+  problem?: string | null;
+  /** Lines whose value isn't in the keychain. */
+  missing: string[];
+  listed?: McpListed | null;
+  usedBy: string[];
+};
+export type McpCandidate = {
+  key: string; name: string; account: string; scope: string; folder?: string | null; transport: string;
+  command: string; args: string[]; url: string; envNames: string[]; headerNames: string[];
+  already: boolean; clash?: string | null;
+};
+export type McpScan = { servers: McpCandidate[]; problems: string[] };
+export type McpPick = { key: string; name: string };
+export type AgentServer = { serverId: string; on: boolean; toolsOff: string[] };
+export type AgentTools = { mcp: AgentServer[] };
+export type AgentServerView = {
+  serverId: string; name: string; transport: string; on: boolean; toolsOff: string[]; signIn: string;
+  actsAsYou?: string | null; lastRun?: { status: string; at: number } | null;
+  tools: McpToolView[]; summary: string; risk: string;
+};
+export type AgentMcpView = { disabled?: string | null; warning?: string | null; servers: AgentServerView[] };

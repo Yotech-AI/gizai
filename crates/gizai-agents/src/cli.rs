@@ -1,6 +1,6 @@
 //! The coding CLIs an agent can run on: Claude Code, Codex, Gemini, or any other program. For each kind, the command
 //! line of one headless task run and how its output turns into the same `RunEvent`s the Run panel shows.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -80,6 +80,13 @@ pub struct TaskRun {
     pub writable_dirs: Vec<String>,
     /// The agent's own folders (agent form → Folders) that are there: see `task_exec` for what each CLI gets.
     pub folders: Vec<RunFolder>,
+    /// The run's temp folder (`<worktree>/.gizai-tmp`, `worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and
+    /// TEMP. None when Gizai couldn't make it.
+    pub temp_dir: Option<String>,
+    /// Claude Code: the run's MCP config file (`mcp_run`), with the agent's MCP servers on.
+    pub mcp_config: Option<PathBuf>,
+    /// Claude Code: more tools to refuse, like the MCP tools switched off (`mcp_run::permissions`).
+    pub disallowed_tools: Vec<String>,
 }
 
 /// One of the agent's folders for a run (absolute, as it is on disk).
@@ -115,7 +122,17 @@ pub fn folders_left_out(kind: Kind, folders: &[RunFolder]) -> Option<String> {
 /// - Codex: its sandbox reads every folder anyway; a read and change folder becomes a writable root (workspace-write);
 /// - Gemini: `--include-directories` for each read and change folder; read folders are left out;
 /// - Other: none.
+///
+/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, after its own environment lines.
 pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
+    let mut exec = cli_exec(cli, run);
+    if let Some(dir) = &run.temp_dir {
+        exec.env.extend(crate::worktree::temp_env(std::path::Path::new(dir)));
+    }
+    exec
+}
+
+fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
     match cli.kind {
         Kind::ClaudeCode => ClaudeArgs {
             bin: cli.bin.clone(), prompt: run.prompt.clone(), session_id: run.session_id.clone(), resume: run.resume,
@@ -124,7 +141,9 @@ pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
             // for headless agents.
             disable_hooks: true, disable_skills: true, effort: run.effort.clone(), env: cli.env.clone(),
-            add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(), disallowed_tools: claude_read_only(&run.folders),
+            add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(),
+            disallowed_tools: claude_read_only(&run.folders).into_iter().chain(run.disallowed_tools.iter().cloned()).collect(),
+            mcp_config: run.mcp_config.clone(),
             ..Default::default()
         }.exec(),
         Kind::Codex => Exec { bin: cli.bin.clone(), args: codex_args(run), env: cli.env.clone(), stdin: run.prompt.clone() },
@@ -300,7 +319,7 @@ pub fn parse_log(text: &str) -> Vec<RunEvent> {
 
 /// Turns one CLI's output into `RunEvent`s, line by line; `finish` gives what is still due when the output ends.
 pub enum Parser {
-    Claude,
+    Claude(Claude),
     Codex(Codex),
     Gemini(Gemini),
     Text(Text),
@@ -309,7 +328,7 @@ pub enum Parser {
 impl Parser {
     pub fn new(kind: Kind) -> Parser {
         match kind {
-            Kind::ClaudeCode => Parser::Claude,
+            Kind::ClaudeCode => Parser::Claude(Claude::default()),
             Kind::Codex => Parser::Codex(Codex::default()),
             Kind::Gemini => Parser::Gemini(Gemini::default()),
             Kind::Other => Parser::Text(Text::default()),
@@ -318,7 +337,7 @@ impl Parser {
 
     pub fn line(&mut self, line: &str) -> Vec<RunEvent> {
         match self {
-            Parser::Claude => stream::parse_line(line),
+            Parser::Claude(p) => p.line(line),
             Parser::Codex(p) => p.line(line),
             Parser::Gemini(p) => p.line(line),
             Parser::Text(p) => p.line(line),
@@ -327,12 +346,86 @@ impl Parser {
 
     pub fn finish(&mut self) -> Vec<RunEvent> {
         match self {
-            Parser::Claude => vec![],
+            Parser::Claude(_) => vec![],
             Parser::Codex(p) => p.finish(),
             Parser::Gemini(p) => p.finish(),
             Parser::Text(p) => p.finish(),
         }
     }
+}
+
+/// Claude Code's stream-json (`stream::parse_line`), and each refused tool call as it happens: a `system` line with
+/// subtype `permission_denied` names the call by its id and says why, and the call's own `tool_use` block said what it
+/// asked for. The result line's `permission_denials` then adds only the calls not shown yet, so a run stopped before
+/// its result (Stop, a limit) keeps the refusals it had.
+#[derive(Default)]
+pub struct Claude {
+    /// What each tool call so far asked for, by its id: (tool, command or file).
+    asked: HashMap<String, (String, String)>,
+    /// The refused calls already shown, by id.
+    refused: HashSet<String>,
+}
+
+impl Claude {
+    pub fn line(&mut self, line: &str) -> Vec<RunEvent> {
+        let mut evs = stream::parse_line(line);
+        if line.contains("\"mcp_servers\"") {
+            evs.extend(mcp_states(line));
+        }
+        let watch = ["\"tool_use\"", "\"permission_denied\"", "\"permission_denials\""];
+        if !watch.iter().any(|w| line.contains(w)) {
+            return evs;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { return evs };
+        match (v.get("type").and_then(Value::as_str), v.get("subtype").and_then(Value::as_str)) {
+            (Some("assistant"), _) => {
+                for b in v.pointer("/message/content").and_then(Value::as_array).into_iter().flatten() {
+                    if b.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        self.asked.insert(text_of(b, "id"), (text_of(b, "name"), stream::refused_input(&b["input"])));
+                    }
+                }
+            }
+            (Some("system"), Some("permission_denied")) => {
+                let id = text_of(&v, "tool_use_id");
+                if self.refused.insert(id.clone()) || id.is_empty() {
+                    let (tool, input) = self.asked.get(&id).cloned().unwrap_or_else(|| (text_of(&v, "tool_name"), String::new()));
+                    let reason = [text_of(&v, "decision_reason"), text_of(&v, "message")].into_iter().find(|r| !r.trim().is_empty()).unwrap_or_default();
+                    evs = vec![RunEvent::Refused { tool, input, reason: stream::cut(reason.trim(), 300) }];
+                }
+            }
+            (Some("result"), _) => {
+                // `stream::parse_line` gave one Refused per denial, in their order: drop those already shown.
+                let ids: Vec<String> = v.get("permission_denials").and_then(Value::as_array).into_iter().flatten()
+                    .map(|d| text_of(d, "tool_use_id")).collect();
+                let mut i = 0;
+                evs.retain(|e| match e {
+                    RunEvent::Refused { .. } => {
+                        let id = ids.get(i).cloned().unwrap_or_default();
+                        i += 1;
+                        id.is_empty() || !self.refused.contains(&id)
+                    }
+                    _ => true,
+                });
+            }
+            _ => {}
+        }
+        evs
+    }
+}
+
+/// An init line's MCP servers besides Gizai's own: their states, and a note for each that didn't connect.
+fn mcp_states(line: &str) -> Vec<RunEvent> {
+    let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { return vec![] };
+    if v.get("type").and_then(Value::as_str) != Some("system") || v.get("subtype").and_then(Value::as_str) != Some("init") {
+        return vec![];
+    }
+    let states: Vec<(String, String)> = crate::mcp_run::init_states(&v).unwrap_or_default().into_iter().filter(|(n, _)| n != "gizai").collect();
+    if states.is_empty() {
+        return vec![];
+    }
+    let mut out: Vec<RunEvent> = states.iter().filter_map(|(n, s)| crate::mcp_run::not_connected(n, s)).map(|text| RunEvent::Note { text }).collect();
+    out.push(RunEvent::McpServers { servers: states.into_iter().map(|(name, status)| stream::McpState { name, status }).collect() });
+    out
 }
 
 fn text_of(v: &Value, key: &str) -> String {

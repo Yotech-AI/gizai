@@ -7,6 +7,7 @@ pub mod folders;
 pub mod git;
 pub mod github;
 pub mod mcp;
+pub mod mcp_servers;
 pub mod pulls;
 mod quit;
 pub mod runs;
@@ -41,6 +42,10 @@ pub struct AppState {
     pub updates: Arc<update::Updates>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
+    /// Where MCP servers' secrets live: the OS keychain, or a file standing in for it (GIZAI_FAKE_KEYCHAIN) in tests.
+    pub keychain: Arc<dyn gizai_agents::secrets::Keychain>,
+    /// MCP servers' sign-ins in that keychain, refreshed one at a time per server.
+    pub tokens: Arc<gizai_agents::oauth::TokenStore>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
     pub notify: Arc<dyn Fn(runs::Note) + Send + Sync>,
 }
@@ -174,9 +179,13 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
         }
     }
     let _ = gizai_core::runs::recover_interrupted(&db);
+    // Messages queued in a chat wait for Send now: the answer they waited for is gone.
+    let _ = gizai_core::chat::hold_all_queues(&db);
     chat::remove_stray_configs(&dir);
     let mcp_socket = mcp::socket_path(&dir);
-    Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
+    let keychain = gizai_agents::secrets::from_env();
+    let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
+    Ok(AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify })
 }
@@ -203,11 +212,17 @@ pub fn test_state(dir: &std::path::Path) -> AppState {
     let mut st = open_state(dir.join("data"), Arc::new(|_| {})).expect("test state");
     // Tests keep their socket in their own folder, never in the real runtime dir.
     st.mcp_socket = st.data_dir.join("mcp.sock");
+    // Never the real keychain in tests: one in memory, unless the test names a file for it.
+    if std::env::var_os("GIZAI_FAKE_KEYCHAIN").is_none() {
+        st.keychain = Arc::new(gizai_agents::secrets::MemoryKeychain::default());
+        st.tokens = Arc::new(gizai_agents::oauth::TokenStore::new(st.keychain.clone()));
+    }
     st
 }
 
-/// A task in To do, labelled `label`, in project KADE (repo `repo`), with a "<Label> Agent" and a rule
-/// label → role. Reuses the project, agent and rule on later calls.
+/// A task in To do, labelled `label` and assigned to a "<Label> Agent" (role `label`; a new agent lands on its role's
+/// usual columns), in project KADE (repo `repo`). Labels don't route: the assignment makes that agent start it. Reuses
+/// the project and the agent on later calls.
 #[doc(hidden)]
 pub fn test_task(st: &AppState, repo: &str, label: &str) -> String {
     use gizai_core::model::*;
@@ -219,15 +234,17 @@ pub fn test_task(st: &AppState, repo: &str, label: &str) -> String {
     };
     let team_id = gizai_core::team::list(db).unwrap()[0].id.clone();
     let team = gizai_core::team::get(db, &team_id).unwrap();
-    if !team.members.iter().any(|m| m.kind == "agent" && m.role_key == label) {
-        let name = format!("{}{} Agent", label[..1].to_uppercase(), &label[1..]);
-        gizai_core::team::add_agent(db, &st.you_id, &team_id, AgentInput { name, role_key: label.into(), ..Default::default() }).unwrap();
-        gizai_core::team::add_rule(db, &st.you_id, &team_id, RuleInput { kind: "label".into(), match_name: label.into(), target_role: label.into(), priority: 10 }).unwrap();
-    }
+    let agent = match team.members.iter().find(|m| m.kind == "agent" && m.role_key == label) {
+        Some(m) => m.actor_id.clone(),
+        None => {
+            let name = format!("{}{} Agent", label[..1].to_uppercase(), &label[1..]);
+            gizai_core::team::add_agent(db, &st.you_id, &team_id, AgentInput { name, role_key: label.into(), ..Default::default() }).unwrap()
+        }
+    };
     let todo = team.states.iter().find(|s| s.category == "ready").unwrap().id.clone();
     let lbl = team.labels.iter().find(|l| l.name == label).unwrap().id.clone();
     let t = gizai_core::tasks::create(db, &st.you_id, TaskInput { project_id: project, title: "Export invoices as CSV".into(), state_id: Some(todo),
-        label_ids: vec![lbl], ..Default::default() }).unwrap();
+        label_ids: vec![lbl], assignee_id: Some(agent), ..Default::default() }).unwrap();
     t
 }
 
@@ -306,14 +323,12 @@ pub fn run() {
                     }
                 });
             }
-            // Heartbeats: once a minute, agents whose interval has passed look for their next card, and agents that wake up
-            // when a card is routed or assigned to them take cards that had to wait (the run limit was full, Gizai just started).
-            // The Team Lead checks the board when its interval has passed; only new findings start it.
+            // Once a minute the agents take cards that had to wait (the run limit was full, Gizai just started), and the
+            // Team Lead checks the board when its interval has passed; only new findings start it.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
-                    let _ = runs::heartbeat_tick(&state, gizai_core::ids::now_ms()).await;
                     let _ = runs::pull(&state).await;
                     let _ = board::tick(&state, gizai_core::ids::now_ms()).await;
                 }
@@ -322,6 +337,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, exit_app,
+            commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
+            commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
+            commands::agent_mcp, commands::save_agent_mcp,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
             commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,
@@ -333,11 +351,14 @@ pub fn run() {
             commands::doc_versions, commands::doc_version_body,
             commands::add_files, commands::list_files, commands::remove_file, commands::open_file,
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
-            commands::add_rule, commands::delete_rule, commands::rename_state, commands::add_state, commands::role_template,
+            commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,
+            commands::column_removal, commands::remove_state, commands::list_labels, commands::save_label, commands::remove_label,
+            commands::add_branch, commands::remove_branch, commands::role_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
-            commands::dismiss_chat,
+            commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
+            commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::list_old_worktrees, commands::remove_old_worktrees,

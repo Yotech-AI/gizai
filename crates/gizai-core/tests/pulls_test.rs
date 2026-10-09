@@ -96,20 +96,24 @@ fn recording_a_pull_request_notes_only_real_changes() {
 }
 
 #[test]
-fn a_merge_moves_the_card_to_done_once() {
+fn a_merge_moves_the_card_to_reviews_next_column_once() {
+    // GA-49: the seed's Review links to Deploy, so a merge moves the card there (it went to Done before Deploy was seeded).
     let s = shop();
     let id = s.card(&s.project, "review", Some("gizai/shop-1"));
     pulls::record(&s.db, Some(&s.you), &id, PR, "open", true).unwrap();
-    assert_eq!(pulls::merged(&s.db, &s.you, &id, PR).unwrap().as_deref(), Some("Done"));
+    assert_eq!(pulls::merged(&s.db, &s.you, &id, PR).unwrap().as_deref(), Some("Deploy"));
     let t = tasks::get(&s.db, &id).unwrap();
-    assert_eq!((t.state_name.as_str(), t.state_category.as_str(), t.pr_state.as_deref()), ("Done", "done", Some("merged")));
+    assert_eq!((t.state_name.as_str(), t.state_category.as_str(), t.pr_state.as_deref()), ("Deploy", "deploy", Some("merged")));
     let a = tasks::activity(&s.db, &id).unwrap();
-    assert!(a.iter().any(|e| e.diff == json!({"column": ["Review", "Done"]})), "{a:?}");
+    assert!(a.iter().any(|e| e.diff == json!({"column": ["Review", "Deploy"]})), "{a:?}");
     assert!(a.iter().any(|e| e.actor_name.is_none() && e.diff == json!({"pullRequest": PR, "prState": "merged"})), "Gizai saw the merge: {a:?}");
     assert!(!pulls::card(&s.db, &id).unwrap().followed() && pulls::to_check(&s.db).unwrap().is_empty(), "not followed any more");
-    // a card that is already Done stays where it is
+    // a card that is already in Deploy stays where it is, and so does one in Done
     assert_eq!(pulls::merged(&s.db, &s.you, &id, PR).unwrap(), None);
-    assert_eq!(tasks::get(&s.db, &id).unwrap().state_name, "Done");
+    assert_eq!(tasks::get(&s.db, &id).unwrap().state_name, "Deploy");
+    let done = s.card(&s.project, "done", Some("gizai/shop-9"));
+    assert_eq!(pulls::merged(&s.db, &s.you, &done, PR).unwrap(), None);
+    assert_eq!(tasks::get(&s.db, &done).unwrap().state_name, "Done");
     // the clean-up is noted as Gizai's
     pulls::note_cleanup(&s.db, &id, "removed its worktree after the merge").unwrap();
     let last = tasks::activity(&s.db, &id).unwrap().pop().unwrap();

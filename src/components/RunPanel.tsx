@@ -7,7 +7,7 @@ import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, resumeCommand, runReason } from "../lib/runs";
 import { relTime } from "../lib/format";
-import type { Run, SeqEvent, Task, Team } from "../types";
+import type { Refusal, Run, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
 import { MarkdownView } from "./MarkdownView";
 
@@ -30,10 +30,25 @@ export function Stream({ events }: { events: SeqEvent[] }) {
           case "tool_result": return e.is_error ? <div key={seq} className="err">{e.preview}</div> : null;
           case "result": return <div key={seq} className={e.is_error ? "err" : "ok"}>{e.is_error ? `Ended with ${e.subtype}` : "Done"} · {e.num_turns} turns</div>;
           case "note": return <div key={seq} style={{ color: "var(--warning)" }}>{e.text}</div>;
+          case "refused": return <div key={seq} className="err">Refused: <b>{e.tool}</b> {e.input}{e.reason ? ` (${e.reason})` : ""}</div>;
+          case "mcp_servers": return <div key={seq} className="faint">MCP servers: {e.servers.map((s) => `${s.name} (${s.status === "connected" ? "connected" : s.status || "failed"})`).join(", ")}</div>;
           default: return e.raw_type?.startsWith("cap_exceeded") ? <div key={seq} className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;
         }
       })}
       <div ref={end} />
+    </div>
+  );
+}
+
+/** The tool calls the run's CLI refused: nobody could approve them during the run. */
+export function Refused({ list }: { list: Refusal[] }) {
+  return (
+    <div className="run-refused" aria-label="Refused in this run" style={{ marginTop: 8, fontSize: "var(--fs-sm)" }}>
+      <div style={{ color: "var(--warning)" }}>Refused in this run ({list.length})</div>
+      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+        {list.map((r, i) => <li key={i}><b>{r.tool}</b> <code className="mono" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.input}</code>
+          {r.reason && <span className="muted"> {r.reason}</span>}</li>)}
+      </ul>
     </div>
   );
 }
@@ -63,7 +78,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
   const [showLast, setShowLast] = useState(false);
   const events = useEvents(live ? live.runId : showLast && run ? run.id : null);
   const agents = team.members.filter((m) => m.kind === "agent" && m.status === "active");
-  const [agentId, setAgentId] = useState<string>(""); // "" = let Gizai choose (assigned agent, else routing)
+  const [agentId, setAgentId] = useState<string>(""); // "" = let Gizai choose (assigned agent, else the column's first agent)
   const [suggested, setSuggested] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -114,11 +129,12 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
       </div>
       <div className="run-summary">
         {agents.length === 0 ? <span className="muted">No agents yet. Add them on the <a href="#/team">Team</a> page; then Run starts one on this card.</span>
-          : !run ? <span className="muted">{task.hold ? holdLine : "No agent has worked on this card yet. Run starts the agent chosen here (or the one the routing picks) in its own git worktree."}</span>
+          : !run ? <span className="muted">{task.hold ? holdLine : "No agent has worked on this card yet. Run starts the agent chosen here (or the card's agent, else the first agent on its column) in its own git worktree."}</span>
           : <>
             {task.hold && <div className="muted" style={{ marginBottom: 6 }}>{holdLine}</div>}
             {run.summaryMd ? <MarkdownView md={run.summaryMd} /> : <span className="run-reason">{runReason(run) ?? "No summary."}</span>}
             {run.summaryMd && run.error && <div className="warn" style={{ color: "var(--warning)", fontSize: "var(--fs-sm)" }}>{run.error}</div>}
+            {!!run.refused?.length && <Refused list={run.refused} />}
             <div style={{ display: "flex", gap: 14, marginTop: 8, color: "var(--text-3)", fontSize: "var(--fs-sm)" }}>
               <span>{formatCost(run.costUsdMicros)}</span>{run.branch && <span className="mono">{run.branch}</span>}
               <button className="link" onClick={() => setShowLast((s) => !s)}>{showLast ? "Hide output" : "Show output"}</button></div>
@@ -131,7 +147,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`
             : task.hold ? "On hold" : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
           <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} style={{ width: 220, height: 28 }}>
-            <option value="">{suggestedName ? `${suggestedName} (routed)` : "Choose an agent"}</option>
+            <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
             {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}
           </select>
           {continuable && <button className="btn sm primary" onClick={resume}><StepForward className="icon" />Continue</button>}

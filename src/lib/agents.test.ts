@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dollarsToMicros, microsToDollars, parseTools, ruleSentence, wakeupLabel } from "./agents";
+import { DEFAULT_TOOLS, dollarsToMicros, microsToDollars, parseTools, ruleSentence, wakeupLabel } from "./agents";
 
 describe("wakeupLabel", () => {
   it("names the three wake-ups", () => {
@@ -41,8 +41,20 @@ import { draftFrom, inputFrom, ROLES, roleLabel } from "./agents";
 describe("agent drafts", () => {
   it("start from a preset: the Chat page's Team Lead", () => {
     const d = draftFrom(null, { name: "Team Lead", role: "lead", chat: true });
-    expect(d).toMatchObject({ name: "Team Lead", role: "lead", chat: true, wakeup: "manual" });
+    expect(d).toMatchObject({ name: "Team Lead", role: "lead", chat: true });
     expect(inputFrom(d)).toMatchObject({ name: "Team Lead", roleKey: "lead", chatEnabled: true });
+  });
+  it("have no wake-up or heartbeat: the columns decide when an agent works (GA-53)", () => {
+    const m = { actorId: "a", name: "Backend Agent", kind: "agent", roleKey: "backend", handle: "b", status: "active", isLead: false, allowedTools: [],
+      chatEnabled: false, wakeup: "heartbeat", heartbeatMinutes: 20 };
+    const d = draftFrom(m);
+    expect(d).not.toHaveProperty("wakeup");
+    expect(d).not.toHaveProperty("minutes");
+    // an old setting isn't sent back, so it goes on save
+    const input = inputFrom(d);
+    expect(input).not.toHaveProperty("wakeup");
+    expect(input).not.toHaveProperty("heartbeatMinutes");
+    expect(inputFrom(draftFrom(null))).not.toHaveProperty("wakeup");
   });
   it("keep an agent's chat setting and send it back", () => {
     const m = { actorId: "a", name: "Backend Agent", kind: "agent", roleKey: "backend", handle: "b", status: "active", isLead: false, allowedTools: [], chatEnabled: false };
@@ -105,5 +117,29 @@ describe("a Team Lead with both a board check and folders (GA-35 and GA-45, merg
     expect(inputFrom(more)).toMatchObject({ boardCheckMinutes: 30, folders: [{ path: "/srv/shared", access: "read" }, { path: "/srv/out", access: "change" }] });
     // Chat off turns the check off, not the folders
     expect(inputFrom({ ...d, chat: false })).toMatchObject({ boardCheckMinutes: 0, folders: [{ path: "/srv/shared", access: "read" }] });
+  });
+});
+
+describe("DEFAULT_TOOLS", () => {
+  // GA-48: new agents also get the read-only helpers agents use in pipes (the same list as src-tauri/src/runs.rs,
+  // checked in src-tauri/tests/agent_runs_test.rs)
+  it("has the read-only helpers, after the usual commands, each once", () => {
+    for (const h of ["head", "tail", "wc", "sort", "uniq", "cut", "diff", "grep", "jq", "pwd", "which", "tree"]) {
+      expect(DEFAULT_TOOLS).toContain(`Bash(${h}:*)`);
+    }
+    for (const t of ["Bash(git status:*)", "Bash(git commit:*)", "Bash(npm:*)", "Bash(cargo:*)", "Bash(cat:*)", "Bash(rg:*)"]) {
+      expect(DEFAULT_TOOLS).toContain(t);
+    }
+    expect(DEFAULT_TOOLS).toHaveLength(29);
+    expect(new Set(DEFAULT_TOOLS).size).toBe(DEFAULT_TOOLS.length);
+  });
+  // GA-54: and sleep, so an agent can wait in the foreground between checks (CI, a release, a deploy)
+  it("lets new agents run sleep", () => {
+    expect(DEFAULT_TOOLS).toContain("Bash(sleep:*)");
+    expect(DEFAULT_TOOLS.at(-1)).toBe("Bash(sleep:*)");
+  });
+  it("is what the form for a new agent starts with", () => {
+    expect(parseTools(draftFrom().tools)).toEqual(DEFAULT_TOOLS);
+    expect(parseTools(draftFrom(null, { name: "Backend Agent", role: "backend" }).tools)).toEqual(DEFAULT_TOOLS);
   });
 });

@@ -204,10 +204,10 @@ C.BoardCard = {
 - At most 50 cards render per column, then "Show N more".`,
   preview: `<div class="board" style="background:var(--bg);padding-top:10px">
 <div class="col rail"><div class="col-head">${st("backlog", "Backlog")} <span class="name">Backlog</span> <span class="n">4</span></div></div>
-<div class="col"><div class="col-head">${st("ready", "To do")}<span class="name">To do</span><span class="n">2</span><span class="add"><button class="btn ghost sm icon-only" aria-label="Add">${ic("plus")}</button></span></div><div class="col-note">Picked up by the agent matching the label</div>
+<div class="col"><div class="col-head">${st("ready", "To do")}<span class="name">To do</span><span class="n">2</span><span class="add"><button class="btn ghost sm icon-only" aria-label="Add">${ic("plus")}</button></span></div><div class="col-note">Auto: Frontend Agent and Backend Agent</div>
 <div class="card"><div class="top"><span class="id">KADE-3</span>${pri("medium")}</div><div class="title">Filament table: remember column order per user</div><div class="meta">${lbl("frontend", "c-blue")}</div></div>
 <div class="card"><div class="top"><span class="id">GFW-3</span>${pri("urgent")}</div><div class="title">Postcode and house number lookup on checkout</div><div class="meta">${lbl("frontend", "c-blue")}${avatar("SB", "", "sm")}</div></div></div>
-<div class="col"><div class="col-head">${st("in_progress", "In progress")}<span class="name">In progress</span><span class="n">1</span></div><div class="col-note">Picked up by the agent matching the label</div>
+<div class="col"><div class="col-head">${st("in_progress", "In progress")}<span class="name">In progress</span><span class="n">1</span></div><div class="col-note">Auto: Frontend Agent and Backend Agent</div>
 <div class="card"><div class="top"><span class="id">KADE-1</span>${pri("high")}</div><div class="title">Export invoices as CSV from the portal</div><div class="working"><span class="pulse"></span>Backend Agent is working</div><div class="meta">${lbl("backend", "c-orange")}${avatar("BA", "agent", "sm")}</div></div></div>
 </div>`,
 };
@@ -410,12 +410,13 @@ C.ChatSetup = {
 
 C.OrgChart = {
   group: "Data display", height: 330,
-  readme: `The team as an org chart: the Team Lead on top, departments below (Development, Design, Quality, Operations, then Specialists for other roles), drawn from the agents' roles.
+  readme: `The team as an org chart: the Team Lead on top, the team's branches below (Design, Development, Quality, Operations and the ones you add, then Specialists for other roles), drawn from the agents' roles.
 
 - Nodes are \`radius-pill\` cards on \`raised\`: a round role icon, the name in bold, a status dot and "Claude Code" (or "Chat · Claude Code" for the Team Lead). Grey dot when idle, \`warning\` when paused (and the node dims), \`live\` when working.
 - An agent working right now gets a teal ring and a teal "Working" badge on its top edge; teal still means only that.
-- Empty places of the usual software team are dashed, transparent nodes ("Frontend · Add an agent"); hovering turns them \`accent\`; a click opens the agent form with that role.
-- Connectors are 1px \`line-2\` with \`radius\` corners; department names sit on the line as small \`text-2\` labels.
+- Every branch ends in one empty spot: a dashed, transparent node ("Frontend · Add an agent"); hovering turns it \`accent\`; a click opens the agent form with the branch's role. Add branch, a dashed node at the end, asks a name; a branch's × removes it while it has no agents.
+- Agent nodes are what you drag onto a column in Team → Workflow; the dragged agent follows the pointer as a chip with \`shadow-drag\`.
+- Connectors are 1px \`line-2\` with \`radius\` corners; branch names sit on the line as small \`text-2\` labels.
 - Wider than the panel, it scrolls sideways; it never shrinks the nodes.`,
   preview: `<div style="background:var(--bg)"><div class="org-scroll"><div class="org">
 <div class="org-top"><a class="org-node live"><span class="badge live org-badge"><span class="pulse"></span>Working</span><span class="org-icon">${ic("crown")}</span><span class="org-text"><b>Team Lead</b><span><i class="org-dot live"></i>Chat · Claude Code</span></span></a></div>

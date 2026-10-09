@@ -1,11 +1,45 @@
-// One speaker's run of messages: your text on the right, the Team Lead's text and tool calls on the left.
+// One speaker's run of messages: your text on the right (with its links to Gizai items as chips, and the files you added),
+// the Team Lead's text and tool calls on the left.
 import { useState } from "react";
 import { Check, ChevronRight, CircleAlert, Info } from "lucide-react";
-import { MarkdownView } from "../MarkdownView";
+import { openFile } from "../../api";
+import { LinkedText, MarkdownView } from "../MarkdownView";
 import { Avatar } from "../Avatar";
-import { relTime } from "../../lib/format";
+import { fileExt } from "../../lib/files";
+import { formatBytes, relTime } from "../../lib/format";
 import { toolCard, type Group } from "../../lib/chat";
-import type { ChatMessage } from "../../types";
+import type { ChatMessage, FileRow } from "../../types";
+
+/** The files added to a message you sent (or queued): each opens with the system's app. */
+export function MessageFiles({ files }: { files?: FileRow[] | null }) {
+  const [error, setError] = useState<string | null>(null);
+  if (!files?.length) return null;
+  return (
+    <>
+      <ul className="files compact msg-files" aria-label="Files">
+        {files.map((f) => (
+          <li key={f.id}>
+            <button type="button" className="file" title={`Open ${f.name}`} onClick={() => openFile(f.id).catch((e) => setError(String(e)))}>
+              <span className="ext">{fileExt(f.name)}</span>
+              <span className="fname"><b>{f.name}</b><span>{formatBytes(f.sizeBytes)}</span></span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error && <div className="msg-files-error">{error}</div>}
+    </>
+  );
+}
+
+/** Your message: its text with item chips, and its files. */
+export function UserBubble({ text, files }: { text: string; files?: FileRow[] | null }) {
+  return (
+    <>
+      {text.trim() && <div className="bubble"><LinkedText text={text} /></div>}
+      <MessageFiles files={files} />
+    </>
+  );
+}
 
 function pretty(v: unknown): string {
   if (typeof v === "string") { try { return JSON.stringify(JSON.parse(v), null, 2); } catch { return v; } }
@@ -49,7 +83,7 @@ export function MessageGroup({ g, agentRole, live, noteActions }: { g: Group; ag
   if (g.side === "user") {
     return (
       <div className="chat-group user">
-        {g.items.map((m) => <div key={m.id} className="chat-msg user"><div className="bubble">{m.bodyMd}</div></div>)}
+        {g.items.map((m) => <div key={m.id} className="chat-msg user"><UserBubble text={m.bodyMd ?? ""} files={m.files} /></div>)}
         <div className="chat-meta">{relTime(g.items[g.items.length - 1].createdAt)}</div>
       </div>
     );

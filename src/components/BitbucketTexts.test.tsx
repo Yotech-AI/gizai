@@ -42,7 +42,7 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, 
 const GH = "https://github.com/acme/shop";
 const BB = "https://bitbucket.org/acme/shop";
 const project = (repoUrl: string | null): Project => ({ id: "p1", number: "P-1", key: "SHOP", name: "Shop", status: "active", repoPath: "/home/you/shop",
-  repoUrl, defaultBranch: "main", openTasks: 1, doneTasks: 0, updatedAt: 0, worktreeCopy: [], worktreeInstall: true });
+  repoUrl, defaultBranch: "main", openTasks: 1, doneTasks: 0, updatedAt: 0, aiCostUsdMicros: 0, aiUnknownCostRuns: 0, worktreeCopy: [], worktreeInstall: true });
 const task = (more: Partial<Task> = {}): Task => ({
   id: "t1", identifier: "SHOP-1", projectId: "p1", title: "Export", descriptionMd: "", stateId: "s-review", stateName: "Review", stateCategory: "review",
   priority: 0, labels: [], bounceCount: 0, failCount: 0, sortKey: "a0", testing: true, createdAt: 0, updatedAt: 0, branch: "gizai/shop-1-export", ...more,

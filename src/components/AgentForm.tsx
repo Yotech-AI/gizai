@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
-import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, roleTemplate, updateAgent } from "../api";
+import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, roleTemplate, saveAgentMcp, updateAgent } from "../api";
 import { go } from "../router";
-import { draftFrom, foldersFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
+import { DEFAULT_TOOLS, draftFrom, foldersFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
 import { CLAUDE_CODE, EFFORTS_BY_KIND, FOLDERS_NOTE, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
+import { cleanSwitches, sameSwitches } from "../lib/mcp";
 import { effortChoices, findModel, modelHint } from "../lib/models";
 import type { AgentFolder, CliKind, CliStatus, FolderCheck, Member, ModelOption } from "../types";
 export type { AgentPreset } from "../lib/agents";
+import { AgentToolsField } from "./AgentTools";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -123,6 +125,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const edited = useRef(!isNew); // once the instructions are edited, a role change no longer replaces them
+  const added = useRef<string | null>(null);
   const lastTemplate = useRef("");
   useEffect(() => {
     if (isNew) return;
@@ -153,9 +156,15 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   const save = async () => {
     setBusy(true);
     try {
+      // A new agent added already, when saving its tools failed: saving again changes it rather than adding another.
+      let id = agentId ?? added.current;
+      if (id) await updateAgent(id, inputFrom(d));
       // Opened from outside the Team page (Chat's setup panel) without a team: the first team.
-      if (isNew) { const id = await addAgent(teamId || (await getTeam(null)).id, inputFrom(d)); onClose(); go({ page: "agent", id }); }
-      else { await updateAgent(agentId!, inputFrom(d)); onClose(); }
+      else { id = await addAgent(teamId || (await getTeam(null)).id, inputFrom(d)); added.current = id; }
+      // Its MCP switches are saved on their own (only you change them); on another CLI they wait until it runs on Claude Code.
+      if (kind === "claude_code" && !sameSwitches(d.mcp, initial.mcp)) await saveAgentMcp(id, { mcp: cleanSwitches(d.mcp) });
+      onClose();
+      if (isNew) go({ page: "agent", id });
     } catch (e) { setErr(String(e)); setBusy(false); }
   };
   return (
@@ -256,6 +265,9 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
           )}
           <FoldersField value={d.folders} onChange={(v) => set("folders", v)} kind={kind} lead={d.chat} />
           <Field label="Monthly budget ($)" htmlFor="a-budget" hint={kind === "claude_code" ? "Once its runs this calendar month (UTC) cost this much, it starts no new runs" : `${cliName} doesn't report what a run costs, so its runs count as $0 here`}><input id="a-budget" className="input" inputMode="decimal" value={d.budget} onChange={(e) => set("budget", e.target.value)} placeholder="No limit" /></Field>
+        </FormSection>
+        <FormSection title="Tools" text={`What ${cliName} may use besides its worktree, folders and commands: outside services through MCP servers. Everything is off until you switch it on.`}>
+          <AgentToolsField agentId={agentId} kind={kind} allowedTools={!usesAllowedTools(kind) ? [] : parseTools(d.tools).length > 0 ? parseTools(d.tools) : DEFAULT_TOOLS} value={d.mcp} onChange={(v) => set("mcp", v)} />
         </FormSection>
         <FormSection title="Instructions" text="Sent with every run, before the task. Must end by asking for the GIZAI_RESULT line.">
           <Field label="Instructions" wide><MarkdownEditor value={d.instructions} onChange={(md) => set("instructions", md)} ariaLabel="Instructions" minHeight={260} /></Field>

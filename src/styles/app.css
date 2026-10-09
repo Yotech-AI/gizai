@@ -267,3 +267,31 @@ a.member:hover { border-color: var(--line-2); }
 .title-input[readonly]:focus { border-color: transparent; background: transparent; }
 .md-static { padding: 6px 0; min-height: 34px; }
 .filedrop.read-only { border-style: solid; border-color: var(--line); }
+/* MCP servers: Settings → MCP servers (McpSettings) and the agent form's Tools (AgentTools). */
+.mcp-list .mcp-server { display: grid; gap: 6px; padding: 6px 0; }
+.mcp-list .ms-head { display: flex; align-items: center; gap: 8px; }
+.mcp-list .ms-confirm { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; }
+.mcp-list .ms-tools summary, .mcp-tool .mt-more summary { color: var(--text-2); font-size: var(--fs-sm); cursor: pointer; }
+.mcp-list .field-like { display: grid; gap: 4px; color: var(--text-2); }
+.mcp-list .cli-edit > .warn { grid-column: 1 / -1; font-size: var(--fs-xs); color: var(--warning); }
+.mcp-import { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.mcp-import ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.mcp-import li { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.mcp-import .warn { font-size: var(--fs-xs); color: var(--warning); }
+.mcp-import .hint { font-size: var(--fs-xs); color: var(--text-3); }
+.mcp-tools { display: grid; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.mcp-tool { display: grid; gap: 2px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.mcp-tool .mt-line { display: flex; align-items: center; gap: 8px; }
+.mcp-tool .mt-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-tool .mt-switch { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+.mcp-tool .mt-summary { color: var(--text-2); font-size: var(--fs-sm); }
+.mcp-tool .mt-desc { white-space: pre-wrap; margin: 4px 0; }
+.mcp-tool .mt-params { margin: 4px 0; padding-left: 18px; font-size: var(--fs-sm); }
+.mcp-tool p { margin: 4px 0; font-size: var(--fs-sm); }
+.mcp-agent { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mcp-agent .ma-server { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.mcp-agent .ma-server.on { border-color: var(--line-2); }
+.mcp-agent .ma-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mcp-agent .ma-line { color: var(--text-2); font-size: var(--fs-sm); }
+.mcp-agent .warn { font-size: var(--fs-xs); color: var(--warning); }
+.mcp-agent .hint { font-size: var(--fs-xs); color: var(--text-3); }

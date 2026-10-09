@@ -87,6 +87,12 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
 - **New agents' commands.** New agents start with the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. An agent with its own list needs `Bash(sleep:*)` added to it to wait that way.
 - **Refused in this run.** Claude Code reports every tool call it refused, with the reason. Gizai saves them on the run: the Run panel lists them under "Refused in this run", Show output marks each one where it happened, and the Team Lead's `get_task` and `get_agent` return them for each run. Codex and Gemini don't report refusals, so their runs list none.
 
+## MCP servers for agents
+
+Agents can use outside services through MCP servers, like Otus OS. Settings → MCP servers holds one list for all agents: add a server by hand (a command, or an address) or **Import from Claude Code**, which reads the servers your Claude Code accounts already have (read only, values into the keychain). **List tools** shows what each tool does, its parameters and its risk before you switch anything on. A server that asks for it gets **Sign in**: Gizai signs in as a device of its own, in your default browser.
+
+Everything is off until you switch it on per agent, in the agent form → Tools, with a switch per server and per tool. Environment values, headers and sign-in tokens stay in the OS keychain, never in Gizai's database. After a chat answer used an outside tool, the Team Lead asks you to confirm before it starts runs or changes agents or columns. On Claude Code for now; Codex and Gemini follow. Details: [docs/agent-tools.md](docs/agent-tools.md).
+
 ## Development
 
 ```sh

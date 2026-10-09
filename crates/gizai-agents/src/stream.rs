@@ -17,6 +17,16 @@ pub enum RunEvent {
     /// asked for (the command, the file) and why, when the CLI said. Claude Code lists them in its result line
     /// (`permission_denials`, without a reason); `cli::Parser` also shows each one as it happens, with its reason.
     Refused { tool: String, input: String, reason: String },
+    /// The MCP servers Claude Code's init line names (Gizai's own `gizai` left out): each one's name and status, like
+    /// connected, failed or needs-auth (`cli::Claude`).
+    McpServers { servers: Vec<McpState> },
+}
+
+/// One MCP server in a run's init line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpState {
+    pub name: String,
+    pub status: String,
 }
 
 fn s(v: &Value) -> String {

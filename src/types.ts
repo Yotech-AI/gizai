@@ -77,6 +77,8 @@ export type Member = {
   boardCheckPaused?: string | null;
   /** Folders besides its worktree its file tools may read, or read and change. */
   folders?: AgentFolder[];
+  /** Its MCP servers switched on or off, with the tools switched off of each (agent form → Tools). */
+  tools?: AgentTools;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -148,6 +150,8 @@ export type RunEvent =
   | { kind: "other"; raw_type: string }
   /** A note from Gizai, such as a folder the run goes without. */
   | { kind: "note"; text: string }
+  /** The MCP servers Claude Code's init line names, with their state (connected, failed, needs-auth). */
+  | { kind: "mcp_servers"; servers: { name: string; status: string }[] }
   /** A tool call the CLI refused: it needed an approval nobody can give in a headless run. */
   | { kind: "refused"; tool: string; input: string; reason: string };
 export type SeqEvent = { seq: number; event: RunEvent };
@@ -277,3 +281,55 @@ export type ChatEvent =
   | { kind: "block"; threadId: string; seq: number }
   | { kind: "tool"; threadId: string; name: string }
   | { kind: "message"; threadId: string; message: ChatMessage };
+
+// ---- MCP servers (Settings → MCP servers, agent form → Tools) ----
+
+/** A server in Settings → MCP servers: names of its lines, never their values (those live in the keychain). */
+export type McpServer = {
+  id: string; name: string;
+  /** stdio (a command) | http | sse (an address) */
+  transport: string;
+  command: string; args: string[]; envNames: string[];
+  url: string; headerNames: string[];
+  /** A client id for sign-in, for a server that doesn't let Gizai register itself. */
+  clientId: string;
+  /** Where it was imported from; empty when added by hand. */
+  source: string;
+};
+/** A secret line as the form saves it: value only when typed in now; null keeps the one in the keychain. */
+export type SecretLine = { name: string; value: string | null };
+export type McpServerInput = { server: McpServer; env: SecretLine[]; headers: SecretLine[] };
+export type McpParam = { name: string; ty: string; required: boolean; description: string };
+export type McpHints = { readOnly: boolean; destructive: boolean; idempotent: boolean; openWorld: boolean };
+/** One tool in plain words: what it does, its parameters, what the server says about it, and its risk. */
+export type McpToolView = {
+  name: string; title?: string | null; description: string; params: McpParam[];
+  hints: McpHints; hintsSent: string[];
+  /** low | medium | high */
+  risk: string; summary: string; notes: string[];
+};
+export type McpListed = { serverName: string; serverVersion: string; listedAt: number; tools: McpToolView[] };
+export type McpServerView = McpServer & {
+  /** signed_in | needs_sign_in | "" */
+  signIn: string;
+  problem?: string | null;
+  /** Lines whose value isn't in the keychain. */
+  missing: string[];
+  listed?: McpListed | null;
+  usedBy: string[];
+};
+export type McpCandidate = {
+  key: string; name: string; account: string; scope: string; folder?: string | null; transport: string;
+  command: string; args: string[]; url: string; envNames: string[]; headerNames: string[];
+  already: boolean; clash?: string | null;
+};
+export type McpScan = { servers: McpCandidate[]; problems: string[] };
+export type McpPick = { key: string; name: string };
+export type AgentServer = { serverId: string; on: boolean; toolsOff: string[] };
+export type AgentTools = { mcp: AgentServer[] };
+export type AgentServerView = {
+  serverId: string; name: string; transport: string; on: boolean; toolsOff: string[]; signIn: string;
+  actsAsYou?: string | null; lastRun?: { status: string; at: number } | null;
+  tools: McpToolView[]; summary: string; risk: string;
+};
+export type AgentMcpView = { disabled?: string | null; warning?: string | null; servers: AgentServerView[] };

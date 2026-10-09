@@ -83,6 +83,10 @@ pub struct TaskRun {
     /// The run's temp folder (`<worktree>/.gizai-tmp`, `worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and
     /// TEMP. None when Gizai couldn't make it.
     pub temp_dir: Option<String>,
+    /// Claude Code: the run's MCP config file (`mcp_run`), with the agent's MCP servers on.
+    pub mcp_config: Option<PathBuf>,
+    /// Claude Code: more tools to refuse, like the MCP tools switched off (`mcp_run::permissions`).
+    pub disallowed_tools: Vec<String>,
 }
 
 /// One of the agent's folders for a run (absolute, as it is on disk).
@@ -137,7 +141,9 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
             // for headless agents.
             disable_hooks: true, disable_skills: true, effort: run.effort.clone(), env: cli.env.clone(),
-            add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(), disallowed_tools: claude_read_only(&run.folders),
+            add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(),
+            disallowed_tools: claude_read_only(&run.folders).into_iter().chain(run.disallowed_tools.iter().cloned()).collect(),
+            mcp_config: run.mcp_config.clone(),
             ..Default::default()
         }.exec(),
         Kind::Codex => Exec { bin: cli.bin.clone(), args: codex_args(run), env: cli.env.clone(), stdin: run.prompt.clone() },
@@ -363,6 +369,9 @@ pub struct Claude {
 impl Claude {
     pub fn line(&mut self, line: &str) -> Vec<RunEvent> {
         let mut evs = stream::parse_line(line);
+        if line.contains("\"mcp_servers\"") {
+            evs.extend(mcp_states(line));
+        }
         let watch = ["\"tool_use\"", "\"permission_denied\"", "\"permission_denials\""];
         if !watch.iter().any(|w| line.contains(w)) {
             return evs;
@@ -402,6 +411,21 @@ impl Claude {
         }
         evs
     }
+}
+
+/// An init line's MCP servers besides Gizai's own: their states, and a note for each that didn't connect.
+fn mcp_states(line: &str) -> Vec<RunEvent> {
+    let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { return vec![] };
+    if v.get("type").and_then(Value::as_str) != Some("system") || v.get("subtype").and_then(Value::as_str) != Some("init") {
+        return vec![];
+    }
+    let states: Vec<(String, String)> = crate::mcp_run::init_states(&v).unwrap_or_default().into_iter().filter(|(n, _)| n != "gizai").collect();
+    if states.is_empty() {
+        return vec![];
+    }
+    let mut out: Vec<RunEvent> = states.iter().filter_map(|(n, s)| crate::mcp_run::not_connected(n, s)).map(|text| RunEvent::Note { text }).collect();
+    out.push(RunEvent::McpServers { servers: states.into_iter().map(|(name, status)| stream::McpState { name, status }).collect() });
+    out
 }
 
 fn text_of(v: &Value, key: &str) -> String {

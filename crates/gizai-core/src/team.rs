@@ -49,6 +49,8 @@ pub struct Member {
     pub board_check_paused: Option<String>,
     /// Folders besides its worktree its file tools may read, or read and change (`folders`).
     pub folders: Vec<crate::folders::Folder>,
+    /// Its MCP servers and their tools, switched on or off (agent form → Tools; `mcp_servers`).
+    pub tools: crate::mcp_servers::AgentTools,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +105,7 @@ pub struct Team {
 const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g.adapter, g.instructions_md, a.handle, a.status, m.is_lead,
         g.model, g.permission_mode, g.allowed_tools_json, g.wakeup, g.heartbeat_minutes, g.budget_usd_micros, g.last_heartbeat_at, m.team_id,
         COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1), g.board_check_minutes, g.board_checked_at, g.board_check_paused,
-        g.folders_json
+        g.folders_json, g.mcp_extra_json
      FROM team_members m JOIN actors a ON a.id = m.actor_id LEFT JOIN agent_configs g ON g.actor_id = a.id";
 
 fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
@@ -116,7 +118,8 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
                 wakeup: r.get(13)?, heartbeat_minutes: r.get(14)?, budget_usd_micros: r.get(15)?, last_heartbeat_at: r.get(16)?,
                 chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)?,
                 board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)?,
-                folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default() })
+                folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default(),
+                tools: crate::mcp_servers::parse_tools(r.get::<_, Option<String>>(25)?.as_deref()) })
 }
 
 /// Every agent of every team, with its team id (for the heartbeat scheduler).

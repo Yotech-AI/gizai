@@ -25,6 +25,7 @@ pub mod worktrees;
 pub mod folders;
 pub mod columns;
 pub mod labels;
+pub mod mcp_servers;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

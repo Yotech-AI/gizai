@@ -580,3 +580,92 @@ pub fn restart_gizai(app: AppHandle, st: State<AppState>) -> R<()> {
     app.exit(0);
     Ok(())
 }
+
+// ---- MCP servers (Settings → MCP servers, agent form → Tools) ----
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> R<T> + Send + 'static) -> R<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn list_mcp_servers(st: State<'_, AppState>) -> R<Vec<crate::mcp_servers::ServerView>> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::list(&st)).await
+}
+
+#[tauri::command]
+pub async fn save_mcp_server(app: AppHandle, st: State<'_, AppState>, input: crate::mcp_servers::ServerInput) -> R<crate::mcp_servers::ServerView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save(&st, input)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn remove_mcp_server(app: AppHandle, st: State<'_, AppState>, id: String) -> R<()> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::remove(&st, &id)).await?;
+    changed(&app, "settings");
+    Ok(())
+}
+
+/// List tools: starts or calls the server, lists its tools and stops it.
+#[tauri::command]
+pub async fn list_mcp_tools(app: AppHandle, st: State<'_, AppState>, id: String) -> R<crate::mcp_servers::ServerView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::list_tools(&st, &id)).await;
+    changed(&app, "settings");
+    out
+}
+
+/// The MCP servers in each Claude Code's config file (read only; no server is started).
+#[tauri::command]
+pub async fn scan_claude_code_mcp(st: State<'_, AppState>) -> R<crate::mcp_servers::Scan> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::scan(&st)).await
+}
+
+#[tauri::command]
+pub async fn import_mcp_servers(app: AppHandle, st: State<'_, AppState>, picks: Vec<crate::mcp_servers::Pick>) -> R<Vec<crate::mcp_servers::ServerView>> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::import(&st, picks)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// Sign in: opens the server's sign-in page in your default browser (the system opener) and waits up to 10 minutes for it.
+#[tauri::command]
+pub async fn mcp_sign_in(app: AppHandle, st: State<'_, AppState>, id: String) -> R<crate::mcp_servers::ServerView> {
+    use tauri_plugin_opener::OpenerExt;
+    let st = st.inner().clone();
+    let opener = app.clone();
+    let out = blocking(move || crate::mcp_servers::sign_in(&st, &id, |url| {
+        opener.opener().open_url(url, None::<&str>).map_err(|e| format!("Couldn't open your browser: {e}"))
+    }, crate::mcp_servers::SIGN_IN_TIMEOUT)).await;
+    changed(&app, "settings");
+    out
+}
+
+#[tauri::command]
+pub async fn mcp_sign_out(app: AppHandle, st: State<'_, AppState>, id: String) -> R<crate::mcp_servers::ServerView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::sign_out(&st, &id)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// The agent form's Tools section.
+#[tauri::command]
+pub async fn agent_mcp(st: State<'_, AppState>, agent_id: String) -> R<crate::mcp_servers::AgentMcpView> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::agent_view(&st, &agent_id)).await
+}
+
+#[tauri::command]
+pub async fn save_agent_mcp(app: AppHandle, st: State<'_, AppState>, agent_id: String, tools: gizai_core::mcp_servers::AgentTools)
+    -> R<crate::mcp_servers::AgentMcpView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save_agent(&st, &agent_id, tools)).await?;
+    changed(&app, "team");
+    Ok(out)
+}

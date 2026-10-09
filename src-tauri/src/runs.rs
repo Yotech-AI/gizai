@@ -729,15 +729,42 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         kind: spec.kind, mode: permission_mode.clone(), allowed_tools: allowed_tools.clone(),
         folders: folders.iter().map(|f| f.path.clone()).collect(), temp_dir: temp_dir.clone(),
     };
+    // The agent's MCP servers (agent form → Tools), on Claude Code for now: each in this run's own MCP config, its tools
+    // allowed or refused by their switches. One it can't use (signed out, a refused refresh, a secret missing from the
+    // keychain) is left out, and the log says why.
+    let mut allowed_tools = allowed_tools;
+    let (mut mcp_config, mut mcp_refused) = (None, vec![]);
+    if agent.tools.servers_on().next().is_some() {
+        if spec.kind == Kind::ClaudeCode {
+            let (st2, a2, cap) = (st.clone(), agent.clone(), std::time::Duration::from_secs(limits.minutes * 60));
+            let (servers, left_out) = tokio::task::spawn_blocking(move || crate::mcp_servers::for_run(&st2, &a2, cap)).await.unwrap_or_default();
+            notes.extend(left_out);
+            if !servers.is_empty() {
+                let path = log_dir.join(format!("{run_id}.mcp.json"));
+                match gizai_agents::mcp_run::write_config(&path, &gizai_agents::mcp_run::config(vec![], &servers)) {
+                    Ok(()) => {
+                        let (allow, refuse) = gizai_agents::mcp_run::permissions(&servers);
+                        allowed_tools.extend(allow);
+                        mcp_refused = refuse;
+                        mcp_config = Some(path);
+                    }
+                    Err(e) => notes.push(format!("Couldn't write this run's MCP config, so it goes without its MCP servers: {e}")),
+                }
+            }
+        } else {
+            notes.push(format!("{} runs on {}: MCP servers work on Claude Code for now, so this run goes without them.", agent.name, cli.name));
+        }
+    }
+    let base_prompt = prompt::with_rules(&match &resume {
+        Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
+        Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
+        Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
+        None => prompt::build(&ctx, &instructions),
+    }, &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
-        prompt: prompt::with_rules(&match &resume {
-            Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
-            Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
-            Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
-            None => prompt::build(&ctx, &instructions),
-        }, &rules),
-        permission_mode, allowed_tools,
+        prompt: if mcp_config.is_some() { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
+        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
@@ -749,8 +776,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let head: String = (spec.kind != Kind::ClaudeCode).then(|| agent_cli::log_header(spec.kind)).into_iter()
         .chain(notes.iter().map(|n| agent_cli::note_line(n)))
         .map(|l| format!("{l}\n")).collect();
+    let drop_config = || if let Some(p) = &mcp_config { let _ = std::fs::remove_file(p); };
     if !head.is_empty() {
         if let Err(e) = std::fs::write(&log_path, head) {
+            drop_config();
             let _ = core_runs::finish(&st.db, &run_id, "failed", None, 0, 0, 0, Some(&e.to_string()));
             return Err(StartError::Other(e.to_string()));
         }
@@ -759,6 +788,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, agent_cli::Parser::new(spec.kind)) {
         Ok(h) => h,
         Err(e) => {
+            drop_config();
             let msg = e.to_string();
             record_head(&st.db, &run_id, &wt.path);
             let _ = core_runs::finish(&st.db, &run_id, "failed", None, 0, 0, 0, Some(&msg));
@@ -794,6 +824,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let tid = task_id.to_string();
     let cli_name = cli.name.clone();
     let dir = wt.path.clone();
+    let (run_agent, run_config) = (agent_id.clone(), mcp_config.clone());
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
@@ -809,6 +840,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                     let _ = core_runs::set_session(&st2.db, &rid, session_id);
                 }
                 RunEvent::Result { .. } => result = Some(ev.clone()),
+                RunEvent::McpServers { servers } => crate::mcp_servers::record_states(&st2, &run_agent, servers),
                 RunEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type.clone()),
                 RunEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type.clone(),
                 _ => {}
@@ -829,7 +861,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
-        // The run's process group has ended, whatever way (finished, Stop, a limit): its throwaway files go.
+        // The run's process group has ended, whatever way (finished, Stop, a limit): its throwaway files go, its MCP
+        // config (with its servers' secrets) first.
+        if let Some(p) = &run_config {
+            let _ = std::fs::remove_file(p);
+        }
         if let Err(e) = worktree::empty_temp(&dir) {
             eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");
         }

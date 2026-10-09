@@ -183,10 +183,11 @@ function run(view: EditorView, cmd: FormatCmd) {
   return true;
 }
 
-/** The `@…` before the cursor (`findTrigger`), only for a plain cursor in a focused editor. */
+/** The `@…` before the cursor (`findTrigger`), only for a plain cursor in the editor that has the focus. Not `hasFocus`,
+ *  which is also false while the window is in the background (and always in a headless test). */
 function triggerAt(view: EditorView) {
   const sel = view.state.selection.main;
-  if (!sel.empty || !view.hasFocus) return null;
+  if (!sel.empty || view.root.activeElement !== view.contentDOM) return null;
   const line = view.state.doc.lineAt(sel.head);
   const t = findTrigger(line.text.slice(0, sel.head - line.from), line.from);
   return t && { ...t, to: sel.head };

@@ -80,7 +80,7 @@ function RemoveConfirm({ s, states, members, info, onClose, onError }: {
           </span>
         )}
         {info.relinked.length > 0 && <span>{andList(info.relinked)} {info.relinked.length === 1 ? "links" : "link"} to {next?.name ?? "its next column"} instead.</span>}
-        {info.unlinked.length > 0 && <span>{andList(info.unlinked)} {info.unlinked.length === 1 ? "loses its" : "lose their"} next column and {info.unlinked.length === 1 ? "turns" : "turn"} Manual if Auto.</span>}
+        {info.unlinked.map((n) => <span key={n}>{n} loses its next column{states.find((x) => x.name === n)?.auto ? " and turns Manual" : ""}.</span>)}
         {agents.length > 0 && <span>{andList(agents)} {agents.length === 1 ? "comes" : "come"} off it.</span>}
       </>)}
       <span className="wf-confirm-actions">
@@ -113,9 +113,10 @@ function ColumnRow({ s, states, members, agents, removal, error, onError, droppi
   const order = boardOrder(states);
   const blocked = removal?.blocked ?? lastOfKind(s, states);
   const openBin = () => { onError(null); columnRemoval(s.id).then(setAsking).catch(fail); };
-  const merged = s.category === "review" ? mergedTarget(s, states) : undefined;
+  // Where merged cards go when Review has no next column: the team's Deploy column, else its Done column.
+  const fallback = s.category === "review" ? mergedTarget({ ...s, nextStateId: null }, states) : undefined;
   return (
-    <div ref={setNodeRef} className={`wf-col${dropping ? " drop" : ""}${isDragging ? " dragging" : ""}`} data-col={s.name} aria-label={`Column ${s.name}`}
+    <div ref={setNodeRef} className={`wf-col${dropping ? " drop" : ""}${isDragging ? " dragging" : ""}`} data-column={s.name} role="group" aria-label={`Column ${s.name}`}
       style={{ transform: CSS.Translate.toString(transform), transition }}>
       <div className="wf-main">
         <button ref={setActivatorNodeRef} className="wf-grip" aria-label={`Move ${s.name}`} title="Drag to a new place (or Space, then the arrow keys)" {...attributes} {...listeners}>
@@ -144,7 +145,7 @@ function ColumnRow({ s, states, members, agents, removal, error, onError, droppi
               <span>{s.category === "review" ? "Merged cards go to" : "Next"}</span>
               <select className="select" aria-label={s.category === "review" ? `Merged cards from ${s.name} go to` : `Next column after ${s.name}`} value={s.nextStateId ?? ""}
                 onChange={(e) => run(setColumn(s.id, { nextStateId: e.target.value }))}>
-                <option value="">{s.category === "review" ? `Not set (${merged?.name ?? "Done"})` : "None"}</option>
+                <option value="">{s.category === "review" ? `Not set (${fallback?.name ?? "Done"})` : "None"}</option>
                 {order.map((x) => <option key={x.id} value={x.id}>{x.name}{x.id === s.id ? " (this column)" : ""}</option>)}
               </select>
             </label>

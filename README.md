@@ -66,7 +66,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - The Team Lead's board check (agent settings → Chat → Check the board every 15 min, off until you turn it on): it looks for answered questions, held and stuck cards, and cards no agent will start. Only something new starts it: it gets agents going again (Continue or Run) and asks you what it can't decide in a chat of its own, labelled Question or Approval, at the top of your Inbox. Dragging a held card back to To do or In progress takes the hold off
 - The Team Lead reads its own read-only copy of each active project's code (`<data dir>/code/<KEY>`, a worktree without a branch), kept at the commit a new card starts from and refreshed before each answer; your own checkouts are never passed to it
 - When a project's linked folder has dependencies behind main (`vendor/` or `node_modules/` missing, or a lock file that differs from main's), the Team Lead tells you what an update would do and, after your yes, updates it: a fast-forward to main (switching branch only if you agreed), then `composer install` or `npm ci`, never a merge, reset or the setup command
-- An org chart of your team
+- An org chart of your team: the Team Lead on top, then branches (Design, Development, Quality, Operations and your own), each with one empty spot that adds an agent there. Drag an agent onto a column in Team → Workflow to put it to work there
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
 - A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)

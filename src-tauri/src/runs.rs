@@ -871,8 +871,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if spec.kind == Kind::ClaudeCode {
         allowed_tools.extend(agent.cli_tools.builtin.iter().filter(|t| gizai_agents::tool_catalog::switchable(spec.kind, t)).cloned());
     }
-    // Content from outside (an MCP server's answers, web pages, search results, the browser) is data: the prompt says so.
-    let untrusted = mcp_config.is_some() || web.search || web.fetch;
+    // Content from outside (an MCP server's answers, web pages, search results, the browser) is data: the prompt says so. A
+    // CLI that searches the web in every run (Gemini) gets it in every run.
+    let untrusted = mcp_config.is_some() || web.search || web.fetch || gizai_agents::tool_catalog::web_in_every_run(spec.kind);
     let note = resume.as_ref().and_then(|r| r.note.as_ref()).map(|n| prompt::Note { from: n.by_name.clone(), text: n.text.clone() });
     let base_prompt = prompt::with_rules(&match &resume {
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),

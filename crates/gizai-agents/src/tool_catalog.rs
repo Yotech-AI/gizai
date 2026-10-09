@@ -210,6 +210,12 @@ pub fn only_by_switch(entry: &str) -> bool {
     }
 }
 
+/// Whether every run on a CLI of `kind` may reach the web whatever the agent's switches (Gemini's web search, which its own
+/// policy allows): its prompt says web content is data in every run.
+pub fn web_in_every_run(kind: Kind) -> bool {
+    rows(kind).iter().any(|r| r.2 == "web" && r.5 == how::ALWAYS)
+}
+
 /// What each CLI can be given of the Web switches: (search, fetch, fetch with a domain list), each None when it can, else why.
 pub fn web_support(kind: Kind) -> (Option<&'static str>, Option<&'static str>, Option<&'static str>) {
     match kind {

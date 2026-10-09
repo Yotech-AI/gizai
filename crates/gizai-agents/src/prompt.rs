@@ -311,8 +311,8 @@ under what you could not check.".into());
 /// Gizai pushes the card's branch itself when a run ends (GA-56), so a CLI that refuses the agent's `git push` no longer
 /// holds a card up: told to every CLI in every mode. Agents keep `git push` in their list.
 pub const PUSHED_BY_GIZAI: &str = "When the run ends, Gizai itself pushes this branch's commits (not uncommitted changes) to the project's \
-remote, when it has one. So a refused `git push` is no reason for `needs_decision`: mention it in your summary and end with the outcome \
-your work deserves.";
+remote, when it has one. So a refused `git push` of this branch is no reason for `needs_decision`: mention it in your summary and end \
+with the outcome your work deserves.";
 
 /// The waiting rule (see `rules_section`): ending the message ends the run, how to wait in the foreground, and what to do
 /// when it won't be done in time. `sleep` is named only when the agent may run it.

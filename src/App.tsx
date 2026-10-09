@@ -19,7 +19,7 @@ import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 
 export default function App() {
@@ -124,7 +124,12 @@ export default function App() {
             chats = await chatArchiveProbe();
             if (!chats.ok) errors.push(`chat archive probe: ${JSON.stringify(chats)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats });
+          let appearance: Awaited<ReturnType<typeof appearanceProbe>> | undefined;
+          if (i.start_route === "settings/appearance" && (i.selftest_mode === "appearance-set" || i.selftest_mode === "appearance-kept")) {
+            appearance = await appearanceProbe(i.selftest_mode === "appearance-kept" ? "kept" : "set");
+            if (!appearance.ok) errors.push(`appearance probe: ${JSON.stringify(appearance)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance });
           await exitApp(0);
         }
       })

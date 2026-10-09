@@ -27,12 +27,21 @@
 #     Then the Total, Agents and Projects tabs and the period
 #     switch against prep_usage's runs (an unknown cost, a chat turn, a run 20 days ago), and the tabs agree; then the
 #     Projects list's AI usage column, sorted by its header.
-#  8. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub.
+#  8. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub
+#     (GA-42: on the GitHub and Bitbucket tab).
 #  9. project form (GA-60): the New project drawer opens with its Repository field (a GitHub or Bitbucket link).
 # 10. chat archive (GA-46): against prep_chats' 36 chats, Recent shows the 30 newest with Archive under them, in sight when
 #     Recent is scrolled; Archive opens #/chats (Recent still there, Chat / Archive, the search focused, all 36 chats); a word
 #     from the oldest chat's Team Lead message finds only that chat, marked; "0%" matches literally; no match says so; the
 #     hit opens the chat, its title in the crumbs.
+# 11. appearance (GA-42), against prep_chats' data: #/settings/appearance opens Settings on the Appearance tab with Font, the
+#     three text sizes, Theme, Density and Reset to defaults (off); at the defaults nothing is on <html> and the sizes are the
+#     design system's; each font choice shows in its own font and every font loads from the app. Clicks pick the largest sizes:
+#     they show at once and are kept; reading text grows fully (task list, task page, its editor, the New task drawer, a doc,
+#     a chat and its composer), titles half, IDs, pills, dates, avatars, group labels, badges, hints and icons at most 1px;
+#     rows grow, the chat column, sidebar and board columns get wider, and in the 1280 px window nothing is cut off or scrolls
+#     sideways, in dark and in light. Compact; each font everywhere at once. Then a second start: Geist, light, compact and
+#     the sizes are still there, and Reset to defaults brings everything back (so later starts begin at the defaults).
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -69,10 +78,15 @@ fresh
 (source scripts/env.sh && cargo run -q -p gizai-core --example prep_usage -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
 DATA=$PWD/.devdata/uitest ROUTE=usage scripts/smoke-cage.sh || fail=1
 fresh
-DATA=$PWD/.devdata/uitest ROUTE=settings MODE='steps:#s-bb-email' scripts/smoke-cage.sh || fail=1
+DATA=$PWD/.devdata/uitest ROUTE=settings MODE='steps:#/settings/github;#s-bb-email' scripts/smoke-cage.sh || fail=1
 fresh
 DATA=$PWD/.devdata/uitest ROUTE=projects MODE=open:project scripts/smoke-cage.sh || fail=1
 fresh
 (source scripts/env.sh && cargo run -q -p gizai-core --example prep_chats -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
 DATA=$PWD/.devdata/uitest ROUTE=chat MODE=archive scripts/smoke-cage.sh || fail=1
+fresh
+(source scripts/env.sh && cargo run -q -p gizai-core --example prep_chats -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
+DATA=$PWD/.devdata/uitest ROUTE=settings/appearance MODE=appearance-set scripts/smoke-cage.sh || fail=1
+# the same WebKit storage (.devdata/xdg): a restart
+DATA=$PWD/.devdata/uitest ROUTE=settings/appearance MODE=appearance-kept scripts/smoke-cage.sh || fail=1
 exit $fail

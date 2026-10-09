@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod pulls;
 mod quit;
 pub mod runs;
+pub mod shell_path;
 pub mod tools;
 pub mod update;
 pub mod worktrees;

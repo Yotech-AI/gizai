@@ -9,6 +9,8 @@ Without options it opens the app (one at a time: starting it again brings the op
 --backup  saves a snapshot of your data in <data folder>/backups (gizai-<name>-<time>.db, name \"manual\" by default) and prints where. Your data lives in ~/.local/share/gizai (GIZAI_DATA_DIR overrides it).";
 
 fn main() {
+    // macOS: the CLIs your shell finds, also when Gizai starts from the Dock (first, before any thread starts).
+    gizai_lib::shell_path::adopt_login_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("gizai {}", env!("CARGO_PKG_VERSION"));

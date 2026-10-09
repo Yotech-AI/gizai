@@ -78,6 +78,40 @@ pub struct ChatManager {
     /// A board check is running (one at a time), with its Claude Code once it has started.
     checking: AtomicBool,
     check: Mutex<Option<StopHandle>>,
+    /// Threads whose answer under way used a tool from outside Gizai (an MCP server of its own, later the web or the
+    /// browser): Gizai's tools that act refuse the rest of that answer (`tools::NOT_AFTER_OUTSIDE`).
+    outside: Mutex<HashMap<String, String>>,
+}
+
+/// The agent's own MCP servers in a turn's init line: their state in its last run, and a chat note for each that didn't connect.
+fn mcp_states(st: &AppState, thread_id: &str, agent_id: &str, log_path: &Path) {
+    let Ok(text) = std::fs::read_to_string(log_path) else { return };
+    let Some(init) = text.lines().filter(|l| l.contains("\"init\"") && l.contains("\"mcp_servers\""))
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v.get("subtype").and_then(|s| s.as_str()) == Some("init")) else { return };
+    let states: Vec<gizai_agents::stream::McpState> = gizai_agents::mcp_run::init_states(&init).unwrap_or_default().into_iter()
+        .filter(|(n, _)| n != "gizai").map(|(name, status)| gizai_agents::stream::McpState { name, status }).collect();
+    for s in &states {
+        if let Some(note) = gizai_agents::mcp_run::not_connected(&s.name, &s.status) {
+            system(st, thread_id, &note);
+        }
+    }
+    crate::mcp_servers::record_states(st, agent_id, &states);
+}
+
+/// Tools that read nothing from outside: Claude Code's file tools and Gizai's own.
+pub fn is_outside_tool(name: &str) -> bool {
+    !matches!(name, "Read" | "Glob" | "Grep") && !name.starts_with("mcp__gizai__")
+}
+
+/// The outside tool this thread's answer under way used, if any.
+pub fn used_outside(st: &AppState, thread_id: &str) -> Option<String> {
+    st.chat.outside.lock().unwrap().get(thread_id).cloned()
+}
+
+/// Marks the answer under way as having used `tool` from outside Gizai (kept until the next message).
+pub fn mark_outside(st: &AppState, thread_id: &str, tool: &str) {
+    st.chat.outside.lock().unwrap().entry(thread_id.to_string()).or_insert_with(|| tool.to_string());
 }
 
 /// Whether a board check is running.
@@ -252,6 +286,8 @@ pub async fn send(st: &AppState, thread_id: Option<String>, text: String, bin_ov
 /// history but no session to resume (its first answer crashed before Claude Code started) also starts a new
 /// session that carries the recent messages. The thread's session is only replaced by one that started.
 async fn turn(st: &AppState, thread_id: &str, agent: &Member, text: &str, bin: &CliSpec, shim: &Path) -> TurnSummary {
+    // A new message: Gizai's tools that act work again until this answer uses an outside tool.
+    st.chat.outside.lock().unwrap().remove(thread_id);
     let Ok(thread) = chat::get_thread(&st.db, thread_id) else {
         return TurnSummary { run_id: String::new(), status: "failed".into(), error: Some("the chat was deleted".into()) };
     };
@@ -505,8 +541,18 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         Err(e) => { let _ = core_runs::finish_chat(&st.db, &run_id, "failed", 0, 0, 0, Some(&e.to_string())); return fail(&run_id, e.to_string()); }
     };
     let config_path = chat_dir.join(format!("{run_id}.mcp.json"));
-    let config = json!({"mcpServers": {"gizai": {"type": "stdio", "command": shim.display().to_string(), "args": [],
-        "env": {"GIZAI_SOCKET": st.mcp_socket.display().to_string(), "GIZAI_TOKEN": token}}}});
+    // The Team Lead's own MCP servers (agent form → Tools) next to Gizai's; one it can't use is left out, and the chat says why.
+    let (servers, left_out) = {
+        let (st2, a2) = (st.clone(), agent.clone());
+        tokio::task::spawn_blocking(move || crate::mcp_servers::for_run(&st2, &a2, CAPS.max_time)).await.unwrap_or_default()
+    };
+    for n in &left_out {
+        system(st, &thread.id, n);
+    }
+    let gizai = json!({"type": "stdio", "command": shim.display().to_string(), "args": [],
+        "env": {"GIZAI_SOCKET": st.mcp_socket.display().to_string(), "GIZAI_TOKEN": token}});
+    let config = gizai_agents::mcp_run::config(vec![("gizai".into(), gizai)], &servers);
+    let (mcp_allowed, mcp_refused) = gizai_agents::mcp_run::permissions(&servers);
     let cleanup = |token: &str| {
         let _ = tokens::revoke(&st.db, token);
         let _ = std::fs::remove_file(&config_path);
@@ -519,11 +565,13 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
     let settings = crate::runs::get_settings(st);
     let args = ClaudeArgs {
         bin: bin.bin.clone(), env: bin.env.clone(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
-        allowed_tools: vec!["mcp__gizai".into()], append_system_prompt: Some(system_prompt(st, agent)), model: agent.model.clone(),
+        allowed_tools: std::iter::once("mcp__gizai".to_string()).chain(mcp_allowed).collect(),
+        append_system_prompt: Some(if servers.is_empty() { system_prompt(st, agent) } else { format!("{}\n\n{}", system_prompt(st, agent), gizai_agents::mcp_run::UNTRUSTED) }),
+        model: agent.model.clone(),
         max_budget_usd: settings.max_run_usd, resume, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
         tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, add_dirs),
         no_session_persistence: std::env::var("GIZAI_CHAT_NO_PERSIST").is_ok_and(|v| v == "1"),
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: vec![],
+        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
     let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
         Ok(h) => h,
@@ -579,6 +627,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
                 }
             }
             ChatEvent::ToolUse { id, name, input } => {
+                if is_outside_tool(&name) {
+                    mark_outside(st, &thread.id, &name);
+                }
                 set_live(st, &thread.id, |l| l.tool = Some(name.clone()));
                 emit(st, &thread.id, ChatUiEvent::Tool { name: name.clone() });
                 if let Some(m) = save(st, NewMessage { tool_name: Some(name), tool: Some(json!({"id": id, "input": input})), ..base("tool") }) {
@@ -605,6 +656,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, agent: &Member, prompt
         save(st, NewMessage { body_md: Some(draft.trim().to_string()), ..base("agent") });
     }
     cleanup(&token);
+    if !servers.is_empty() {
+        mcp_states(st, &thread.id, &agent.actor_id, &log_path);
+    }
     let stopped = st.chat.stopped.lock().unwrap().contains(&thread.id);
     let (now_totals, ok) = match &result {
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, .. }) => (
@@ -824,10 +878,13 @@ fn stderr_tail(log_path: &Path) -> String {
 
 /// At start-up: MCP configs a crashed Gizai left behind hold tokens; remove them (the tokens expire anyway).
 pub fn remove_stray_configs(data_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(data_dir.join("chat")) else { return };
-    for e in entries.flatten() {
-        if e.file_name().to_string_lossy().ends_with(".mcp.json") {
-            let _ = std::fs::remove_file(e.path());
+    // Chat turns' configs, and task runs' (with the secrets of the agent's MCP servers).
+    for dir in ["chat", "runs"] {
+        let Ok(entries) = std::fs::read_dir(data_dir.join(dir)) else { continue };
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().ends_with(".mcp.json") {
+                let _ = std::fs::remove_file(e.path());
+            }
         }
     }
 }

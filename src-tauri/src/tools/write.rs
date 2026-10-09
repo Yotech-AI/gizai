@@ -46,6 +46,12 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
             return Err("an agent can't be allowed to run any command from chat; name the commands, like Bash(npm test:*) or Bash(git commit:*)".into());
         }
     }
+    // MCP servers and their tools: only the user switches them, in the agent form → Tools.
+    for k in ["mcp_servers", "mcp", "tools", "mcp_tools"] {
+        if a.0.get(k).is_some_and(|v| !v.is_null()) {
+            return Err("an agent's MCP servers and their tools can't be switched from chat: only the user does that, in the agent form → Tools".into());
+        }
+    }
     // The folders an agent may read or change: only the user sets them, in the agent form.
     if a.0.get("folders").is_some_and(|v| !v.is_null()) {
         return Err("an agent's folders can't be changed from chat: the user sets them in the agent form (Team page → the agent → Permissions → Folders). Nothing changed.".into());

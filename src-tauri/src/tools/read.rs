@@ -196,6 +196,11 @@ pub(crate) fn get_agent(cx: &Cx, a: &Args) -> Result<Value, String> {
     let mut v = agent_json(cx, &m, &live);
     v["permission_mode"] = json!(m.permission_mode);
     v["allowed_tools"] = json!(m.allowed_tools);
+    // Its MCP servers' switches, to show: only the user changes them (agent form → Tools).
+    let servers = gizai_core::mcp_servers::list(cx.db()).unwrap_or_default();
+    v["mcp_servers"] = json!(m.tools.mcp.iter().filter_map(|o| servers.iter().find(|s| s.id == o.server_id).map(|s| json!({
+        "name": s.name, "on": o.on, "tools_off": o.tools_off,
+    }))).collect::<Vec<_>>());
     v["instructions_md"] = json!(m.instructions_md);
     let recent: Vec<Value> = runs::list_for_agent(cx.db(), &m.actor_id, 10).map_err(err)?.into_iter().map(|r| json!({
         "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "cost_usd": usd(r.cost_usd_micros), "error": r.error,

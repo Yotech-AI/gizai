@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { listProjects } from "../api";
-import { go } from "../router";
+import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useDrawer } from "../lib/drawers";
+import { COST_NOTE, formatUsageCost, unknownCostNote } from "../lib/usage";
 import type { Project } from "../types";
 import { DataTable, type Col } from "../components/DataTable";
 
@@ -22,6 +23,12 @@ export function ProjectsPage() {
       const total = p.doneTasks + p.openTasks;
       return <span className="who"><span style={{ width: 90, height: 5, borderRadius: 3, background: "var(--line)", overflow: "hidden", display: "inline-block" }}><i style={{ display: "block", height: "100%", width: `${total ? (100 * p.doneTasks) / total : 0}%`, background: "var(--success)" }} /></span>{p.doneTasks} / {total}</span>;
     } },
+    // A cost that is only unknown (runs of a CLI that reports none) sorts just above $0.00.
+    { key: "ai", header: "AI usage", width: 130, align: "right", title: `API cost this month. ${COST_NOTE}`,
+      sort: (p) => p.aiCostUsdMicros + (p.aiUnknownCostRuns > 0 ? 0.5 : 0), cell: (p) => {
+        const t = { costUsdMicros: p.aiCostUsdMicros, unknownCostRuns: p.aiUnknownCostRuns };
+        return <span className={p.aiCostUsdMicros || p.aiUnknownCostRuns ? undefined : "faint"} title={unknownCostNote(p.aiUnknownCostRuns)}>{formatUsageCost(t)}</span>;
+      } },
     { key: "repo", header: "Repository", cell: (p) => p.repoPath ? <span className="mono muted">{p.repoPath.split("/").slice(-2).join("/")}</span> : <span className="faint">Not linked</span> },
     { key: "status", header: "Status", sort: (p) => p.status, cell: (p) => <span className={`badge ${STATUS[p.status] ?? ""}`}>{p.status[0].toUpperCase() + p.status.slice(1)}</span> },
   ];
@@ -38,7 +45,8 @@ export function ProjectsPage() {
       <DataTable rows={rows} columns={cols} rowId={(p) => p.id} onRowClick={(p) => go({ page: "project", id: p.id })} keyboardNav
         initialSort={[{ id: "number", desc: true }]}
         empty={<div className="empty"><b>No projects here.</b><span>Projects hold tasks, docs and files. Link one to a git repository so agents can work on it.</span><button className="btn primary" onClick={() => open({ kind: "project" })}><Plus className="icon" />New project</button></div>}
-        footer={<span>{rows.length} of {data?.length ?? 0} projects</span>} />
+        footer={<><span>{rows.length} of {data?.length ?? 0} projects</span>
+          <span title={COST_NOTE}>AI usage: the API cost this month, an estimate at API prices, not a bill. <a href={href({ page: "usage" })}>Open Usage</a></span></>} />
     </>
   );
 }

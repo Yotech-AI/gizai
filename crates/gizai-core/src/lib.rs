@@ -13,6 +13,7 @@ pub mod team;
 pub mod docs;
 pub mod files;
 pub mod runs;
+pub mod usage;
 pub mod settings;
 pub mod workflow;
 pub mod board;

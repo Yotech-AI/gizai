@@ -11,6 +11,7 @@ You need:
 - Linux with WebKitGTK 4.1;
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once). Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs); the Team Lead chat needs Claude Code;
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
+- for the tray icon, libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it Gizai runs without a tray icon;
 - optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in;
 - or, for a project on Bitbucket Cloud, an SSH key on your Bitbucket account and an API token with the scopes `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket` (Atlassian account → Security → API tokens), saved with your Atlassian email in Settings → Bitbucket. Gizai keeps them in your keychain.
 
@@ -88,6 +89,8 @@ MCP servers: add them in Settings → MCP servers, then switch them on per agent
 - An org chart of your team: the Team Lead on top, then branches (Design, Development, Quality, Operations and your own), each with one empty spot that adds an agent there. Drag an agent onto a column in Team → Workflow to put it to work there
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
 - Usage (in Company): the agents' input tokens (cache included), output tokens and API cost for today, 7 days, 30 days or this month, in total with a bar per day, per agent and per project, with the Team Lead's chat on its own line. The Projects list shows each project's API cost this month. API cost is what the tokens would cost at API prices, not a bill; a CLI that reports no cost (Codex, Gemini) shows its tokens and an unknown cost
+- Gizai keeps running when you close its window (Super+W on Omarchy, the X button): the agents, the board check and the chat go on. A tray icon (top right in Omarchy's Waybar, the menu bar on macOS) has Open Gizai and Quit Gizai completely; starting Gizai again also brings the window back. Settings → Quit quits too, and says how many runs and chat answers it stops
+- Desktop notifications when a card goes on hold, a card waits for your review or deploy, the Team Lead asks you something (a Question or Approval chat), or the Team Lead answered while the Gizai window was hidden or in the background. Each kind has a switch in Settings → Notifications, all on by default. Clicking a notification while it shows opens the card or the chat, where the desktop's notifications support it (Omarchy's do); otherwise Open Gizai in the tray brings the window back
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
 - A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)
 

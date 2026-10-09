@@ -163,6 +163,9 @@ pub struct Task {
     pub labels: Vec<Label>,
     pub hold: Option<String>,
     pub hold_reason: Option<String>,
+    /// When the current hold was set; None without a hold. A new hold has a new time, also after a cleared one.
+    #[serde(default)]
+    pub hold_at: Option<i64>,
     pub bounce_count: i64,
     pub fail_count: i64,
     pub sort_key: String,

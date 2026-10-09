@@ -183,7 +183,12 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   /** The GitHub CLI; null = found when needed. */
   ghBin?: string | null;
   /** How Open pull request and Push branch reach GitHub. */
-  pushOver: PushOver };
+  pushOver: PushOver;
+  /** Settings → Notifications: a desktop notification per kind, on or off. */
+  notifications: NotificationSwitches };
+/** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
+ *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
+export type NotificationSwitches = { hold: boolean; waiting: boolean; leadAsks: boolean; leadAnswered: boolean };
 /** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
 export type OldWorktree = {
   taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;

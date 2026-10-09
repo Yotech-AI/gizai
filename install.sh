@@ -99,7 +99,7 @@ if [ -r /etc/os-release ]; then
 fi
 deps_command() {
   case "$distro" in
-    *" arch "*|*" manjaro "*|*" endeavouros "*|*" omarchy "*) say "sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg git" ;;
+    *" arch "*|*" manjaro "*|*" endeavouros "*|*" omarchy "*) say "sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libayatana-appindicator librsvg git" ;;
     *" debian "*|*" ubuntu "*) say "sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config git" ;;
     *" fedora "*|*" rhel "*) say "sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel git && sudo dnf group install c-development" ;;
     *" opensuse"*|*" suse "*) say "sudo zypper in webkit2gtk3-soup2-devel libopenssl-devel curl wget file libappindicator3-1 librsvg-devel git && sudo zypper in -t pattern devel_basis" ;;
@@ -119,6 +119,10 @@ if have claude; then
   say "Claude Code: found ($(command -v claude)). Make sure you are logged in: run 'claude' once."
 else
   say "Claude Code: not found. Gizai's agents and chat run it; install it from https://docs.claude.com/en/docs/claude-code and log in."
+fi
+# The tray icon loads libayatana-appindicator (or the older libappindicator) when Gizai starts; Gizai works without it.
+if have ldconfig && ! ldconfig -p 2>/dev/null | grep -qE 'lib(ayatana-)?appindicator3\.so\.1'; then
+  say "Tray icon: libayatana-appindicator is missing, so Gizai will have no tray icon (Arch and Omarchy: sudo pacman -S libayatana-appindicator; Debian and Ubuntu: sudo apt install libayatana-appindicator3-1)."
 fi
 [ "$ok" = 1 ] && say "Everything Gizai needs to build is here."
 if [ "$CHECK" = 1 ]; then exit $((1 - ok)); fi

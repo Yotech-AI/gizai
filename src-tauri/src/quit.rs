@@ -1,12 +1,12 @@
 //! Quitting cleanly. WebKitGTK's page process (WebKitWebProcess) can crash in its own teardown once Gizai's
 //! window goes away: its main thread, in exit(), frees Mesa's GBM device while a compositor thread still
 //! releases its EGL state, and the heap breaks (a WebKitGTK/Mesa bug, seen as WebKitWebProcess core dumps).
-//! So Gizai ends that process itself just before its window closes or Gizai exits, with WebKit's own call:
-//! an instant kill, which runs no teardown and leaves no core dump. Signals quit the usual way, so they take
-//! that path too.
+//! So Gizai ends that process itself just before Gizai exits, with WebKit's own call: an instant kill, which runs no
+//! teardown and leaves no core dump. Closing the window only hides it, page and all. Signals quit the usual way, so
+//! they take that path too.
 //!
-//! Agents at work (runs and chat answers) are stopped before Gizai quits, however it is asked to: the window, a
-//! signal, logging out (which closes the window, then sends SIGTERM) or shutting down. They are recorded as stopped
+//! Agents at work (runs and chat answers) are stopped before Gizai quits, however it is asked to: Quit Gizai
+//! completely (the tray or Settings), a signal, logging out (SIGTERM) or shutting down. They are recorded as stopped
 //! because Gizai quit, and none outlives Gizai.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ const END_WAIT: Duration = Duration::from_secs(4);
 /// Set by the first request to quit while agents are at work: a second request quits at once.
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
-/// A request to quit (the window closed, a signal, the app quitting itself). With agents at work, the first request
+/// A request to quit (Quit Gizai completely, a signal, the app quitting itself). With agents at work, the first request
 /// stops them and quits once they have ended (at most 12 s), so Gizai stays for now: returns true. A second request,
 /// or one with no agents at work, quits at once.
 pub fn stop_agents_first(app: &AppHandle) -> bool {
@@ -53,9 +53,8 @@ pub fn end_agents(st: &AppState) {
     }
 }
 
-/// Ends the main window's page process, if it still runs. Only for a window that is about to close or a
-/// Gizai that is about to exit: the window shows nothing after it, and WebKit doesn't start a new one by
-/// itself.
+/// Ends the main window's page process, if it still runs. Only for a Gizai that is about to exit: the window
+/// shows nothing after it, and WebKit doesn't start a new one by itself.
 pub fn end_web_content(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     if let Some(w) = app.get_webview_window("main") {
@@ -68,7 +67,7 @@ pub fn end_web_content(app: &AppHandle) {
 }
 
 /// SIGTERM (`kill`, logging out, the headless test scripts), SIGINT (Ctrl+C) and SIGHUP (a closed terminal)
-/// quit Gizai the way closing its window does: agents at work are stopped first, and a second signal quits at
+/// quit Gizai the way Quit Gizai completely does: agents at work are stopped first, and a second signal quits at
 /// once. A signal that was ignored when Gizai started (nohup, a background job in a script) stays ignored.
 pub fn on_signals(app: &AppHandle) {
     use tokio::signal::unix::{SignalKind, signal};

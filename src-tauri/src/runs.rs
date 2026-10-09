@@ -181,6 +181,9 @@ pub struct Settings {
     /// How Open pull request and Push branch reach GitHub: "ssh" (your SSH keys, the default) or "https" (gh's login).
     #[serde(default = "default_push_over")]
     pub push_over: String,
+    /// Desktop notifications, a switch per kind (Settings → Notifications); all on by default.
+    #[serde(default)]
+    pub notifications: crate::notifications::Switches,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
@@ -198,6 +201,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         max_run_tool_calls: settings::get(&st.db, "max_run_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_TOOL_CALLS),
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
         push_over: crate::github::push_over_name(st),
+        notifications: crate::notifications::switches(&st.db),
     }
 }
 
@@ -227,6 +231,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_run_minutes", &s.max_run_minutes).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_tool_calls", &s.max_run_tool_calls).map_err(|e| e.to_string())?;
     crate::github::save_push_over(st, &s.push_over)?;
+    crate::notifications::save_switches(&st.db, &s.notifications)?;
     Ok(())
 }
 

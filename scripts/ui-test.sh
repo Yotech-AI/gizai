@@ -4,7 +4,8 @@
 #  2. task page: opens the description editor, types, saves with Ctrl+Enter; checks the database.
 #  3. doc page: saves with Ctrl+S, then forces a conflict and keeps our text.
 #  4. team page (GA-53): Design first and one empty spot per branch; the Development spot opens the agent form with its
-#     role and no wake-up, and the agent lands on To do and In progress; its card dragged from the chart onto Testing (and
+#     role and no wake-up; picking a role fills in its instructions and allowed commands until the list is edited (GA-63),
+#     and the agent lands on To do and In progress; its card dragged from the chart onto Testing (and
 #     not onto Review), "+ Agent" and ×; Manual and Auto; the next column
 #     and the backend's refusals (a link to itself, Auto without a next column); Review; Add column; dragging a column by
 #     its grip; the bins of the last Backlog and Done; the removal confirm and removing a column; a new label, a name in use
@@ -14,6 +15,11 @@
 #     through the real gizai-mcp shim and socket, and the answer links the task it created. Then Runs on under the
 #     text box: it lists the Claude Code accounts (Codex disabled, with why) and picking Claude Code 2 saves it; while a
 #     slow answer is written, Enter queues a message, which shows as queued and goes by itself when the answer is done.
+#  7. usage (GA-33): Usage in the sidebar's Company section above Team; the Total, Agents and Projects tabs and the period
+#     switch against prep_usage's runs (an unknown cost, a chat turn, a run 20 days ago), and the tabs agree; then the
+#     Projects list's AI usage column, sorted by its header.
+#  8. settings (GA-60): Settings opens and scrolls to Settings → Bitbucket (its email field), under Settings → GitHub.
+#  9. project form (GA-60): the New project drawer opens with its Repository field (a GitHub or Bitbucket link).
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -46,4 +52,11 @@ DATA=$PWD/.devdata/uitest ROUTE="task/$RUNTASK" MODE=run scripts/smoke-cage.sh |
 fresh
 (source scripts/env.sh && cargo run -q -p gizai-core --example prep_chat -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude-chat.py")
 DATA=$PWD/.devdata/uitest ROUTE=chat MODE=chat scripts/smoke-cage.sh || fail=1
+fresh
+(source scripts/env.sh && cargo run -q -p gizai-core --example prep_usage -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
+DATA=$PWD/.devdata/uitest ROUTE=usage scripts/smoke-cage.sh || fail=1
+fresh
+DATA=$PWD/.devdata/uitest ROUTE=settings MODE='steps:#s-bb-email' scripts/smoke-cage.sh || fail=1
+fresh
+DATA=$PWD/.devdata/uitest ROUTE=projects MODE=open:project scripts/smoke-cage.sh || fail=1
 exit $fail

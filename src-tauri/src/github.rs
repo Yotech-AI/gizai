@@ -131,21 +131,21 @@ pub struct Check {
     pub text: String,
     /// For a failure: what to do.
     pub fix: Option<String>,
-    /// For a project: its id and GitHub repository ("owner/name").
+    /// For a project: its id and repository ("owner/name" on GitHub, "workspace/repository" on Bitbucket).
     pub project_id: Option<String>,
     pub repo: Option<String>,
 }
 
 impl Check {
-    fn ok(name: &str, text: impl Into<String>) -> Check {
+    pub(crate) fn ok(name: &str, text: impl Into<String>) -> Check {
         Check { name: name.into(), result: "ok".into(), text: text.into(), fix: None, project_id: None, repo: None }
     }
 
-    fn failed(name: &str, p: Problem) -> Check {
+    pub(crate) fn failed(name: &str, p: Problem) -> Check {
         Check { name: name.into(), result: "failed".into(), text: p.what, fix: p.fix, project_id: None, repo: None }
     }
 
-    fn skipped(name: &str, text: impl Into<String>) -> Check {
+    pub(crate) fn skipped(name: &str, text: impl Into<String>) -> Check {
         Check { name: name.into(), result: "skipped".into(), text: text.into(), fix: None, project_id: None, repo: None }
     }
 }
@@ -163,7 +163,7 @@ pub struct ConnectionCheck {
 
 /// Check connection: the GitHub CLI, the account it is logged in as, ssh to git@github.com in batch mode (when pushes
 /// go over SSH), and for each project with a GitHub link whether you can push to it, the way Push branch would (a dry
-/// run: nothing is sent). Never asks for anything, and changes nothing.
+/// run: nothing is sent). Never asks for anything, and changes nothing. Bitbucket's is `bitbucket::check`.
 pub async fn check(st: &AppState) -> ConnectionCheck {
     let st2 = st.clone();
     tokio::task::spawn_blocking(move || check_blocking(&st2)).await.unwrap_or_else(|e| ConnectionCheck {
@@ -211,20 +211,21 @@ fn check_blocking(st: &AppState) -> ConnectionCheck {
     } else {
         checks.push(Check::skipped("SSH", "Not used: pushes go over HTTPS with gh's login"));
     }
-    checks.extend(project_checks(st, over.as_ref()));
+    checks.extend(project_checks(st, "github", over.as_ref()));
     ConnectionCheck { ok: !checks.iter().any(|c| c.result == "failed"), push_over: over_name, checks }
 }
 
-/// How many projects are checked at the same time (GitHub may drop a burst of SSH connections).
+/// How many projects are checked at the same time (GitHub and Bitbucket may drop a burst of SSH connections).
 const PROJECTS_AT_ONCE: usize = 4;
 
-/// For each project with a GitHub link (archived ones aside): whether you can push to it, a few at a time.
-fn project_checks(st: &AppState, over: Option<&PushOver>) -> Vec<Check> {
+/// For each project linked to `provider` ("github" or "bitbucket"; archived ones aside): whether you can push to it, a
+/// few at a time.
+pub(crate) fn project_checks(st: &AppState, provider: &str, over: Option<&PushOver>) -> Vec<Check> {
     let mut linked: Vec<(Project, String, String)> = projects::list(&st.db).unwrap_or_default().into_iter()
         .filter(|p| p.status != "archived")
         .filter_map(|p| {
-            let link = repo_url::normalize(p.repo_url.as_deref()?).ok().flatten().filter(|l| l.provider == "github")?;
-            let repo = format!("{}/{}", link.owner?, link.name?);
+            let link = repo_url::normalize(p.repo_url.as_deref()?).ok().flatten().filter(|l| l.provider == provider)?;
+            let repo = link.full_name()?;
             Some((p, link.url, repo))
         })
         .collect();

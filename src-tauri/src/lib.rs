@@ -1,3 +1,4 @@
+pub mod bitbucket;
 pub mod board;
 pub mod chat;
 pub mod clis;
@@ -161,12 +162,33 @@ pub fn backup_data_dir(dir: &std::path::Path, label: &str) -> Result<PathBuf, St
     gizai_core::db::snapshot(&db, &dir.join("backups"), label).map_err(|e| e.to_string())
 }
 
+/// Housekeeping (README → Your data): the chat tools' dead tokens, and the run and chat logs in `dir` older than 30 days,
+/// go. When Gizai starts (`open_state`) and once a day while it runs.
+pub fn housekeeping(db: &Db, dir: &std::path::Path) {
+    match gizai_core::housekeeping::run(db, dir, gizai_core::ids::now_ms()) {
+        Ok(p) if p.logs + p.tokens > 0 => eprintln!("gizai: housekeeping removed {} old logs and {} old tokens", p.logs, p.tokens),
+        Ok(_) => {}
+        Err(e) => eprintln!("gizai: housekeeping failed: {e}"),
+    }
+}
+
 /// Opens (and on first start seeds) the database in `dir`. Runs a previous Gizai left behind are marked interrupted.
+/// A first start is a new install: it gets the five default agents, on Codex when only Codex is installed
+/// (`gizai_core::seed::ensure_seed_with_agents`).
 pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -> Result<AppState, String> {
+    open_data(dir, notify, true)
+}
+
+/// `open_state`, with or without the default agents on a first start.
+fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, default_agents: bool) -> Result<AppState, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let lock = lock_data_dir(&dir)?;
     let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
-    let seed = gizai_core::seed::ensure_seed(&db, &display_name()).map_err(|e| e.to_string())?;
+    let seed = if default_agents {
+        gizai_core::seed::ensure_seed_with_agents(&db, &display_name(), clis::codex_at_first_start)
+    } else {
+        gizai_core::seed::ensure_seed(&db, &display_name())
+    }.map_err(|e| e.to_string())?;
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
@@ -182,6 +204,7 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     // Messages queued in a chat wait for Send now: the answer they waited for is gone.
     let _ = gizai_core::chat::hold_all_queues(&db);
     chat::remove_stray_configs(&dir);
+    housekeeping(&db, &dir);
     let mcp_socket = mcp::socket_path(&dir);
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
@@ -207,9 +230,12 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
     })
 }
 
+/// Gizai for a test, on the data in `dir/data`. Its first start adds no agents: a new install's five would take the
+/// test's cards, and would start the real Claude Code when the test hasn't set a fake one. Tests add the agents they
+/// need; `open_state` starts like a new install.
 #[doc(hidden)]
 pub fn test_state(dir: &std::path::Path) -> AppState {
-    let mut st = open_state(dir.join("data"), Arc::new(|_| {})).expect("test state");
+    let mut st = open_data(dir.join("data"), Arc::new(|_| {}), false).expect("test state");
     // Tests keep their socket in their own folder, never in the real runtime dir.
     st.mcp_socket = st.data_dir.join("mcp.sock");
     // Never the real keychain in tests: one in memory, unless the test names a file for it.
@@ -323,6 +349,25 @@ pub fn run() {
                     }
                 });
             }
+            // Housekeeping once a day while Gizai runs (open_state did it at start). The hourly tick goes by the wall
+            // clock, so the hours the computer slept count too.
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let hour = std::time::Duration::from_secs(60 * 60);
+                    let mut last = gizai_core::ids::now_ms();
+                    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + hour, hour);
+                    loop {
+                        tick.tick().await;
+                        let now = gizai_core::ids::now_ms();
+                        if now - last >= gizai_core::housekeeping::EVERY_MS {
+                            last = now;
+                            let st = st.clone();
+                            let _ = tokio::task::spawn_blocking(move || housekeeping(&st.db, &st.data_dir)).await;
+                        }
+                    }
+                });
+            }
             // Once a minute the agents take cards that had to wait (the run limit was full, Gizai just started), and the
             // Team Lead checks the board when its interval has passed; only new findings start it.
             tauri::async_runtime::spawn(async move {
@@ -353,14 +398,16 @@ pub fn run() {
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
             commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,
             commands::column_removal, commands::remove_state, commands::list_labels, commands::save_label, commands::remove_label,
-            commands::add_branch, commands::remove_branch, commands::role_template,
+            commands::add_branch, commands::remove_branch, commands::role_template, commands::role_tools,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
+            commands::usage_summary,
             commands::list_chat_threads, commands::chat_messages, commands::send_chat, commands::stop_chat, commands::chat_live, commands::chat_agent,
             commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
+            commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
             commands::list_old_worktrees, commands::remove_old_worktrees,
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,

@@ -114,6 +114,18 @@ async fn create_project_suggests_a_key_and_links_the_client_by_name() {
 }
 
 #[tokio::test]
+async fn create_project_suggests_a_key_of_at_most_six_characters_after_nine_collisions() {
+    let t = setup();
+    // GA-25: the tenth got ABCDE10, a key the project form can't hold. An archived project's key counts too.
+    t.ok("create_project", json!({"name": "a b c d e f g h", "status": "archived"})).await;
+    let mut keys = vec![];
+    for _ in 0..11 {
+        keys.push(t.ok("create_project", json!({"name": "a b c d e f g h"})).await["project"]["key"].as_str().unwrap().to_string());
+    }
+    assert_eq!(keys, ["ABCDE2", "ABCDE3", "ABCDE4", "ABCDE5", "ABCDE6", "ABCDE7", "ABCDE8", "ABCDE9", "ABCD10", "ABCD11", "ABCD12"]);
+}
+
+#[tokio::test]
 async fn update_project_keeps_repo_and_colour() {
     let t = setup();
     let id = t.project("Kade portal", "KADE");
@@ -528,4 +540,39 @@ async fn the_team_lead_adds_a_deploy_column_after_review_and_it_comes_in_manual_
     assert_eq!(states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Backlog", "To do", "In progress", "Testing", "Review", "Staging", "Release", "Deploy", "Done"]);
     let staging = states.iter().find(|s| s.name == "Staging").unwrap();
     assert_eq!((staging.auto, staging.agent_ids.len()), (false, 0));
+}
+
+#[tokio::test]
+async fn create_agent_without_a_list_gives_the_roles_allowed_commands_and_update_never_changes_a_saved_list() {
+    // GA-63: as the agent form starts a new agent; a list that is given is kept as given.
+    use gizai_core::seed::role_tools;
+    let t = setup();
+    let tools_of = |name: &str| team::agent(&t.st.db, &resolve_agent(&t, name)).unwrap().allowed_tools;
+    t.ok("create_agent", json!({"name": "Backend Agent", "role": "backend"})).await;
+    t.ok("create_agent", json!({"name": "QA Agent", "role": " QA "})).await;
+    t.ok("create_agent", json!({"name": "DevOps Agent", "role": "devops", "allowed_tools": []})).await;
+    t.ok("create_agent", json!({"name": "Second Lead", "role": "lead"})).await;
+    t.ok("create_agent", json!({"name": "Docs Agent", "role": "docs"})).await;
+    t.ok("create_agent", json!({"name": "Make Agent", "role": "backend", "allowed_tools": ["Bash(make:*)", "Bash(git commit:*)"]})).await;
+    assert_eq!(tools_of("Backend Agent"), role_tools("backend"));
+    assert!(tools_of("Backend Agent").contains(&"Bash(git push:*)".to_string()));
+    assert_eq!(tools_of("QA Agent"), role_tools("qa"), "the role key is cleaned first");
+    assert!(tools_of("QA Agent").contains(&"Bash(gh pr create:*)".to_string()));
+    assert_eq!(tools_of("DevOps Agent"), role_tools("devops"), "an empty list is no list");
+    assert_eq!(tools_of("Second Lead"), gizai_lib::runs::DEFAULT_TOOLS.map(String::from).to_vec());
+    assert_eq!(tools_of("Docs Agent"), role_tools("backend"), "your own roles are builders");
+    assert_eq!(tools_of("Make Agent"), ["Bash(make:*)", "Bash(git commit:*)"]);
+    // Its instructions are the role's too, unless given.
+    let qa = team::agent(&t.st.db, &resolve_agent(&t, "QA Agent")).unwrap();
+    assert_eq!(qa.instructions_md.as_deref(), Some(gizai_core::seed::role_template("qa").as_str()));
+    // A saved list is never changed: not by another field, not by a role change.
+    t.ok("update_agent", json!({"agent": "Make Agent", "model": "sonnet"})).await;
+    t.ok("update_agent", json!({"agent": "Make Agent", "role": "qa"})).await;
+    assert_eq!(tools_of("Make Agent"), ["Bash(make:*)", "Bash(git commit:*)"]);
+    // The tool says so.
+    let cat = tools::catalog();
+    let create = cat.iter().find(|d| d.name == "create_agent").unwrap();
+    assert!(create.description.contains("role's instructions and allowed commands"), "{}", create.description);
+    let field = create.input_schema["properties"]["allowed_tools"]["description"].as_str().unwrap();
+    assert!(field.contains("Omit on create for its role's list") && !field.starts_with("Commands it may run without asking, like Bash(npm test:*); empty"), "{field}");
 }

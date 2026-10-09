@@ -80,6 +80,8 @@ export function TaskPage({ id }: { id: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [props, setPropsState] = useState(() => readPref("gizai-props") !== "closed");
   const setProps = (on: boolean) => { setPropsState(on); writePref("gizai-props", on ? "open" : "closed"); };
+  const thread = useRef<HTMLDivElement>(null);
+  const [readReason, setReadReason] = useState(0);
   useEffect(() => { if (task) setTitle(task.title); }, [task?.title]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -90,6 +92,14 @@ export function TaskPage({ id }: { id: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  // Read in comments (the Hold row): the Comments tab, at the latest comment that holds the hold reason (an agent's summary
+  // is posted as one), else at the thread.
+  useEffect(() => {
+    if (!readReason) return;
+    const reason = task?.holdReason?.trim();
+    const c = reason ? [...(comments ?? [])].reverse().find((x) => x.bodyMd.includes(reason)) : undefined;
+    ((c && document.getElementById(`comment-${c.id}`)) || thread.current)?.scrollIntoView({ block: "start" });
+  }, [readReason]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <div className="error-banner">{error}</div>;
   if (!task) return null;
@@ -160,7 +170,7 @@ export function TaskPage({ id }: { id: string }) {
             {team && !archived && <RunPanel task={task} team={team} />}
             {!archived && <PullPanel task={task} live={live} mergeTo={mergeTo} />}
 
-            <div className="tabs" role="tablist">
+            <div className="tabs" role="tablist" ref={thread}>
               {([["comments", MessageSquare, "Comments", comments?.length], ["activity", Activity, "Activity", undefined], ["runs", Play, "Runs", runs?.length]] as const).map(([k, I, l, n]) => (
                 <button key={k} className="tab" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}><I className="icon" />{l}{n ? <span className="n">{n}</span> : null}</button>
               ))}
@@ -169,7 +179,7 @@ export function TaskPage({ id }: { id: string }) {
             {tab === "comments" && (
               <div>
                 {(comments ?? []).map((c) => (
-                  <div className="comment" key={c.id}>
+                  <div className="comment" key={c.id} id={`comment-${c.id}`}>
                     <Avatar name={c.authorName} kind={c.authorKind} size="lg" />
                     <div className="body">
                       <div className="by"><b>{c.authorName}</b><span className="faint" title={new Date(c.createdAt).toLocaleString("en-GB")}>{relTime(c.createdAt)}</span>{c.runId && <span className="badge info">from a run</span>}</div>
@@ -198,7 +208,8 @@ export function TaskPage({ id }: { id: string }) {
             {tab === "runs" && <RunHistory runs={runs} />}
           </div>
         </div>
-        {props && team && people && <Properties task={task} team={team} people={people} onError={setErr} onClose={() => setProps(false)} readOnly={archived} />}
+        {props && team && people && <Properties task={task} team={team} people={people} onError={setErr} onClose={() => setProps(false)} readOnly={archived}
+          onReadComments={() => { setTab("comments"); setReadReason((n) => n + 1); }} />}
       </div>
     </>
   );

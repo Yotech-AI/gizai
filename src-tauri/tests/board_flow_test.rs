@@ -3,7 +3,6 @@
 //! start_chat and continue_agent_run, what a check may not do, waiting Team Lead chats in read_inbox and
 //! get_overview, and your reply in a Team Lead chat (its preface).
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gizai_core::model::*;
@@ -39,8 +38,8 @@ struct T {
 /// A Team Lead with Chat on that checks the board every 15 minutes, project KADE, the fake chat `claude`.
 async fn setup() -> T {
     let tmp = tempfile::tempdir().unwrap();
-    let mut st = gizai_lib::open_state(tmp.path().join("data"), Arc::new(|_| {})).unwrap();
-    st.mcp_socket = st.data_dir.join("mcp.sock");
+    // Without a new install's five agents (GA-63): the checks here count on To do having none, and one Team Lead.
+    let mut st = gizai_lib::test_state(tmp.path());
     st.mcp_shim = Some(shim());
     settings::set(&st.db, "claude_bin", &CHAT_FAKE.to_string()).unwrap();
     let project = projects::create(&st.db, &st.you_id, ProjectInput { name: "Kade portal".into(), key: "KADE".into(), ..Default::default() }).unwrap();

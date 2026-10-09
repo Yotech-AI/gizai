@@ -11,7 +11,8 @@ You need:
 - Linux with WebKitGTK 4.1;
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once). Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs); the Team Lead chat needs Claude Code;
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
-- optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in.
+- optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in;
+- or, for a project on Bitbucket Cloud, an SSH key on your Bitbucket account and an API token with the scopes `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket` (Atlassian account → Security → API tokens), saved with your Atlassian email in Settings → Bitbucket. Gizai keeps them in your keychain.
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -40,6 +41,23 @@ Click it and Gizai:
 
 If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull` and `./install.sh`.
 
+### Your data
+
+Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it elsewhere). It cleans up after itself when it starts and once a day while it runs:
+
+- **Run and chat logs** (`runs/` and `chat/`): kept for 30 days after the run, chat answer or board check ended, then removed. The run stays in the history with its summary, cost and commits; Show output says its log is gone.
+- **Keys for the Team Lead's tools** (`api_tokens` in `gizai.db`): each one lasts a chat answer or board check, and is removed a day after it expired or was revoked.
+- **Backups** (`backups/`): one before every update, install and database upgrade, and `gizai --backup` makes one when you ask. The newest 20 are kept. Their names use your local time, like `gizai-before-update-20261009-143502-123.db`.
+
+## Getting started
+
+1. Install Claude Code or Codex and sign in to it. The Team Lead chat needs Claude Code.
+2. For projects on GitHub, install gh and sign in (`gh auth login`, or Settings → GitHub): QA opens the pull requests with it.
+3. Open Gizai: the workflow and five agents are ready. The Backend and Frontend Agents work the cards in To do, the QA Agent tests them, the DevOps Agent releases what you merged when you press Run in Deploy, and you talk to the Team Lead on the Chat page. With only Codex installed, Gizai adds it under Settings → Coding CLIs and runs every agent but the Team Lead on it.
+4. Add a project with its git repository, and put a card in To do.
+
+MCP servers: add them in Settings → MCP servers, then switch them on per agent in the agent form → Tools. This works for agents on Claude Code for now; GA-55 adds Codex.
+
 ![Gizai: the board, a live agent run, the Team Lead chat, the team and an agent](docs/gizai.gif)
 
 ## Features
@@ -49,12 +67,13 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - Agents for each role (frontend, backend, design, QA, DevOps), with their own model, effort and allowed commands
 - Folders per agent besides its worktree, each set to read or read and change (agent form → Permissions). They limit the agent's file tools, not the commands it runs; `/`, your home folder, Gizai's data and folders with keys are refused
 - Each agent runs on the coding CLI you pick: Claude Code, Codex, Gemini, any other CLI (its output is read as text), or a second account of one with its own environment (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`). Settings → Coding CLIs adds them, or finds the ones installed
-- A git worktree and branch for every card, started from main on GitHub when the project is linked
+- A git worktree and branch for every card, started from main on GitHub or Bitbucket when the project is linked
 - Worktrees that start warm: per project, paths copied from your checkout (`cp --reflink=auto`), missing dependencies installed (`composer install`, `npm ci`) and a setup command; a new card takes over a finished card's worktree, and Settings → Data removes old ones
 - A card flow: Backlog → To do → In progress → Testing → Review → Deploy → Done, set up on the Team page (Team → Workflow). Each column holds the agents that work its cards, is Auto (its agents pick up its cards by priority as they have room) or Manual (only Run starts one), and links to the column its cards go to next. Add your own columns (a Design column with a design agent, linked to Review), drag them into any order, or remove one
 - The column decides, labels don't: starting a card in To do moves it to To do's next column, and an agent's done answer moves it on (In progress → Testing → your Review). A card assigned to an agent is started only by that agent; a failed test sends a card back to the column it came from, to its builder. A card with Testing off skips Testing columns, and a DevOps run never sends a card to QA
 - Labels are tags for people, such as Must have and Could have: create, rename, recolour and remove them on the Team page
 - Review on GitHub: Open pull request pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh; a merge on GitHub moves the card to Review's next column (Deploy; Done for a team without a Deploy column) and removes its worktree
+- Review on Bitbucket Cloud works the same way: the push goes over SSH with your keys, the pull request through Bitbucket's API with your email and API token; declined and superseded pull requests show as closed
 - Archive a card in Done: it leaves the board and every list, and keeps its ID, comments, runs and branch. The bin on the Tasks page lists archived cards, and Restore puts one back in Done
 - Deploy: Manual by default, so no agent starts there by itself. Press Run for the agent on the column (its `deployed` moves the card to Deploy's next column, Done), or deploy it yourself and drag the card to Done
 - Settings → GitHub: whether gh is found and logged in, how pushes go, Check connection for every linked project, and Log in with GitHub; Gizai never stores a token or password
@@ -68,6 +87,7 @@ If a step fails, the version you have keeps working, and Settings → Updates sa
 - When a project's linked folder has dependencies behind main (`vendor/` or `node_modules/` missing, or a lock file that differs from main's), the Team Lead tells you what an update would do and, after your yes, updates it: a fast-forward to main (switching branch only if you agreed), then `composer install` or `npm ci`, never a merge, reset or the setup command
 - An org chart of your team: the Team Lead on top, then branches (Design, Development, Quality, Operations and your own), each with one empty spot that adds an agent there. Drag an agent onto a column in Team → Workflow to put it to work there
 - Time and tool-call limits per run, a spending limit per run, a monthly budget per agent
+- Usage (in Company): the agents' input tokens (cache included), output tokens and API cost for today, 7 days, 30 days or this month, in total with a bar per day, per agent and per project, with the Team Lead's chat on its own line. The Projects list shows each project's API cost this month. API cost is what the tokens would cost at API prices, not a bill; a CLI that reports no cost (Codex, Gemini) shows its tokens and an unknown cost
 - Updates from GitHub Releases: a notice in the sidebar, a build in the background, a backup first, then a restart
 - A backup before every update, one Gizai per data folder, no telemetry (the release check only asks GitHub for the latest release)
 
@@ -84,7 +104,7 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
   Codex and Gemini hear only what holds for them: Codex asks for nothing and its sandbox blocks what it doesn't allow; Gemini hears its allowed commands.
 - **Waiting in a run.** Ending its message ends an agent's run, and nothing wakes it up later. So "How this run works" also says how to wait for something outside the run, like a CI run, a release or deploy workflow or a pull request's checks: check it in the foreground about once a minute (one check, then `sleep 45`, in one command, and again), and when it won't be done before the run's limit, end with the result line and say what is left. `sleep` is named only for an agent that may run it. Checked against Claude Code 2.1.289: a command that starts with a sleep of more than 20 seconds is blocked, most shell loops are refused, a command that runs more than 2 minutes (or its own timeout, at most 10) is moved to the background, and a background command is stopped when the message ends.
 - **One nudge.** A run that ends normally without its `GIZAI_RESULT` line is continued once by itself, in the same session, like Continue: Gizai tells the agent that nothing wakes it up later, to check in the foreground now if it was waiting, and to end with its result line. It never does this after Stop, a time or tool-call limit, a failed run or Gizai quitting, and only when a start is allowed now (agents not paused, the agent active, within its budget and cards at once, and room in Runs at once); otherwise nothing changes. If the nudged run also ends without a result, the card goes on hold "stalled" and shows in the Inbox.
-- **New agents' commands.** New agents start with the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. An agent with its own list needs `Bash(sleep:*)` added to it to wait that way.
+- **New agents' commands.** A new agent starts with its role's allowed commands. Gizai's default list has the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. The Team Lead gets that list; builders (Backend, Frontend, Design and your own roles) also get `git push`, `git pull`, `git fetch`, a few read-only git commands, `node`, `echo` and `printf`; QA gets the builders' list plus `gh pr create`, `list`, `view` and `edit`; DevOps gets a list of its own for releases. An agent without a list runs with Gizai's default list. An agent with its own list needs `Bash(sleep:*)` added to it to wait between checks.
 - **Refused in this run.** Claude Code reports every tool call it refused, with the reason. Gizai saves them on the run: the Run panel lists them under "Refused in this run", Show output marks each one where it happened, and the Team Lead's `get_task` and `get_agent` return them for each run. Codex and Gemini don't report refusals, so their runs list none.
 
 ## MCP servers for agents

@@ -14,7 +14,7 @@ use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
 use gizai_agents::stream::RunEvent;
 use gizai_agents::{outcome, worktree};
 use gizai_core::model::{Outcome, Project, Refusal, Task, TaskPatch};
-use gizai_core::{comments, ids, projects, runs as core_runs, settings, tasks, team, workflow};
+use gizai_core::{comments, housekeeping, ids, projects, runs as core_runs, settings, tasks, team, workflow};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -27,15 +27,9 @@ const BUFFER: usize = 500;
 /// Why a run or chat answer ended when Gizai quit (logging out and SIGTERM included), and the note a chat shows.
 pub const STOPPED_BY_QUIT: &str = "Stopped because Gizai quit.";
 
-/// Used when an agent has no allowed commands of its own; new agents start with the same list (`src/lib/agents.ts`).
-/// The read-only helpers near the end are the ones agents use in pipes; `sleep` lets an agent wait in the foreground
-/// (for CI, a release or a deploy) between checks, as "How this run works" tells it.
-pub const DEFAULT_TOOLS: [&str; 29] = [
-    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(composer:*)",
-    "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)",
-    "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(diff:*)", "Bash(grep:*)", "Bash(jq:*)",
-    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)", "Bash(sleep:*)",
-];
+/// Used when an agent has no allowed commands of its own. New agents start with their role's list, which builds on it
+/// (`gizai_core::seed::role_tools`).
+pub use gizai_core::seed::DEFAULT_TOOLS;
 
 /// What the UI hears about.
 pub enum Note {
@@ -243,21 +237,26 @@ pub(crate) fn executable(p: &Path) -> bool {
 
 /// Finds `claude` the way a login shell would, then in the usual install places. Saves what it finds.
 pub fn detect_claude(st: &AppState) -> Option<String> {
+    let found = find_claude();
+    if let Some(p) = &found {
+        let _ = settings::set(&st.db, "claude_bin", p);
+    }
+    found
+}
+
+/// `detect_claude` without saving: where `claude` is installed, if it is.
+pub fn find_claude() -> Option<String> {
     let from_shell = std::process::Command::new("bash").args(["-lc", "command -v claude"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|p| !p.is_empty() && executable(Path::new(p)));
     let home = std::env::var("HOME").unwrap_or_default();
-    let found = from_shell.or_else(|| {
+    from_shell.or_else(|| {
         [".local/bin/claude", ".claude/local/claude", ".local/share/mise/installs/claude/latest/claude", ".npm-global/bin/claude"]
             .iter().map(|rel| format!("{home}/{rel}"))
             .chain(["/usr/local/bin/claude".to_string(), "/usr/bin/claude".to_string()])
             .find(|p| executable(Path::new(p)))
-    });
-    if let Some(p) = &found {
-        let _ = settings::set(&st.db, "claude_bin", p);
-    }
-    found
+    })
 }
 
 /// The saved Claude Code path; detected only when none was ever saved (a saved path that has gone missing is
@@ -316,14 +315,23 @@ pub fn live(st: &AppState) -> Vec<LiveRun> {
         .collect()
 }
 
-/// The run's events: from memory while it is live, else re-read from its log.
+/// The run's events: from memory while it is live, else re-read from its log. When housekeeping removed the log (the
+/// run ended more than 30 days ago), a note says so.
 pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     if let Some(l) = st.runs.live.lock().unwrap().get(run_id) {
         return l.events.clone();
     }
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
-    let text = std::fs::read_to_string(&run.log_path).unwrap_or_default();
-    agent_cli::parse_log(&text).into_iter().enumerate().map(|(i, event)| SeqEvent { seq: i as u64, event }).collect()
+    let events = match std::fs::read_to_string(&run.log_path) {
+        Ok(text) => agent_cli::parse_log(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+            && run.ended_at.unwrap_or(run.created_at) < ids::now_ms() - housekeeping::KEEP_LOGS_MS => {
+            vec![RunEvent::Note { text: format!("Gizai keeps run logs for {} days, so this run's output is gone. Its summary, cost and commits stay.",
+                                                housekeeping::KEEP_LOG_DAYS) }]
+        }
+        Err(_) => vec![],
+    };
+    events.into_iter().enumerate().map(|(i, event)| SeqEvent { seq: i as u64, event }).collect()
 }
 
 pub fn stop(st: &AppState, run_id: &str) {
@@ -522,6 +530,15 @@ fn hold_card(st: &AppState, actor: &str, task_id: &str, reason: &str) {
     }
 }
 
+/// Where the project's main branch is fetched from, as the run prompt says it: "GitHub", "Bitbucket", or "the project's
+/// repository" for another git URL.
+fn fetched_from(project: &Project) -> &'static str {
+    project.repo_url.as_deref()
+        .and_then(|u| gizai_core::repo_url::normalize(u).ok().flatten())
+        .and_then(|l| gizai_core::repo_url::provider_name(&l.provider))
+        .unwrap_or("the project's repository")
+}
+
 /// The card's worktree: its own when it has one; else a finished card's worktree of the same project, taken over so
 /// its build stays warm (`worktree::reuse`, see `worktrees::reusable`); else a new one. A new or taken-over worktree is
 /// noted as still to prepare.
@@ -643,8 +660,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| StartError::Card(e.to_string()))?;
     let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
         .ok_or_else(|| StartError::Card(format!("Link a git repository to {} first (project page → Edit)", project.name)))?;
-    // With a GitHub link, a card starts from the main branch just fetched from GitHub, and a card that already has
-    // a branch hears how far that main has moved on.
+    // With a link (GitHub, Bitbucket or another git URL), a card starts from the main branch just fetched from it, and
+    // a card that already has a branch hears how far that main has moved on.
     let start = {
         let (p, dir) = (project.clone(), PathBuf::from(&repo));
         tokio::task::spawn_blocking(move || crate::git::start_point(&p, &dir, Some(crate::git::START_FETCH_LIMIT)))
@@ -759,7 +776,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
         Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
         Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
-        None => prompt::build(&ctx, &instructions),
+        None => prompt::build_from(&ctx, &instructions, fetched_from(&project)),
     }, &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),

@@ -1,20 +1,14 @@
 // Settings → GitHub: whether Gizai can use GitHub (the GitHub CLI, the account it is logged in as, how pushes go),
 // Check connection, and Log in with GitHub: gh's own login in the browser, whose one-time code and link show here.
 // Gizai never stores a token or password: it uses gh's login and your SSH keys.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CircleCheck, CircleMinus, CircleX, Copy, ExternalLink, LogIn, PlugZap } from "lucide-react";
+import { CircleX, Copy, ExternalLink, LogIn, PlugZap } from "lucide-react";
 import { detectGh, githubCheck, githubLogin, githubLoginCancel, githubLoginWait, githubStatus } from "../api";
-import { accountLine, canLogIn, ghLine, PUSH_OVER, pushOverHint, type Mark } from "../lib/github";
+import { accountLine, canLogIn, ghLine, PUSH_OVER, pushOverHint } from "../lib/github";
 import type { ConnectionCheck, GithubLoginCode, GithubStatus, PushOver, Settings } from "../types";
+import { ConnectionChecks, Line } from "./ConnectionChecks";
 import { Field, FormSection } from "./Form";
-
-const MARKS = { ok: CircleCheck, failed: CircleX, skipped: CircleMinus };
-
-function Line({ mark, children }: { mark: Mark; children: ReactNode }) {
-  const Icon = MARKS[mark];
-  return <div className={`gh-line ${mark}`}><Icon className="icon" /><span>{children}</span></div>;
-}
 
 /** `savedAt` changes after Settings are saved (a new gh path): the status is asked again. */
 export function GithubSettings({ s, setS, save, say, savedAt }: {
@@ -126,23 +120,7 @@ export function GithubSettings({ s, setS, save, say, savedAt }: {
       </Field>
       <Field label="Connection" wide hint="Checks gh and its login, ssh to GitHub, and whether you can push to each project with a GitHub link. Nothing is pushed.">
         <div><button className="btn" onClick={runCheck} disabled={checking}><PlugZap className="icon" />{checking ? "Checking…" : "Check connection"}</button></div>
-        {check && (
-          <div className="gh-checks" aria-label="Connection checks">
-            <div className={`gh-summary ${check.ok ? "ok" : "failed"}`}>{check.ok ? "Gizai can use GitHub." : "Something needs fixing: see what to do below."}</div>
-            {check.checks.map((c, i) => {
-              const Icon = MARKS[c.result] ?? CircleMinus;
-              return (
-                <div key={`${c.name}-${i}`} className={`gh-check ${c.result}`}>
-                  <Icon className="icon" />
-                  <span className="name">{c.name}{c.repo && <span className="mono muted"> {c.repo}</span>}</span>
-                  <span>{c.text}</span>
-                  {c.fix && <span className="fix">{c.fix}</span>}
-                </div>
-              );
-            })}
-            {!check.checks.some((c) => c.projectId) && <div className="gh-check skipped"><CircleMinus className="icon" /><span className="name">Projects</span><span>No project has a GitHub link yet.</span></div>}
-          </div>
-        )}
+        {check && <ConnectionChecks check={check} host="GitHub" />}
       </Field>
     </FormSection>
   );

@@ -287,6 +287,9 @@ a.member:hover { border-color: var(--line-2); }
 .gh-check { display: grid; grid-template-columns: 16px 180px minmax(0, 1fr); gap: 2px 10px; align-items: start; padding: 10px 14px; border-top: 1px solid var(--line); line-height: 1.5; }
 .gh-check .name { font-weight: 600; overflow-wrap: anywhere; }
 .gh-check .fix { grid-column: 3; color: var(--text-2); font-size: var(--fs-sm); }
+/* Settings → Bitbucket: Save and Remove, and the confirm before Remove */
+.bb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bb-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; }
 
 /* ---------- updates: the notice above Company, Settings → Updates ---------- */
 .update-box { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
@@ -360,3 +363,27 @@ a.member:hover { border-color: var(--line-2); }
 .mcp-agent .ma-line { color: var(--text-2); font-size: var(--fs-sm); }
 .mcp-agent .warn { font-size: var(--fs-xs); color: var(--warning); }
 .mcp-agent .hint { font-size: var(--fs-xs); color: var(--text-3); }
+/* The Usage page (UsagePage): the period switch, the metrics, the bars per day and the agent and project tables. */
+.usage-page { gap: 18px; }
+.usage-page .usage-metric { margin-top: 10px; }
+.usage-unknown { text-decoration: underline dotted var(--text-3); text-underline-offset: 3px; cursor: help; }
+.usage-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 12px; }
+.usage-bars .seg-cost, .usage-bars .seg-in, .legend i.seg-in { background: var(--accent); border-radius: 1px; }
+.usage-bars .seg-out, .legend i.seg-out { background: var(--c-violet); border-radius: 1px; }
+.axis.one { justify-content: center; }
+.usage-panel { overflow-x: auto; }
+.usage-table th { position: static; background: none; }
+.usage-table td { max-width: 320px; }
+.usage-table tr:last-child td { border-bottom: 0; }
+.usage-table tfoot td { border-top: 1px solid var(--line-2); border-bottom: 0; font-weight: 600; color: var(--text); }
+.usage-table .usage-name, .usage-table .usage-name > a { display: inline-flex; align-items: center; gap: 7px; color: var(--text); text-decoration: none; }
+.usage-table .usage-name > a:hover { text-decoration: underline; }
+.usage-table .usage-name .icon { color: var(--text-3); }
+.usage-table .usage-name .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.usage-table .share { width: 140px; }
+.usage-share { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.usage-share .track { width: 80px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; display: inline-block; }
+.usage-share .track i { display: block; height: 100%; background: var(--accent); }
+.usage-foot { margin: 0; max-width: 760px; font-size: var(--fs-sm); }
+.usage-utc { font-size: var(--fs-sm); }
+@media (max-width: 960px) { .usage-table .share { display: none; } }

@@ -1,47 +1,109 @@
-use gizai_core::seed::role_template;
+use gizai_core::seed::{role_template, role_tools};
 
-#[test]
-fn implementer_templates_name_the_role_and_allowed_outcomes() {
-    let fe = role_template("frontend");
-    assert!(fe.starts_with("You are the Frontend Agent in Gizai's Software team."));
-    assert!(fe.contains("Implement the task and add or update tests."));
-    assert!(fe.contains("Allowed outcomes: ready_for_testing, needs_decision."));
-    assert!(fe.contains("Never push, merge or change branches."));
-    assert!(role_template("backend").starts_with("You are the Backend Agent"));
+const RESULT_LINE: &str = r#"GIZAI_RESULT: {"outcome":"<outcome>","summary":"<one paragraph for the task comment>","issues":[]}"#;
+
+/// Everything after a text's first line.
+fn rest(t: &str) -> &str {
+    t.split_once('\n').unwrap().1
 }
 
 #[test]
-fn qa_and_lead_get_their_own_rules() {
+fn builders_get_our_own_instructions_they_push_and_leave_tests_and_pull_requests_to_qa() {
+    // GA-63: the Backend and Frontend Agents' texts, word for word (crates/gizai-core/roles).
+    let be = role_template("backend");
+    assert!(be.starts_with("You are the Backend Agent in Gizai's Software team. You build the server side of a card (APIs, database, jobs, services). \
+                            You do not test and you do not open pull requests: the QA Agent does both.\n"), "{be}");
+    let fe = role_template("frontend");
+    assert!(fe.starts_with("You are the Frontend Agent in Gizai's Software team. You build the user-facing part of a card (pages, components, styling, \
+                            client-side behaviour). You do not test and you do not open pull requests: the QA Agent does both.\n"), "{fe}");
+    for t in [&be, &fe] {
+        assert!(t.contains("push the branch with `git push -u origin HEAD` (for a project without a remote, committing is enough)"), "{t}");
+        assert!(t.contains("never merge, except the main branch into your branch when 'Your branch' below asks for it"), "{t}");
+        assert!(t.contains("(README, CLAUDE.md, AGENTS.md, an agent guide)"), "{t}");
+        assert!(t.contains("Do not run tests") && t.contains("Do not open a pull request."), "{t}");
+        assert!(t.contains("A run has limits: Gizai names them at the end of this prompt."), "{t}");
+        assert!(t.contains("- ready_for_testing: ") && t.contains("- needs_decision: "), "{t}");
+        // The old stubs told builders to write tests and never push.
+        assert!(!t.contains("add or update tests") && !t.contains("Never push"), "{t}");
+    }
+    assert!(be.contains("cargo test, go test, node --test") && fe.contains("vitest, jest, playwright, cypress"));
+}
+
+#[test]
+fn qa_runs_the_tests_and_opens_the_pull_request_on_github_only() {
     let qa = role_template("qa");
-    assert!(qa.starts_with("You are the QA Agent"));
-    assert!(qa.contains("Do not change application code; you may add or fix tests only."));
-    assert!(qa.contains("qa_pass, qa_fail (list numbered issues), needs_decision"));
+    assert!(qa.starts_with("You are the QA Agent in Gizai's Software team. You check the work of the developer agents (Backend, Frontend and the like). \
+                            You are the only agent that runs tests and the only one that opens pull requests.\n"), "{qa}");
+    assert!(qa.contains("Do not change application code. You may add or fix tests only"), "{qa}");
+    assert!(qa.contains("When the project's remote is on GitHub (`git remote -v`), open a pull request with `gh pr create`"), "{qa}");
+    assert!(qa.contains("On another host, or without a remote, don't open one: say so in your summary, and the user opens it from Review."), "{qa}");
+    assert!(qa.contains("run `git push origin HEAD` (for a project without a remote, committing is enough)"), "{qa}");
+    assert!(qa.contains("never merge, except the main branch into this branch when 'Your branch' below asks for it"), "{qa}");
+    assert!(qa.contains("\nOutcomes: qa_pass, qa_fail, needs_decision."), "{qa}");
+}
+
+#[test]
+fn the_lead_keeps_its_template() {
     let lead = role_template("lead");
     assert!(lead.starts_with("You are the Team Lead"));
     assert!(lead.contains("Chat page"));
     assert!(lead.contains("Don't write code yourself"));
     assert!(!lead.contains("routing"), "labels don't route any more (GA-49): {lead}");
+    assert_eq!(lead.trim_end().lines().last().unwrap(), RESULT_LINE);
 }
 
 #[test]
-fn design_and_devops_have_templates() {
-    let d = role_template("design");
-    assert!(d.starts_with("You are the Design Agent"));
-    assert!(d.contains("Allowed outcomes: ready_for_testing, needs_decision."));
+fn devops_releases_and_deploys_by_the_projects_own_flow_without_our_projects() {
     let o = role_template("devops");
-    assert!(o.starts_with("You are the DevOps Agent"));
-    // Started by hand: it deploys a card in Deploy (deployed), and its other jobs go to Review, never to QA.
-    assert!(o.contains("Allowed outcomes: deployed, ready_for_testing, needs_decision."), "{o}");
-    assert!(o.contains("never to QA"), "{o}");
-    assert!(!o.contains("Never deploy"), "{o}");
+    assert!(o.starts_with("You are the DevOps Agent in Gizai's Software team. You make releases, you deploy them, you fix pull requests that can't be merged"), "{o}");
+    assert!(o.contains("\nOutcomes: deployed, ready_for_testing, needs_decision."), "{o}");
+    assert!(o.contains("The card goes to Review for the user, never to QA."), "{o}");
+    // It waits the way "How this run works" says: a check first, then a short sleep.
+    assert!(o.contains("`gh run view <id> --json status,conclusion; sleep 45`"), "{o}");
+    assert!(o.contains("Deploy mode: manual (the team deploys it by hand)"), "{o}");
+    for gone in ["Known projects", "doctl", "insteadOf", "latest", "45 minutes", "80 tool turns"] {
+        assert!(!o.contains(gone), "{gone}: {o}");
+    }
 }
 
 #[test]
-fn every_template_ends_with_the_result_line() {
+fn design_is_the_frontend_text_with_its_own_name_and_job() {
+    let d = role_template("design");
+    let (first, _) = d.split_once('\n').unwrap();
+    assert_eq!(first, "You are the Design Agent in Gizai's Software team. You design the screens and flows a card asks for and build them as UI \
+                       components and styles, following the project's design system; explain your design decisions in the hand-over. You do not \
+                       test and you do not open pull requests: the QA Agent does both.");
+    assert_eq!(rest(&d), rest(&role_template("frontend")));
+}
+
+#[test]
+fn any_other_role_is_the_backend_text_with_its_own_name() {
+    for (role, name) in [("docs", "Docs"), ("data", "Data"), ("mobile-app", "Mobile-app")] {
+        let t = role_template(role);
+        let (first, _) = t.split_once('\n').unwrap();
+        assert_eq!(first, format!("You are the {name} Agent in Gizai's Software team. You build what the card asks for. You do not test and you do not \
+                                   open pull requests: the QA Agent does both."));
+        assert_eq!(rest(&t), rest(&role_template("backend")), "{role}");
+    }
+}
+
+#[test]
+fn every_template_asks_for_the_result_line() {
     for role in ["frontend", "backend", "qa", "lead", "design", "devops", "docs"] {
         let t = role_template(role);
-        let last = t.trim_end().lines().last().unwrap();
-        assert_eq!(last, r#"GIZAI_RESULT: {"outcome":"<outcome>","summary":"<one paragraph for the task comment>","issues":[]}"#, "role {role}");
+        let lines: Vec<&str> = t.lines().collect();
+        let at = lines.iter().position(|l| *l == RESULT_LINE).unwrap_or_else(|| panic!("{role}: no result line in {t}"));
+        assert_eq!(lines[at - 1], "When you finish, end your final message with exactly one line:", "{role}");
+        assert!(lines.len() - at <= 2, "{role}: the result line is at the end: {t}");
     }
-    assert!(role_template("docs").starts_with("You are the Docs Agent"));
+}
+
+#[test]
+fn no_default_text_or_command_list_names_our_company_or_its_repositories() {
+    for role in ["lead", "backend", "frontend", "design", "qa", "devops", "docs"] {
+        let all = format!("{}\n{}", role_template(role), role_tools(role).join("\n")).to_lowercase();
+        for ours in ["yotech", "otus", "oranje", "jeffrey", "gizai.git", "github.com/"] {
+            assert!(!all.contains(ours), "{role} mentions {ours}");
+        }
+    }
 }

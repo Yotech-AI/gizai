@@ -1,10 +1,12 @@
-//! How Gizai reaches GitHub, and the checks behind Settings → GitHub.
-//! - A push goes over SSH with your keys (the default) or over HTTPS with the GitHub CLI's login, set for that one git
-//!   command only (`PushOver`). A failure says what to check, in plain words (`push_problem`).
-//! - The checks: gh's version and the account it is logged in as, ssh to git@github.com in batch mode, and gh's own
-//!   login in the browser (`GhLogin`).
+//! How Gizai reaches GitHub and Bitbucket, and the checks behind Settings → GitHub and Settings → Bitbucket.
+//! - A push to GitHub goes over SSH with your keys (the default) or over HTTPS with the GitHub CLI's login; a push to
+//!   Bitbucket over SSH with your keys. Either is set for that one git command only (`PushOver`). A failure says what
+//!   to check, in plain words and in the terms of the place it went to (`push_problem`).
+//! - The checks: gh's version and the account it is logged in as, ssh to git@github.com and git@bitbucket.org in batch
+//!   mode, and gh's own login in the browser (`GhLogin`).
 //!
-//! Gizai never stores a token or password and never asks for one: it uses gh's login and your SSH keys.
+//! For GitHub, Gizai never stores a token or password and never asks for one: it uses gh's login and your SSH keys.
+//! Bitbucket's login (your email and an API token, for its REST API) is in `bitbucket`.
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -16,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::github;
 
-/// How a card's branch goes to GitHub (Settings → GitHub → Push over).
+/// How a card's branch goes to GitHub (Settings → GitHub → Push over), or to Bitbucket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PushOver {
     /// SSH with your own keys, the default: an https://github.com/ address goes to git@github.com: instead.
@@ -24,11 +26,16 @@ pub enum PushOver {
     /// HTTPS with the GitHub CLI's login (`gh auth git-credential`) as git's only credential helper: a git@github.com:
     /// address goes to https://github.com/ instead.
     Https { gh: PathBuf },
+    /// To Bitbucket Cloud, over SSH with your own keys: an https://bitbucket.org/ address, also one with a user name in
+    /// it (https://jefsev@bitbucket.org/…, see `git_config_for`), goes to git@bitbucket.org: instead.
+    Bitbucket,
 }
 
 /// How a GitHub address starts, over HTTPS and over SSH.
 const HTTPS: [&str; 4] = ["https://github.com/", "http://github.com/", "https://www.github.com/", "http://www.github.com/"];
 const SSH: [&str; 2] = ["git@github.com:", "ssh://git@github.com/"];
+/// How a Bitbucket address starts over HTTPS (without a user name in it).
+const BITBUCKET_HTTPS: [&str; 4] = ["https://bitbucket.org/", "http://bitbucket.org/", "https://www.bitbucket.org/", "http://www.bitbucket.org/"];
 
 impl PushOver {
     /// The `-c` settings for one git command; they change no git config and no remote. git takes the longest rewrite
@@ -43,8 +50,54 @@ impl PushOver {
                 c.push(format!("credential.helper=!{} auth git-credential", sh_quote(&gh.to_string_lossy())));
                 c
             }
+            PushOver::Bitbucket => BITBUCKET_HTTPS.iter().map(|from| format!("url.git@bitbucket.org:.insteadOf={from}")).collect(),
         }
     }
+
+    /// `git_config` for a push to `addresses` (where it goes, as the remote has them written). To Bitbucket, an https
+    /// address with a user name in it (what Bitbucket's Clone button gives) goes to git@bitbucket.org: too: git rewrites
+    /// only the start of an address, so each user name needs a rule of its own. One with a password in it is left as it
+    /// is (its password never goes in a command line).
+    pub fn git_config_for(&self, addresses: &[String]) -> Vec<String> {
+        let mut c = self.git_config();
+        if *self == PushOver::Bitbucket {
+            for rule in addresses.iter().filter_map(|a| bitbucket_user_start(a)).map(|from| format!("url.git@bitbucket.org:.insteadOf={from}")) {
+                if !c.contains(&rule) {
+                    c.push(rule);
+                }
+            }
+        }
+        c
+    }
+
+    /// The place a push goes to, for the words a problem is said in.
+    fn host(&self) -> Host {
+        match self {
+            PushOver::Bitbucket => Host::Bitbucket,
+            _ => Host::GitHub,
+        }
+    }
+}
+
+/// "https://jefsev@bitbucket.org/" for https://jefsev@bitbucket.org/acme/shop.git; None for any other address.
+fn bitbucket_user_start(address: &str) -> Option<String> {
+    let (scheme, rest) = address.trim().split_once("://")?;
+    if !matches!(scheme, "https" | "http") {
+        return None;
+    }
+    let (user, path) = rest.split_once('@')?;
+    if user.is_empty() || user.contains(['/', ':']) {
+        return None;
+    }
+    let host = ["bitbucket.org/", "www.bitbucket.org/"].into_iter().find(|h| path.starts_with(h))?;
+    Some(format!("{scheme}://{user}@{host}"))
+}
+
+/// Where a push goes: GitHub or Bitbucket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Host {
+    GitHub,
+    Bitbucket,
 }
 
 /// What went wrong talking to GitHub, and what to do about it, in plain words.
@@ -76,11 +129,14 @@ impl std::fmt::Display for Problem {
 
 const OR_HTTPS: &str = "Or push over HTTPS with gh's login (Settings → GitHub).";
 
-/// What a failed push (or its dry run) means, from everything git said: what to check, in plain words. Else git's own
-/// words.
+/// What a failed push (or its dry run) means, from everything git said: what to check, in plain words, in the terms of
+/// the place it went to (GitHub, or Bitbucket for `PushOver::Bitbucket`). Else git's own words.
 pub fn push_problem(said: &str, over: &PushOver) -> Problem {
+    if over.host() == Host::Bitbucket {
+        return bitbucket_push_problem(said);
+    }
     let has = |s: &str| said.contains(s);
-    if let Some(p) = ssh_problem(said) {
+    if let Some(p) = ssh_problem(said, Host::GitHub) {
         return p;
     }
     if has("Repository not found") {
@@ -98,7 +154,8 @@ pub fn push_problem(said: &str, over: &PushOver) -> Problem {
             PushOver::Https { .. } if refused => Problem::new("GitHub refused gh's login for HTTPS",
                                                               "Use Log in with GitHub again in Settings → GitHub, or run gh auth login in a terminal."),
             PushOver::Https { .. } => not_logged_in_for_https(),
-            PushOver::Ssh => Problem::new("git tried HTTPS, and has no login for it",
+            // (Bitbucket's pushes are told apart above)
+            PushOver::Ssh | PushOver::Bitbucket => Problem::new("git tried HTTPS, and has no login for it",
                                           "Check where this repository pushes to (git remote -v), or push over HTTPS with gh's login (Settings → GitHub)."),
         };
     }
@@ -119,8 +176,45 @@ pub fn push_problem(said: &str, over: &PushOver) -> Problem {
     Problem::plain(last_words(said))
 }
 
+/// What a failed push to Bitbucket means, in Bitbucket's terms. Else git's (or Bitbucket's) own words.
+fn bitbucket_push_problem(said: &str) -> Problem {
+    let has = |s: &str| said.contains(s);
+    if let Some(p) = ssh_problem(said, Host::Bitbucket) {
+        return p;
+    }
+    if has("repository does not exist") || has("Repository not found") || has("repository not found") {
+        return Problem::new("Bitbucket has no repository at this address that your account can see",
+                            "Check the project's Bitbucket link, and that your Bitbucket account has access to the repository.");
+    }
+    if ["access denied", "Access denied", "Forbidden", "read-only", "read only"].iter().any(|s| has(s)) {
+        return Problem::new("Your Bitbucket account can't push to this repository",
+                            "Ask a workspace admin for write access to it. An access key (a repository's deployment key) can only read.");
+    }
+    if ["could not read Username", "could not read Password", "terminal prompts disabled", "Authentication failed"].iter().any(|s| has(s)) {
+        return Problem::new("git tried HTTPS, and has no login for it",
+                            "Check where this repository pushes to (git remote -v): Gizai pushes to Bitbucket over SSH, with your SSH keys.");
+    }
+    if has("[rejected]") || has("non-fast-forward") || has("(fetch first)") {
+        return Problem::new("The branch on Bitbucket has commits this one doesn't",
+                            "Gizai never forces a push: merge Bitbucket's copy into the branch first.");
+    }
+    if ["Could not resolve host", "Failed to connect to", "Couldn't connect to server", "Connection timed out", "Network is unreachable"].iter().any(|s| has(s)) {
+        return Problem::new("Can't reach bitbucket.org", "Check your internet connection, then try again.");
+    }
+    if has("src refspec") && has("does not match any") {
+        return Problem::new("The repository has no commits yet", "Gizai tries a push with its latest commit: commit something first.");
+    }
+    Problem::plain(last_words(said))
+}
+
+/// Where you add an SSH key on Bitbucket.
+const BITBUCKET_KEYS: &str = "Bitbucket → Personal settings → SSH keys (bitbucket.org/account/settings/ssh-keys/)";
+
 /// What ssh said went wrong, in plain words.
-fn ssh_problem(said: &str) -> Option<Problem> {
+fn ssh_problem(said: &str, host: Host) -> Option<Problem> {
+    if host == Host::Bitbucket {
+        return bitbucket_ssh_problem(said);
+    }
     let has = |s: &str| said.contains(s);
     if has("Permission denied (publickey") {
         Some(Problem::new("GitHub didn't accept your SSH key",
@@ -129,7 +223,7 @@ fn ssh_problem(said: &str) -> Option<Problem> {
         Some(Problem::new("This computer doesn't trust GitHub's SSH host key yet",
                           "Run ssh -T git@github.com once in a terminal and answer yes."))
     } else if has("ssh: not found") || has("ssh: command not found") || has("cannot run ssh") {
-        Some(ssh_missing())
+        Some(ssh_missing(Host::GitHub))
     } else if ["ssh: connect to host", "Could not resolve hostname", "Connection closed by", "kex_exchange_identification", "Connection reset by"].iter().any(|s| has(s)) {
         Some(Problem::new("Can't reach github.com over SSH",
                           format!("Check your internet connection, and that no firewall blocks SSH (port 22). {OR_HTTPS}")))
@@ -138,8 +232,30 @@ fn ssh_problem(said: &str) -> Option<Problem> {
     }
 }
 
-fn ssh_missing() -> Problem {
-    Problem::new("ssh isn't installed", format!("Install OpenSSH. {OR_HTTPS}"))
+/// What ssh said went wrong talking to Bitbucket, in Bitbucket's terms.
+fn bitbucket_ssh_problem(said: &str) -> Option<Problem> {
+    let has = |s: &str| said.contains(s);
+    if has("Permission denied (publickey") {
+        Some(Problem::new("Bitbucket didn't accept your SSH key",
+                          format!("Add your public key in {BITBUCKET_KEYS}, or load it into ssh-agent with ssh-add.")))
+    } else if has("Host key verification failed") {
+        Some(Problem::new("This computer doesn't trust Bitbucket's SSH host key yet",
+                          "Run ssh -T git@bitbucket.org once in a terminal and answer yes."))
+    } else if has("ssh: not found") || has("ssh: command not found") || has("cannot run ssh") {
+        Some(ssh_missing(Host::Bitbucket))
+    } else if ["ssh: connect to host", "Could not resolve hostname", "Connection closed by", "kex_exchange_identification", "Connection reset by"].iter().any(|s| has(s)) {
+        Some(Problem::new("Can't reach bitbucket.org over SSH",
+                          "Check your internet connection, and that no firewall blocks SSH (port 22)."))
+    } else {
+        None
+    }
+}
+
+fn ssh_missing(host: Host) -> Problem {
+    match host {
+        Host::GitHub => Problem::new("ssh isn't installed", format!("Install OpenSSH. {OR_HTTPS}")),
+        Host::Bitbucket => Problem::new("ssh isn't installed", "Install OpenSSH: Gizai pushes to Bitbucket over SSH."),
+    }
 }
 
 fn not_logged_in_for_https() -> Problem {
@@ -149,7 +265,20 @@ fn not_logged_in_for_https() -> Problem {
 
 /// GitHub gave no answer within `limit`.
 pub fn no_answer(limit: Duration) -> Problem {
-    Problem::new(format!("GitHub gave no answer within {}", span(limit)), "Check your internet connection, then try again.")
+    no_answer_from(Host::GitHub, limit)
+}
+
+/// The place a push went to (`over`) gave no answer within `limit`.
+pub fn push_no_answer(over: &PushOver, limit: Duration) -> Problem {
+    no_answer_from(over.host(), limit)
+}
+
+fn no_answer_from(host: Host, limit: Duration) -> Problem {
+    let name = match host {
+        Host::GitHub => "GitHub",
+        Host::Bitbucket => "Bitbucket",
+    };
+    Problem::new(format!("{name} gave no answer within {}", span(limit)), "Check your internet connection, then try again.")
 }
 
 /// "2 minutes", "30 seconds".
@@ -197,10 +326,9 @@ fn sh_quote(s: &str) -> String {
     }
 }
 
-/// Whether ssh reaches GitHub with your keys, in batch mode so it never asks: `ssh -T git@github.com`, which GitHub
-/// answers with "Hi <login>! You've successfully authenticated, …". Ok: the account your key belongs to. It runs your
-/// own GIT_SSH_COMMAND when you set one, the way git does for a push.
-pub fn ssh_check(limit: Duration) -> Result<String, Problem> {
+/// What `ssh -T <to>` says, in batch mode so it never asks. It runs your own GIT_SSH_COMMAND when you set one, the way
+/// git does for a push.
+fn ssh_t(to: &str, host: Host, limit: Duration) -> Result<String, Problem> {
     let mut cmd = match std::env::var("GIT_SSH_COMMAND") {
         Ok(own) if !own.trim().is_empty() => {
             let mut c = Command::new("sh");
@@ -213,18 +341,40 @@ pub fn ssh_check(limit: Duration) -> Result<String, Problem> {
             c
         }
     };
-    cmd.args(["-T", "git@github.com"]).env("SSH_ASKPASS_REQUIRE", "never");
+    cmd.args(["-T", to]).env("SSH_ASKPASS_REQUIRE", "never");
     let (_, out, err) = github::run(cmd, None, limit).map_err(|e| match e.kind() {
-        ErrorKind::NotFound => ssh_missing(),
-        ErrorKind::TimedOut => no_answer(limit),
+        ErrorKind::NotFound => ssh_missing(host),
+        ErrorKind::TimedOut => no_answer_from(host, limit),
         _ => Problem::plain(format!("can't run ssh: {e}")),
     })?;
-    let said = format!("{err}\n{out}");
+    Ok(format!("{err}\n{out}"))
+}
+
+/// Whether ssh reaches GitHub with your keys, in batch mode so it never asks: `ssh -T git@github.com`, which GitHub
+/// answers with "Hi <login>! You've successfully authenticated, …". Ok: the account your key belongs to. It runs your
+/// own GIT_SSH_COMMAND when you set one, the way git does for a push.
+pub fn ssh_check(limit: Duration) -> Result<String, Problem> {
+    let said = ssh_t("git@github.com", Host::GitHub, limit)?;
     // GitHub ends the session with exit code 1 even when the key is accepted, so its words decide
     if let Some(who) = said.lines().filter(|l| l.contains("successfully authenticated")).find_map(|l| l.trim().strip_prefix("Hi ")?.split('!').next()) {
         return Ok(who.trim().to_string());
     }
-    Err(ssh_problem(&said).unwrap_or_else(|| Problem::plain(last_words(&said))))
+    Err(ssh_problem(&said, Host::GitHub).unwrap_or_else(|| Problem::plain(last_words(&said))))
+}
+
+/// Whether ssh reaches Bitbucket with your keys, in batch mode so it never asks: `ssh -T git@bitbucket.org`. Bitbucket
+/// answers a key it accepts with "authenticated via ssh key." (or "logged in as <username>." for an older one) and "You
+/// can use git to connect to Bitbucket. Shell access is disabled", not the way GitHub does; its words decide, not its
+/// exit code. Ok: the account your key belongs to, when Bitbucket names it.
+pub fn bitbucket_ssh_check(limit: Duration) -> Result<Option<String>, Problem> {
+    let said = ssh_t("git@bitbucket.org", Host::Bitbucket, limit)?;
+    if let Some(who) = said.lines().find_map(|l| word_after(l, "logged in as ")) {
+        return Ok(Some(who));
+    }
+    if ["authenticated via", "You can use git to connect to Bitbucket", "You can use git or hg to connect to Bitbucket"].iter().any(|w| said.contains(w)) {
+        return Ok(None);
+    }
+    Err(bitbucket_ssh_problem(&said).unwrap_or_else(|| Problem::plain(last_words(&said))))
 }
 
 /// Why gh couldn't be run, with what to do.

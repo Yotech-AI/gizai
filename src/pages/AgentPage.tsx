@@ -5,6 +5,7 @@ import { agentNextTask, agentRuns, agentStats, getAgent, getTeam, listTasks, set
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
+import { usePending } from "../lib/usePending";
 import { relTime } from "../lib/format";
 import { roleLabel } from "../lib/agents";
 import { andList, boardOrder } from "../lib/columns";
@@ -15,6 +16,7 @@ import { formatCost, dayRate } from "../lib/runs";
 import { useDrawer } from "../lib/drawers";
 import type { DayStat, Run } from "../types";
 import { Avatar } from "../components/Avatar";
+import { BusyButton } from "../components/BusyButton";
 import { MarkdownView } from "../components/MarkdownView";
 import { outcomeBadge } from "../components/RunPanel";
 import { RunHistory } from "../components/RunHistory";
@@ -60,6 +62,9 @@ export function AgentPage({ id }: { id: string }) {
   const live = useLiveRuns().filter((r) => r.agentId === id);
   const open = useDrawer();
   const [msg, setMsg] = useState<string | null>(null);
+  // Run spins until the agent shows as working, or its run ended (it can end before it shows), or there was nothing to
+  // pick up (the call returns null).
+  const pending = usePending<"run">((_, runId) => live.length > 0 || runId === null || !!runs?.some((r) => r.id === runId && r.endedAt != null));
   if (error) return <div className="error-banner">{error}</div>;
   if (!agent) return null;
   const taskOf = (r: Run) => tasks?.find((t) => t.id === r.taskId);
@@ -72,14 +77,12 @@ export function AgentPage({ id }: { id: string }) {
   const spent = (runs ?? []).filter((r) => r.createdAt >= monthStart).reduce((s, r) => s + r.costUsdMicros, 0);
   const total = (days ?? []).reduce((s, d) => s + d.succeeded + d.failed, 0);
   const ok = (days ?? []).reduce((s, d) => s + d.succeeded, 0);
-  const runNext = async () => {
+  const runNext = () => pending.act("run", async () => {
     setMsg(null);
-    try {
-      const task = await agentNextTask(id);
-      if (!task) { setMsg(`Nothing to pick up: no card waits for ${agent.name} in an Auto column right now.`); return; }
-      await startRun(task, id);
-    } catch (e) { setMsg(String(e)); }
-  };
+    const task = await agentNextTask(id);
+    if (!task) { setMsg(`Nothing to pick up: no card waits for ${agent.name} in an Auto column right now.`); return null; }
+    return startRun(task, id);
+  }, (e) => setMsg(String(e)));
   return (
     <>
       <div className="topbar"><div className="crumbs"><a href={href({ page: "team" })}>Team</a><span className="sep">/</span><b>{agent.name}</b></div></div>
@@ -92,7 +95,7 @@ export function AgentPage({ id }: { id: string }) {
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>
-              <button className="btn" onClick={runNext} disabled={state !== "idle"}><Play className="icon" />Run</button>
+              <BusyButton className="btn" pending={pending} name="run" busyLabel="Starting…" icon={<Play className="icon" />} onClick={runNext} disabled={state !== "idle"}>Run</BusyButton>
               <button className="btn" onClick={() => setAgentStatus(id, agent.status === "active" ? "paused" : "active").catch((e) => setMsg(String(e)))}>
                 {agent.status === "active" ? <><Pause className="icon" />Pause</> : <><Play className="icon" />Resume</>}</button>
               <span className={`state ${state}`}>{state}</span>

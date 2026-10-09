@@ -60,3 +60,34 @@ describe("following a pull request", () => {
     expect(pullHint(card("review", { prUrl: URL, prState: "closed" }), "main")).toMatch(/^Closed on GitHub without a merge\. Open pull request opens a new one\.$/);
   });
 });
+
+// GA-60: a Bitbucket project's pull request, next to GitHub's (which reads exactly as before).
+describe("pull requests on Bitbucket", () => {
+  const BB = "https://bitbucket.org/acme/shop/pull-requests/12";
+  it("reads the number from a Bitbucket link", () => {
+    expect(pullNumber(BB)).toBe(12);
+    expect(pullNumber(BB + "/")).toBe(12);
+    expect(pullNumber(" " + BB + " ")).toBe(12);
+    expect(pullNumber("https://bitbucket.org/acme/shop/pull-requests")).toBeNull();
+    expect(pullNumber("https://bitbucket.org/acme/shop/pull-requests/12/diff")).toBeNull();
+    expect(pullLabel(BB)).toBe("PR #12");
+  });
+  it("says Bitbucket, the SSH keys and no gh in the line under the pull request", () => {
+    const hint = pullHint(card("review"), "main", "Done", "bitbucket");
+    expect(hint).toBe("Pushes gizai/shop-1-export with your SSH keys and opens a pull request into main on Bitbucket. When it is merged, the card moves to Done.");
+    expect(hint).not.toContain("gh");
+    expect(hint).not.toContain("GitHub");
+    expect(pullHint(card("review", { branch: null }), "develop", "Deploy", "bitbucket"))
+      .toBe("Pushes the card's branch with your SSH keys and opens a pull request into develop on Bitbucket. When it is merged, the card moves to Deploy.");
+    expect(pullHint(card("review", { prUrl: BB, prState: "open" }), "main", "Done", "bitbucket"))
+      .toBe("When it is merged on Bitbucket, the card moves to Done and its worktree is removed. Push branch adds new commits from gizai/shop-1-export to it.");
+    expect(pullHint(card("ready", { prUrl: BB, prState: "draft" }), "main", "Deploy", "bitbucket")).toBe("When it is merged on Bitbucket, the card moves to Deploy and its worktree is removed.");
+    expect(pullHint(card("done", { prUrl: BB, prState: "merged" }), "main", "Done", "bitbucket")).toBe("Merged on Bitbucket.");
+    expect(pullHint(card("review", { prUrl: BB, prState: "closed" }), "main", "Done", "bitbucket")).toBe("Closed on Bitbucket without a merge. Open pull request opens a new one.");
+    expect(pullHint(card("in_progress", { prUrl: BB, prState: "closed" }), "main", "Done", "bitbucket")).toBe("Closed on Bitbucket without a merge.");
+  });
+  it("still says GitHub and gh when the host is GitHub or not given", () => {
+    expect(pullHint(card("review"), "main", "Done", "github")).toBe(pullHint(card("review"), "main"));
+    expect(pullHint(card("review"), "main", "Deploy")).toBe("Pushes gizai/shop-1-export to GitHub with your git login and opens a pull request into main with gh. When it is merged, the card moves to Deploy.");
+  });
+});

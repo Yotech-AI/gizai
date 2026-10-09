@@ -74,20 +74,33 @@ const KNOWN: [(&str, &str, &str, &str); 5] = [
 
 /// The known CLIs installed here (your login shell's PATH) that aren't in the list yet, ready to add.
 pub fn find(st: &AppState) -> Result<Vec<Cli>, String> {
-    let path = crate::runs::command_path();
     let have = core_clis::list(&st.db).map_err(|e| e.to_string())?;
+    Ok(find_in(&have, &crate::runs::command_path()))
+}
+
+/// The known CLIs found in `path` that aren't in `have` yet.
+fn find_in(have: &[Cli], path: &std::ffi::OsStr) -> Vec<Cli> {
     let listed = |program: &str| have.iter().any(|c| {
         let cmd = core_clis::expand_home(c.command.trim(), &home());
         Path::new(&cmd).file_name().is_some_and(|n| n == program) && c.env.is_empty()
     });
-    Ok(KNOWN.iter()
+    KNOWN.iter()
         .filter(|(program, _, name, _)| !listed(program) && !have.iter().any(|c| c.name.eq_ignore_ascii_case(name)))
         .filter_map(|(program, kind, name, args)| {
-            let found = resolve_program(program, &path)?;
+            let found = resolve_program(program, path)?;
             Some(Cli { id: String::new(), name: name.to_string(), kind: kind.to_string(), command: found.display().to_string(),
                        env: vec![], args: args.to_string() })
         })
-        .collect())
+        .collect()
+}
+
+/// A new install's first start (`gizai_core::seed::ensure_seed_with_agents`): Codex, ready to add, when Claude Code isn't
+/// installed but Codex is (your login shell's PATH, as `find` looks). None when Claude Code is found, or Codex isn't.
+pub fn codex_at_first_start() -> Option<Cli> {
+    if crate::runs::find_claude().is_some() {
+        return None;
+    }
+    find_in(&[], &crate::runs::command_path()).into_iter().find(|c| c.kind == "codex")
 }
 
 /// What a run on `cli` starts: its kind, program, environment and arguments. `bin_override` replaces the program (tests).

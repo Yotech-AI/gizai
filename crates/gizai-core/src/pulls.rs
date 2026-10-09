@@ -1,6 +1,7 @@
-//! A card's pull request on GitHub: its link and state as Gizai last saw them, which cards the PR check follows, and
-//! what a merge does to its card (Deploy, or Done for a team without a Deploy column). Talking to GitHub (gh, git push) is gizai-agents' `github`; the app joins
-//! the two.
+//! A card's pull request on GitHub or Bitbucket: its link and state as Gizai last saw them, which cards the PR check
+//! follows, and what a merge does to its card (Deploy, or Done for a team without a Deploy column). Talking to GitHub
+//! (gh) and Bitbucket (its REST API) is gizai-agents' `github` and `bitbucket`, git push its `worktree`; the app joins
+//! them.
 use rusqlite::OptionalExtension;
 use serde_json::json;
 
@@ -10,7 +11,11 @@ use crate::{Error, Result, ids, projects, repo_url, tasks};
 /// The states Gizai keeps for a pull request.
 pub const STATES: [&str; 4] = ["open", "draft", "merged", "closed"];
 
-/// A card that can have a pull request: it has a branch, and its project a local repository linked to GitHub.
+/// The providers a card can have a pull request on.
+pub const PROVIDERS: [&str; 2] = ["github", "bitbucket"];
+
+/// A card that can have a pull request: it has a branch, and its project a local repository linked to GitHub or
+/// Bitbucket.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrCard {
     pub task_id: String,
@@ -22,9 +27,11 @@ pub struct PrCard {
     pub pr_state: Option<String>,
     /// The project's local repository (its main checkout).
     pub repo_path: String,
-    /// The GitHub repository as "owner/name".
+    /// Where the repository is: "github" or "bitbucket".
+    pub provider: String,
+    /// The repository as "owner/name" (GitHub) or "workspace/repository" (Bitbucket).
     pub repo: String,
-    /// Its link, https://github.com/owner/name.
+    /// Its link, https://github.com/owner/name or https://bitbucket.org/workspace/repository.
     pub repo_url: String,
     /// The branch pull requests go into.
     pub default_branch: String,
@@ -39,27 +46,27 @@ impl PrCard {
     }
 }
 
-/// The card's pull request details, or why it can't have one: its project needs a GitHub link (and so a local
-/// repository), and the card a branch (an agent's first run makes it).
+/// The card's pull request details, or why it can't have one: its project needs a GitHub or Bitbucket link (and so a
+/// local repository), and the card a branch (an agent's first run makes it).
 pub fn card(db: &Db, task_id: &str) -> Result<PrCard> {
     let t = tasks::get(db, task_id)?;
     let project_id = t.project_id.clone().ok_or_else(|| Error::Invalid(format!("{} has no project", t.identifier)))?;
     let p = projects::get(db, &project_id)?;
     let link = match p.repo_url.as_deref() {
-        Some(u) => repo_url::normalize(u)?.filter(|l| l.provider == "github"),
+        Some(u) => repo_url::normalize(u)?.filter(|l| PROVIDERS.contains(&l.provider.as_str())),
         None => None,
     };
     let (Some(link), Some(repo_path)) = (link, p.repo_path.clone().filter(|r| !r.trim().is_empty())) else {
-        return Err(Error::Invalid(format!("Link {} to its GitHub repository first (project page → Edit → GitHub repository)", p.name)));
+        return Err(Error::Invalid(format!("Link {} to its GitHub repository first, or to its Bitbucket repository (project page → Edit)", p.name)));
     };
-    let (Some(owner), Some(name)) = (link.owner, link.name) else {
-        return Err(Error::Invalid(format!("{} isn't a GitHub repository link", link.url)));
+    let Some(repo) = link.full_name() else {
+        return Err(Error::Invalid(format!("{} isn't a GitHub or Bitbucket repository link", link.url)));
     };
     let branch = t.branch.clone().filter(|b| !b.trim().is_empty())
         .ok_or_else(|| Error::Invalid(format!("{} has no branch yet: an agent makes one when it first works on the card", t.identifier)))?;
     Ok(PrCard {
         task_id: t.id, identifier: t.identifier, title: t.title, category: t.state_category, branch, pr_url: t.pr_url, pr_state: t.pr_state,
-        repo_path, repo: format!("{owner}/{name}"), repo_url: link.url, default_branch: p.default_branch,
+        repo_path, provider: link.provider, repo, repo_url: link.url, default_branch: p.default_branch,
     })
 }
 
@@ -70,8 +77,8 @@ pub fn to_check(db: &Db) -> Result<Vec<PrCard>> {
             "SELECT t.id FROM tasks t
              JOIN projects p ON p.id = t.project_id AND p.deleted_at IS NULL
              JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL
-             WHERE t.deleted_at IS NULL AND coalesce(t.branch, '') <> '' AND r.provider = 'github'
-               AND t.state_category NOT IN ('done', 'cancelled')
+             WHERE t.deleted_at IS NULL AND coalesce(t.branch, '') <> ''
+               AND r.provider IN ('github', 'bitbucket') AND t.state_category NOT IN ('done', 'cancelled')
              ORDER BY t.sort_key, t.created_at")?;
         Ok(st.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
     })?;
@@ -107,7 +114,7 @@ pub fn record(db: &Db, actor: Option<&str>, task_id: &str, url: &str, state: &st
     })
 }
 
-/// GitHub merged the card's pull request: records it and moves a card in Review to Review's next column (without one,
+/// GitHub or Bitbucket merged the card's pull request: records it and moves a card in Review to Review's next column (without one,
 /// to the team's first Deploy column, else Done; a card in another open column goes there too). A card that is already
 /// in Deploy, Done or Cancelled stays. On an Auto column its agents pick it up (the caller pulls the queue); on a
 /// Manual one nothing starts. The activity says Gizai did it; `by` is the person it did it for (the card's

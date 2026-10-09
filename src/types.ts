@@ -17,6 +17,9 @@ export type Project = {
   id: string; clientId?: string | null; clientName?: string | null; number: string; key: string; name: string; status: string;
   color?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null; defaultBranch: string; teamId?: string | null;
   budgetAmountMinor?: number | null; budgetHours?: number | null; openTasks: number; doneTasks: number; updatedAt: number;
+  /** AI usage: the API cost of the runs on its cards this month (UTC), an estimate at API prices; and how many of those runs
+   *  have an unknown cost (tokens but no cost: a CLI that reports none). */
+  aiCostUsdMicros: number; aiUnknownCostRuns: number;
   /** How a new worktree is prepared: paths copied from the main checkout, the install of what is missing, a setup command. */
   worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
 };
@@ -33,7 +36,7 @@ export type Task = {
   priority: number; assigneeId?: string | null; assigneeName?: string | null; assigneeKind?: string | null; labels: Label[];
   hold?: string | null; holdReason?: string | null; bounceCount: number; failCount: number; sortKey: string;
   branch?: string | null;
-  /** The card's pull request on GitHub, and its state as Gizai last saw it. */
+  /** The card's pull request on GitHub or Bitbucket, and its state as Gizai last saw it. */
   prUrl?: string | null; prState?: PullState | null;
   /** On: the QA Agent tests the card before Review. Off: it goes straight to Review (a small fix). */
   testing: boolean;
@@ -211,6 +214,18 @@ export type ConnectionCheckItem = {
 };
 export type ConnectionCheck = { ok: boolean; pushOver: PushOver; checks: ConnectionCheckItem[] };
 
+// ---- Settings → Bitbucket ----
+/** Whether Gizai can use Bitbucket: your Atlassian email, whether an API token is saved (the token itself never comes back),
+ * and the account it belongs to. Pushes go over SSH with your own keys. */
+export type BitbucketStatus = {
+  email?: string | null;
+  hasToken: boolean;
+  /** Who the token belongs to. */
+  account?: string | null;
+  /** Why there is none, with what to do. */
+  accountProblem?: GithubProblem | null;
+};
+
 // ---- updates: Settings → Updates and the notice above Company ----
 /** A release on GitHub: `version` "0.1.6" from the tag "v0.1.6"; `url` is its page, `notes` its Markdown notes. */
 export type Release = { version: string; tag: string; name?: string | null; url?: string | null; publishedAt?: string | null; notes?: string | null };
@@ -248,6 +263,19 @@ export type UpdateStatus = {
   repo: string;
 };
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
+
+// ---- the Usage page (gizai-core usage.rs) ----
+export type UsagePeriod = "today" | "7d" | "30d" | "month";
+/** What a set of runs used. `runs` includes the chat turns; input tokens include cache reads and writes; the cost leaves out the
+ *  `unknownCostRuns` (tokens but no cost: a CLI that reports none) and is an estimate at API prices, not a bill. */
+export type UsageTotals = { runs: number; chatTurns: number; inputTokens: number; outputTokens: number; costUsdMicros: number; unknownCostRuns: number };
+export type UsageDay = { dayStart: number; totals: UsageTotals };
+export type AgentUsage = { agentId: string; name: string; roleKey?: string | null; totals: UsageTotals };
+export type ProjectUsage = { projectId: string; number: string; key: string; name: string; color?: string | null; totals: UsageTotals };
+/** One period (UTC days, from `since` up to `until`). The agents add up to `total`; so do the projects with `chat` (runs without a
+ *  card: the Team Lead's chat turns and board checks) and `noProject` (runs on cards without a project). */
+export type Usage = { since: number; until: number; total: UsageTotals; days: UsageDay[]; agents: AgentUsage[]; projects: ProjectUsage[];
+  chat: UsageTotals; noProject: UsageTotals };
 
 // ---- chat with the Team Lead ----
 export type ChatThread = { id: string; agentId: string; title: string; sessionId?: string | null; createdAt: number; updatedAt: number;

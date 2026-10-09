@@ -31,6 +31,11 @@ fn keep(a: &Args, k: &str, current: &Option<String>) -> Option<String> {
     }
 }
 
+/// The argument a project's repository link is in: `repository`, or `github`, its old name.
+fn repository_arg(a: &Args) -> &'static str {
+    if a.text("repository").is_some() { "repository" } else { "github" }
+}
+
 // ---- guards: what the chat may not do, whatever it is asked ----
 
 /// The Team Lead reads text other people and agents wrote, so it can't hand an agent unlimited powers: no
@@ -161,24 +166,14 @@ pub(crate) fn save_contact(cx: &Cx, a: &Args) -> Result<Value, String> {
 pub(crate) fn create_project(cx: &Cx, a: &Args) -> Result<Value, String> {
     let name = a.req("name")?;
     let repo_path = a.opt("repo_path").map(|r| checked_repo(&r)).transpose()?;
-    let taken: Vec<String> = projects::list(cx.db()).map_err(err)?.into_iter().map(|p| p.key).collect();
     let key = match a.opt("key") {
         Some(k) => k.to_uppercase(),
-        None => {
-            let base = projects::suggest_key(&name);
-            let mut k = base.clone();
-            let mut n = 2;
-            while taken.contains(&k) {
-                k = format!("{}{n}", &base[..base.len().min(5)]);
-                n += 1;
-            }
-            k
-        }
+        None => projects::unused_key(cx.db(), &name).map_err(err)?,
     };
     let client_id = match a.opt("client") { Some(c) => Some(resolve::client(cx, &c)?.id), None => None };
     let id = projects::create(cx.db(), cx.actor, ProjectInput {
         client_id, name, key, status: a.opt("status"), goal_md: a.opt("goal_md"), repo_path,
-        default_branch: a.opt("default_branch"), color: a.opt("color"), repo_url: a.opt("github"), ..Default::default()
+        default_branch: a.opt("default_branch"), color: a.opt("color"), repo_url: a.opt(repository_arg(a)), ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &id).map_err(err)?;
@@ -203,12 +198,13 @@ pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         status: a.opt("status").or(Some(cur.status.clone())), goal_md: keep(a, "goal_md", &cur.goal_md),
         repo_path, default_branch: a.opt("default_branch").or(Some(cur.default_branch.clone())),
         color: keep(a, "color", &cur.color), budget_amount_minor: cur.budget_amount_minor, budget_hours: cur.budget_hours,
-        repo_url: keep(a, "github", &cur.repo_url), ..Default::default()
+        repo_url: keep(a, repository_arg(a), &cur.repo_url), ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &cur.id).map_err(err)?;
     let label = format!("{} ({})", p.name, p.key);
-    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path, "github": p.repo_url}, "link": link("project", &p.id, &label)}))
+    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path,
+              "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref())}, "link": link("project", &p.id, &label)}))
 }
 
 // ---- tasks ----
@@ -320,10 +316,13 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         check_model(cx, a.opt("model").as_deref(), a.opt("effort").as_deref()).await?;
     }
     let team_id = resolve::team_of(cx, None)?.id;
+    let (name, role) = (a.req("name")?, a.req("role")?);
+    // No list given: its role's, as the agent form starts it.
+    let allowed_tools = a.list("allowed_tools").filter(|l| !l.is_empty()).unwrap_or_else(|| gizai_core::seed::role_tools(&team::role_key(&role)));
     let id = team::add_agent(cx.db(), cx.actor, &team_id, AgentInput {
-        name: a.req("name")?, role_key: a.req("role")?, title: a.opt("title"), adapter: cli.map(|c| c.id).unwrap_or_default(), model: a.opt("model"),
+        name, role_key: role, title: a.opt("title"), adapter: cli.map(|c| c.id).unwrap_or_default(), model: a.opt("model"),
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
-        allowed_tools: a.list("allowed_tools").unwrap_or_default(), wakeup: String::new(),
+        allowed_tools, wakeup: String::new(),
         heartbeat_minutes: None, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
         max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None,
     }).map_err(err)?;

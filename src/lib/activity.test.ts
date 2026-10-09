@@ -27,3 +27,16 @@ describe("describeChange", () => {
       .toBe("removed its worktree and deleted branch gizai/kade-1-x after the merge");
   });
 });
+
+// GA-60: the activity names Bitbucket for a Bitbucket pull request (its link says which).
+describe("describeChange on Bitbucket", () => {
+  it("describes a card's pull request on Bitbucket", () => {
+    const pr = "https://bitbucket.org/acme/shop/pull-requests/12";
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "open", opened: true }))).toBe("opened pull request #12 on Bitbucket");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "open" }))).toBe("saw pull request #12 open on Bitbucket");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "draft" }))).toBe("saw pull request #12 as a draft on Bitbucket");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "merged" }))).toBe("saw pull request #12 merged on Bitbucket");
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "closed" }))).toBe("saw pull request #12 closed on Bitbucket");
+    expect(describeChange(e("tasks", "update", { pullRequest: "https://bitbucket.org/acme/shop/pull-requests", opened: true }))).toBe("opened a pull request on Bitbucket");
+  });
+});

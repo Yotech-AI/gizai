@@ -17,6 +17,7 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 .btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--raised); color: var(--text); font: inherit; font-size: var(--fs); font-weight: 500; white-space: nowrap; cursor: pointer; text-decoration: none; }
 .btn:hover { background: var(--hover); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: default; pointer-events: none; }
+.btn[aria-busy="true"]:disabled { opacity: 1; } /* BusyButton: the one working ("Starting…") stays clear; its neighbours dim */
 .btn .icon { width: 15px; height: 15px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }

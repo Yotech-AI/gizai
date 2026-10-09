@@ -369,6 +369,9 @@ pub fn rename_state(app: AppHandle, st: State<AppState>, state_id: String, name:
 /// The starting instructions for a role, to prefill the agent form.
 #[tauri::command]
 pub fn role_template(role: String) -> String { gizai_core::seed::role_template(&team::role_key(&role)) }
+/// The allowed commands a role starts with, to prefill the agent form.
+#[tauri::command]
+pub fn role_tools(role: String) -> Vec<String> { gizai_core::seed::role_tools(&team::role_key(&role)) }
 
 // ---- agent runs ----
 use crate::runs;
@@ -459,6 +462,13 @@ pub fn agent_runs(st: State<AppState>, id: String, limit: i64) -> R<Vec<Run>> { 
 #[tauri::command]
 pub fn agent_next_task(st: State<AppState>, id: String) -> R<Option<String>> { gizai_core::workflow::next_task_for(&st.db, &id).map_err(e) }
 
+/// The Usage page: the tokens and API cost of the runs and chat turns in `period` (today, 7d, 30d or month), in total, per
+/// day, per agent and per project.
+#[tauri::command]
+pub fn usage_summary(st: State<AppState>, period: String) -> R<gizai_core::usage::Usage> {
+    gizai_core::usage::for_period(&st.db, &period, gizai_core::ids::now_ms()).map_err(e)
+}
+
 // ---- chat with the Team Lead ----
 use crate::chat;
 
@@ -544,6 +554,22 @@ pub async fn github_login_wait(st: State<'_, AppState>) -> R<Option<String>> {
 }
 #[tauri::command]
 pub fn github_login_cancel(st: State<AppState>) { crate::github::login_cancel(&st) }
+
+// ---- Settings → Bitbucket ----
+/// Whether Gizai can use Bitbucket: the login in the keychain (email and API token) and the account it belongs to.
+#[tauri::command]
+pub async fn bitbucket_status(st: State<'_, AppState>) -> R<crate::bitbucket::BitbucketStatus> { Ok(crate::bitbucket::status(&st).await) }
+/// Saves your Atlassian email and API token in the keychain, once Bitbucket has accepted them.
+#[tauri::command]
+pub async fn bitbucket_save_login(st: State<'_, AppState>, email: String, token: String) -> R<crate::bitbucket::BitbucketStatus> {
+    crate::bitbucket::save_login(&st, email, token).await
+}
+/// Removes the Bitbucket login from the keychain.
+#[tauri::command]
+pub async fn bitbucket_remove_login(st: State<'_, AppState>) -> R<crate::bitbucket::BitbucketStatus> { crate::bitbucket::remove_login(&st).await }
+/// Check connection: the token's account, ssh to Bitbucket, and whether you can push to each project with a Bitbucket link.
+#[tauri::command]
+pub async fn bitbucket_check(st: State<'_, AppState>) -> R<crate::github::ConnectionCheck> { Ok(crate::bitbucket::check(&st).await) }
 
 // ---- worktrees of finished cards (Settings → Data) ----
 /// The worktrees of Done and Cancelled cards, with their disk use.

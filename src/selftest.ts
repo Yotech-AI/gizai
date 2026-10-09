@@ -1,5 +1,6 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
 import { archiveTask, getTask, listChatThreads, listLabels, listTasks } from "./api";
+import { periodDays } from "./lib/usage";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -158,7 +159,8 @@ async function dragOnto(handle: HTMLElement, target: () => HTMLElement | null) {
 }
 
 type ProbeTeam = { states: { id: string; name: string; category: string; sortKey: string; auto?: boolean; nextStateId?: string | null; agentIds?: string[] }[];
-  members: { actorId: string; name: string; kind: string; roleKey: string; wakeup?: string | null; heartbeatMinutes?: number | null; model?: string | null; effort?: string | null }[];
+  members: { actorId: string; name: string; kind: string; roleKey: string; wakeup?: string | null; heartbeatMinutes?: number | null; model?: string | null; effort?: string | null;
+    allowedTools?: string[] }[];
   branches?: { key: string; name: string; roles: string[] }[] };
 
 /** GA-53, Team page against the demo data (no agents yet): the organisation chart's empty spot opens the agent form with the
@@ -185,6 +187,26 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
     wake_up: !!q("input[aria-label=Minutes]", dialog) || (dialog.textContent ?? "").includes("Wakes up"),
     // GA-39's Tools section next to this card's Work section (merged in from main)
     sections: [...dialog.querySelectorAll("h3")].map((h) => h.textContent ?? "") };
+  // GA-63: the role fills in its allowed commands like its instructions, and another role replaces both, until you edit
+  // the list (here with a suggestion's + button); then a role change keeps it.
+  const roleSel = q<HTMLSelectElement>("#a-role", dialog);
+  const hasTool = (t: string) => (q<HTMLTextAreaElement>("#a-tools", dialog)?.value ?? "").split("\n").includes(t);
+  const instructions = () => q("[aria-label=Instructions]", dialog)?.textContent ?? "";
+  const isFrontend = () => hasTool("Bash(git push:*)") && !hasTool("Bash(gh pr create:*)") && instructions().includes("You are the Frontend Agent in Gizai's Software team.");
+  const frontendFirst = !!(await waitFor(() => isFrontend() || null, 5000));
+  if (roleSel) pickOption(roleSel, "qa");
+  const qaNext = !!(await waitFor(() => (hasTool("Bash(gh pr create:*)") && instructions().includes("You are the QA Agent in Gizai's Software team.")) || null, 5000));
+  if (roleSel) pickOption(roleSel, "frontend");
+  const frontendAgain = !!(await waitFor(() => isFrontend() || null, 5000));
+  buttonByText(dialog, "+ Bash(make test:*)")?.click();
+  await sleep(100);
+  if (roleSel) pickOption(roleSel, "qa");
+  const qaInstructions = !!(await waitFor(() => instructions().includes("You are the QA Agent") || null, 5000));
+  await sleep(300);
+  const keptEdit = hasTool("Bash(make test:*)") && hasTool("Bash(git push:*)") && !hasTool("Bash(gh pr create:*)");
+  if (roleSel) pickOption(roleSel, "frontend");
+  await waitFor(() => instructions().includes("You are the Frontend Agent") || null, 5000);
+  out.role_fills = { frontend_first: frontendFirst, qa_next: qaNext, frontend_again: frontendAgain, qa_instructions: qaInstructions, kept_edit: keptEdit };
   const modelSel = await waitFor(() => { const el = q<HTMLSelectElement>("#a-model", dialog); return el && !el.disabled && [...el.options].some((o) => o.value === "opus") ? el : null; }, 8000);
   if (modelSel) pickOption(modelSel, "opus");
   await sleep(100);
@@ -199,7 +221,9 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   out.agent = { role: agent.roleKey, wakeup: agent.wakeup, heartbeat: agent.heartbeatMinutes, model: agent.model, effort: agent.effort,
     agent_page: !!(await waitFor(() => (q(".entity-head h1")?.textContent ?? "") === "Frontend Agent" || null, 3000)),
     columns: (await getTeam()).states.filter((s) => s.agentIds?.includes(id)).map((s) => s.name),
-    added_once: (await getTeam()).members.filter((m) => m.name === "Frontend Agent" && m.kind === "agent").length === 1 };
+    added_once: (await getTeam()).members.filter((m) => m.name === "Frontend Agent" && m.kind === "agent").length === 1,
+    // GA-63: saved with the frontend role's list and the command added in the form
+    tools: agent.allowedTools?.includes("Bash(git push:*)") && agent.allowedTools.includes("Bash(make test:*)") && !agent.allowedTools.includes("Bash(gh pr create:*)") };
   window.location.hash = "#/team";
   if (!(await waitFor(() => column("Testing"), 4000))) return fail("back on the Team page: no columns");
 
@@ -387,7 +411,7 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   }
   out.drawer_new_label = { drawer: !!drawer, pill_on: pill, card_has_it: drawerCard };
 
-  const a = out.agent as { role?: string; wakeup?: string | null; model?: string | null; effort?: string | null; agent_page?: boolean; columns?: string[]; added_once?: boolean };
+  const a = out.agent as { role?: string; wakeup?: string | null; model?: string | null; effort?: string | null; agent_page?: boolean; columns?: string[]; added_once?: boolean; tools?: boolean };
   const sf = out.spot_form as { name?: string; role?: string; wake_up?: boolean; sections?: string[] };
   const pa = out.plus_agent as Record<string, boolean>, am = out.auto_manual as { manual: boolean; auto: boolean; manual_line: string; auto_line: string };
   const nc = out.next_column as { self_link_refused: string; cleared: boolean; auto_without_next_refused: string; stayed_manual: boolean; linked_to_done: boolean; error_gone: boolean };
@@ -402,7 +426,8 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
     one_spot_each: !!out.one_spot_each,
     spot_form: sf.name === "Frontend Agent" && sf.role === "frontend" && !sf.wake_up && sf.sections?.join(",") === "Agent,Chat,Work,Permissions,Tools,Instructions",
     agent: a.role === "frontend" && a.wakeup !== "heartbeat" && !!a.agent_page && a.model === "opus" && a.effort === "xhigh" && a.columns?.join(",") === "To do,In progress"
-      && !!a.added_once,
+      && !!a.added_once && !!a.tools,
+    role_fills: Object.values(out.role_fills as Record<string, boolean>).every(Boolean),
     plus_agent: Object.values(pa).every(Boolean),
     auto_manual: am.manual && am.auto && am.manual_line.startsWith("Manual: press Run on a card to start Frontend Agent") && am.auto_line.startsWith("Auto: Frontend Agent takes cards"),
     next_column: !!nc.self_link_refused && nc.cleared && !!nc.auto_without_next_refused && nc.stayed_manual && nc.linked_to_done && nc.error_gone,
@@ -525,4 +550,116 @@ async function runsOnAndQueueProbe() {
   const ok = right && onLead && !!cc2 && codexOff && saved && shows && answering && locked && queued && notYet && went && done && note;
   return { ok, right_of_hints: right, on_lead: onLead, options, codex_disabled: codexOff, saved, shows, answering, locked_while_answering: locked,
     queued, not_sent_yet: notYet, went_after: went, answer_done: done, switch_note: note };
+}
+
+const DAY = 86_400_000;
+const textOf = (el: Element | null | undefined) => (el?.textContent ?? "").trim();
+const textsOf = (sel: string, root: ParentNode = document) => [...root.querySelectorAll(sel)].map((e) => textOf(e));
+const cellsOf = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => textOf(td));
+
+/** GA-33, against prep_usage's runs (today: $0.57 of the Backend Agent on KADE and GFW, a Codex run on KADE with tokens but
+ * no cost, a Team Lead chat turn of $0.03; 20 days ago: $1.00 on KADE). Company lists Usage above Team and it is the page
+ * shown; the three tabs, the period switch and the labels; today's numbers on each tab, which agree with each other; 30
+ * days takes in the older run; then the Projects list's AI usage column, sorted by a click on its header. */
+export async function usageProbe() {
+  const company = [...document.querySelectorAll(".side .nav-section")].find((s) => textOf(s.querySelector(".nav-label")) === "Company");
+  const companyItems = company ? textsOf("a.nav-item", company) : [];
+  const usageOn = textOf(company?.querySelector('a.nav-item[aria-current="page"]')) === "Usage";
+  if (!(await waitFor(() => q(".usage-tab"), 6000))) return { ok: false, error: "the Usage page shows no tab", company: companyItems, page: textOf(q(".main")).slice(0, 300) };
+
+  const tabs = textsOf(".tabs button.tab");
+  const selectedTab = () => textOf(q('.tabs button.tab[aria-selected="true"]'));
+  const chips = textsOf('[aria-label="Period"] .chip');
+  const pressedChip = () => textOf(q('[aria-label="Period"] .chip[aria-pressed="true"]'));
+  const shownDays = () => textOf(q(".topbar .crumbs .faint"));
+  const now = new Date();
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const sinceOf: Record<string, number> = { Today: today, "7 days": today - 6 * DAY, "30 days": today - 29 * DAY, "This month": Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) };
+  const daysOf = (label: string) => periodDays(sinceOf[label], today + DAY);
+  const first = { tab: selectedTab(), period: pressedChip(), days: shownDays(), want_days: daysOf("This month"), bars: q(".usage-bars")?.children.length,
+    want_bars: now.getUTCDate() };
+  const labels = textsOf(".usage-tab .stat-card h4");
+  const subs = textsOf(".usage-tab .stat-card .sub");
+  const foot = textOf(q(".usage-foot"));
+  const labelled = labels.includes("API cost") && labels.includes("Input tokens (incl. cache)") && labels.includes("Output tokens")
+    && subs.includes("An estimate at API prices, not a bill") && foot.includes("API cost: what these tokens would cost at API prices")
+    && foot.includes("Input tokens include cache reads and writes");
+
+  const period = async (label: string) => {
+    buttonByText(q('[aria-label="Period"]') ?? document, label)?.click();
+    return !!(await waitFor(() => (pressedChip() === label && shownDays() === daysOf(label) ? true : null), 4000));
+  };
+  const tab = async (label: string) => {
+    buttonByText(q(".tabs") ?? document, label)?.click();
+    return !!(await waitFor(() => (selectedTab() === label ? true : null), 2000));
+  };
+  const table = (label: string) => q(`table[aria-label="${label}"]`);
+  const rows = (label: string) => [...(table(label)?.querySelectorAll("tbody tr") ?? [])].map(cellsOf);
+  const total = (label: string) => [...(table(label)?.querySelectorAll("tfoot td") ?? [])].map((td) => textOf(td));
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+  // Today, on each tab: [name, runs, input tokens, output tokens, API cost, share].
+  const toToday = await period("Today");
+  await sleep(300);
+  const metrics = textsOf(".usage-tab .usage-metric");
+  const unknownLine = textOf(q(".usage-tab .stat-card .sub.usage-unknown"));
+  const totalOk = same(metrics, ["$0.60", "23K", "4K", "4"]) && unknownLine === "+ an unknown cost for 1 run";
+  const wantTotal = ["Total", "3 runs · 1 chat turn", "23K", "4K", "$0.60 + unknown", ""];
+  await tab("Agents");
+  const agents = rows("Usage per agent");
+  const agentsTotal = total("Usage per agent");
+  const agentsOk = same(agents, [
+    ["Backend Agent", "2 runs", "16K", "3.4K", "$0.57", "95%"],
+    ["Team Lead", "1 chat turn", "2K", "100", "$0.03", "5%"],
+    ["Codex Agent", "1 run", "5K", "500", "Unknown", "0%"],
+  ]) && same(agentsTotal, wantTotal);
+  await tab("Projects");
+  const projects = rows("Usage per project");
+  const projectsTotal = total("Usage per project");
+  const projectsOk = same(projects, [
+    ["Kade portalKADE", "2 runs", "17K", "3.5K", "$0.42 + unknown", "70%"],
+    ["Groene Fiets webshopGFW", "1 run", "4K", "400", "$0.15", "25%"],
+    ["Chat (no project)", "1 chat turn", "2K", "100", "$0.03", "5%"],
+  ]) && same(projectsTotal, wantTotal);
+  // The other periods: the dates change; 30 days takes in the run of 20 days ago.
+  const to7 = await period("7 days");
+  const to30 = await period("30 days");
+  await sleep(300);
+  const projects30 = rows("Usage per project");
+  const total30 = total("Usage per project");
+  const thirtyOk = projects30[0]?.[0] === "Kade portalKADE" && projects30[0]?.[4] === "$1.42 + unknown" && same(total30, ["Total", "4 runs · 1 chat turn", "24K", "4.1K", "$1.60 + unknown", ""]);
+  const toMonth = await period("This month");
+  const periodsOk = toToday && to7 && to30 && toMonth;
+
+  // The Projects list: AI usage this month, sortable.
+  window.location.hash = "#/projects";
+  const th = await waitFor(() => [...document.querySelectorAll("table.grid th")].find((h) => textOf(h).startsWith("AI usage")) as HTMLElement | undefined, 4000);
+  if (!th) return { ok: false, error: "no AI usage column on the Projects list", company: companyItems, first, labelled, totalOk, agents, projects };
+  const heads = textsOf("table.grid thead th");
+  const at = heads.findIndex((h) => h.startsWith("AI usage")), nameAt = heads.findIndex((h) => h.startsWith("Project"));
+  const list = () => [...document.querySelectorAll("table.grid tbody tr")].map(cellsOf).filter((c) => c.length === heads.length).map((c) => [c[nameAt], c[at]]);
+  const oldInMonth = new Date(Date.now() - 20 * DAY).getUTCMonth() === now.getUTCMonth();
+  const kade = list().find(([n]) => n.startsWith("Kade portal"))?.[1], gfw = list().find(([n]) => n.startsWith("Groene Fiets"))?.[1];
+  const column = { kade, gfw, title: th.title, footer: textOf(q(".tablefoot")) };
+  const columnOk = kade === (oldInMonth ? "$1.42 + unknown" : "$0.42 + unknown") && gfw === "$0.15" && th.title.includes("API cost this month")
+    && column.footer.includes("AI usage: the API cost this month, an estimate at API prices, not a bill");
+  const sorted = async () => {
+    th.click();
+    await sleep(200);
+    const arrow = textOf(th.querySelector(".arr"));
+    const names = list().map(([n]) => n);
+    const want = ["Kade portal", "Groene Fiets"];
+    const firsts = (arrow === "↓" ? names : [...names].reverse()).slice(0, 2);
+    return { arrow, names, ok: (arrow === "↓" || arrow === "↑") && want.every((w, i) => firsts[i]?.startsWith(w)) };
+  };
+  const sort1 = await sorted(), sort2 = await sorted();
+  const sortOk = sort1.ok && sort2.ok && sort1.arrow !== sort2.arrow;
+
+  const companyOk = companyItems.indexOf("Usage") >= 0 && companyItems.indexOf("Usage") + 1 === companyItems.indexOf("Team") && usageOn;
+  const firstOk = same(tabs, ["Total", "Agents", "Projects"]) && same(chips, ["Today", "7 days", "30 days", "This month"]) && first.tab === "Total"
+    && first.period === "This month" && first.days === first.want_days && first.bars === first.want_bars;
+  const ok = companyOk && firstOk && labelled && totalOk && agentsOk && projectsOk && periodsOk && thirtyOk && columnOk && sortOk;
+  return { ok, company: companyItems, usage_on: usageOn, tabs, chips, first, labelled, metrics, unknown_line: unknownLine, total_ok: totalOk,
+    agents, agents_total: agentsTotal, projects, projects_total: projectsTotal, periods: { today: toToday, d7: to7, d30: to30, month: toMonth },
+    projects_30: projects30, total_30: total30, column, column_ok: columnOk, sort: [sort1, sort2] };
 }

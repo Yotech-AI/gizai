@@ -40,9 +40,11 @@ impl PullRequest {
         }
     }
 
-    /// Whether commit `sha` is in it (its latest commit or an earlier one).
+    /// Whether commit `sha` is in it (its latest commit or an earlier one). A short hash counts when `sha` starts with
+    /// it (7 characters or more): Bitbucket gives a pull request's latest commit that way.
     pub fn contains(&self, sha: &str) -> bool {
-        !sha.is_empty() && (self.head_ref_oid == sha || self.commits.iter().any(|c| c.oid == sha))
+        let is = |oid: &str| oid == sha || (oid.len() >= 7 && sha.starts_with(oid));
+        !sha.is_empty() && (is(&self.head_ref_oid) || self.commits.iter().any(|c| is(&c.oid)))
     }
 }
 

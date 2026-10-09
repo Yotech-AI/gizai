@@ -5,14 +5,20 @@ import { ArrowUp, Pencil, Square, X } from "lucide-react";
 import { answerChatOn, chatClis, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
 import { chatRunsOn, groupMessages, SUGGESTIONS, toolName } from "../../lib/chat";
+import { usePending, type Pending } from "../../lib/usePending";
 import type { ChatCli, ChatMessage, ChatThread as Thread, Member, QueuedMessage } from "../../types";
 import { MarkdownView } from "../MarkdownView";
 import { MessageGroup } from "./ChatMessage";
 import { Avatar } from "../Avatar";
+import { BusyButton } from "../BusyButton";
 import { useChat } from "./useChat";
 
-function Composer({ value, setValue, onSend, onStop, working, disabled, busy }: {
+/** Stop, Send now and Answer on <CLI>: each spins from its click until the chat shows what it did. */
+type ChatButtons = Pending<"stop" | "send" | `answer:${string}`>;
+
+function Composer({ value, setValue, onSend, onStop, working, disabled, busy, pending }: {
   value: string; setValue: (v: string) => void; onSend: () => void; onStop: () => void; working: boolean; disabled: boolean; busy: boolean;
+  pending: ChatButtons;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -31,7 +37,8 @@ function Composer({ value, setValue, onSend, onStop, working, disabled, busy }: 
           // While the Team Lead answers, Enter queues the message: it goes when the answer is done.
           if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); }
         }} />
-      {working && <button className="btn sm stop-btn" onClick={onStop} title="Stop the answer"><Square className="icon sm" />Stop</button>}
+      {working && <BusyButton className="btn sm stop-btn" pending={pending} name="stop" busyLabel="Stopping…" icon={<Square className="icon sm" />} onClick={onStop}
+        title="Stop the answer">Stop</BusyButton>}
       {(!working || value.trim()) && (
         <button className="btn primary sm icon-only" onClick={onSend} disabled={disabled || busy || !value.trim()} aria-label={working ? "Queue" : "Send"}
           title={working ? "Queue: it goes when this answer is done (Enter)" : "Send (Enter)"}><ArrowUp className="icon" /></button>
@@ -100,6 +107,11 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
     const s = scroller.current;
     if (s && pinned.current) s.scrollTop = s.scrollHeight;
   }, [messages, draft, working, tool, queue]);
+  // The queue goes by itself when the answer is done; after a stopped or failed answer (or a restart) it waits.
+  const waiting = queue.filter((q) => !working || q.held);
+  // Stop spins until the answer has stopped, Send now until its messages have gone, Answer on until the answer starts.
+  const pending: ChatButtons = usePending((k) => k === "stop" ? !working : k === "send" ? waiting.length === 0 : working, threadId);
+  const fail = (e: unknown) => setSendError(String(e));
 
   const runsOn = chatRunsOn(threadId ? thread?.cli : newCli, agent.adapter, clis);
   const pickCli = (id: string) => {
@@ -126,16 +138,14 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
     }
   };
 
-  // The queue goes by itself when the answer is done; after a stopped or failed answer (or a restart) it waits.
-  const waiting = queue.filter((q) => !working || q.held);
   const queueBits = queue.length > 0 && threadId ? (
     <div className="chat-queue" aria-label="Queued messages">
       {queue.map((q) => <Queued key={q.id} q={q} waiting={!working || q.held} onError={setSendError} />)}
       {waiting.length > 0 && (
         <div className="q-actions">
-          <button className="btn sm primary" onClick={() => sendChatQueue(threadId).catch((e) => setSendError(String(e)))}
-            title={working ? "They go when this answer is done" : "They go together, in the order written"}>Send now</button>
-          <button className="btn sm" onClick={() => Promise.all(waiting.map((q) => removeQueuedChat(q.id))).catch((e) => setSendError(String(e)))}>Remove</button>
+          <BusyButton className="btn sm primary" pending={pending} name="send" busyLabel="Sending…" onClick={() => pending.act("send", () => sendChatQueue(threadId), fail)}
+            title={working ? "They go when this answer is done" : "They go together, in the order written"}>Send now</BusyButton>
+          <button className="btn sm" disabled={!!pending.busy} onClick={() => Promise.all(waiting.map((q) => removeQueuedChat(q.id))).catch((e) => setSendError(String(e)))}>Remove</button>
         </div>
       )}
     </div>
@@ -149,8 +159,9 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
     if (!clis) return null;
     if (others.length === 0) return <span className="faint small">Add another Claude Code account in Settings → Coding CLIs to answer on it.</span>;
     return others.map((c) => (
-      <button key={c.id} className="btn sm" onClick={() => { pinned.current = true; answerChatOn(threadId, c.id, m.id).catch((e) => setSendError(String(e))); }}>
-        Answer on {c.name}</button>
+      <BusyButton key={c.id} className="btn sm" pending={pending} name={`answer:${c.id}`} busyLabel="Starting…"
+        onClick={() => { pinned.current = true; pending.act(`answer:${c.id}`, () => answerChatOn(threadId, c.id, m.id), fail); }}>
+        Answer on {c.name}</BusyButton>
     ));
   };
 
@@ -193,7 +204,8 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
               <button className="btn sm" onClick={() => setAgentStatus(agent.actorId, "active").catch((e) => setSendError(String(e)))}>Resume</button></div>
           )}
           {sendError && <div className="chat-banner bad" role="alert">{sendError}</div>}
-          <Composer value={value} setValue={setValue} onSend={send} onStop={() => threadId && stopChat(threadId)} working={working} disabled={paused} busy={busy} />
+          <Composer value={value} setValue={setValue} onSend={send} onStop={() => { if (threadId) pending.act("stop", () => stopChat(threadId), fail); }}
+            working={working} disabled={paused} busy={busy} pending={pending} />
           <div className="composer-foot">
             <div className="composer-hint"><span><span className="kbd">Enter</span> {working ? "queues" : "sends"}</span><span><span className="kbd">Shift</span> <span className="kbd">Enter</span> new line</span></div>
             <RunsOn value={runsOn} clis={clis} disabled={working} onChange={pickCli} />

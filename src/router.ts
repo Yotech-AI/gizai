@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 
 export const PAGES_WITH_ID = ["task", "project", "client", "doc", "team", "agent", "chat"] as const;
-export const PAGES = ["chat", "inbox", "tasks", "board", "task", "projects", "project", "clients", "client", "doc", "team", "agent", "users", "settings"] as const;
+export const PAGES = ["chat", "inbox", "tasks", "board", "task", "projects", "project", "clients", "client", "doc", "team", "agent", "users", "settings", "usage"] as const;
 export type Page = (typeof PAGES)[number];
 export type Route = { page: Page; id?: string };
 

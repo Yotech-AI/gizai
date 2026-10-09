@@ -113,6 +113,8 @@ export const findClis = () => invoke<T.Cli[]>("find_clis");
 export const agentStats = (id: string, days = 14) => invoke<T.DayStat[]>("agent_stats", { id, days });
 export const agentRuns = (id: string, limit = 20) => invoke<T.Run[]>("agent_runs", { id, limit });
 export const agentNextTask = (id: string) => invoke<string | null>("agent_next_task", { id });
+/** The Usage page: tokens and API cost of all runs and chat turns in the period, in total, per day, per agent and per project. */
+export const usageSummary = (period: T.UsagePeriod) => invoke<T.Usage>("usage_summary", { period });
 export const roleTemplate = (role: string) => invoke<string>("role_template", { role });
 
 export const detectClaude = () => invoke<string | null>("detect_claude");

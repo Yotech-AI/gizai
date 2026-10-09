@@ -1,7 +1,7 @@
 // The sidebar (design system: Sidebar): quick actions, work areas, projects and the team's agents scroll; the
 // company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
 // data than the usual folder says so there.
-import { Building2, FlaskConical, FolderKanban, Inbox, ListTodo, MessagesSquare, Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon } from "lucide-react";
+import { Building2, ChartColumn, FlaskConical, FolderKanban, Inbox, ListTodo, MessagesSquare, Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon } from "lucide-react";
 import { getTeam, listChatThreads, listProjects, listTasks } from "../api";
 import { href, type Route } from "../router";
 import { useData } from "../lib/useData";
@@ -82,6 +82,7 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
         <UpdateNotice />
         <div className="nav-section">
           <div className="nav-label">Company</div>
+          <Item to={{ page: "usage" }} icon={ChartColumn} label="Usage" active={is("usage")} />
           <Item to={{ page: "team" }} icon={Network} label="Team" active={is("team")} />
           <Item to={{ page: "users" }} icon={Users} label="Users" active={is("users")} />
           <Item to={{ page: "settings" }} icon={Settings} label="Settings" active={is("settings")} />

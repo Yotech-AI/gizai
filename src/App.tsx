@@ -17,6 +17,7 @@ import { TeamPage } from "./pages/TeamPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
+import { UsagePage } from "./pages/UsagePage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
 import { chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe } from "./selftest";
 
@@ -135,6 +136,7 @@ export default function App() {
             : route.page === "clients" ? <ClientsPage />
             : route.page === "client" && route.id ? <ClientPage key={route.id} id={route.id} />
             : route.page === "users" ? <UsersPage />
+            : route.page === "usage" ? <UsagePage />
             : route.page === "projects" ? <ProjectsPage />
             : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
             : <Placeholder route={route} info={info} />}

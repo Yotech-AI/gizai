@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { detectClaude, getSettings, saveSettings } from "../api";
-import type { Settings } from "../types";
+import { detectClaude, getSettings, getTeam, listTeams, saveSettings } from "../api";
+import type { NotificationSwitches, Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
 import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
 import { McpSettings } from "../components/McpSettings";
 import { OldWorktrees } from "../components/OldWorktrees";
+import { QuitSettings } from "../components/QuitSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
+import { cardAgents, runsAtOnceWarning, type CardAgent } from "../lib/settings";
+
+/** Settings → Notifications: a switch per kind, in this order. */
+const NOTIFY: [keyof NotificationSwitches, string][] = [
+  ["hold", "A card goes on hold"],
+  ["waiting", "A card waits for your review or deploy"],
+  ["leadAsks", "The Team Lead asks you something (a Question or Approval chat)"],
+  ["leadAnswered", "The Team Lead answers in a chat while the Gizai window is hidden or in the background"],
+];
 
 export function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
@@ -15,8 +25,11 @@ export function SettingsPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
+  // The active agents on the columns, for the warning under Runs at once.
+  const [agents, setAgents] = useState<CardAgent[]>([]);
   const say = useCallback((ok: boolean, text: string) => setMsg({ ok, text }), []);
   useEffect(() => { getSettings().then((x) => { setS(x); setBudget(x.maxRunUsd != null ? String(x.maxRunUsd) : ""); }).catch((e) => setMsg({ ok: false, text: String(e) })); }, []);
+  useEffect(() => { listTeams().then((ts) => Promise.all(ts.map((t) => getTeam(t.id)))).then((teams) => setAgents(cardAgents(teams))).catch(() => {}); }, []);
   if (!s) return msg ? <div className="error-banner">{msg.text}</div> : null;
   const detect = async () => {
     setDetecting(true);
@@ -38,6 +51,17 @@ export function SettingsPage() {
       <div className="content"><div className="page" style={{ maxWidth: 1100 }}>
         {msg && <div className={msg.ok ? "ok-banner" : "error-banner"} role="status" style={{ margin: 0 }}>{msg.text}</div>}
         <div className="form">
+          <QuitSettings />
+          <FormSection title="Notifications" text="A desktop notification when something needs you, also while the Gizai window is hidden. Click one to open its card or chat.">
+            <Field label="Notify me when" wide hint="Saved as soon as you switch one.">
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+                {NOTIFY.map(([key, text]) => (
+                  <label key={key} className="check"><input type="checkbox" checked={s.notifications[key]}
+                    onChange={(e) => { const next = { ...s, notifications: { ...s.notifications, [key]: e.target.checked } }; setS(next); save(next); }} />{text}</label>
+                ))}
+              </div>
+            </Field>
+          </FormSection>
           <UpdateSettings />
           <FormSection title="Coding CLIs" text="Agents run one of these programs headless in their worktree, with its own login. Claude Code is the default; add Codex, Gemini, any other coding CLI, or a second account of one. Each agent picks its CLI under Runs on.">
             <Field label="Claude Code" htmlFor="s-bin" wide hint="Its program (claude -p). Detect looks in your login shell and the usual install folders.">
@@ -51,7 +75,8 @@ export function SettingsPage() {
           <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
           <BitbucketSettings say={say} />
           <FormSection title="Runs" text="Each run is a process of the agent's coding CLI in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
-            <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
+            <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"
+              warn={runsAtOnceWarning(s.maxConcurrentRuns, agents)}><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
             <Field label="Spend per run ($)" htmlFor="s-usd" hint="Claude Code stops a run that reaches this amount; other CLIs don't report cost"><input id="s-usd" className="input" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="No limit" /></Field>
             <Field label="Minutes per run" htmlFor="s-min" hint="5 to 480"><input id="s-min" className="input" type="number" min={5} max={480} value={s.maxRunMinutes} onChange={(e) => setS({ ...s, maxRunMinutes: Number(e.target.value) })} /></Field>
             <Field label="Tool calls per run" htmlFor="s-calls" hint="20 to 2000. Every file read, edit and command is one."><input id="s-calls" className="input" type="number" min={20} max={2000} value={s.maxRunToolCalls} onChange={(e) => setS({ ...s, maxRunToolCalls: Number(e.target.value) })} /></Field>

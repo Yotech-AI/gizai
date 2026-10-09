@@ -13,8 +13,9 @@ use std::sync::Arc;
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// A Command for `program` (a name or a path) that works on every system. On Windows no console window opens, and an
-/// npm `.cmd` shim (Gemini, Codex, an npm-installed Claude Code) runs as `node <its script>`, so arguments with spaces
-/// and quotes reach the CLI unchanged; another `.cmd` or `.bat` goes through Rust's own batch-file quoting.
+/// npm `.cmd` shim runs what the shim would: `node <its script>` (Gemini, Codex), or the program it points at (an
+/// npm-installed Claude Code's `claude.exe`). So arguments with spaces, quotes and line breaks reach the CLI unchanged.
+/// Another `.cmd` or `.bat` goes through Rust's own batch-file quoting, which refuses an argument it can't pass safely.
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     #[cfg(windows)]
     {
@@ -26,9 +27,9 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
             find_in(&program.to_string_lossy(), &std::env::var_os("PATH").unwrap_or_default())
         };
         let mut cmd = match found.as_deref().and_then(npm_shim) {
-            Some((node, script)) => {
-                let mut c = Command::new(node);
-                c.arg(script);
+            Some((runs, script)) => {
+                let mut c = Command::new(runs);
+                c.args(script);
                 c
             }
             None => Command::new(found.as_deref().map(Path::as_os_str).unwrap_or(program)),
@@ -103,33 +104,40 @@ fn path_exts() -> Vec<String> {
     if exts.is_empty() { [".com", ".exe", ".bat", ".cmd"].map(String::from).to_vec() } else { exts }
 }
 
-/// The script an npm `.cmd` shim runs, read from the shim's text: its path relative to the shim's folder, like
-/// `node_modules\@google\gemini-cli\dist\index.js`. None for any other text. Plain text work, the same on every system
-/// (so it can be tested anywhere); `npm_shim` uses it on Windows.
+/// What an npm `.cmd` shim runs, read from the shim's text: its path relative to the shim's folder. That is a script
+/// npm runs with node, like `node_modules\@google\gemini-cli\bundle\gemini.js`, or a program of its own, like npm's
+/// Claude Code: `node_modules\@anthropic-ai\claude-code\bin\claude.exe`. None for any other text. Plain text work, the
+/// same on every system (so it can be tested anywhere); `npm_shim` uses it on Windows.
 pub fn npm_shim_script(cmd_text: &str) -> Option<&str> {
     // npm's cmd-shim ends with: "%_prog%"  "%dp0%\node_modules\<package>\<script>.js" %*
+    // or, for a program that isn't a script: "%dp0%\node_modules\<package>\<program>.exe"   %*
     let start = cmd_text.rfind("\"%dp0%\\")? + "\"%dp0%\\".len();
     let rel = &cmd_text[start..start + cmd_text[start..].find('"')?];
-    (rel.ends_with(".js") || rel.ends_with(".cjs") || rel.ends_with(".mjs")).then_some(rel)
+    let lower = rel.to_ascii_lowercase();
+    [".js", ".cjs", ".mjs", ".exe"].iter().any(|e| lower.ends_with(e)).then_some(rel)
 }
 
-/// Windows: for an npm `.cmd` shim, the node it runs (the `node.exe` next to it, else node on PATH) and its script.
-/// None for any other file.
+/// Windows: for an npm `.cmd` shim, what to start instead of it, and its first argument: the node it runs a script
+/// with (the `node.exe` next to the shim, else node on PATH) and that script; or the program the shim points at
+/// (npm's Claude Code, `claude.exe`) with no first argument. None for any other file.
 #[cfg(windows)]
-pub fn npm_shim(cmd_file: &Path) -> Option<(PathBuf, PathBuf)> {
+pub fn npm_shim(cmd_file: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
     let ext = cmd_file.extension()?.to_string_lossy().to_ascii_lowercase();
     if ext != "cmd" {
         return None;
     }
     let dir = cmd_file.parent()?;
     let text = std::fs::read_to_string(cmd_file).ok().filter(|t| t.len() < 16 * 1024)?;
-    let script = dir.join(npm_shim_script(&text)?);
-    if !script.is_file() {
+    let target = dir.join(npm_shim_script(&text)?);
+    if !target.is_file() {
         return None;
+    }
+    if target.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+        return Some((target, None));
     }
     let local = dir.join("node.exe");
     let node = if local.is_file() { local } else { find_in("node", &std::env::var_os("PATH").unwrap_or_default())? };
-    Some((node, script))
+    Some((node, Some(target)))
 }
 
 /// The bash that runs shell commands (a worktree's prepare commands, your GIT_SSH_COMMAND): `bash` on PATH on Linux and

@@ -225,6 +225,36 @@ async fn the_team_lead_lists_searches_reads_writes_appends_and_moves_notes_with_
     assert!(memory::find(&t.st.db, "Standards/Go style").unwrap().is_none());
 }
 
+#[tokio::test]
+async fn the_memory_append_tool_takes_a_notes_title_as_its_parameter_says_and_an_unknown_title_says_what_to_give() {
+    // QA round 2 (fix 482cc60): memory_append's note parameter is "The note's path, title or id".
+    let t = setup().await;
+    let w = t.tool("memory_write", json!({"path": "Standards/Rust style", "body_md": "# Rust style\n"})).await.unwrap();
+    let id = w["note"]["id"].as_str().unwrap().to_string();
+    let a = t.tool("memory_append", json!({"note": "Rust style", "heading": "Errors", "text": "- No unwrap in library code."})).await.unwrap();
+    assert_eq!((a["ok"].as_bool(), a["created"].as_bool(), a["note"]["path"].as_str(), a["note"]["version"].as_i64(), a["note"]["id"].as_str()),
+               (Some(true), Some(false), Some("Standards/Rust style"), Some(2), Some(id.as_str())), "{a}");
+    assert_eq!(memory::get(&t.st.db, &t.lead(), &id).unwrap().body_md, "# Rust style\n\n## Errors\n\n- No unwrap in library code.\n");
+    // by id too
+    let a = t.tool("memory_append", json!({"note": id, "text": "- And no panics."})).await.unwrap();
+    assert_eq!(a["note"]["version"], 3, "{a}");
+    // a title that names no note: a reason the model can act on, and nothing made
+    let before = t.tool("memory_list", json!({})).await.unwrap()["notes"].as_array().unwrap().len();
+    let e = t.tool("memory_append", json!({"note": "Go style", "text": "- gofmt."})).await.unwrap_err();
+    assert!(e.contains("no note is called Go style") && e.contains("memory_list") && e.contains("a folder and a title"), "{e}");
+    assert_eq!(t.tool("memory_list", json!({})).await.unwrap()["notes"].as_array().unwrap().len(), before);
+    // a folder and a title still make the note
+    let a = t.tool("memory_append", json!({"note": "Lessons/Go style", "heading": "Format", "text": "- gofmt."})).await.unwrap();
+    assert_eq!((a["created"].as_bool(), a["note"]["path"].as_str(), a["note"]["version"].as_i64()), (Some(true), Some("Lessons/Go style"), Some(1)), "{a}");
+    // the Team Lead's own notes by their title, made on first use
+    memory::ensure_lead_notes(&t.st.db, &t.lead, "Jeffrey").unwrap();
+    let team_id = team::list(&t.st.db).unwrap()[0].id.clone();
+    team::add_agent(&t.st.db, &t.st.you_id, &team_id, AgentInput { name: "Backend Agent".into(), role_key: "backend".into(), ..Default::default() }).unwrap();
+    let a = t.tool("memory_append", json!({"note": "Notes", "heading": "Open threads", "text": "- KADE waits on the CSV sample."})).await.unwrap();
+    assert_eq!(a["note"]["path"], "Team Lead/Notes", "the Team Lead's, not an agent's: {a}");
+    assert_eq!(memory::get(&t.st.db, &t.lead(), "Team Lead/Notes").unwrap().updated_by.as_deref(), Some("Team Lead"));
+}
+
 // ---- Task runs on every coding CLI ----
 
 fn git_repo(dir: &Path) -> PathBuf {

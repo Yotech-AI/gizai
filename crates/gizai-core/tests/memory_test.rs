@@ -639,6 +639,105 @@ fn a_note_of_another_client_in_the_agents_own_folder_stays_out_of_a_run_for_this
 }
 
 #[test]
+fn client_isolation_in_the_agents_own_folder_covers_projects_and_the_index_and_keeps_its_own_untagged_and_matching_notes() {
+    // QA round 2 (fix 482cc60): a note in the agent's own folder about another project (no client:) stays out too, its
+    // path not even in the index of notes that didn't fit; own notes without client: or project:, or with the run's,
+    // still come first.
+    let f = setup();
+    let acme = clients::create(&f.db, &f.you, ClientInput { name: "Acme".into(), ..Default::default() }).unwrap();
+    f.project("Shop", "SHOP", Some(&acme));
+    f.project("Internal", "INT", None);
+    f.write("Agents/Backend Agent/Internal tools", "---\nproject: INT\n---\nThe internal build needs Java 21.");
+    f.write("Agents/Backend Agent/Shop deploys", "---\nproject: Shop\n---\nShop deploys with Kamal.");
+    f.write("Agents/Backend Agent/Acme people", "---\nclient: \"[[Clients/Acme|Acme]]\"\n---\nAsk Sanne.");
+    f.write("Agents/Backend Agent/Untagged", "Run cargo with -j 8.");
+    f.write("Standards/Rust style", "---\napplies_to: all\n---\nUse thiserror.");
+    let shop = Context { role: "backend".into(), project: Some(("SHOP".into(), "Shop".into())), client: Some("Acme".into()) };
+    let b = memory::prompt_block(&f.db, &f.be(), &shop).unwrap();
+    let paths: Vec<&str> = b.given.iter().map(|g| g.path.as_str()).collect();
+    assert_eq!(&paths[..4], ["Agents/Backend Agent/Notes", "Agents/Backend Agent/Acme people", "Agents/Backend Agent/Shop deploys",
+                             "Agents/Backend Agent/Untagged"], "own notes first, Notes first: {paths:?}");
+    assert_eq!(paths[4..], ["Standards/Rust style"]);
+    assert!(!b.text.contains("Internal tools") && !b.text.contains("Java 21"), "another project's own note in a SHOP run: {}", b.text);
+
+    // over the cap: the own notes that don't fit are listed by path, still never the other project's
+    let v = memory::get(&f.db, &f.be(), "Agents/Backend Agent/Notes").unwrap().current_version;
+    memory::write(&f.db, &f.be(), "Agents/Backend Agent/Notes", &"A long lesson, kept for later.\n".repeat(220), Some(v), None).unwrap();
+    let b = memory::prompt_block(&f.db, &f.be(), &shop).unwrap();
+    let more = &b.text[b.text.find("### More notes for this card, not shown in full").expect("an index of the rest")..];
+    assert!(more.contains("- Agents/Backend Agent/Untagged ("), "{more}");
+    assert!(!b.text.contains("Internal tools"), "listed in the index: {more}");
+
+    // a run for the other project gets that note, and not the Shop or Acme ones
+    let int = Context { role: "backend".into(), project: Some(("INT".into(), "Internal".into())), client: None };
+    let b = memory::prompt_block(&f.db, &f.be(), &int).unwrap();
+    assert!(b.text.contains("Internal tools"), "{}", b.text);
+    for never in ["Shop deploys", "Acme people", "Sanne"] {
+        assert!(!b.text.contains(never), "{never} in a run for INT: {}", b.text);
+    }
+    // the Team Lead's own block (chat, board checks) still lists every note
+    let b = memory::prompt_block(&f.db, &f.lead(), &Context::default()).unwrap();
+    for path in ["Agents/Backend Agent/Internal tools", "Agents/Backend Agent/Shop deploys", "Standards/Rust style"] {
+        assert!(b.text.contains(path), "{path} not in the Team Lead's block: {}", b.text);
+    }
+}
+
+#[test]
+fn a_title_finds_only_a_note_the_asker_may_read_and_an_append_by_title_follows_the_access_rule() {
+    // QA round 2 (fix 482cc60): get, append and move find a note by its title among the notes the asker may read.
+    let f = setup();
+    let qa_own = f.write("Agents/QA Agent/Gotchas", "QA's own gotchas.");
+    let shared = f.write("Deployments/Staging/Gotchas", "Staging needs a VPN.");
+    let rust = f.write("Standards/Rust style", "# Rust style\n");
+    // the shorter path wins a title for the Team Lead (as a wikilink), but the Backend Agent can't read QA's folder
+    assert_eq!(memory::get(&f.db, &f.lead(), "Gotchas").unwrap().id, qa_own);
+    assert_eq!(memory::get(&f.db, &f.be(), "Gotchas").unwrap().id, shared, "the note it may read, not a NotFound");
+    assert_eq!(memory::get(&f.db, &f.be(), "gotchas").unwrap().id, shared, "case ignored");
+    let e = err(memory::get(&f.db, &f.be(), &qa_own));
+    assert!(e.contains("memory note"), "another agent's note by id: {e}");
+    let only_qa = f.write("Agents/QA Agent/Flaky tests", "Re-run alone.");
+    let e = err(memory::get(&f.db, &f.be(), "Flaky tests"));
+    assert!(e.contains("memory note Flaky tests"), "{e}");
+    assert_eq!(memory::get(&f.db, &f.qa(), "Flaky tests").unwrap().id, only_qa);
+    // "Notes" is each agent's own, and the Team Lead's for the Team Lead
+    memory::ensure_lead_notes(&f.db, &f.lead, "Jeffrey").unwrap();
+    assert_eq!(memory::get(&f.db, &f.be(), "Notes").unwrap().path, "Agents/Backend Agent/Notes");
+    assert_eq!(memory::get(&f.db, &f.qa(), "Notes").unwrap().path, "Agents/QA Agent/Notes");
+    assert_eq!(memory::get(&f.db, &f.lead(), "Notes").unwrap().path, "Team Lead/Notes");
+
+    // an agent's append by title: to its own note, yes; to a shared note it can only read, refused with the rule
+    let s = memory::append(&f.db, &f.be(), "Notes", Some("Learned"), "- Use -j 8.", None).unwrap();
+    assert_eq!(s.path, "Agents/Backend Agent/Notes");
+    assert!(!s.created);
+    let e = err(memory::append(&f.db, &f.be(), "Rust style", None, "- Mine.", None));
+    assert!(e.contains("you can't write Standards/Rust style") && e.contains("only in its own folder"), "{e}");
+    assert!(!f.body(&rust).contains("Mine."));
+    let e = err(memory::append(&f.db, &f.be(), "Flaky tests", None, "- Not QA's.", None));
+    assert!(e.contains("no note is called Flaky tests"), "another agent's note by title: {e}");
+    assert!(!f.body(&only_qa).contains("Not QA's"));
+
+    // the Team Lead's append by title, by path, by id; a title that names nothing says what to give, and makes nothing
+    let s = memory::append(&f.db, &f.lead(), "  rust STYLE ", None, "- By title.", None).unwrap();
+    assert_eq!((s.id.as_str(), s.created), (rust.as_str(), false));
+    memory::append(&f.db, &f.lead(), "Standards/Rust style.md", None, "- By path.", None).unwrap();
+    memory::append(&f.db, &f.lead(), &rust, None, "- By id.", None).unwrap();
+    let body = f.body(&rust);
+    assert!(body.contains("- By title.") && body.contains("- By path.") && body.contains("- By id."), "{body}");
+    assert_eq!(memory::get(&f.db, &f.lead(), &rust).unwrap().current_version, 4, "every append a version");
+    let before = f.paths(&f.lead());
+    let e = err(memory::append(&f.db, &f.lead(), "Go style", None, "- gofmt.", None));
+    assert!(e.contains("no note is called Go style") && e.contains("memory_list") && e.contains("Standards/Rust style"), "{e}");
+    assert_eq!(f.paths(&f.lead()), before, "nothing made");
+    // a folder and a title still make a new note
+    let s = memory::append(&f.db, &f.lead(), "Standards/Go style", None, "- gofmt.", None).unwrap();
+    assert!(s.created && s.path == "Standards/Go style");
+
+    // move by title finds only what the asker may read too: the Team Lead moves QA's, by the same title
+    let n = memory::move_note(&f.db, &f.lead(), "Flaky tests", "Lessons/Flaky tests", false).unwrap();
+    assert_eq!((n.id.as_str(), n.path.as_str(), n.scope.as_str()), (only_qa.as_str(), "Lessons/Flaky tests", "shared"));
+}
+
+#[test]
 fn memory_append_finds_a_note_by_its_title_as_its_tool_says() {
     // The memory_append tool's description: "note: The note's path, title or id". memory_read and memory_move take a
     // title; an append by title should reach the same note.

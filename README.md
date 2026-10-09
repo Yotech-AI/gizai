@@ -57,7 +57,7 @@ Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it else
 3. Open Gizai: the workflow and five agents are ready. The Backend and Frontend Agents work the cards in To do, the QA Agent tests them, the DevOps Agent releases what you merged when you press Run in Deploy, and you talk to the Team Lead on the Chat page. With only Codex installed, Gizai adds it under Settings → Coding CLIs and runs every agent but the Team Lead on it.
 4. Add a project with its git repository, and put a card in To do.
 
-MCP servers: add them in Settings → MCP servers, then switch them on per agent in the agent form → Tools. This works for agents on Claude Code for now; GA-55 adds Codex.
+Tools for agents: web search, fetching pages, a hidden browser for testing web pages, the CLI's own built-in tools and MCP servers (Settings → MCP servers) are switched on per agent in the agent form → Tools. Everything is off until you switch it on.
 
 ![Gizai: the board, a live agent run, the Team Lead chat, the team and an agent](docs/gizai.gif)
 
@@ -119,11 +119,17 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
 - **New agents' commands.** A new agent starts with its role's allowed commands. Gizai's default list has the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. The Team Lead gets that list; builders (Backend, Frontend, Design and your own roles) also get `git push`, `git pull`, `git fetch`, a few read-only git commands, `node`, `echo` and `printf`; QA gets the builders' list plus `gh pr create`, `list`, `view` and `edit`; DevOps gets a list of its own for releases. An agent without a list runs with Gizai's default list. An agent with its own list needs `Bash(sleep:*)` added to it to wait between checks.
 - **Refused in this run.** Claude Code reports every tool call it refused, with the reason. Gizai saves them on the run: the Run panel lists them under "Refused in this run", Show output marks each one where it happened, and the Team Lead's `get_task` and `get_agent` return them for each run. Codex and Gemini don't report refusals, so their runs list none.
 
-## MCP servers for agents
+## Tools for agents: MCP servers, the web and a hidden browser
 
 Agents can use outside services through MCP servers, like Otus OS. Settings → MCP servers holds one list for all agents: add a server by hand (a command, or an address) or **Import from Claude Code**, which reads the servers your Claude Code accounts already have (read only, values into the keychain). **List tools** shows what each tool does, its parameters and its risk before you switch anything on. A server that asks for it gets **Sign in**: Gizai signs in as a device of its own, in your default browser.
 
-Everything is off until you switch it on per agent, in the agent form → Tools, with a switch per server and per tool. Environment values, headers and sign-in tokens stay in the OS keychain, never in Gizai's database. After a chat answer used an outside tool, the Team Lead asks you to confirm before it starts runs or changes agents or columns. On Claude Code for now; Codex and Gemini follow. Details: [docs/agent-tools.md](docs/agent-tools.md).
+The agent form → Tools also has:
+
+- **Web:** search the web, and fetch pages (any, or only the domains you list). Claude Code gets `WebSearch` and `WebFetch`; Codex its own web search; Gemini fetches pages (its web search is on by its own policy).
+- **Browser:** a hidden Chrome for testing web pages, through Chrome DevTools MCP, the built-in entry at the top of Settings → MCP servers. It always runs headless with a throwaway profile: never on your screen, never your own browser, profile or logins. It needs Node 20.19 or newer with npx, and Google Chrome or Chromium (never Brave); the form says what is missing. Gizai installs none of it: `npx` fetches the pinned server, and the server starts the browser.
+- **Built-in tools:** what the agent's CLI offers, from Gizai's catalog merged with what the CLI itself reports (Claude Code's list from the agent's last run, or **Ask Claude Code again**, which starts it without a login). Each says what it allows and how risky it is.
+
+Everything is off until you switch it on per agent, with a switch per server and per tool. Gizai builds no tools of its own: each one is the CLI's own or comes from an MCP server. Environment values, headers and sign-in tokens stay in the OS keychain, never in Gizai's database. After a chat answer used an outside tool (an MCP server, the web, the browser), the Team Lead asks you to confirm before it starts runs or changes agents or columns. MCP servers and the browser work on Claude Code; Codex and Gemini agents show them disabled, with why. Details: [docs/agent-tools.md](docs/agent-tools.md).
 
 ## Development
 

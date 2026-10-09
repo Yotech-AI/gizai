@@ -288,4 +288,29 @@ describe("a renamed line", () => {
     expect(html).toContain('aria-label="Environment line 1 name" placeholder="ACME_TOKEN" value="ACME_KEY"/>');
     expect(html).not.toContain('aria-label="Environment line 1 value" placeholder="Saved in your keychain: type to replace"');
   });
+
+  it("asks for its value again, says again it is saved once it gets its old name back, and Save sends what the form shows", async () => {
+    const edit = { id: "s-local", name: "local", transport: "stdio", command: "npx", args: "", url: "", headers: [], clientId: "", source: "",
+      env: linesOf(["ACME_TOKEN", "ACME_URL"], ["ACME_URL"]) };
+    const first = tree({ edit });
+    first.input("Environment line 1 name").onChange({ target: { value: "ACME_KEY" } });
+    const renamed = (first.got[EDIT][0] as (x: unknown) => typeof edit)(edit);
+    expect(render({ edit: renamed })).toContain('aria-label="Environment line 1 value" placeholder="Renamed from ACME_TOKEN: type its value again" value=""/>');
+    // a line without a saved value just says Value, renamed or not
+    const second = tree({ edit: renamed });
+    second.input("Environment line 2 name").onChange({ target: { value: "ACME_HOST" } });
+    const both = (second.got[EDIT][0] as (x: unknown) => typeof edit)(renamed);
+    expect(render({ edit: both })).toContain('aria-label="Environment line 2 value" placeholder="Value" value=""/>');
+
+    const third = tree({ edit: both });
+    third.input("Environment line 1 name").onChange({ target: { value: "ACME_TOKEN" } });
+    const back = (third.got[EDIT][0] as (x: unknown) => typeof edit)(both);
+    expect(render({ edit: back })).toContain('aria-label="Environment line 1 value" placeholder="Saved in your keychain: type to replace" value=""/>');
+
+    answers.saveMcpServer = () => local;
+    calls.length = 0;
+    await tree({ edit: back }).button("Save server")[0].onClick();
+    const input = calls.find(([k]) => k === "saveMcpServer")![1][0] as McpServerInput;
+    expect(input.env).toEqual([{ name: "ACME_TOKEN", value: null }, { name: "ACME_HOST", value: null }]);
+  });
 });

@@ -255,11 +255,20 @@ fn http_401_asks_for_sign_in_with_the_servers_challenge() {
 
 #[test]
 fn http_server_that_isnt_there_says_so_without_its_path() {
-    // A port nothing listens on: bind one, then let it go.
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let t = Target { transport: Transport::Http, url: format!("http://127.0.0.1:{port}/mcp?key={API_KEY}"), ..Default::default() };
-    let text = failed(list_tools(&t, TIMEOUT).unwrap_err());
-    assert_eq!(text, "Couldn't reach 127.0.0.1: nothing answers there (connection refused).");
+    // A port nothing listens on: bind one, then let it go. Another test's fake server may take the freed port meanwhile
+    // (it then answers or resets), so try a few ports.
+    let mut seen = vec![];
+    for _ in 0..10 {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let t = Target { transport: Transport::Http, url: format!("http://127.0.0.1:{port}/mcp?key={API_KEY}"), ..Default::default() };
+        let Err(ListError::Failed(text)) = list_tools(&t, TIMEOUT) else { continue };
+        assert!(!text.contains(API_KEY) && !text.contains("/mcp"), "{text}");
+        if text == "Couldn't reach 127.0.0.1: nothing answers there (connection refused)." {
+            return;
+        }
+        seen.push(text);
+    }
+    panic!("never refused: {seen:?}");
 }
 
 #[test]
@@ -370,6 +379,41 @@ fn parameters_are_listed_in_the_schemas_order() {
     let order = |name: &str| tool(&views, name).params.iter().map(|p| p.name.clone()).collect::<Vec<_>>();
     assert_eq!(order("read_notes"), ["query", "limit", "tags"]);
     assert_eq!(order("send_mail"), ["to", "body", "priority"]);
+}
+
+/// The same over Streamable HTTP (tools/list as an event stream and as plain JSON) and the older HTTP+SSE.
+#[test]
+fn parameters_keep_the_servers_order_over_http_json_and_sse() {
+    for (mode, transport) in [(fake_http::Mode::Ok, Transport::Http), (fake_http::Mode::Json, Transport::Http), (fake_http::Mode::Sse, Transport::Sse)] {
+        let server = fake_http::start(mode);
+        let l = list_tools(&http(&server, transport), TIMEOUT).expect("listing");
+        let views = describe_all(&l.tools);
+        let got: Vec<(&str, bool)> = tool(&views, "search").params.iter().map(|p| (p.name.as_str(), p.required)).collect();
+        assert_eq!(got, [("q", true), ("limit", false)], "{mode:?}");
+    }
+}
+
+/// A tool listed before the order was kept (cached, without `PARAM_ORDER`) shows its parameters by name. An order
+/// that names a parameter twice, one the schema hasn't got, or leaves one out, still shows each parameter once.
+#[test]
+fn parameters_without_a_kept_order_are_listed_by_name_and_each_once() {
+    let schema = json!({"type": "object", "properties": {"q": {}, "limit": {}, "tags": {}}});
+    let names = |t: &Value| describe(t).params.into_iter().map(|p| p.name).collect::<Vec<_>>();
+    assert_eq!(names(&json!({"name": "a", "inputSchema": schema})), ["limit", "q", "tags"]);
+    let mut odd = json!({"name": "a", "inputSchema": schema});
+    odd[mcp_tools::PARAM_ORDER] = json!(["tags", "nope", "tags", 7, "q"]);
+    assert_eq!(names(&odd), ["tags", "q", "limit"]);
+}
+
+/// List tools adds the order to every tool it lists, one entry per parameter.
+#[test]
+fn every_listed_tool_gets_the_order_of_its_parameters() {
+    let l = list_tools(&stdio("hints", &[]), TIMEOUT).expect("listing");
+    for t in &l.tools {
+        let order = t.get(mcp_tools::PARAM_ORDER).and_then(Value::as_array).unwrap_or_else(|| panic!("no order: {t}"));
+        let props = t.pointer("/inputSchema/properties").and_then(Value::as_object).unwrap();
+        assert_eq!(order.len(), props.len(), "{t}");
+    }
 }
 
 #[test]

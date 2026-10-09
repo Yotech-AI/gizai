@@ -296,6 +296,38 @@ async fn a_server_with_a_secret_missing_from_the_keychain_or_signed_out_is_left_
     }
 }
 
+/// A list saved before the name rule can still hold a server called gizai__notes or otus_: its tools would be named
+/// mcp__gizai__notes__x, which passes for Gizai's own. The run leaves it out and says once to rename it.
+#[tokio::test]
+async fn a_server_saved_under_a_name_the_list_no_longer_takes_is_left_out_and_the_run_says_to_rename_it() {
+    let t = run_setup(false);
+    let st = &t.st;
+    let wiki = add_command(st, "wiki", "wiki-mcp", &[], &[]);
+    let mut all = core_mcp::list(&st.db).unwrap();
+    for (id, name) in [("old-notes", "gizai__notes"), ("old-otus", "otus_")] {
+        all.push(McpServer { id: id.into(), name: name.into(), transport: "stdio".into(), command: "notes-mcp".into(), ..Default::default() });
+    }
+    // straight into the settings table, as an older Gizai could have saved it
+    gizai_core::settings::set(&st.db, "mcp_servers", &all).unwrap();
+    switch(st, &t.agent, &[(&wiki, true, &[]), ("old-notes", true, &[]), ("old-otus", true, &[])]);
+
+    let s = gizai_lib::runs::run_once(st, &t.task, None, None).await.unwrap();
+    assert_eq!(s.status, "succeeded", "{:?}", s.error);
+    let config: Value = serde_json::from_str(&read(&t.out.join("mcp.json"))).unwrap();
+    assert_eq!(config["mcpServers"].as_object().unwrap().keys().collect::<Vec<_>>(), ["wiki"], "{config}");
+    let argv = argv_of(&t.out);
+    let allowed = values(&argv, "--allowedTools");
+    assert!(!allowed.iter().chain(values(&argv, "--disallowedTools").iter()).any(|a| a.contains("notes") || a.starts_with("mcp__otus")), "{allowed:?}");
+    let shown = notes(&events(st, &s.run_id));
+    for name in ["gizai__notes", "otus_"] {
+        let mine: Vec<&String> = shown.iter().filter(|n| n.starts_with(&format!("Left out {name}: "))).collect();
+        assert_eq!(mine.len(), 1, "one note for {name}: {shown:?}");
+        assert!(mine[0].starts_with(&format!("Left out {name}: rename it in Settings → MCP servers")), "{}", mine[0]);
+        assert_eq!(mine[0].to_lowercase().matches("another name").count() + mine[0].to_lowercase().matches("rename").count(), 1,
+                   "says once to rename it: {}", mine[0]);
+    }
+}
+
 #[tokio::test]
 async fn a_run_whose_servers_are_all_left_out_goes_without_an_mcp_config_or_the_untrusted_line() {
     let t = run_setup(false);

@@ -131,6 +131,35 @@ fn a_server_whose_tools_would_pass_for_gizais_own_is_refused_or_counts_as_outsid
     assert!(passing.is_empty(), "servers saved whose tools count as Gizai's own, so using them doesn't stop the acting tools: {}", passing.join(", "));
 }
 
+/// Both halves of the fix on their own: such names are refused with the reason, ordinary ones with a single _ or - still
+/// work, and a tool name that only looks like Gizai's own counts as outside even if such a server were there.
+#[test]
+fn server_names_with_two_underscores_or_a_trailing_one_are_refused_and_their_tools_count_as_outside() {
+    let t = setup();
+    for name in ["gizai_", "gizai__notes", "gizai___x", "otus__x", "otus_", "a__b", "__otus", "Otus__Notes"] {
+        let e = core_mcp::save(&t.st.db, McpServer { name: name.into(), transport: "stdio".into(), command: "/opt/x".into(), ..Default::default() })
+            .expect_err(name).to_string();
+        assert!(e.contains("can't have two _ in a row or end with _") && e.contains(&format!("\"{name}\"")), "{name}: {e}");
+        assert!(!core_mcp::clear_in_tool_names(name), "{name}");
+    }
+    for name in ["notes", "my_server", "otus-os", "a_b_c", "x-_y", "gizai-notes", "otus2"] {
+        core_mcp::save(&t.st.db, McpServer { name: name.into(), transport: "stdio".into(), command: "/opt/x".into(), ..Default::default() })
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+    }
+    let names: Vec<String> = core_mcp::list(&t.st.db).unwrap().into_iter().map(|s| s.name).collect();
+    assert!(!names.iter().any(|n| n.contains("__") || n.ends_with('_')), "{names:?}");
+    // editing a saved server into such a name is refused too
+    let mut otus = core_mcp::list(&t.st.db).unwrap().into_iter().find(|s| s.id == t.otus).unwrap();
+    otus.name = "otus__x".into();
+    assert!(core_mcp::save(&t.st.db, otus).is_err());
+    for outside in ["mcp__gizai__", "mcp__gizai___x", "mcp__gizai____x", "mcp__gizai__notes__search", "mcp__gizai__notes__", "mcp__gizai_x__y"] {
+        assert!(app_chat::is_outside_tool(outside), "{outside} is outside");
+    }
+    for inside in ["mcp__gizai__create_task", "mcp__gizai__start_agent_run", "mcp__gizai__get_overview"] {
+        assert!(!app_chat::is_outside_tool(inside), "{inside} is Gizai's own");
+    }
+}
+
 // ---- after an outside tool, in that answer ----
 
 #[tokio::test]

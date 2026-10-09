@@ -1,6 +1,7 @@
 //! A fake MCP server over HTTP for List tools tests, on 127.0.0.1 with std only: Streamable HTTP (POST /mcp) or the
-//! older HTTP+SSE (GET /sse, then POST /messages). It keeps every request it got, so a test can check the headers
-//! that arrived. One request per connection (it answers with Connection: close).
+//! older HTTP+SSE (GET /sse, then POST /messages). tools/list is sent as written text (`TOOLS`), so its keys stay in the
+//! server's order. It keeps every request it got, so a test can check the headers that arrived. One request per
+//! connection (it answers with Connection: close).
 #![allow(dead_code)]
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -20,6 +21,8 @@ pub enum Mode {
     NeedsSignIn,
     /// The older HTTP+SSE transport.
     Sse,
+    /// Streamable HTTP with every answer as plain JSON, tools/list too.
+    Json,
 }
 
 /// A request the server got.
@@ -59,23 +62,29 @@ impl FakeHttp {
     }
 }
 
-/// The tools it lists: one that only reads (readOnlyHint only), one without hints.
+/// The tools it lists, as the server writes them (on one line, for an event's data): one that only reads (readOnlyHint
+/// only) with its parameters not in name order (q, then limit), one without hints.
+pub const TOOLS: &str = concat!(
+    r#"[{"name": "search", "description": "Searches the docs.", "annotations": {"readOnlyHint": true}, "#,
+    r#""inputSchema": {"type": "object", "properties": {"q": {"type": "string", "description": "What to find"}, "#,
+    r#""limit": {"type": "integer"}}, "required": ["q"]}}, "#,
+    r#"{"name": "publish", "description": "Publishes a page.", "inputSchema": {"type": "object", "properties": {"page": {"type": "string"}}}}]"#,
+);
+
+/// The tools it lists (`TOOLS`).
 pub fn tools() -> Value {
-    json!([
-        {"name": "search", "description": "Searches the docs.", "annotations": {"readOnlyHint": true},
-         "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "description": "What to find"}}, "required": ["q"]}},
-        {"name": "publish", "description": "Publishes a page.", "inputSchema": {"type": "object", "properties": {"page": {"type": "string"}}}},
-    ])
+    serde_json::from_str(TOOLS).unwrap()
 }
 
-fn rpc_answer(req: &Value) -> Option<Value> {
+/// The answer to a request, as text: tools/list keeps the order `TOOLS` was written in.
+fn rpc_answer(req: &Value) -> Option<String> {
     let id = req.get("id").filter(|v| !v.is_null())?.clone();
     let method = req.get("method").and_then(Value::as_str).unwrap_or_default();
     Some(match method {
         "initialize" => json!({"jsonrpc": "2.0", "id": id, "result": {
-            "protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake-http", "version": "3.1.4"}}}),
-        "tools/list" => json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools()}}),
-        _ => json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "Method not found"}}),
+            "protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake-http", "version": "3.1.4"}}}).to_string(),
+        "tools/list" => format!(r#"{{"jsonrpc": "2.0", "id": {id}, "result": {{"tools": {TOOLS}}}}}"#),
+        _ => json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "Method not found"}}).to_string(),
     })
 }
 
@@ -166,12 +175,12 @@ fn handle(mut conn: TcpStream, mode: Mode, seen: &Mutex<Vec<Seen>>, stream_tx: &
             let challenge = format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource\"");
             respond(&mut conn, "401 Unauthorized", &[("WWW-Authenticate", &challenge)], "");
         }
-        Mode::Ok => {
+        Mode::Ok | Mode::Json => {
             if req.method == "DELETE" {
                 return respond(&mut conn, "200 OK", &[], "");
             }
             let Some(answer) = rpc_answer(&msg) else { return respond(&mut conn, "202 Accepted", &[], "") };
-            if req.rpc() == "tools/list" {
+            if req.rpc() == "tools/list" && mode == Mode::Ok {
                 // As an event stream: a log notification first, then the answer.
                 let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
                 let note = json!({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "listing"}});
@@ -180,7 +189,7 @@ fn handle(mut conn: TcpStream, mode: Mode, seen: &Mutex<Vec<Seen>>, stream_tx: &
                 let _ = chunk(&mut conn, &format!("event: message\ndata: {answer}\n\n"));
                 let _ = chunk(&mut conn, "");
             } else {
-                respond(&mut conn, "200 OK", &[("Content-Type", "application/json"), ("Mcp-Session-Id", "sess-42")], &answer.to_string());
+                respond(&mut conn, "200 OK", &[("Content-Type", "application/json"), ("Mcp-Session-Id", "sess-42")], &answer);
             }
         }
         Mode::Sse => {
@@ -201,7 +210,7 @@ fn handle(mut conn: TcpStream, mode: Mode, seen: &Mutex<Vec<Seen>>, stream_tx: &
             if let Some(answer) = rpc_answer(&msg)
                 && let Some(tx) = stream_tx.lock().unwrap().as_ref()
             {
-                let _ = tx.send(answer.to_string());
+                let _ = tx.send(answer);
             }
             respond(&mut conn, "202 Accepted", &[], "");
         }

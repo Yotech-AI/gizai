@@ -2,7 +2,7 @@
 // switches per server and tool, the last-run and sign-in badges, secret lines that never carry a saved value, and names.
 import { describe, expect, it } from "vitest";
 import {
-  actsAsYou, cleanSwitches, lastRunLabel, linesOf, nameProblem, npmWarning, parseArgs, RISK_BADGE, RISK_LABEL, sameSwitches, secretLines,
+  actsAsYou, cleanSwitches, lastRunLabel, linesOf, nameProblem, npmWarning, parseArgs, renameLine, RISK_BADGE, RISK_LABEL, sameSwitches, secretLines,
   serverWhere, signInLabel, switchServer, switchTool, TAKEN_NAMES, toolsSummary, TRANSPORT_LABEL,
 } from "./mcp";
 import type { AgentServer, McpToolView } from "../types";
@@ -171,6 +171,38 @@ describe("the server form's lines", () => {
   });
 });
 
+describe("renameLine", () => {
+  it("a saved line under a new name has no saved value, and remembers the name its value is kept under", () => {
+    const [saved] = linesOf(["ACME_TOKEN"]);
+    const renamed = renameLine(saved, "ACME_KEY");
+    expect(renamed).toEqual({ name: "ACME_KEY", value: "", saved: false, savedAs: "ACME_TOKEN" });
+    // Save sends the new name without a value: the form asks for it again (see McpSettings.test.tsx)
+    expect(secretLines([renamed])).toEqual([{ name: "ACME_KEY", value: null }]);
+  });
+
+  it("is saved again once it gets its old name back, also after renaming it more than once or with spaces around it", () => {
+    const [saved] = linesOf(["ACME_TOKEN"]);
+    const twice = renameLine(renameLine(saved, "ACME_K"), "ACME_KEY");
+    expect(twice).toMatchObject({ saved: false, savedAs: "ACME_TOKEN" });
+    expect(renameLine(twice, "ACME_TOKEN")).toEqual({ name: "ACME_TOKEN", value: "", saved: true, savedAs: "ACME_TOKEN" });
+    expect(renameLine(twice, " ACME_TOKEN ")).toMatchObject({ saved: true });
+    expect(secretLines([renameLine(twice, "ACME_TOKEN")])).toEqual([{ name: "ACME_TOKEN", value: null }]);
+  });
+
+  it("leaves a line without a saved value as it is, but for its name", () => {
+    expect(renameLine({ name: "NEW", value: "typed", saved: false }, "NEWER")).toEqual({ name: "NEWER", value: "typed", saved: false });
+    const [, missing] = linesOf(["ACME_TOKEN", "ACME_URL"], ["ACME_URL"]);
+    expect(renameLine(missing, "ACME_HOST")).toEqual({ name: "ACME_HOST", value: "", saved: false });
+  });
+
+  it("keeps a value typed in before or after the rename, and sends it under the new name", () => {
+    const [saved] = linesOf(["ACME_TOKEN"]);
+    const renamed = renameLine({ ...saved, value: "new-value" }, "ACME_KEY");
+    expect(renamed).toMatchObject({ value: "new-value", saved: false });
+    expect(secretLines([renamed])).toEqual([{ name: "ACME_KEY", value: "new-value" }]);
+  });
+});
+
 describe("nameProblem", () => {
   it("takes letters, digits, - and _ up to 64", () => {
     expect(nameProblem("otus_os-2", [])).toBeNull();
@@ -191,5 +223,13 @@ describe("nameProblem", () => {
   it("asks for another name when one in the list has it, in any case", () => {
     expect(nameProblem("Otus", ["otus"])).toBe("There is already an MCP server called Otus: give this one another name");
     expect(nameProblem("otus2", ["otus"])).toBeNull();
+  });
+
+  it("refuses two _ in a row or a _ at the end, as name_problem in crates/gizai-core does, so no tool passes for Gizai's own", () => {
+    for (const n of ["gizai_", "gizai__notes", "gizai___x", "otus__x", "otus_", "__otus", " otus_ "]) {
+      expect(nameProblem(n, [])).toBe(`A name can't have two _ in a row or end with _, not "${n.trim()}": its tools are called mcp__<name>__<tool>, and Claude Code reads __ as where the name ends`);
+    }
+    for (const n of ["otus", "my_server", "a_b_c", "x-_y", "gizai-notes", "_otus"]) expect(nameProblem(n, [])).toBeNull();
+    expect(rust("crates/gizai-core/src/mcp_servers.rs")).toContain("can't have two _ in a row or end with _, not \\\"{name}\\\": its tools are called mcp__<name>__<tool>, and Claude Code reads __ as where the name ends");
   });
 });

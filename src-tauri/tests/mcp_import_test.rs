@@ -319,6 +319,31 @@ fn a_name_that_is_taken_or_gizais_own_has_a_clash() {
     }
 }
 
+/// Claude Code takes names like otus__x or notes_, but Gizai doesn't (its tools would be mcp__otus__x__<tool>): the scan
+/// says why, and the import asks for another name.
+#[test]
+fn a_name_with_two_underscores_or_a_trailing_one_has_a_clash_and_imports_only_under_another_name() {
+    let t = setup();
+    let mut v = builtin_json();
+    let servers = v["mcpServers"].as_object_mut().unwrap();
+    servers.insert("otus__x".into(), json!({ "type": "http", "url": "https://os.example.test/api/mcp" }));
+    servers.insert("notes_".into(), json!({ "command": "/usr/local/bin/notes-mcp", "env": { "NOTES_KEY": "nk_SECRET_notes" } }));
+    servers.insert("gizai__notes".into(), json!({ "command": "/usr/local/bin/notes-mcp", "args": ["--two"] }));
+    write_json(&t.builtin_file(), &v);
+    let scan = t.scan();
+    for name in ["otus__x", "notes_", "gizai__notes"] {
+        let why = candidate(&scan, "Claude Code", name).clash.clone().unwrap_or_else(|| panic!("{name} has no clash"));
+        assert!(why.contains("can't have two _ in a row or end with _"), "{name}: {why}");
+        let e = mcp::import(&t.st, vec![pick(&t.key("Claude Code", name), "")]).unwrap_err();
+        assert!(e.contains("can't have two _ in a row or end with _") && !e.contains("SECRET"), "{name}: {e}");
+    }
+    assert!(mcp::list(&t.st).unwrap().is_empty(), "nothing imported");
+    let added = mcp::import(&t.st, vec![pick(&t.key("Claude Code", "otus__x"), "otus"), pick(&t.key("Claude Code", "notes_"), "notes")]).unwrap();
+    assert_eq!(added.iter().map(|v| v.server.name.as_str()).collect::<Vec<_>>(), ["otus", "notes"]);
+    let notes = added.iter().find(|v| v.server.name == "notes").unwrap();
+    assert_eq!(t.secret(&notes.server.id, "env", "NOTES_KEY").as_deref(), Some("nk_SECRET_notes"));
+}
+
 // ---- import ----
 
 #[test]

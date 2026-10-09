@@ -7,6 +7,7 @@ pub mod folders;
 pub mod git;
 pub mod github;
 pub mod mcp;
+pub mod mcp_servers;
 pub mod pulls;
 mod quit;
 pub mod runs;
@@ -41,6 +42,10 @@ pub struct AppState {
     pub updates: Arc<update::Updates>,
     /// Held while this Gizai runs: one Gizai per data folder (see `lock_data_dir`).
     pub _lock: Arc<std::fs::File>,
+    /// Where MCP servers' secrets live: the OS keychain, or a file standing in for it (GIZAI_FAKE_KEYCHAIN) in tests.
+    pub keychain: Arc<dyn gizai_agents::secrets::Keychain>,
+    /// MCP servers' sign-ins in that keychain, refreshed one at a time per server.
+    pub tokens: Arc<gizai_agents::oauth::TokenStore>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
     pub notify: Arc<dyn Fn(runs::Note) + Send + Sync>,
 }
@@ -176,7 +181,9 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     let _ = gizai_core::runs::recover_interrupted(&db);
     chat::remove_stray_configs(&dir);
     let mcp_socket = mcp::socket_path(&dir);
-    Ok(AppState { db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
+    let keychain = gizai_agents::secrets::from_env();
+    let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
+    Ok(AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify })
 }
@@ -203,6 +210,11 @@ pub fn test_state(dir: &std::path::Path) -> AppState {
     let mut st = open_state(dir.join("data"), Arc::new(|_| {})).expect("test state");
     // Tests keep their socket in their own folder, never in the real runtime dir.
     st.mcp_socket = st.data_dir.join("mcp.sock");
+    // Never the real keychain in tests: one in memory, unless the test names a file for it.
+    if std::env::var_os("GIZAI_FAKE_KEYCHAIN").is_none() {
+        st.keychain = Arc::new(gizai_agents::secrets::MemoryKeychain::default());
+        st.tokens = Arc::new(gizai_agents::oauth::TokenStore::new(st.keychain.clone()));
+    }
     st
 }
 
@@ -323,6 +335,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, exit_app,
+            commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
+            commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
+            commands::agent_mcp, commands::save_agent_mcp,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
             commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,

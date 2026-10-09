@@ -62,3 +62,47 @@ describe("saving and loading the folders", () => {
     expect([input.model, input.folders]).toEqual(["sonnet", [{ path: "/srv/out", access: "change" }]]);
   });
 });
+
+// GA-53 merged with GA-39: the agent form without Wake-up or heartbeat (the columns decide) next to the Tools section.
+describe("the agent form with GA-39's Tools and GA-53's columns", () => {
+  const sections = (html: string) => [...html.matchAll(/<h3>([^<]+)<\/h3>/g)].map((m) => m[1]);
+  const section = (html: string, title: string) => {
+    const at = html.indexOf(`<h3>${title}</h3>`);
+    const next = html.indexOf("<h3>", at + 1);
+    return html.slice(at, next < 0 ? undefined : next);
+  };
+
+  it("has Agent, Chat, Work, Permissions, Tools and Instructions, and no Wake-up or heartbeat, opened from an empty spot", () => {
+    const html = renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ role: "backend" }} onClose={() => {}} />);
+    expect(sections(html)).toEqual(["Agent", "Chat", "Work", "Permissions", "Tools", "Instructions"]);
+    expect(html).not.toContain("Wakes up");
+    expect(html).not.toContain("Wake-up");
+    expect(html).not.toMatch(/heartbeat/i);
+    // Work holds only Cards at once
+    const work = section(html, "Work");
+    expect([...work.matchAll(/<label for="[^"]*">([^<]+)<\/label>/g)].map((m) => m[1])).toEqual(["Cards at once"]);
+    expect(section(html, "Tools")).toContain(">MCP servers<");
+    expect(html).toMatch(/<option value="backend" selected="">/);
+  });
+
+  it("keeps the Team Lead's board check in Chat, with Tools further down", () => {
+    const html = renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ name: "Team Lead", role: "lead", chat: true }} onClose={() => {}} />);
+    expect(sections(html)).toEqual(["Agent", "Chat", "Work", "Permissions", "Tools", "Instructions"]);
+    expect(section(html, "Chat")).toContain('aria-label="Board check minutes"');
+    expect(html.indexOf("Board check")).toBeLessThan(html.indexOf("<h3>Tools</h3>"));
+    expect(html).not.toMatch(/heartbeat/i);
+  });
+
+  it("loads an agent's MCP switches next to no wake-up, and saves the rest without them or an old heartbeat", () => {
+    const m = { actorId: "a1", name: "Backend Agent 2", roleKey: "backend", kind: "agent", isLead: false, allowedTools: [], chatEnabled: false,
+      wakeup: "heartbeat", heartbeatMinutes: 20, boardCheckMinutes: null,
+      tools: { mcp: [{ serverId: "otus", on: true, toolsOff: ["delete_doc"] }] } } as unknown as Member;
+    const d = draftFrom(m);
+    expect(d.mcp).toEqual([{ serverId: "otus", on: true, toolsOff: ["delete_doc"] }]);
+    expect(d).not.toHaveProperty("wakeup");
+    const input = inputFrom({ ...d, maxRuns: "2" });
+    expect(input.maxRuns).toBe(2);
+    // the switches go on their own (saveAgentMcp); the old wake-up and heartbeat go
+    for (const k of ["mcp", "tools", "wakeup", "heartbeatMinutes"]) expect(input, k).not.toHaveProperty(k);
+  });
+});

@@ -519,7 +519,7 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
         let Some(s) = servers.iter().find(|s| s.id == a.server_id) else { continue };
         // A name the list doesn't take (only in a list saved before its rules): its tools could pass for Gizai's own.
         if let Some(why) = core_mcp::name_problem(&[], &s.name, &s.id) {
-            notes.push(format!("Left out {}: {why}. Give it another name in Settings → MCP servers.", s.name));
+            notes.push(format!("Left out {}: rename it in Settings → MCP servers ({why}).", s.name));
             continue;
         }
         let cached = lists.get(&s.id);

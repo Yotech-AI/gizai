@@ -10,7 +10,7 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
     s.category, t.priority, t.assignee_actor_id, a.name, a.kind, t.hold, t.hold_reason, t.bounce_count, t.fail_count,
     t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state, t.testing, t.deleted_at,
     CASE WHEN t.deleted_at IS NOT NULL THEN (SELECT x.name FROM changes ch JOIN actors x ON x.id = ch.actor_id
-      WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END
+      WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END, t.hold_at
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -24,7 +24,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         id: r.get(0)?, identifier: r.get(1)?, project_id: r.get(2)?, project_name: r.get(3)?, project_color: r.get(4)?,
         title: r.get(5)?, description_md: r.get(6)?, acceptance_md: r.get(7)?, state_id: r.get(8)?, state_name: r.get(9)?,
         state_category: r.get(10)?, priority: r.get(11)?, assignee_id: r.get(12)?, assignee_name: r.get(13)?,
-        assignee_kind: r.get(14)?, labels: vec![], hold: r.get(15)?, hold_reason: r.get(16)?, bounce_count: r.get(17)?,
+        assignee_kind: r.get(14)?, labels: vec![], hold: r.get(15)?, hold_reason: r.get(16)?, hold_at: r.get(28)?, bounce_count: r.get(17)?,
         fail_count: r.get(18)?, sort_key: r.get(19)?, branch: r.get(20)?, created_at: r.get(21)?, updated_at: r.get(22)?,
         pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0, archived_at: r.get(26)?, archived_by: r.get(27)?,
     })

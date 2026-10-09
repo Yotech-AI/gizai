@@ -231,9 +231,14 @@ fn may_sleep(r: &RunRules) -> bool {
 ///   command ends (each wake-up is a turn with its own result line; Gizai reads the last), and a Monitor expires after
 ///   5 minutes. The rule doesn't offer it: one foreground check after another keeps the run one turn, with the
 ///   GIZAI_RESULT line in its last message.
-/// - A foreground `until <check>; do sleep 2; done` ran, but with a pipe in the check (`until git status --short | grep
-///   -q never; do sleep 30; done`) it needed an approval and was refused. So the rule asks for the check first and the
-///   sleep after it, in one command.
+/// - Loops are a gamble: `until git status --short; do sleep 2; done` and `until test -f ci-done.txt; do sleep 30; done`
+///   ran in the foreground, but `for i in {1..20}; …` ("A brace pattern in this command can't be checked before it
+///   runs"), `while true; do test -f ci-done.txt && break; sleep 30; done` ("requires approval: break") and an `until`
+///   with a pipe in its check were refused. So the rule asks for one check and then the sleep in one command, no loop.
+/// - A Haiku run told to wait for a file a fake CI wrote after 100 s, with an earlier wording of this rule (without "no
+///   loop"), tried the two refused loops, then waited with the `until` loop. With this wording it tried a subshell
+///   (`… || ( sleep 30 && … )`, refused: "shell operators that require approval"), then waited with one check per
+///   command (`test -f ci-done.txt && cat ci-done.txt || sleep 30`, four times). Both ended with their GIZAI_RESULT line.
 ///
 /// Codex, Gemini and Other CLIs were not checked; they hear the same rule without Claude Code's limits, and `sleep` only
 /// when they may run it (`may_sleep`).
@@ -299,24 +304,23 @@ fn waiting_lines(r: &RunRules) -> Vec<String> {
     let claude = r.kind == crate::cli::Kind::ClaudeCode;
     let sleep = may_sleep(r);
     let what = "To wait for something outside this run (a CI run, a release or deploy workflow, a pull request's checks)";
-    let mut wait = if sleep {
-        format!("{what}, check it in the foreground about once a minute, within this run's limits: the check first and then the sleep, in \
-one command, like `<check>; sleep 45`.")
+    let wait = if sleep {
+        format!("{what}, check it in the foreground about once a minute, within this run's limits: one check and then the sleep in one \
+command, like `<check>; sleep 45`, and again until it is done.")
     } else {
         format!("{what}, check it again in the foreground until it is done, within this run's limits.")
     };
-    if claude {
-        if sleep {
-            wait.push_str(" A command that starts with a sleep longer than 20 seconds is blocked.");
-        }
-        wait.push_str(" A command that runs longer than 2 minutes, or than the timeout you give it (at most 10 minutes), is moved to the \
-background.");
-    }
-    vec![
+    let mut lines = vec![
         format!("Ending your message ends the run: nothing wakes you up later, and {} is stopped.",
                 if claude { "a command still running in the background (run_in_background)" } else { "anything still running in the background" }),
         wait,
-        "If it won't be done before the limit, don't wait for it: end with your GIZAI_RESULT line, and say in your summary what to check and \
-what is left.".into(),
-    ]
+    ];
+    if claude {
+        lines.push(format!("Don't write a loop (`for`, `while`, `until`): most are refused. {}A command that runs longer than 2 minutes, \
+or than the timeout you give it (at most 10 minutes), is moved to the background.",
+                           if sleep { "A command that starts with a sleep longer than 20 seconds is blocked. " } else { "" }));
+    }
+    lines.push("If it won't be done before the limit, don't wait for it: end with your GIZAI_RESULT line, and say in your summary what to \
+check and what is left.".into());
+    lines
 }

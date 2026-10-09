@@ -1,4 +1,5 @@
 import type { ChangeEntry } from "../types";
+import { hostName } from "./provider";
 import { pullNumber } from "./pulls";
 
 const FIELD_NAMES: Record<string, string> = {
@@ -21,14 +22,15 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
   if (d.archived === false) return "restored the card";
   if (Array.isArray(d.column)) return `moved it from ${d.column[0]} to ${d.column[1]}`;
   if (Array.isArray(d.labels)) return d.labels.length ? `set labels to ${d.labels.join(", ")}` : "removed all labels";
-  // Review on GitHub: a pull request Gizai opened or saw change, and the clean-up after its merge
+  // Review on GitHub or Bitbucket (its link says which): a pull request Gizai opened or saw change, and the clean-up after its merge
   if (typeof d.cleanup === "string" && d.cleanup) return d.cleanup;
   if (typeof d.pullRequest === "string") {
     const n = pullNumber(d.pullRequest);
     const pr = n == null ? "a pull request" : `pull request #${n}`;
-    if (d.opened) return `opened ${pr} on GitHub`;
+    const on = hostName(d.pullRequest);
+    if (d.opened) return `opened ${pr} on ${on}`;
     const state = typeof d.prState === "string" ? d.prState : "open";
-    return state === "draft" ? `saw ${pr} as a draft on GitHub` : `saw ${pr} ${state} on GitHub`;
+    return state === "draft" ? `saw ${pr} as a draft on ${on}` : `saw ${pr} ${state} on ${on}`;
   }
   const set = (k: string) => d[k] !== null && d[k] !== undefined;
   const fields = Object.keys(FIELD_NAMES).filter(set).map((k) => FIELD_NAMES[k]);

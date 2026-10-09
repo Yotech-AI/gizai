@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { detectClaude, getSettings, saveSettings } from "../api";
 import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
+import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
 import { McpSettings } from "../components/McpSettings";
@@ -48,6 +49,7 @@ export function SettingsPage() {
             <Field label="Servers" wide hint="Saved as soon as you add, change or remove one. Only you add, import, sign in to and switch on servers: the Team Lead can't."><McpSettings /></Field>
           </FormSection>
           <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
+          <BitbucketSettings say={say} />
           <FormSection title="Runs" text="Each run is a process of the agent's coding CLI in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
             <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
             <Field label="Spend per run ($)" htmlFor="s-usd" hint="Claude Code stops a run that reaches this amount; other CLIs don't report cost"><input id="s-usd" className="input" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="No limit" /></Field>

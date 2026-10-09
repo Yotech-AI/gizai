@@ -287,6 +287,9 @@ a.member:hover { border-color: var(--line-2); }
 .gh-check { display: grid; grid-template-columns: 16px 180px minmax(0, 1fr); gap: 2px 10px; align-items: start; padding: 10px 14px; border-top: 1px solid var(--line); line-height: 1.5; }
 .gh-check .name { font-weight: 600; overflow-wrap: anywhere; }
 .gh-check .fix { grid-column: 3; color: var(--text-2); font-size: var(--fs-sm); }
+/* Settings → Bitbucket: Save and Remove, and the confirm before Remove */
+.bb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bb-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; }
 
 /* ---------- updates: the notice above Company, Settings → Updates ---------- */
 .update-box { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }

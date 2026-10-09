@@ -133,9 +133,9 @@ export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEve
   listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
-/** Pushes a Review card's branch with your git login and opens its pull request with gh (keeps an open one). */
+/** Pushes a Review card's branch and opens its pull request: with gh on GitHub, through Bitbucket's API on Bitbucket (keeps an open one). */
 export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
-/** Asks GitHub about the card's pull request now; a merge moves the card to Done. */
+/** Asks GitHub or Bitbucket about the card's pull request now; a merge moves the card to Done. */
 export const checkPullRequest = (taskId: string) => invoke<T.PullInfo | null>("check_pull_request", { taskId });
 export const detectGh = () => invoke<string | null>("detect_gh");
 /** Settings → GitHub: whether gh is found, the account it is logged in as, and how pushes go (gh asks GitHub). */
@@ -147,8 +147,17 @@ export const githubLogin = () => invoke<T.GithubLoginCode>("github_login");
 /** Resolves when that login has ended, with the account gh logged in as (null if it didn't say); rejects with why not. */
 export const githubLoginWait = () => invoke<string | null>("github_login_wait");
 export const githubLoginCancel = () => invoke<void>("github_login_cancel");
+/** Settings → Bitbucket: your Atlassian email, whether an API token is saved, and who it belongs to (asks Bitbucket). */
+export const bitbucketStatus = () => invoke<T.BitbucketStatus>("bitbucket_status");
+/** Saves your Atlassian email and API token in your keychain; fails with plain words when Bitbucket refuses them. */
+export const bitbucketSaveLogin = (email: string, token: string) => invoke<void>("bitbucket_save_login", { email, token });
+/** Removes the email and the token. */
+export const bitbucketRemoveLogin = () => invoke<void>("bitbucket_remove_login");
+/** Check connection: the token, ssh to Bitbucket, and whether you can push to each project with a Bitbucket link. */
+export const bitbucketCheck = () => invoke<T.ConnectionCheck>("bitbucket_check");
 
-export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null; suggestCopy?: string[] };
+/** A local folder: whether it's a git repository, its branch, and its GitHub or Bitbucket remote as a link. */
+export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean; github?: string | null; bitbucket?: string | null; suggestCopy?: string[] };
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });

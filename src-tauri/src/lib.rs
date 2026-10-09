@@ -173,11 +173,22 @@ pub fn housekeeping(db: &Db, dir: &std::path::Path) {
 }
 
 /// Opens (and on first start seeds) the database in `dir`. Runs a previous Gizai left behind are marked interrupted.
+/// A first start is a new install: it gets the five default agents, on Codex when only Codex is installed
+/// (`gizai_core::seed::ensure_seed_with_agents`).
 pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -> Result<AppState, String> {
+    open_data(dir, notify, true)
+}
+
+/// `open_state`, with or without the default agents on a first start.
+fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, default_agents: bool) -> Result<AppState, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let lock = lock_data_dir(&dir)?;
     let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
-    let seed = gizai_core::seed::ensure_seed(&db, &display_name()).map_err(|e| e.to_string())?;
+    let seed = if default_agents {
+        gizai_core::seed::ensure_seed_with_agents(&db, &display_name(), clis::codex_at_first_start)
+    } else {
+        gizai_core::seed::ensure_seed(&db, &display_name())
+    }.map_err(|e| e.to_string())?;
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
@@ -219,9 +230,12 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
     })
 }
 
+/// Gizai for a test, on the data in `dir/data`. Its first start adds no agents: a new install's five would take the
+/// test's cards, and would start the real Claude Code when the test hasn't set a fake one. Tests add the agents they
+/// need; `open_state` starts like a new install.
 #[doc(hidden)]
 pub fn test_state(dir: &std::path::Path) -> AppState {
-    let mut st = open_state(dir.join("data"), Arc::new(|_| {})).expect("test state");
+    let mut st = open_data(dir.join("data"), Arc::new(|_| {}), false).expect("test state");
     // Tests keep their socket in their own folder, never in the real runtime dir.
     st.mcp_socket = st.data_dir.join("mcp.sock");
     // Never the real keychain in tests: one in memory, unless the test names a file for it.
@@ -384,7 +398,7 @@ pub fn run() {
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
             commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,
             commands::column_removal, commands::remove_state, commands::list_labels, commands::save_label, commands::remove_label,
-            commands::add_branch, commands::remove_branch, commands::role_template,
+            commands::add_branch, commands::remove_branch, commands::role_template, commands::role_tools,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,
             commands::usage_summary,

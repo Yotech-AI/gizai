@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
-import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, roleTemplate, saveAgentMcp, updateAgent } from "../api";
+import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, roleTemplate, roleTools, saveAgentMcp, updateAgent } from "../api";
 import { go } from "../router";
 import { DEFAULT_TOOLS, draftFrom, foldersFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
 import { CLAUDE_CODE, EFFORTS_BY_KIND, FOLDERS_NOTE, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
@@ -125,8 +125,10 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const edited = useRef(!isNew); // once the instructions are edited, a role change no longer replaces them
+  const toolsEdited = useRef(!isNew); // the same for the allowed commands
   const added = useRef<string | null>(null);
   const lastTemplate = useRef("");
+  const lastTools = useRef("");
   useEffect(() => {
     if (isNew) return;
     getAgent(agentId!).then((m) => { const dr = draftFrom(m); setInitial(dr); setD(dr); }).catch((e) => setErr(String(e)));
@@ -137,9 +139,14 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
     if (edited.current || role === undefined) return;
     roleTemplate(role || "agent").then((t) => { lastTemplate.current = t; setD((x) => (x ? { ...x, instructions: t } : x)); setInitial((x) => (x && isNew ? { ...x, instructions: t } : x)); }).catch(() => {});
   }, [role, isNew]);
+  useEffect(() => {
+    if (toolsEdited.current || role === undefined) return;
+    roleTools(role || "agent").then((list) => { const t = list.join("\n"); lastTools.current = t; setD((x) => (x ? { ...x, tools: t } : x)); setInitial((x) => (x && isNew ? { ...x, tools: t } : x)); }).catch(() => {});
+  }, [role, isNew]);
   if (!d || !initial) return null;
   const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => {
     if (k === "instructions" && v !== lastTemplate.current) edited.current = true;
+    if (k === "tools" && v !== lastTools.current) toolsEdited.current = true;
     setD((x) => (x ? { ...x, [k]: v } : x));
   };
   const custom = !ROLES.includes(d.role);

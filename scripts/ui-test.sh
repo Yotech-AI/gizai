@@ -4,7 +4,8 @@
 #  2. task page: opens the description editor, types, saves with Ctrl+Enter; checks the database.
 #  3. doc page: saves with Ctrl+S, then forces a conflict and keeps our text.
 #  4. team page (GA-53): Design first and one empty spot per branch; the Development spot opens the agent form with its
-#     role and no wake-up, and the agent lands on To do and In progress; its card dragged from the chart onto Testing (and
+#     role and no wake-up; picking a role fills in its instructions and allowed commands until the list is edited (GA-63),
+#     and the agent lands on To do and In progress; its card dragged from the chart onto Testing (and
 #     not onto Review), "+ Agent" and ×; Manual and Auto; the next column
 #     and the backend's refusals (a link to itself, Auto without a next column); Review; Add column; dragging a column by
 #     its grip; the bins of the last Backlog and Done; the removal confirm and removing a column; a new label, a name in use

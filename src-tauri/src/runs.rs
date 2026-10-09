@@ -27,15 +27,9 @@ const BUFFER: usize = 500;
 /// Why a run or chat answer ended when Gizai quit (logging out and SIGTERM included), and the note a chat shows.
 pub const STOPPED_BY_QUIT: &str = "Stopped because Gizai quit.";
 
-/// Used when an agent has no allowed commands of its own; new agents start with the same list (`src/lib/agents.ts`).
-/// The read-only helpers near the end are the ones agents use in pipes; `sleep` lets an agent wait in the foreground
-/// (for CI, a release or a deploy) between checks, as "How this run works" tells it.
-pub const DEFAULT_TOOLS: [&str; 29] = [
-    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(composer:*)",
-    "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)",
-    "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(diff:*)", "Bash(grep:*)", "Bash(jq:*)",
-    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)", "Bash(sleep:*)",
-];
+/// Used when an agent has no allowed commands of its own. New agents start with their role's list, which builds on it
+/// (`gizai_core::seed::role_tools`).
+pub use gizai_core::seed::DEFAULT_TOOLS;
 
 /// What the UI hears about.
 pub enum Note {
@@ -243,21 +237,26 @@ pub(crate) fn executable(p: &Path) -> bool {
 
 /// Finds `claude` the way a login shell would, then in the usual install places. Saves what it finds.
 pub fn detect_claude(st: &AppState) -> Option<String> {
+    let found = find_claude();
+    if let Some(p) = &found {
+        let _ = settings::set(&st.db, "claude_bin", p);
+    }
+    found
+}
+
+/// `detect_claude` without saving: where `claude` is installed, if it is.
+pub fn find_claude() -> Option<String> {
     let from_shell = std::process::Command::new("bash").args(["-lc", "command -v claude"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|p| !p.is_empty() && executable(Path::new(p)));
     let home = std::env::var("HOME").unwrap_or_default();
-    let found = from_shell.or_else(|| {
+    from_shell.or_else(|| {
         [".local/bin/claude", ".claude/local/claude", ".local/share/mise/installs/claude/latest/claude", ".npm-global/bin/claude"]
             .iter().map(|rel| format!("{home}/{rel}"))
             .chain(["/usr/local/bin/claude".to_string(), "/usr/bin/claude".to_string()])
             .find(|p| executable(Path::new(p)))
-    });
-    if let Some(p) = &found {
-        let _ = settings::set(&st.db, "claude_bin", p);
-    }
-    found
+    })
 }
 
 /// The saved Claude Code path; detected only when none was ever saved (a saved path that has gone missing is

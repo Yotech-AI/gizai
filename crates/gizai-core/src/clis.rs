@@ -36,10 +36,12 @@ pub struct Cli {
 
 /// The built-in Claude Code.
 pub fn builtin(db: &Db) -> Cli {
-    Cli {
-        id: CLAUDE_CODE.into(), name: "Claude Code".into(), kind: "claude_code".into(),
-        command: settings::get::<String>(db, "claude_bin").ok().flatten().unwrap_or_default(), env: vec![], args: String::new(),
-    }
+    Cli { command: settings::get::<String>(db, "claude_bin").ok().flatten().unwrap_or_default(), ..claude_code() }
+}
+
+/// The built-in Claude Code without its program (the `claude_bin` setting).
+pub(crate) fn claude_code() -> Cli {
+    Cli { id: CLAUDE_CODE.into(), name: "Claude Code".into(), kind: "claude_code".into(), ..Default::default() }
 }
 
 /// Claude Code first, then the CLIs added in Settings.
@@ -89,17 +91,7 @@ fn clean(c: Cli) -> Result<Cli> {
 /// Saves the CLIs added in Settings (the built-in Claude Code is left out: its program is a setting of its own). New ones
 /// get an id. Refuses two CLIs with one name, and a list without a CLI that agents still run on. Returns the full list.
 pub fn save(db: &Db, clis: Vec<Cli>) -> Result<Vec<Cli>> {
-    let mut out: Vec<Cli> = vec![];
-    for c in clis.into_iter().filter(|c| c.id != CLAUDE_CODE) {
-        let c = clean(c)?;
-        if c.name.eq_ignore_ascii_case("Claude Code") || out.iter().any(|o| o.name.eq_ignore_ascii_case(&c.name)) {
-            return Err(Error::Invalid(format!("there is already a CLI called {}: give each its own name", c.name)));
-        }
-        if out.iter().any(|o| o.id == c.id) {
-            return Err(Error::Invalid(format!("two CLIs have the id {}", c.id)));
-        }
-        out.push(c);
-    }
+    let out = clean_all(clis)?;
     let old = list(db)?;
     let agents: Vec<(String, String)> = db.read(|c| {
         let mut st = c.prepare("SELECT g.adapter, a.name FROM agent_configs g JOIN actors a ON a.id = g.actor_id WHERE a.deleted_at IS NULL ORDER BY a.name")?;
@@ -113,6 +105,31 @@ pub fn save(db: &Db, clis: Vec<Cli>) -> Result<Vec<Cli>> {
     }
     settings::set(db, KEY, &out)?;
     list(db)
+}
+
+/// Saves the CLIs added in Settings inside a write that is open already, as `save` does, but without asking which agents
+/// run on the ones that go: a new install's first start (`seed::ensure_seed_with_agents`), which has no agents yet.
+/// Returns the saved CLIs (without the built-in Claude Code).
+pub(crate) fn save_in(w: &crate::db::Writer, clis: Vec<Cli>) -> Result<Vec<Cli>> {
+    let out = clean_all(clis)?;
+    settings::set_in(w, KEY, &out)?;
+    Ok(out)
+}
+
+/// The CLIs added in Settings, cleaned, the built-in Claude Code left out; two with one name are refused.
+fn clean_all(clis: Vec<Cli>) -> Result<Vec<Cli>> {
+    let mut out: Vec<Cli> = vec![];
+    for c in clis.into_iter().filter(|c| c.id != CLAUDE_CODE) {
+        let c = clean(c)?;
+        if c.name.eq_ignore_ascii_case("Claude Code") || out.iter().any(|o| o.name.eq_ignore_ascii_case(&c.name)) {
+            return Err(Error::Invalid(format!("there is already a CLI called {}: give each its own name", c.name)));
+        }
+        if out.iter().any(|o| o.id == c.id) {
+            return Err(Error::Invalid(format!("two CLIs have the id {}", c.id)));
+        }
+        out.push(c);
+    }
+    Ok(out)
 }
 
 /// Why a CLI can't run the Team Lead's chat, or None when it can: chat needs Claude Code's MCP and stream support, so it

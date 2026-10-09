@@ -125,7 +125,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
           </FormSection>
           <FormSection title="Description" text="Context for whoever picks it up: people and agents read the same text.">
             <Field label="Description" wide><MarkdownEditor value={description} onChange={setDescription} ariaLabel="Description" minHeight={180}
-              placeholder="What and why. Mention a task like KADE-12 or a person like @sanne." /></Field>
+              placeholder="What and why. @ links a task, project, client or agent." /></Field>
           </FormSection>
           <FormSection title="Acceptance criteria" text="What must be true when it's done. The QA agent checks these one by one.">
             <Field label="Acceptance criteria" wide><MarkdownEditor value={acceptance} onChange={setAcceptance} ariaLabel="Acceptance criteria" minHeight={100}

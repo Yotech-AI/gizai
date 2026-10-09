@@ -1,5 +1,5 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
-import { getTask, listChatThreads, listLabels, listTasks } from "./api";
+import { archiveTask, getTask, listChatThreads, listLabels, listTasks } from "./api";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -296,6 +296,33 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   if (ask) buttonByText(ask, "Keep")?.click();
   (out.confirm as Record<string, unknown>).kept = !!(await until(() => !q("[role=alertdialog][aria-label='Remove Review']"))) && !!(await st("Review"));
 
+  // 8b. A second Done column turns the old Done's bin on; its confirm counts its archived card and offers the column before
+  //     (the new one) by default. Then the new one goes again.
+  const doneCard = (await listTasks()).find((t) => t.stateName === "Done");
+  if (doneCard) await archiveTask(doneCard.id);
+  buttonByText(document, "Add column")?.click();
+  const form2 = await waitFor(() => q("[role=group][aria-label='Add column']"));
+  if (form2) {
+    typeInto(q<HTMLInputElement>("[aria-label='Column name']", form2)!, "Shipped");
+    pickOption(q<HTMLSelectElement>("[aria-label='Kind of column']", form2)!, "done");
+    pickOption(q<HTMLSelectElement>("[aria-label='After column']", form2)!, deployId);
+    await sleep(50);
+    buttonByText(form2, "Add column")?.click();
+  }
+  const shipped = await until(async () => (await st("Shipped"))?.category === "done") && !!(await waitFor(() => column("Shipped"), 2000));
+  const doneOn = await until(() => !!bin("Done") && !bin("Done")!.disabled);
+  bin("Done")?.click();
+  const ask3 = await waitFor(() => q("[role=alertdialog][aria-label='Remove Done']"));
+  out.done_confirm = { archived_one: !!doneCard, shipped, bin_on: doneOn, text: ask3?.textContent,
+    default_target: q<HTMLSelectElement>("[aria-label='Cards of Done go to']", ask3 ?? document)?.selectedOptions[0]?.textContent };
+  if (ask3) buttonByText(ask3, "Keep")?.click();
+  await until(() => !q("[role=alertdialog][aria-label='Remove Done']"));
+  bin("Shipped")?.click();
+  const ask4 = await waitFor(() => q("[role=alertdialog][aria-label='Remove Shipped']"));
+  if (ask4) buttonByText(ask4, "Remove column")?.click();
+  (out.done_confirm as Record<string, unknown>).shipped_gone = await until(async () => !(await st("Shipped")));
+  (out.done_confirm as Record<string, unknown>).done_kept = !!(await st("Done"));
+
   // 9. Labels: a new one, a name in use (any case) refused with the backend's reason, and removing one that a card has.
   const labels = () => q("[aria-label=Labels]");
   const newName = () => q<HTMLInputElement>("[aria-label='New label name']", labels()!);
@@ -381,6 +408,8 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
     bins_off: bo.backlog.disabled && !!bo.backlog.why?.includes("last Backlog") && bo.done.disabled && !!bo.done.why?.includes("last Done"),
     confirm: !!cf.text?.includes("Its card goes to") && cf.default_target === "Testing (the column before)" && !!cf.text?.includes("Testing links to Deploy instead.") && cf.kept,
     remove: !!rm.confirm?.includes("It has no cards.") && rm.removed && rm.off_screen,
+    done_confirm: (() => { const d = out.done_confirm as { archived_one: boolean; shipped: boolean; bin_on: boolean; text?: string | null; default_target?: string | null; shipped_gone: boolean; done_kept: boolean };
+      return d.archived_one && d.shipped && d.bin_on && !!d.text?.includes("Its archived card goes to") && d.default_target === "Shipped (the column before)" && d.shipped_gone && d.done_kept; })(),
     labels: lb.created && !!lb.duplicate_refused && lb.only_one && !!lb.remove_confirm?.includes("1 card loses it.") && lb.removed,
     branch: br.added && br.shown && br.empty_spot && br.removed && br.development_locked,
     props_new_label: !!(out.props_new_label as { on_card: boolean }).on_card,

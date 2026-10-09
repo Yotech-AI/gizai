@@ -49,6 +49,15 @@ Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it else
 - **Keys for the Team Lead's tools** (`api_tokens` in `gizai.db`): each one lasts a chat answer or board check, and is removed a day after it expired or was revoked.
 - **Backups** (`backups/`): one before every update, install and database upgrade, and `gizai --backup` makes one when you ask. The newest 20 are kept. Their names use your local time, like `gizai-before-update-20261009-143502-123.db`.
 
+## Getting started
+
+1. Install Claude Code or Codex and sign in to it. The Team Lead chat needs Claude Code.
+2. For projects on GitHub, install gh and sign in (`gh auth login`, or Settings → GitHub): QA opens the pull requests with it.
+3. Open Gizai: the workflow and five agents are ready. The Backend and Frontend Agents work the cards in To do, the QA Agent tests them, the DevOps Agent releases what you merged when you press Run in Deploy, and you talk to the Team Lead on the Chat page. With only Codex installed, Gizai adds it under Settings → Coding CLIs and runs every agent but the Team Lead on it.
+4. Add a project with its git repository, and put a card in To do.
+
+MCP servers: add them in Settings → MCP servers, then switch them on per agent in the agent form → Tools. This works for agents on Claude Code for now; GA-55 adds Codex.
+
 ![Gizai: the board, a live agent run, the Team Lead chat, the team and an agent](docs/gizai.gif)
 
 ## Features
@@ -95,7 +104,7 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
   Codex and Gemini hear only what holds for them: Codex asks for nothing and its sandbox blocks what it doesn't allow; Gemini hears its allowed commands.
 - **Waiting in a run.** Ending its message ends an agent's run, and nothing wakes it up later. So "How this run works" also says how to wait for something outside the run, like a CI run, a release or deploy workflow or a pull request's checks: check it in the foreground about once a minute (one check, then `sleep 45`, in one command, and again), and when it won't be done before the run's limit, end with the result line and say what is left. `sleep` is named only for an agent that may run it. Checked against Claude Code 2.1.289: a command that starts with a sleep of more than 20 seconds is blocked, most shell loops are refused, a command that runs more than 2 minutes (or its own timeout, at most 10) is moved to the background, and a background command is stopped when the message ends.
 - **One nudge.** A run that ends normally without its `GIZAI_RESULT` line is continued once by itself, in the same session, like Continue: Gizai tells the agent that nothing wakes it up later, to check in the foreground now if it was waiting, and to end with its result line. It never does this after Stop, a time or tool-call limit, a failed run or Gizai quitting, and only when a start is allowed now (agents not paused, the agent active, within its budget and cards at once, and room in Runs at once); otherwise nothing changes. If the nudged run also ends without a result, the card goes on hold "stalled" and shows in the Inbox.
-- **New agents' commands.** New agents start with the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. An agent with its own list needs `Bash(sleep:*)` added to it to wait that way.
+- **New agents' commands.** A new agent starts with its role's allowed commands. Gizai's default list has the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. The Team Lead gets that list; builders (Backend, Frontend, Design and your own roles) also get `git push`, `git pull`, `git fetch`, a few read-only git commands, `node`, `echo` and `printf`; QA gets the builders' list plus `gh pr create`, `list`, `view` and `edit`; DevOps gets a list of its own for releases. An agent without a list runs with Gizai's default list. An agent with its own list needs `Bash(sleep:*)` added to it to wait between checks.
 - **Refused in this run.** Claude Code reports every tool call it refused, with the reason. Gizai saves them on the run: the Run panel lists them under "Refused in this run", Show output marks each one where it happened, and the Team Lead's `get_task` and `get_agent` return them for each run. Codex and Gemini don't report refusals, so their runs list none.
 
 ## MCP servers for agents

@@ -132,8 +132,9 @@ pub fn save(st: &AppState, input: ServerInput) -> Result<ServerView, String> {
     let old = core_mcp::list(&st.db).map_err(|e| e.to_string())?.into_iter().find(|o| !s.id.is_empty() && o.id == s.id);
     let saved = core_mcp::save(&st.db, s).map_err(|e| e.to_string())?;
     let id = saved.id.clone();
-    for (lines, key) in [(&input.env, env_key as fn(&str, &str) -> String), (&input.headers, header_key)] {
-        for l in lines.iter().filter(|l| !l.name.trim().is_empty()) {
+    // Only the lines the server keeps: a command has no headers and an address no environment.
+    for (lines, kept, key) in [(&input.env, &saved.env_names, env_key as fn(&str, &str) -> String), (&input.headers, &saved.header_names, header_key)] {
+        for l in lines.iter().filter(|l| kept.iter().any(|n| n == l.name.trim())) {
             if let Some(v) = l.value.as_deref().filter(|v| !v.is_empty()) {
                 k.set(&key(&id, l.name.trim()), v).map_err(keychain_problem)?;
             }

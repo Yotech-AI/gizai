@@ -112,3 +112,40 @@ fn argv_passes_the_effort_level() {
     assert_eq!(a[a.iter().position(|x| x == "--effort").unwrap() + 1], "xhigh");
     assert!(!args().argv().contains(&"--effort".to_string()));
 }
+
+// GA-31, "Run this for me": a needs_decision result line may name the commands the agent asks the user to run.
+#[test]
+fn a_result_line_may_ask_the_user_to_run_commands_and_older_lines_still_parse() {
+    // the fixture the fake Claude Code ends with for FAKE_RUN_FOR_ME: each command exactly as written, quotes and all
+    let evs: Vec<RunEvent> = include_str!("fixtures/run-for-me.jsonl").lines().flat_map(parse_line).collect();
+    let RunEvent::Result { text, .. } = evs.last().unwrap() else { panic!("{evs:?}") };
+    let o = outcome::parse(text).unwrap();
+    assert_eq!((o.outcome.as_str(), o.issues.len()), ("needs_decision", 0));
+    assert_eq!(o.run_for_me, ["sudo pacman -S libayatana-appindicator",
+        "echo \"fs.inotify.max_user_watches=524288\" | sudo tee /etc/sysctl.d/40-watches.conf && sudo sysctl --system"]);
+    // older result lines have none, and parse as before
+    for line in ["GIZAI_RESULT: {\"outcome\":\"needs_decision\",\"summary\":\"CSV or JSON?\",\"issues\":[\"Which format?\"]}",
+                 "GIZAI_RESULT: {\"outcome\":\"qa_pass\",\"summary\":\"ok\"}", "GIZAI_RESULT: {\"outcome\":\"ready_for_testing\"}"] {
+        let o = outcome::parse(line).unwrap_or_else(|| panic!("{line}"));
+        assert!(o.run_for_me.is_empty(), "{line}");
+    }
+    let RunEvent::Result { text, .. } = include_str!("fixtures/run-asks.jsonl").lines().flat_map(parse_line).last().unwrap() else { panic!() };
+    let o = outcome::parse(&text).unwrap();
+    assert_eq!((o.outcome.as_str(), o.summary.as_str(), o.run_for_me.len()), ("needs_decision", "CSV or JSON for the export?", 0));
+}
+
+#[test]
+fn run_for_me_takes_one_command_as_a_string_drops_blank_entries_and_never_spoils_the_line() {
+    let p = |rfm: &str| outcome::parse(&format!("GIZAI_RESULT: {{\"outcome\":\"needs_decision\",\"summary\":\"s\",\"run_for_me\":{rfm}}}"))
+        .unwrap_or_else(|| panic!("run_for_me {rfm} spoiled the line"));
+    assert_eq!(p("\"sudo pacman -S libayatana-appindicator\"").run_for_me, ["sudo pacman -S libayatana-appindicator"]);
+    assert_eq!(p("[\"  sudo make install  \", \"\", \"   \", \"npm i -g pnpm\"]").run_for_me, ["sudo make install", "npm i -g pnpm"], "trimmed, blanks out");
+    assert_eq!(p("[\"a\", 3, null, {\"cmd\":\"b\"}, \"c\"]").run_for_me, ["a", "c"], "only the strings");
+    for odd in ["42", "true", "null", "{\"cmd\":\"x\"}", "[]", "\"\""] {
+        assert!(p(odd).run_for_me.is_empty(), "{odd}");
+    }
+    // the verdict as Gizai saves it again: no run_for_me key without commands
+    let o = p("[]");
+    assert!(!serde_json::to_string(&o).unwrap().contains("run_for_me"));
+    assert!(serde_json::to_string(&p("[\"x\"]")).unwrap().contains("\"run_for_me\":[\"x\"]"));
+}

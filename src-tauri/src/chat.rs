@@ -1163,7 +1163,8 @@ fn check_system_prompt(st: &AppState, agent: &Member) -> String {
          otherwise start_agent_run. Add a short comment that says so. If it doesn't answer the question, leave the hold.\n\
          - held, no answer: answer it yourself only when it is a fact you can check (the repository, docs, other cards), and say so in a comment \
          before you release it. Scope, product choices, money, keys and passwords, deploys and deleting go to {you} in a chat (start_chat), with \
-         your recommendation. Holds blocked and stalled: find the cause in the card's runs and clear the hold only when the cause is gone; otherwise ask.\n\
+         your recommendation. Holds blocked and stalled: find the cause in the card's runs and clear the hold only when the cause is gone; otherwise ask. \
+         A held card with run_for_me waits for {you} to run those commands: the Inbox shows them with Done, continue, so leave it and don't ask about it.\n\
          - waiting: an agent with a free slot: start it on the card (start_agent_run). No agent is on its column: assign the agent the card \
          clearly calls for (update_task), otherwise ask. A paused agent, a used budget, a paused pull or a full \"Runs at once\": ask.\n\
          - stopped: a run that hit the time or tool-call limit gets one Continue (continue_agent_run), not another when that run was already a \

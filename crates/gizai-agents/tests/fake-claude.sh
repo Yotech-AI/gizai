@@ -14,6 +14,8 @@
 # run-no-result: the agent pushes, starts a background wait for CI and ends its message without the GIZAI_RESULT line
 # (GA-54). FAKE_GATE=<file> in its environment waits (at most 30 s) until that file exists before it finishes, so a test
 # can change things while the run is still live.
+# FAKE_RUN_FOR_ME in the prompt finishes like run-for-me: a needs_decision whose result line asks the user to run two
+# commands (`run_for_me`, GA-31). FAKE_ASKS finishes like run-asks: a needs_decision without them (an older result line).
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -38,6 +40,7 @@ fi
 fixture="$here/fixtures/run-ok.jsonl"
 case "$prompt" in *FAKE_REFUSED*) fixture="$here/fixtures/run-refused.jsonl" ;; esac
 case "$prompt" in *FAKE_NO_RESULT*) fixture="$here/fixtures/run-no-result.jsonl" ;; esac
+case "$prompt" in *FAKE_RUN_FOR_ME*) fixture="$here/fixtures/run-for-me.jsonl" ;; *FAKE_ASKS*) fixture="$here/fixtures/run-asks.jsonl" ;; esac
 if [ -n "${FAKE_NO_RESULT:-}" ]; then fixture="$here/fixtures/run-no-result.jsonl"; fi
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
 case "$prompt" in *FAKE_REFUSED_THEN_HANG*) prompt=refusedhang ;; esac

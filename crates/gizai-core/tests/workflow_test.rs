@@ -274,7 +274,9 @@ fn a_nudge_that_ends_without_a_result_too_holds_the_card_stalled() {
 
     let n = nudge(&db, &be, &t, "backend");
     let run = runs::get(&db, &n).unwrap();
-    assert_eq!((run.trigger.as_str(), run.nudged, run.session_id.as_deref()), ("nudge", true, Some("S")));
+    // GA-31: its own trigger in the Runs list, apart from a Continue
+    assert_eq!((run.trigger.as_str(), run.nudged, run.session_id.as_deref()), (runs::RESULT_NUDGE, true, Some("S")));
+    assert_eq!(runs::RESULT_NUDGE, "result_nudge");
     assert!(runs::list_for_task(&db, &t).unwrap().iter().any(|r| r.id == n && r.nudged), "listed as nudged too");
     runs::finish(&db, &n, "succeeded", None, 0, 0, 0, None).unwrap();
     let g = workflow::apply_outcome(&db, &n, None).unwrap();
@@ -303,6 +305,7 @@ fn a_nudge_that_fails_hits_a_limit_or_finishes_counts_as_usual_and_a_persons_con
     let be = agent(&db, "Backend Agent");
     let c = runs::create_with_trigger(&db, &be, &t, "backend", "nudge", "S", "/tmp", "/tmp", "gizai/x", "/tmp/c.jsonl").unwrap();
     assert!(!runs::get(&db, &c).unwrap().nudged);
+    assert_eq!(runs::get(&db, &c).unwrap().trigger, "nudge", "a Continue reads as a Continue, not as Gizai's nudge");
     runs::finish(&db, &c, "succeeded", None, 0, 0, 0, None).unwrap();
     assert_eq!(workflow::apply_outcome(&db, &c, None).unwrap().hold, None);
     // the nudge ends with a result: the card moves on as usual

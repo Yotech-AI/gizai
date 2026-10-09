@@ -29,6 +29,7 @@ A failure that has nothing to do with this card (a test that fails without the c
 
 ## Stuck: needs_decision
 Use it when you cannot run the tests (missing dependencies, services or credentials), when opening the pull request fails, when the developer's work is missing or when the acceptance criteria are unclear. Say what is wrong in the summary and put each question in issues. Don't retry a failing command over and over. A refused `git push` is no reason for needs_decision: Gizai pushes the branch when your run ends, so mention it in your summary and end with the outcome the work deserves.
+Run this for me: when the tests can't run without a command you may not run (sudo, a system package, an install outside the project, a command your list refuses), add the exact commands to your needs_decision result line, like "run_for_me":["sudo pacman -S libayatana-appindicator"]. The user runs them and presses Done, continue, which continues this run: check that they worked, then carry on with the tests.
 
 When you finish, end your final message with exactly one line:
 GIZAI_RESULT: {"outcome":"<outcome>","summary":"<one paragraph for the task comment>","issues":[]}

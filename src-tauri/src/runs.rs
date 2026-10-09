@@ -440,6 +440,35 @@ struct Resume {
     answer: Option<String>,
     /// Gizai's own nudge (`nudge_for`): the run ended without a result, and the agent hears `prompt::nudge_prompt`.
     nudge: bool,
+    /// Continue with a message (GA-31): the note of whoever continued it, told to the agent next to `reason` (or the
+    /// answer) and saved on the card as their comment once the run is recorded.
+    note: Option<ContinueNote>,
+}
+
+/// A note for a continued run (GA-31): from you (the text box next to Continue, or Done, continue) or from the Team Lead
+/// (`continue_agent_run`'s `note`).
+struct ContinueNote {
+    /// Who wrote it: the comment's author.
+    by: String,
+    /// Their name, as the prompt says it.
+    by_name: String,
+    text: String,
+}
+
+impl ContinueNote {
+    /// The note of `by`, None when it is empty.
+    fn of(st: &AppState, by: &str, text: Option<String>) -> Option<ContinueNote> {
+        let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())?;
+        Some(ContinueNote { by: by.to_string(), by_name: actor_name(st, by), text })
+    }
+}
+
+/// An actor's name (a person or an agent), for a prompt.
+fn actor_name(st: &AppState, actor_id: &str) -> String {
+    team::agent(&st.db, actor_id).map(|m| m.name).ok()
+        .or_else(|| gizai_core::users::list(&st.db).ok()?.into_iter().find(|p| p.id == actor_id).map(|p| p.name))
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "The user".into())
 }
 
 /// Continue: resumes a stopped run's session in its worktree, as a new run of the same agent on the same CLI. Only the
@@ -447,16 +476,54 @@ struct Resume {
 /// the work (clearing also resets its failure count).
 pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<String>)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
-    continue_inner(st, run_id, bin_override, false).await
+    continue_inner(st, run_id, bin_override, false, None).await
+}
+
+/// Continue with a message (GA-31): `continue_run` with your note for the agent (the text box next to Continue), like
+/// "use the existing CSV writer". The note goes into the continued run's prompt, next to why the run stopped, and is saved
+/// on the card as your comment. None or an empty note: a plain Continue.
+pub async fn continue_with_note(st: &AppState, run_id: &str, note: Option<String>, bin_override: Option<String>)
+    -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    let note = ContinueNote::of(st, &st.you_id, note);
+    continue_inner(st, run_id, bin_override, false, note).await
 }
 
 /// The Team Lead's Continue after an answer (`continue_agent_run`): also a run that ended asking for a decision
 /// (`needs_decision`) resumes, told what was written on the card since it ended.
 pub async fn continue_answered(st: &AppState, run_id: &str) -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
-    continue_inner(st, run_id, None, true).await
+    continue_inner(st, run_id, None, true, None).await
 }
 
-async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String>, answered: bool)
+/// `continue_answered` with the Team Lead's note (`continue_agent_run`'s `note`), from `lead`: saved on the card as its
+/// comment and told to the agent like a person's note. On a run that asked for a decision, the note counts as an answer
+/// written on the card.
+pub async fn continue_answered_with_note(st: &AppState, run_id: &str, lead: &str, note: Option<String>)
+    -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    let note = ContinueNote::of(st, lead, note);
+    continue_inner(st, run_id, None, true, note).await
+}
+
+/// "Run this for me", Done, continue (GA-31): you ran the commands the card's latest run asked you to run (`run_for_me`
+/// on its `needs_decision` result). That run continues, like the Team Lead's Continue after an answer, with your note that
+/// the commands were run (saved on the card as your comment), so the agent checks that they worked and carries on. A
+/// hold on the card is cleared.
+pub async fn continue_after_run_for_me(st: &AppState, task_id: &str) -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    let last = core_runs::list_for_task(&st.db, task_id).map_err(|e| e.to_string())?.into_iter().next()
+        .ok_or("this card has no run to continue")?;
+    if last.outcome.as_deref() != Some("needs_decision") || last.run_for_me.is_empty() {
+        return Err("its last run didn't ask you to run anything: Continue or Run starts the agent".into());
+    }
+    let note = ContinueNote::of(st, &st.you_id, Some(ran_for_me_note(&last.run_for_me)));
+    continue_inner(st, &last.id, None, true, note).await
+}
+
+/// Done, continue's note: the commands, and that they were run.
+pub fn ran_for_me_note(commands: &[String]) -> String {
+    let (what, worked) = if commands.len() == 1 { ("the command", "it worked") } else { ("the commands", "they worked") };
+    format!("Done: I ran {what} you asked me to run.\n\n```sh\n{}\n```\n\nCheck that {worked}, then carry on.", commands.join("\n"))
+}
+
+async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String>, answered: bool, note: Option<ContinueNote>)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
     let run = core_runs::get(&st.db, run_id).map_err(|e| e.to_string())?;
     let task_id = run.task_id.clone().ok_or("only a card's run can continue")?;
@@ -476,7 +543,8 @@ async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String
             .filter(|c| c.created_at > since && c.run_id.as_deref() != Some(run_id))
             .map(|c| format!("{}: {}", c.author_name, c.body_md.trim()))
             .collect();
-        if lines.is_empty() {
+        // A note is an answer too: it is saved on the card with the run (`start_inner`).
+        if lines.is_empty() && note.is_none() {
             return Err("nobody has answered on the card since this run asked for a decision".into());
         }
         Some(lines[lines.len().saturating_sub(5)..].join("\n\n"))
@@ -492,7 +560,8 @@ async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String
         return Err("its worktree is gone; Run starts the card fresh".into());
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
-    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason, answer, nudge: false })).await
+    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual",
+                              Some(Resume { session, cli, reason, answer, nudge: false, note })).await
         .map_err(StartError::message)?;
     resume_pull(st, &run.agent_id);
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
@@ -677,7 +746,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     }
     // A card the queue or Gizai's nudge starts waits when another of the agent's cards failed meanwhile: asked before its
     // worktree is made and again before its process spawns.
-    let queued = matches!(trigger, "assigned" | "nudge");
+    let queued = matches!(trigger, "assigned" | core_runs::RESULT_NUDGE);
     let wait_if_paused = || match pull_paused(st, &agent_id) {
         Some(why) if queued => Err(StartError::Wait(format!("{} stopped taking cards: {why}", agent.name))),
         _ => Ok(()),
@@ -706,6 +775,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         None => log_dir.join(format!("{session}.jsonl")),
     };
     let wt_path = wt.path.to_string_lossy().to_string();
+    // A Continue (a person's, the Team Lead's, Done, continue) is recorded as `nudge`. Gizai's own nudge is too, marked
+    // nudged (`create_nudge`), and reads as `result_nudge`.
     let db_trigger = if resume.is_some() { "nudge" } else { trigger };
     let log = log_path.to_string_lossy();
     let run_id = if resume.as_ref().is_some_and(|r| r.nudge) {
@@ -713,6 +784,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     } else {
         core_runs::create_with_trigger(&st.db, &agent_id, task_id, &role, db_trigger, &session, &wt_path, &wt_path, &wt.branch, &log)
     }.map_err(|e| StartError::Other(e.to_string()))?;
+    // The note of whoever continued it goes on the card as their comment, now that the run is recorded: a start that
+    // didn't get this far leaves no comment behind.
+    if let Some(n) = resume.as_ref().and_then(|r| r.note.as_ref()) {
+        match comments::add(&st.db, &n.by, task_id, &n.text, None) {
+            Ok(_) => (st.notify)(Note::RowsChanged("comments")),
+            Err(e) => eprintln!("gizai: saving the note for run {run_id} as a comment failed: {e}"),
+        }
+    }
 
     if let Ok(sha) = worktree::rev_parse(&wt.path, "HEAD") {
         let _ = core_runs::set_base_sha(&st.db, &run_id, &sha);
@@ -777,10 +856,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             notes.push(format!("{} runs on {}: MCP servers work on Claude Code for now, so this run goes without them.", agent.name, cli.name));
         }
     }
+    let note = resume.as_ref().and_then(|r| r.note.as_ref()).map(|n| prompt::Note { from: n.by_name.clone(), text: n.text.clone() });
     let base_prompt = prompt::with_rules(&match &resume {
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
-        Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
-        Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
+        Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt_with(a, note.as_ref(), Some(limits)),
+        Some(r) => prompt::continue_prompt_with(&r.reason, note.as_ref(), Some(limits)),
         None => prompt::build_from(&ctx, &instructions, fetched_from(&project)),
     }, &rules);
     let run = TaskRun {
@@ -986,7 +1066,10 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
             ((cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, *input_tokens, *output_tokens, text.clone(), !is_error),
         _ => (0, 0, 0, String::new(), false),
     };
-    let verdict: Option<Outcome> = outcome::parse(&text).map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
+    let parsed = outcome::parse(&text);
+    // "Run this for me" (GA-31): the commands a `needs_decision` asks you to run, kept with its verdict below.
+    let run_for_me: Vec<String> = parsed.as_ref().filter(|o| o.outcome == "needs_decision").map(|o| o.run_for_me.clone()).unwrap_or_default();
+    let verdict: Option<Outcome> = parsed.map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
     let finished = ok && exit == "exit:0";
     // While Gizai quits, a run that didn't finish was stopped by the quit, also when its agent ended first: logging
     // out sends SIGTERM to the agents as well as to Gizai. It doesn't count as a failure.
@@ -1026,12 +1109,15 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
     let mut nudge = None;
+    // Only a run that finished has a verdict for the gates, and only then do its commands to run count.
+    let (gated, asks) = if status == "succeeded" { (verdict.as_ref(), run_for_me.as_slice()) } else { (None, &[][..]) };
     if let Some(reason) = &unpushed {
         // The push failed: the card stays where it is, on hold with the reason, whatever the run's answer (its summary is
-        // still posted), so it shows in the Inbox. Nothing retries: the next run's end pushes again.
+        // still posted), so it shows in the Inbox. Nothing retries: the next run's end pushes again. Commands it asks you
+        // to run are kept with its verdict, so the held card still shows them.
         if cancelled {
             hold_card(st, &agent, task_id, reason);
-        } else if let Err(e) = workflow::hold_unpushed(&st.db, run_id, if status == "succeeded" { verdict.as_ref() } else { None }, reason) {
+        } else if let Err(e) = workflow::hold_unpushed_with(&st.db, run_id, gated, asks, reason) {
             eprintln!("gizai: holding the card of run {run_id} failed: {e}");
         }
         if status == "failed" && !quit {
@@ -1051,7 +1137,7 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
             let _ = workflow::put_back(&st.db, &agent, task_id, from);
         }
     } else if !cancelled {
-        match workflow::apply_outcome(&st.db, run_id, if status == "succeeded" { verdict.as_ref() } else { None }) {
+        match workflow::apply_outcome_with(&st.db, run_id, gated, asks) {
             Ok(g) => moved = g.moved_to.is_some(),
             Err(e) => eprintln!("gizai: applying the outcome of run {run_id} failed: {e}"),
         }
@@ -1190,7 +1276,7 @@ fn nudge_for(st: &AppState, run_id: &str, task_id: &str) -> Option<Resume> {
         return None;
     }
     let session = run.session_id.filter(|s| !s.is_empty())?;
-    Some(Resume { session, cli, reason: "it ended without a result".into(), answer: None, nudge: true })
+    Some(Resume { session, cli, reason: "it ended without a result".into(), answer: None, nudge: true, note: None })
 }
 
 /// Starts Gizai's nudge (`nudge_for`) only when a start is allowed now: Gizai isn't quitting, agents aren't paused in
@@ -1209,8 +1295,9 @@ fn start_nudge<'a>(st: &'a AppState, task_id: &'a str, agent_id: &'a str, resume
         if busy >= agent.max_runs.max(1) {
             return;
         }
-        // The start checks the rest: active, budget, Runs at once (a wait, so nothing changes).
-        if start_background(st, task_id, agent_id, "nudge", Some(resume)).await.is_some() {
+        // The start checks the rest: active, budget, Runs at once (a wait, so nothing changes). Its own trigger
+        // (`result_nudge`), so the Runs list tells it from a Continue.
+        if start_background(st, task_id, agent_id, core_runs::RESULT_NUDGE, Some(resume)).await.is_some() {
             eprintln!("gizai: a run on card {task_id} ended without a result: continued it once");
         }
     })

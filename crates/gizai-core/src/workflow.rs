@@ -373,6 +373,13 @@ fn set_fields(w: &Writer, task_id: &str, sql_set: &str, params: &[&dyn rusqlite:
 /// Deploy column holds the card. A builder's `ready_for_testing` on a card in Testing leaves it there for QA, and on a
 /// card in Review it goes to Testing (with the switch on), as in 0.2.0.
 pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result<GateResult> {
+    apply_outcome_with(db, run_id, outcome, &[])
+}
+
+/// `apply_outcome` for a result line that may also name `run_for_me` (GA-31): on a `needs_decision`, the commands the
+/// agent asks you to run for it. They are kept with the verdict (`Run::run_for_me`), and the held card shows them
+/// (`Task::run_for_me`) until a run continues it. On another outcome they are left out.
+pub fn apply_outcome_with(db: &Db, run_id: &str, outcome: Option<&Outcome>, run_for_me: &[String]) -> Result<GateResult> {
     let run = runs::get(db, run_id)?;
     let task_id = run.task_id.clone().ok_or_else(|| Error::Invalid("this run has no task".into()))?;
     let agent = run.agent_id.clone();
@@ -381,7 +388,7 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
         let c = w.conn();
         let t = task_row(c, &task_id)?;
         let mut g = GateResult::default();
-        record_verdict(w, run_id, &agent, &task_id, outcome)?;
+        record_verdict(w, run_id, &agent, &task_id, outcome, run_for_me)?;
 
         let moved_by_hand = matches!(t.category.as_str(), "backlog" | "done" | "cancelled");
         // Moves the card to `to` (None: it stays), as the agent: into Review it is assigned to the person who reviews,
@@ -462,7 +469,11 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
                     }
                 }
                 _ => {
-                    let reason = if o.summary.trim().is_empty() { "The agent needs a decision".to_string() } else { o.summary.trim().to_string() };
+                    let reason = match o.summary.trim() {
+                        "" if !run_for_me.is_empty() => "The agent asks you to run commands for it".to_string(),
+                        "" => "The agent needs a decision".to_string(),
+                        s => s.to_string(),
+                    };
                     set_hold(w, &task_id, "needs_decision", &reason)?;
                     g.hold = Some("needs_decision".into());
                 }
@@ -496,25 +507,42 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
 /// on hold "blocked" with the reason, so it shows in the Inbox: the next agent wouldn't find the branch. Nothing else
 /// changes: no column, assignee, implementer, bounce or failure count.
 pub fn hold_unpushed(db: &Db, run_id: &str, outcome: Option<&Outcome>, reason: &str) -> Result<GateResult> {
+    hold_unpushed_with(db, run_id, outcome, &[], reason)
+}
+
+/// `hold_unpushed` for a result line that may also name `run_for_me` (see `apply_outcome_with`): the commands are kept
+/// with the verdict as well, so the card held for the push shows them too.
+pub fn hold_unpushed_with(db: &Db, run_id: &str, outcome: Option<&Outcome>, run_for_me: &[String], reason: &str) -> Result<GateResult> {
     let run = runs::get(db, run_id)?;
     let task_id = run.task_id.clone().ok_or_else(|| Error::Invalid("this run has no task".into()))?;
     db.write(Some(&run.agent_id), |w| {
         task_row(w.conn(), &task_id)?;
-        record_verdict(w, run_id, &run.agent_id, &task_id, outcome)?;
+        record_verdict(w, run_id, &run.agent_id, &task_id, outcome, run_for_me)?;
         set_hold(w, &task_id, "blocked", reason)?;
         Ok(GateResult { moved_to: None, hold: Some("blocked".into()) })
     })
 }
 
 /// Records a finished run's verdict on the run (a run still marked active is finished here), releases the card's claim
-/// and posts the agent's summary, with QA's issues, as a comment on the card.
-fn record_verdict(w: &Writer, run_id: &str, agent: &str, task_id: &str, outcome: Option<&Outcome>) -> Result<()> {
+/// and posts the agent's summary, with QA's issues, as a comment on the card. A `needs_decision` keeps the commands it
+/// asks you to run (`run_for_me`) in its `outcome_json`.
+fn record_verdict(w: &Writer, run_id: &str, agent: &str, task_id: &str, outcome: Option<&Outcome>, run_for_me: &[String]) -> Result<()> {
     let label = outcome.map(|o| o.outcome.clone()).unwrap_or_else(|| "no_result".into());
+    let json = match outcome {
+        Some(o) => {
+            let mut v = serde_json::to_value(o)?;
+            if o.outcome == "needs_decision" && !run_for_me.is_empty() {
+                v["run_for_me"] = serde_json::json!(run_for_me);
+            }
+            Some(v.to_string())
+        }
+        None => None,
+    };
     w.conn().execute(
         "UPDATE runs SET outcome=CASE WHEN ?2='no_result' AND outcome='error' THEN outcome ELSE ?2 END, outcome_json=?3, summary_md=?4,
                 status=CASE WHEN status IN ('queued','running','waiting_approval') THEN 'succeeded' ELSE status END,
                 ended_at=COALESCE(ended_at, ?5), updated_at=?5 WHERE id=?1",
-        rusqlite::params![run_id, label, outcome.map(serde_json::to_string).transpose()?, outcome.map(|o| o.summary.clone()), ids::now_ms()])?;
+        rusqlite::params![run_id, label, json, outcome.map(|o| o.summary.clone()), ids::now_ms()])?;
     runs::release_claim(w, run_id)?;
     if let Some(o) = outcome {
         let mut body = o.summary.trim().to_string();

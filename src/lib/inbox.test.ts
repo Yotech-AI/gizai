@@ -49,3 +49,24 @@ describe("chatLabel (Chat → Recent)", () => {
     expect(chatLabel(chat({}))).toBeNull();
   });
 });
+
+import { asksToRun } from "./inbox";
+
+describe("asksToRun (Run this for me, GA-31)", () => {
+  const cmds = ["sudo pacman -S libayatana-appindicator"];
+  it("is an open card on any hold whose agent asks you to run commands", () => {
+    expect(asksToRun({ ...t({ hold: "needs_decision" }), runForMe: cmds })).toBe(true);
+    expect(asksToRun({ ...t({ hold: "blocked" }), runForMe: cmds })).toBe(true);
+    expect(asksToRun({ ...t({ hold: "needs_decision", stateCategory: "testing" }), runForMe: cmds })).toBe(true);
+  });
+  it("not without a hold, without commands, or for a card that is done or cancelled", () => {
+    expect(asksToRun({ ...t({}), runForMe: cmds })).toBe(false);
+    expect(asksToRun({ ...t({ hold: "needs_decision" }), runForMe: [] })).toBe(false);
+    expect(asksToRun(t({ hold: "needs_decision" }))).toBe(false);
+    expect(asksToRun({ ...t({ hold: "blocked", stateCategory: "done" }), runForMe: cmds })).toBe(false);
+    expect(asksToRun({ ...t({ hold: "blocked", stateCategory: "cancelled" }), runForMe: cmds })).toBe(false);
+  });
+  it("counts once in the Inbox's count, like any held card", () => {
+    expect(inboxCount([{ ...t({ hold: "needs_decision" }), runForMe: cmds }, t({ hold: "needs_decision" })], [], "me")).toBe(2);
+  });
+});

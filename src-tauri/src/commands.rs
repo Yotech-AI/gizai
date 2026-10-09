@@ -395,10 +395,18 @@ pub async fn start_run(st: State<'_, AppState>, task_id: String, agent_id: Optio
     let (id, _done) = runs::start(&st, &task_id, agent_id, None, "manual").await?;
     Ok(id)
 }
-/// Continue a stopped run: resume its session (see runs::continue_run).
+/// Continue a stopped run: resume its session (see runs::continue_run), with your note for the agent when you wrote one
+/// (saved on the card as your comment, see runs::continue_with_note).
 #[tauri::command]
-pub async fn continue_run(st: State<'_, AppState>, run_id: String) -> R<String> {
-    let (id, _done) = runs::continue_run(&st, &run_id, None).await?;
+pub async fn continue_run(st: State<'_, AppState>, run_id: String, note: Option<String>) -> R<String> {
+    let (id, _done) = runs::continue_with_note(&st, &run_id, note, None).await?;
+    Ok(id)
+}
+/// "Run this for me": Done, continue. You ran the commands the card's latest run asked you to run; that run continues
+/// with a note that says so (see runs::continue_after_run_for_me). Returns the new run's id.
+#[tauri::command]
+pub async fn continue_after_run_for_me(st: State<'_, AppState>, task_id: String) -> R<String> {
+    let (id, _done) = runs::continue_after_run_for_me(&st, &task_id).await?;
     Ok(id)
 }
 #[tauri::command]

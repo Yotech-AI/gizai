@@ -43,6 +43,8 @@ export type Task = {
   createdAt: number; updatedAt: number;
   /** Archived from Done: when, and who archived it. Null for a card on the board. */
   archivedAt?: number | null; archivedBy?: string | null;
+  /** Run this for me: while the card is on hold, the commands its latest run asks you to run; Done, continue resumes that run. */
+  runForMe?: string[];
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -173,6 +175,10 @@ export type Run = {
   headSha?: string | null;
   /** The tool calls its CLI refused (Refused in this run): Claude Code reports them, other CLIs don't. */
   refused?: Refusal[];
+  /** Gizai's own nudge after a run ended without its result line (trigger result_nudge; before GA-31 it was a nudge too). */
+  nudged?: boolean;
+  /** Run this for me: the commands its needs_decision result asks you to run for it. */
+  runForMe?: string[];
 };
 /** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
 export type Refusal = { tool: string; input: string; reason?: string };

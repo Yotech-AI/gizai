@@ -29,12 +29,17 @@ pub(crate) fn when(ms: i64) -> String {
 }
 
 fn finding_json(f: &Finding) -> Value {
-    json!({
+    let mut v = json!({
         "kind": f.kind, "why": f.code, "task": f.task, "title": f.title, "column": f.column, "since": when(f.since), "agent": f.agent,
         "reason": f.reason, "hold": f.hold, "hold_reason": f.hold_reason, "answer": f.answer,
         "last_run": f.last_run.as_ref().map(|r| json!({"agent": r.agent, "status": r.status, "trigger": r.trigger, "outcome": r.outcome,
                                                        "error": r.error, "ended": r.ended_at.map(when)})),
-    })
+    });
+    // "Run this for me" (GA-31): what the agent asks the user to run, shown in their Inbox with Done, continue.
+    if !f.run_for_me.is_empty() {
+        v["run_for_me"] = json!(f.run_for_me);
+    }
+    v
 }
 
 /// The agents' slots: per agent its cards at once, the cards it runs now and whether its pull is paused (and why), and

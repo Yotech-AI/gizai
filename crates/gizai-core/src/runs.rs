@@ -12,18 +12,33 @@ const ACTIVE: &str = "('queued','running','waiting_approval')";
 const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.trigger, r.status, r.outcome, r.summary_md, r.created_at,
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
                     r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha,
-                    COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]'), r.nudged";
+                    COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]'), r.nudged,
+                    json_extract(r.outcome_json, '$.run_for_me')";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
+    let nudged = r.get::<_, i64>(25)? != 0;
     Ok(Run {
-        id: r.get(0)?, agent_id: r.get(1)?, agent_name: r.get(2)?, task_id: r.get(3)?, role_key: r.get(4)?, trigger: r.get(5)?,
+        id: r.get(0)?, agent_id: r.get(1)?, agent_name: r.get(2)?, task_id: r.get(3)?, role_key: r.get(4)?, trigger: reported_trigger(r.get(5)?, nudged),
         status: r.get(6)?, outcome: r.get(7)?, summary_md: r.get(8)?, created_at: r.get(9)?, started_at: r.get(10)?,
         ended_at: r.get(11)?, cost_usd_micros: r.get(12)?, input_tokens: r.get(13)?, output_tokens: r.get(14)?,
         branch: r.get(15)?, worktree_path: r.get(16)?, session_id: r.get(17)?, error: r.get(18)?, log_path: r.get(19)?, pid: r.get(20)?,
         base_sha: r.get(21)?, adapter: r.get(22)?, head_sha: r.get(23)?,
         refused: serde_json::from_str(&r.get::<_, String>(24)?).unwrap_or_default(),
-        nudged: r.get::<_, i64>(25)? != 0,
+        nudged,
+        run_for_me: commands_of(r.get(26)?),
     })
+}
+
+/// The trigger a run reports (`Run::trigger`): Gizai's nudge is stored as `nudge` with `nudged` set, and reported as
+/// `result_nudge` (`RESULT_NUDGE`), apart from a Continue. Older nudges (GA-54) read the same way.
+pub(crate) fn reported_trigger(stored: String, nudged: bool) -> String {
+    if nudged && stored == "nudge" { RESULT_NUDGE.to_string() } else { stored }
+}
+
+/// The commands of a verdict's `run_for_me` (`outcome_json`, see `workflow::apply_outcome_with`), as JSON text; none
+/// when it has none or isn't a list of strings.
+pub(crate) fn commands_of(json: Option<String>) -> Vec<String> {
+    json.and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok()).unwrap_or_default()
 }
 
 /// A routed run (the dispatcher picked the agent). See `create_with_trigger`.
@@ -40,9 +55,15 @@ pub fn create_with_trigger(db: &Db, agent_id: &str, task_id: &str, role_key: &st
     create_run(db, agent_id, task_id, role_key, trigger, false, session_id, cwd, worktree, branch, log_path)
 }
 
+/// The trigger of Gizai's nudge (GA-31), so the Runs list tells it from a Continue (`nudge`): what `Run::trigger` says
+/// for it. In the database it is a `nudge` with `nudged` set (`reported_trigger`): the runs table's CHECK takes no new
+/// trigger without rebuilding the whole table, and `nudged` already says it.
+pub const RESULT_NUDGE: &str = "result_nudge";
+
 /// Gizai's nudge (GA-54): a run that continues, by itself, a run that ended without a result, in the same session.
 /// Recorded like `create_with_trigger` with trigger `nudge` and marked `nudged`, so it is never nudged in turn: when it
-/// ends without a result too, the card goes on hold (`workflow::apply_outcome`).
+/// ends without a result too, the card goes on hold (`workflow::apply_outcome`). It reads as trigger `result_nudge`
+/// (`RESULT_NUDGE`); a person's or the Team Lead's Continue reads as `nudge`.
 #[allow(clippy::too_many_arguments)]
 pub fn create_nudge(db: &Db, agent_id: &str, task_id: &str, role_key: &str, session_id: &str, cwd: &str, worktree: &str, branch: &str,
                     log_path: &str) -> Result<String> {

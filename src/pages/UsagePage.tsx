@@ -171,7 +171,7 @@ function LimitRow({ c, l, now }: { c: CliLimits; l: SubscriptionLimit; now: numb
     used = <span className="muted" title={u.title}>{u.text}</span>;
   } else if (state === "reset" && r.resetsAt != null) {
     used = <span className="muted" title={`Its window reset ${fullWhen(r.resetsAt)}, and no run on ${c.name} has reported a newer number`}>
-      Reset {whenLabel(r.resetsAt, now)} · no newer number</span>;
+      Reset at {whenLabel(r.resetsAt, now)} · no newer number</span>;
   } else if (r.usedPercent != null) {
     used = <span className="limit-used"><span className="track"><i style={{ width: `${usedWidth(r)}%` }} /></span>{usedLabel(l, now)}</span>;
   } else {
@@ -190,11 +190,12 @@ function LimitRow({ c, l, now }: { c: CliLimits; l: SubscriptionLimit; now: numb
 /** One coding CLI (Settings → Coding CLIs): its limits, or why Gizai can't read them, and what runs on it. */
 function LimitsBlock({ c, now }: { c: CliLimits; now: number }) {
   const chats = chatsLine(c);
+  const kind = KIND_LABEL[c.kind] ?? c.kind;
   return (
     <section className="panel limits-block" aria-label={c.name}>
       <header className="limits-head">
         <h3>{c.name}</h3>
-        <span className="faint">{KIND_LABEL[c.kind] ?? c.kind}</span>
+        {kind !== c.name && <span className="faint">{kind}</span>}
         {c.accountDir && <span className="mono faint limits-dir" title="The folder this account is kept in">{c.accountDir}</span>}
       </header>
       {c.readable ? (

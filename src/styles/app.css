@@ -411,7 +411,7 @@ a.member:hover { border-color: var(--line-2); }
 .usage-utc { font-size: var(--fs-sm); }
 @media (max-width: 960px) { .usage-table .share { display: none; } }
 /* The Subscription tab (GA-62): a block per coding CLI with its limits; amber near a limit, red once it is reached. */
-.limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; align-items: start; }
+.limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 660px), 1fr)); gap: 12px; align-items: start; }
 .limits-block { padding: 14px 0; min-width: 0; overflow-x: auto; }
 .limits-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 0 16px 8px; }
 .limits-head h3 { margin: 0; font-size: var(--fs); font-weight: 600; color: var(--text); }

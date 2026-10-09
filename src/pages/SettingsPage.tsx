@@ -4,6 +4,7 @@ import type { Settings } from "../types";
 import { Field, FormSection } from "../components/Form";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
+import { McpSettings } from "../components/McpSettings";
 import { OldWorktrees } from "../components/OldWorktrees";
 import { UpdateSettings } from "../components/UpdateSettings";
 
@@ -42,6 +43,9 @@ export function SettingsPage() {
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />
                 <button className="btn" onClick={detect} disabled={detecting}>{detecting ? "Looking…" : "Detect"}</button></div></Field>
             <Field label="More CLIs" wide hint="Saved as soon as you add, change or remove one."><CliSettings /></Field>
+          </FormSection>
+          <FormSection title="MCP servers" text="Outside services your agents can use, like Otus OS: one list for all agents, switched on per agent in its form → Tools. Values of environment and header lines and sign-ins stay in your keychain.">
+            <Field label="Servers" wide hint="Saved as soon as you add, change or remove one. Only you add, import, sign in to and switch on servers: the Team Lead can't."><McpSettings /></Field>
           </FormSection>
           <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
           <FormSection title="Runs" text="Each run is a process of the agent's coding CLI in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">

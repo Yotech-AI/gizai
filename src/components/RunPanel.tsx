@@ -31,6 +31,7 @@ export function Stream({ events }: { events: SeqEvent[] }) {
           case "result": return <div key={seq} className={e.is_error ? "err" : "ok"}>{e.is_error ? `Ended with ${e.subtype}` : "Done"} · {e.num_turns} turns</div>;
           case "note": return <div key={seq} style={{ color: "var(--warning)" }}>{e.text}</div>;
           case "refused": return <div key={seq} className="err">Refused: <b>{e.tool}</b> {e.input}{e.reason ? ` (${e.reason})` : ""}</div>;
+          case "mcp_servers": return <div key={seq} className="faint">MCP servers: {e.servers.map((s) => `${s.name} (${s.status === "connected" ? "connected" : s.status || "failed"})`).join(", ")}</div>;
           default: return e.raw_type?.startsWith("cap_exceeded") ? <div key={seq} className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;
         }
       })}

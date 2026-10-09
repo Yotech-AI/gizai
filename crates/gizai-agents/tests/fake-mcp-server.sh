@@ -14,6 +14,13 @@ else
   perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sleep 600 </dev/null >/dev/null 2>&1 &
 fi
 helper=$!
+# the helper leads its own group a moment after it starts (perl starts first): wait for that (at most 2 s) before the
+# test looks
+i=0
+while [ "$i" -lt 100 ] && [ "$(ps -o pgid= -p "$helper" 2>/dev/null | tr -d ' ')" != "$helper" ]; do
+  sleep 0.02
+  i=$((i + 1))
+done
 echo "$helper" > "$dir/helper.pid.tmp" && mv "$dir/helper.pid.tmp" "$dir/helper.pid"
 end_helper() {
   kill -TERM "$helper" 2>/dev/null

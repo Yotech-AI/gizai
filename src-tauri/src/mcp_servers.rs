@@ -174,21 +174,34 @@ pub fn remove(st: &AppState, id: &str) -> Result<(), String> {
 /// What Gizai starts or calls for a server, secrets filled in; a signed-in server gets an access token valid for at least
 /// `min_valid` (refreshed when needed).
 fn target(st: &AppState, s: &McpServer, min_valid: Duration) -> Result<Target, String> {
-    let (env, mut headers, missing) = secrets(st.keychain.as_ref(), s)?;
+    let (env, headers, missing) = secrets(st.keychain.as_ref(), s)?;
     if let Some(n) = missing.first() {
         return Err(format!("{}'s value for {n} isn't in the keychain: enter it again in Settings → MCP servers", s.name));
     }
     let transport = Transport::parse(&s.transport).unwrap_or(Transport::Stdio);
-    if transport != Transport::Stdio && st.tokens.load(&s.id).ok().flatten().is_some() {
-        let token = st.tokens.access_token(&s.id, min_valid).map_err(|p| token_problem(st, s, p))?;
-        headers.retain(|(n, _)| !n.eq_ignore_ascii_case("authorization"));
-        headers.push(("Authorization".into(), format!("Bearer {token}")));
-    }
     let home = std::env::var("HOME").unwrap_or_default();
-    Ok(Target {
+    let t = Target {
         transport, command: gizai_core::clis::expand_home(&s.command, &home), args: s.args.clone(), env, cwd: None,
         url: s.url.clone(), headers,
-    })
+    };
+    if transport != Transport::Stdio && st.tokens.load(&s.id).ok().flatten().is_some() {
+        let token = st.tokens.access_token(&s.id, min_valid).map_err(|p| token_problem(st, s, p))?;
+        return Ok(with_bearer(t, &token));
+    }
+    Ok(t)
+}
+
+/// The token in a target's `Authorization: Bearer …` header, if it has one.
+fn bearer(t: &Target) -> Option<String> {
+    t.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("authorization"))
+        .and_then(|(_, v)| v.trim().strip_prefix("Bearer ").map(|tok| tok.trim().to_string()))
+}
+
+/// The target with `token` as its bearer token.
+fn with_bearer(mut t: Target, token: &str) -> Target {
+    t.headers.retain(|(n, _)| !n.eq_ignore_ascii_case("authorization"));
+    t.headers.push(("Authorization".into(), format!("Bearer {token}")));
+    t
 }
 
 /// A token that can't be had, in plain words; a refused refresh also marks the server as needing sign-in.
@@ -215,7 +228,23 @@ pub fn list_tools(st: &AppState, id: &str) -> Result<ServerView, String> {
             return Err(e);
         }
     };
-    match mcp_client::list_tools(&t, LIST_TIMEOUT) {
+    let mut listed = mcp_client::list_tools(&t, LIST_TIMEOUT);
+    // A signed-in server refused a token that looked valid (another run may just have renewed it, or the server dropped
+    // it): renew it once, then try again. A refused renewal means signing in again.
+    if let (Err(ListError::NeedsSignIn { .. }), Some(used)) = (&listed, bearer(&t)) {
+        if st.tokens.load(id).ok().flatten().is_some() {
+            match st.tokens.renewed_token(id, &used, Duration::from_secs(5 * 60)) {
+                Ok(token) => listed = mcp_client::list_tools(&with_bearer(t, &token), LIST_TIMEOUT),
+                Err(TokenProblem::Failed(why)) => {
+                    let why = format!("{}: couldn't refresh its sign-in: {why}", s.name);
+                    let _ = core_mcp::change_tool_list(&st.db, id, |c| c.problem = Some(why.clone()));
+                    return Err(why);
+                }
+                Err(_) => {}
+            }
+        }
+    }
+    match listed {
         Ok(l) => {
             core_mcp::set_tool_list(&st.db, id, &core_mcp::ToolList {
                 server_name: l.server_name, server_version: l.server_version, listed_at: gizai_core::ids::now_ms(), tools: l.tools,

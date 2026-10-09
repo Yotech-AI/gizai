@@ -147,7 +147,7 @@ export const githubLoginWait = () => invoke<string | null>("github_login_wait");
 export const githubLoginCancel = () => invoke<void>("github_login_cancel");
 /** Settings → Bitbucket: your Atlassian email, whether an API token is saved, and who it belongs to (asks Bitbucket). */
 export const bitbucketStatus = () => invoke<T.BitbucketStatus>("bitbucket_status");
-/** Saves your Atlassian email and API token (the token in your keychain); fails with plain words when Bitbucket refuses them. */
+/** Saves your Atlassian email and API token in your keychain; fails with plain words when Bitbucket refuses them. */
 export const bitbucketSaveLogin = (email: string, token: string) => invoke<void>("bitbucket_save_login", { email, token });
 /** Removes the email and the token. */
 export const bitbucketRemoveLogin = () => invoke<void>("bitbucket_remove_login");

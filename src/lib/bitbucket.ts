@@ -5,9 +5,9 @@ import { problemText, type StatusLine } from "./github";
 /** Where you make an API token: your Atlassian account's security page. */
 export const TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api-tokens";
 
-/** The scopes the token needs: who it belongs to, the repositories, and their pull requests (opening one included).
- *  Pushes go over SSH, so it needs no write access to the repositories themselves. */
-export const TOKEN_SCOPES = ["read:user:bitbucket", "read:repository:bitbucket", "read:pullrequest:bitbucket", "write:pullrequest:bitbucket"];
+/** The scopes the token needs, as the backend asks for them (gizai-agents' `bitbucket::SCOPES`; change both together): who
+ *  it belongs to, and reading and opening pull requests. Pushes go over SSH, so it needs no access to push. */
+export const TOKEN_SCOPES = ["read:user:bitbucket", "read:pullrequest:bitbucket", "write:pullrequest:bitbucket"];
 
 /** How to make the API token and the scopes it needs, in one line. */
 export const TOKEN_HOW_TO = "Make the token in your Atlassian account: Security → Create and manage API tokens → Create API token with scopes, "

@@ -89,7 +89,8 @@ block (`-----BEGIN … PRIVATE KEY-----`) or an API token (`sk-…`, `ghp_…` a
 
 The Team Lead's tools: `memory_list`, `memory_search`, `memory_read`, `memory_write` (a whole note, with the version it
 read; a new path makes the note), `memory_append` (under a heading, without rewriting the note) and `memory_move` (move
-or copy, rewriting links). It sees every scope, and the activity feed shows it as the author.
+or copy, rewriting links). `memory_read`, `memory_append` and `memory_move` find a note by its path, its title (as a
+wikilink does) or its id. It sees every scope, and the activity feed shows it as the author.
 
 Every chat answer and every board check has the Team Lead's Memory block at the end of its system prompt, in old chats
 and new ones: its own notes (`Team Lead/`, `Notes` first) in full, at most **6,000 characters** (a note that doesn't fit
@@ -106,8 +107,9 @@ A new task run's prompt has a Memory section after the task, built by `memory::p
    role or `all` (`applies_to:`).
 
 At most **6,000 characters** of notes in full (the one that doesn't fit is cut), then the paths of the rest that match
-(**4,000**). **Client isolation:** a note about another client or another project never goes in, not even its path; a
-note with `applies_to` for other roles doesn't either. A continued run has the notes in its session already.
+(**4,000**). **Client isolation:** a note about another client or another project never goes in, not even its path, and
+not from the agent's own folder either; a shared note with `applies_to` for other roles doesn't go in. A continued run
+has the notes in its session already.
 
 An agent keeps what it learned by adding an optional `learned` list to its result line:
 

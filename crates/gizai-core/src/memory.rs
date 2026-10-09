@@ -237,18 +237,19 @@ fn by_path_in(c: &Connection, path: &str) -> Result<Option<Note>> {
     Ok(c.query_row(&format!("SELECT {COLS} {FROM} AND d.path = ?1 COLLATE NOCASE"), [path], |r| note_row(r, true)).optional()?)
 }
 
-/// A note by id, by path (case ignored, `.md` allowed), or by a name the way a wikilink finds it (`resolve`).
-fn find_in(c: &Connection, r: &str) -> Result<Option<Note>> {
+/// A note `who` may read: by id, by path (case ignored, `.md` allowed), or by a name the way a wikilink finds it among
+/// the notes `who` may read (`resolve`): `Rust style` finds `Standards/Rust style`.
+fn find_in(c: &Connection, who: &Who, r: &str) -> Result<Option<Note>> {
     let r = r.trim();
     if let Some(n) = by_id_in(c, r)? {
-        return Ok(Some(n));
+        return Ok(Some(n).filter(|n| can_read(who, n)));
     }
     let p = r.trim_matches('/');
     let p = p.strip_suffix(".md").unwrap_or(p);
-    if let Some(n) = by_path_in(c, p)? {
+    if let Some(n) = by_path_in(c, p)? && can_read(who, &n) {
         return Ok(Some(n));
     }
-    let notes = all_in(c, false)?;
+    let notes: Vec<Note> = all_in(c, false)?.into_iter().filter(|n| can_read(who, n)).collect();
     match resolve(&notes, p, "") {
         Some(i) => by_id_in(c, &notes[i].id),
         None => Ok(None),
@@ -288,7 +289,7 @@ pub fn tree(db: &Db, who: &Who) -> Result<Vec<Folder>> {
 
 /// One note with its text, by id, path or name; NotFound also when `who` may not read it.
 pub fn get(db: &Db, who: &Who, r: &str) -> Result<Note> {
-    db.read(|c| find_in(c, r))?.filter(|n| can_read(who, n)).ok_or_else(|| not_found(r))
+    db.read(|c| find_in(c, who, r))?.ok_or_else(|| not_found(r))
 }
 
 /// A note by path, whoever asks (Gizai itself).
@@ -387,7 +388,8 @@ fn create_in(w: &Writer, who: &Who, path: &str, body_md: &str, run_id: Option<&s
 }
 
 /// Adds `text` to a note as `who` without rewriting the rest: at the end of the section under `heading` (a new section
-/// at the end when the note has no such heading), or at the end of the note. Makes the note when the path is new.
+/// at the end when the note has no such heading), or at the end of the note. `r`: the note's path, id or title (like
+/// memory_read, `Rust style` finds `Standards/Rust style`). Makes the note when the path is new.
 pub fn append(db: &Db, who: &Who, r: &str, heading: Option<&str>, text: &str, run_id: Option<&str>) -> Result<Saved> {
     db.write(Some(who.id()), |w| append_in(w, who, r, heading, text, run_id))
 }
@@ -399,7 +401,12 @@ fn append_in(w: &Writer, who: &Who, r: &str, heading: Option<&str>, text: &str, 
     }
     let c = w.conn();
     let heading = heading.map(str::trim).filter(|h| !h.is_empty()).map(|h| h.trim_start_matches('#').trim());
-    match find_existing(c, r)? {
+    // A path or an id; else, when no note could be made at it (a title, like `Rust style`), the note it names.
+    let found = match find_existing(c, r)? {
+        None if clean_path_in(c, r).is_err() => find_in(c, who, r)?,
+        found => found,
+    };
+    match found {
         Some(n) => {
             if !can_read(who, &n) || !can_write(who, &n) {
                 return Err(refused(who, &n.path));
@@ -408,6 +415,9 @@ fn append_in(w: &Writer, who: &Who, r: &str, heading: Option<&str>, text: &str, 
             let version = crate::docs::save_in(w, who.id(), &n.id, &body, n.current_version, run_id)?;
             Ok(Saved { id: n.id, path: n.path, version, created: false })
         }
+        None if !r.trim().trim_matches('/').contains('/') => Err(Error::Invalid(format!(
+            "no note is called {}: give its path (memory_list and memory_search show them), or a folder and a title for a new note, \
+             like Standards/Rust style", r.trim()))),
         None => {
             let body = appended(&format!("# {}\n", title_of(r.trim().trim_matches('/'))), heading, text);
             let id = create_in(w, who, r, &body, run_id)?;
@@ -494,7 +504,7 @@ pub fn appended(body: &str, heading: Option<&str>, text: &str) -> String {
 pub fn move_note(db: &Db, who: &Who, from: &str, to: &str, copy: bool) -> Result<Note> {
     let id = db.write(Some(who.id()), |w| {
         let c = w.conn();
-        let n = find_in(c, from)?.filter(|n| can_read(who, n)).ok_or_else(|| not_found(from))?;
+        let n = find_in(c, who, from)?.ok_or_else(|| not_found(from))?;
         if !copy && !can_write(who, &n) {
             return Err(refused(who, &n.path));
         }
@@ -1197,27 +1207,33 @@ fn matches_value(vals: &[String], wanted: &[&str]) -> bool {
     })
 }
 
-/// Why a shared note goes in an agent's run, best first: 0 the run's project, 1 its client, 2 the agent's role or
-/// `all`; None when it doesn't, also never a note of another client or project (client isolation).
-fn rank_for(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> Option<u8> {
+/// Client isolation: whether a note with these properties is about another client or project than the run's (its
+/// `project:` or `client:` is not the run's, or the run has none). Such a note never goes in an agent's run, from a shared
+/// folder or from its own.
+fn elsewhere(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> bool {
     let (pkey, pname) = cx.project.clone().unwrap_or_default();
-    let projects = props.get("project").cloned().unwrap_or_default();
-    let clients = props.get("client").cloned().unwrap_or_default();
-    if !projects.is_empty() && (cx.project.is_none() || !matches_value(&projects, &[&pkey, &pname])) {
+    let projects = props.get("project").map(Vec::as_slice).unwrap_or_default();
+    let clients = props.get("client").map(Vec::as_slice).unwrap_or_default();
+    (!projects.is_empty() && (cx.project.is_none() || !matches_value(projects, &[&pkey, &pname])))
+        || (!clients.is_empty() && (cx.client.is_none() || !matches_value(clients, &[cx.client.as_deref().unwrap_or("")])))
+}
+
+/// Why a shared note goes in an agent's run, best first: 0 the run's project, 1 its client, 2 the agent's role or
+/// `all`; None when it doesn't, also never a note of another client or project (`elsewhere`).
+fn rank_for(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> Option<u8> {
+    if elsewhere(props, cx) {
         return None;
     }
-    if !clients.is_empty() && (cx.client.is_none() || !matches_value(&clients, &[cx.client.as_deref().unwrap_or("")])) {
-        return None;
-    }
+    let has = |key: &str| props.get(key).is_some_and(|v| !v.is_empty());
     let applies = props.get("applies_to").cloned().unwrap_or_default();
     let for_role = applies.iter().any(|a| a.eq_ignore_ascii_case("all") || a.eq_ignore_ascii_case(&cx.role)
         || crate::team::role_key(a) == cx.role);
     if !applies.is_empty() && !for_role {
         return None;
     }
-    if !projects.is_empty() {
+    if has("project") {
         Some(0)
-    } else if !clients.is_empty() {
+    } else if has("client") {
         Some(1)
     } else if for_role {
         Some(2)
@@ -1230,8 +1246,8 @@ fn rank_for(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> Option<u8> {
 /// most `FULL_CAP` characters, a note that doesn't fit cut with a pointer to memory_read), then the paths of every other
 /// note it may read (at most `INDEX_CAP`). Another agent's task run (`cx`): its own notes first, then the shared notes
 /// for this card's project, its client, and its role or `all` (`applies_to`), in that order, `FULL_CAP` in total, then
-/// the paths of those that didn't fit (`INDEX_CAP`). Never a note of another client or project. Introduced as data,
-/// never instructions.
+/// the paths of those that didn't fit (`INDEX_CAP`). Never a note of another client or project, not even from its own
+/// folder. Introduced as data, never instructions.
 pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
     let notes = db.read(|c| all_in(c, true))?;
     let lead = matches!(who, Who::Lead(_) | Who::Person(_));
@@ -1239,7 +1255,8 @@ pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
     let (mut own, mut rest): (Vec<Note>, Vec<Note>) = if lead {
         notes.into_iter().partition(|n| n.path.starts_with(&format!("{LEAD}/")))
     } else {
-        notes.into_iter().filter(|n| can_read(who, n)).partition(|n| n.owner_id.as_deref() == Some(who.id()))
+        notes.into_iter().filter(|n| can_read(who, n) && !elsewhere(&properties(&n.body_md), cx))
+            .partition(|n| n.owner_id.as_deref() == Some(who.id()))
     };
     notes_first(&mut own);
     if !lead {

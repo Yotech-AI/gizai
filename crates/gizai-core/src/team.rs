@@ -266,6 +266,13 @@ struct CleanAgent {
 }
 
 fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
+    let places = i.folders.as_ref().map(|_| crate::folders::Places::of(db));
+    clean_agent_on(crate::clis::get(db, &i.adapter)?, i, places.as_ref())
+}
+
+/// `clean_agent` for an agent on `cli`, the CLI it runs on (Settings → Coding CLIs): its kind decides the permission
+/// modes and effort levels. Its folders are checked against `places`; without places they are left out.
+fn clean_agent_on(cli: crate::clis::Cli, i: &AgentInput, places: Option<&crate::folders::Places>) -> Result<CleanAgent> {
     let name = i.name.trim().to_string();
     if name.is_empty() {
         return Err(Error::Invalid("give the agent a name".into()));
@@ -274,8 +281,6 @@ fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
     if role.is_empty() || role.len() > 32 {
         return Err(Error::Invalid("give the agent a role, like frontend, backend or qa".into()));
     }
-    // The CLI it runs on (Settings → Coding CLIs); its kind decides the permission modes and effort levels.
-    let cli = crate::clis::get(db, &i.adapter)?;
     let (adapter, kind) = (cli.id, cli.kind);
     let modes = crate::clis::permission_modes(&kind);
     let permission_mode = match (i.permission_mode.trim(), modes.first()) {
@@ -316,9 +321,9 @@ fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
         return Err(Error::Invalid("an agent works on between 1 and 10 cards at once".into()));
     }
     let tools: Vec<String> = i.allowed_tools.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
-    let folders_json = match &i.folders {
-        Some(list) => Some(serde_json::to_string(&crate::folders::clean(list, &crate::folders::Places::of(db))?)?),
-        None => None,
+    let folders_json = match (&i.folders, places) {
+        (Some(list), Some(places)) => Some(serde_json::to_string(&crate::folders::clean(list, places)?)?),
+        _ => None,
     };
     Ok(CleanAgent {
         name, role, title: util::clean(&i.title), adapter, model: util::clean(&i.model), permission_mode,
@@ -331,40 +336,49 @@ fn clean_agent(db: &Db, i: &AgentInput) -> Result<CleanAgent> {
 /// Creates the agent (an actor reporting to `actor`), its settings and its team membership.
 pub fn add_agent(db: &Db, actor: &str, team_id: &str, input: AgentInput) -> Result<String> {
     let a = clean_agent(db, &input)?;
+    db.write(Some(actor), |w| insert_agent(w, actor, team_id, &a, &input))
+}
+
+/// `add_agent` inside a write that is open already, for an agent on `cli`: a new install's agents, made with the seed
+/// (`seed::ensure_seed_with_agents`). Folders are left out.
+pub(crate) fn add_agent_in(w: &crate::db::Writer, actor: &str, team_id: &str, cli: crate::clis::Cli, input: AgentInput) -> Result<String> {
+    let a = clean_agent_on(cli, &input, None)?;
+    insert_agent(w, actor, team_id, &a, &input)
+}
+
+fn insert_agent(w: &crate::db::Writer, actor: &str, team_id: &str, a: &CleanAgent, input: &AgentInput) -> Result<String> {
     let instructions = input.instructions_md.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| crate::seed::role_template(&a.role));
-    db.write(Some(actor), |w| {
-        let c = w.conn();
-        if c.query_row("SELECT count(*) FROM teams WHERE id=?1 AND deleted_at IS NULL", [team_id], |r| r.get::<_, i64>(0))? == 0 {
-            return Err(Error::NotFound(format!("team {team_id}")));
-        }
-        let now = ids::now_ms();
-        let id = ids::new_id();
-        let handle = util::unique_handle(c, &crate::seed::handle_for(&a.name))?;
-        c.execute(
-            "INSERT INTO actors(id, created_at, updated_at, created_by, updated_by, org_id, kind, name, handle, title, reports_to_id)
-             VALUES (?1, ?2, ?2, ?3, ?3, ?4, 'agent', ?5, ?6, ?7, ?3)",
-            rusqlite::params![id, now, actor, util::org_id(c)?, a.name, handle, a.title],
-        )?;
-        c.execute(
-            "INSERT INTO agent_configs(actor_id, created_at, updated_at, adapter, model, instructions_md, permission_mode, allowed_tools_json,
-                                       wakeup, heartbeat_minutes, budget_usd_micros, effort, max_concurrent_runs, board_check_minutes, folders_json)
-             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            rusqlite::params![id, now, a.adapter, a.model, instructions, a.permission_mode, a.tools_json, a.wakeup, a.heartbeat_minutes, a.budget, a.effort,
-                              input.max_runs.unwrap_or(1), input.board_check_minutes.filter(|m| *m > 0), a.folders_json.as_deref().unwrap_or("[]")],
-        )?;
-        c.execute(
-            "INSERT INTO team_members(team_id, actor_id, role_key, is_lead, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![team_id, id, a.role, (a.role == "lead") as i64, now],
-        )?;
-        w.insert("actors", &id, serde_json::json!({"kind": "agent", "name": a.name, "handle": handle}))?;
-        w.insert("agent_configs", &id, serde_json::json!({"adapter": a.adapter, "role": a.role, "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes}))?;
-        w.insert("team_members", &format!("{team_id}:{id}"), serde_json::json!({"role_key": a.role}))?;
-        crate::columns::place_new_agent(w, team_id, &id, &a.role)?;
-        if input.chat_enabled == Some(true) {
-            set_chat_in(w, &id, now)?;
-        }
-        Ok(id)
-    })
+    let c = w.conn();
+    if c.query_row("SELECT count(*) FROM teams WHERE id=?1 AND deleted_at IS NULL", [team_id], |r| r.get::<_, i64>(0))? == 0 {
+        return Err(Error::NotFound(format!("team {team_id}")));
+    }
+    let now = ids::now_ms();
+    let id = ids::new_id();
+    let handle = util::unique_handle(c, &crate::seed::handle_for(&a.name))?;
+    c.execute(
+        "INSERT INTO actors(id, created_at, updated_at, created_by, updated_by, org_id, kind, name, handle, title, reports_to_id)
+         VALUES (?1, ?2, ?2, ?3, ?3, ?4, 'agent', ?5, ?6, ?7, ?3)",
+        rusqlite::params![id, now, actor, util::org_id(c)?, a.name, handle, a.title],
+    )?;
+    c.execute(
+        "INSERT INTO agent_configs(actor_id, created_at, updated_at, adapter, model, instructions_md, permission_mode, allowed_tools_json,
+                                   wakeup, heartbeat_minutes, budget_usd_micros, effort, max_concurrent_runs, board_check_minutes, folders_json)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        rusqlite::params![id, now, a.adapter, a.model, instructions, a.permission_mode, a.tools_json, a.wakeup, a.heartbeat_minutes, a.budget, a.effort,
+                          input.max_runs.unwrap_or(1), input.board_check_minutes.filter(|m| *m > 0), a.folders_json.as_deref().unwrap_or("[]")],
+    )?;
+    c.execute(
+        "INSERT INTO team_members(team_id, actor_id, role_key, is_lead, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![team_id, id, a.role, (a.role == "lead") as i64, now],
+    )?;
+    w.insert("actors", &id, serde_json::json!({"kind": "agent", "name": a.name, "handle": handle}))?;
+    w.insert("agent_configs", &id, serde_json::json!({"adapter": a.adapter, "role": a.role, "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes}))?;
+    w.insert("team_members", &format!("{team_id}:{id}"), serde_json::json!({"role_key": a.role}))?;
+    crate::columns::place_new_agent(w, team_id, &id, &a.role)?;
+    if input.chat_enabled == Some(true) {
+        set_chat_in(w, &id, now)?;
+    }
+    Ok(id)
 }
 
 /// Saves an agent's settings. `instructions_md: None` keeps the current instructions.
@@ -456,7 +470,8 @@ pub fn add_state(db: &Db, actor: &str, team_id: &str, name: &str, after_id: &str
     db.write(Some(actor), |w| crate::columns::add_in(w, actor, team_id, name, after_id, category))
 }
 
-/// A new team with the seven default columns (linked, To do, In progress and Testing on Auto) and `actor` as its reviewer. No agents: Jeffrey adds them.
+/// A new team with the seven default columns (linked, To do, In progress and Testing on Auto) and `actor` as its reviewer.
+/// No agents: you add them (only a new install's first team starts with agents, `seed::ensure_seed_with_agents`).
 pub fn add_team(db: &Db, actor: &str, name: &str) -> Result<String> {
     let name = name.trim().to_string();
     if name.is_empty() {

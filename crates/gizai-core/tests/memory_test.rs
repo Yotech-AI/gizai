@@ -622,6 +622,35 @@ fn an_agents_block_has_its_own_notes_first_then_this_projects_this_clients_and_i
 }
 
 #[test]
+fn a_note_of_another_client_in_the_agents_own_folder_stays_out_of_a_run_for_this_client() {
+    // Client isolation (the card: "never include notes of another client or project") holds for the agent's own folder
+    // too: the Team Lead or a person may keep a client's note there.
+    let f = setup();
+    let acme = clients::create(&f.db, &f.you, ClientInput { name: "Acme".into(), ..Default::default() }).unwrap();
+    let globex = clients::create(&f.db, &f.you, ClientInput { name: "Globex".into(), ..Default::default() }).unwrap();
+    f.project("Shop", "SHOP", Some(&acme));
+    f.project("Globex portal", "GX", Some(&globex));
+    f.write("Agents/Backend Agent/Globex gotchas", "---\nclient: Globex\nproject: GX\n---\nGlobex's staging needs a VPN.");
+    f.write("Agents/Backend Agent/Shop gotchas", "---\nclient: Acme\n---\nShop's tests need Redis.");
+    let shop = Context { role: "backend".into(), project: Some(("SHOP".into(), "Shop".into())), client: Some("Acme".into()) };
+    let b = memory::prompt_block(&f.db, &f.be(), &shop).unwrap();
+    assert!(b.given.iter().any(|g| g.path == "Agents/Backend Agent/Shop gotchas"), "{:?}", b.given);
+    assert!(!b.text.contains("Globex"), "a run for Acme got Globex's note from the agent's own folder: {:?}", b.given);
+}
+
+#[test]
+fn memory_append_finds_a_note_by_its_title_as_its_tool_says() {
+    // The memory_append tool's description: "note: The note's path, title or id". memory_read and memory_move take a
+    // title; an append by title should reach the same note.
+    let f = setup();
+    let id = f.write("Standards/Rust style", "# Rust style\n");
+    let s = memory::append(&f.db, &f.lead(), "Rust style", Some("Errors"), "- No unwrap.", None);
+    assert!(s.is_ok(), "{:?}", s.err());
+    assert_eq!(s.unwrap().id, id);
+    assert!(f.body(&id).contains("## Errors\n\n- No unwrap."));
+}
+
+#[test]
 fn the_use_memory_switches_are_on_by_default_and_each_turns_it_off() {
     let f = setup();
     assert!(memory::enabled(&f.db) && memory::agent_uses(&f.db, &f.be));

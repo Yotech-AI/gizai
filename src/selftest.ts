@@ -159,7 +159,8 @@ async function dragOnto(handle: HTMLElement, target: () => HTMLElement | null) {
 }
 
 type ProbeTeam = { states: { id: string; name: string; category: string; sortKey: string; auto?: boolean; nextStateId?: string | null; agentIds?: string[] }[];
-  members: { actorId: string; name: string; kind: string; roleKey: string; wakeup?: string | null; heartbeatMinutes?: number | null; model?: string | null; effort?: string | null }[];
+  members: { actorId: string; name: string; kind: string; roleKey: string; wakeup?: string | null; heartbeatMinutes?: number | null; model?: string | null; effort?: string | null;
+    allowedTools?: string[] }[];
   branches?: { key: string; name: string; roles: string[] }[] };
 
 /** GA-53, Team page against the demo data (no agents yet): the organisation chart's empty spot opens the agent form with the
@@ -186,6 +187,26 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
     wake_up: !!q("input[aria-label=Minutes]", dialog) || (dialog.textContent ?? "").includes("Wakes up"),
     // GA-39's Tools section next to this card's Work section (merged in from main)
     sections: [...dialog.querySelectorAll("h3")].map((h) => h.textContent ?? "") };
+  // GA-63: the role fills in its allowed commands like its instructions, and another role replaces both, until you edit
+  // the list (here with a suggestion's + button); then a role change keeps it.
+  const roleSel = q<HTMLSelectElement>("#a-role", dialog);
+  const hasTool = (t: string) => (q<HTMLTextAreaElement>("#a-tools", dialog)?.value ?? "").split("\n").includes(t);
+  const instructions = () => q("[aria-label=Instructions]", dialog)?.textContent ?? "";
+  const isFrontend = () => hasTool("Bash(git push:*)") && !hasTool("Bash(gh pr create:*)") && instructions().includes("You are the Frontend Agent in Gizai's Software team.");
+  const frontendFirst = !!(await waitFor(() => isFrontend() || null, 5000));
+  if (roleSel) pickOption(roleSel, "qa");
+  const qaNext = !!(await waitFor(() => (hasTool("Bash(gh pr create:*)") && instructions().includes("You are the QA Agent in Gizai's Software team.")) || null, 5000));
+  if (roleSel) pickOption(roleSel, "frontend");
+  const frontendAgain = !!(await waitFor(() => isFrontend() || null, 5000));
+  buttonByText(dialog, "+ Bash(make test:*)")?.click();
+  await sleep(100);
+  if (roleSel) pickOption(roleSel, "qa");
+  const qaInstructions = !!(await waitFor(() => instructions().includes("You are the QA Agent") || null, 5000));
+  await sleep(300);
+  const keptEdit = hasTool("Bash(make test:*)") && hasTool("Bash(git push:*)") && !hasTool("Bash(gh pr create:*)");
+  if (roleSel) pickOption(roleSel, "frontend");
+  await waitFor(() => instructions().includes("You are the Frontend Agent") || null, 5000);
+  out.role_fills = { frontend_first: frontendFirst, qa_next: qaNext, frontend_again: frontendAgain, qa_instructions: qaInstructions, kept_edit: keptEdit };
   const modelSel = await waitFor(() => { const el = q<HTMLSelectElement>("#a-model", dialog); return el && !el.disabled && [...el.options].some((o) => o.value === "opus") ? el : null; }, 8000);
   if (modelSel) pickOption(modelSel, "opus");
   await sleep(100);
@@ -200,7 +221,9 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   out.agent = { role: agent.roleKey, wakeup: agent.wakeup, heartbeat: agent.heartbeatMinutes, model: agent.model, effort: agent.effort,
     agent_page: !!(await waitFor(() => (q(".entity-head h1")?.textContent ?? "") === "Frontend Agent" || null, 3000)),
     columns: (await getTeam()).states.filter((s) => s.agentIds?.includes(id)).map((s) => s.name),
-    added_once: (await getTeam()).members.filter((m) => m.name === "Frontend Agent" && m.kind === "agent").length === 1 };
+    added_once: (await getTeam()).members.filter((m) => m.name === "Frontend Agent" && m.kind === "agent").length === 1,
+    // GA-63: saved with the frontend role's list and the command added in the form
+    tools: agent.allowedTools?.includes("Bash(git push:*)") && agent.allowedTools.includes("Bash(make test:*)") && !agent.allowedTools.includes("Bash(gh pr create:*)") };
   window.location.hash = "#/team";
   if (!(await waitFor(() => column("Testing"), 4000))) return fail("back on the Team page: no columns");
 
@@ -388,7 +411,7 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
   }
   out.drawer_new_label = { drawer: !!drawer, pill_on: pill, card_has_it: drawerCard };
 
-  const a = out.agent as { role?: string; wakeup?: string | null; model?: string | null; effort?: string | null; agent_page?: boolean; columns?: string[]; added_once?: boolean };
+  const a = out.agent as { role?: string; wakeup?: string | null; model?: string | null; effort?: string | null; agent_page?: boolean; columns?: string[]; added_once?: boolean; tools?: boolean };
   const sf = out.spot_form as { name?: string; role?: string; wake_up?: boolean; sections?: string[] };
   const pa = out.plus_agent as Record<string, boolean>, am = out.auto_manual as { manual: boolean; auto: boolean; manual_line: string; auto_line: string };
   const nc = out.next_column as { self_link_refused: string; cleared: boolean; auto_without_next_refused: string; stayed_manual: boolean; linked_to_done: boolean; error_gone: boolean };
@@ -403,7 +426,8 @@ export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
     one_spot_each: !!out.one_spot_each,
     spot_form: sf.name === "Frontend Agent" && sf.role === "frontend" && !sf.wake_up && sf.sections?.join(",") === "Agent,Chat,Work,Permissions,Tools,Instructions",
     agent: a.role === "frontend" && a.wakeup !== "heartbeat" && !!a.agent_page && a.model === "opus" && a.effort === "xhigh" && a.columns?.join(",") === "To do,In progress"
-      && !!a.added_once,
+      && !!a.added_once && !!a.tools,
+    role_fills: Object.values(out.role_fills as Record<string, boolean>).every(Boolean),
     plus_agent: Object.values(pa).every(Boolean),
     auto_manual: am.manual && am.auto && am.manual_line.startsWith("Manual: press Run on a card to start Frontend Agent") && am.auto_line.startsWith("Auto: Frontend Agent takes cards"),
     next_column: !!nc.self_link_refused && nc.cleared && !!nc.auto_without_next_refused && nc.stayed_manual && nc.linked_to_done && nc.error_gone,

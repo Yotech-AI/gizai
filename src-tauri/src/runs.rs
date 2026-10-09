@@ -28,12 +28,13 @@ const BUFFER: usize = 500;
 pub const STOPPED_BY_QUIT: &str = "Stopped because Gizai quit.";
 
 /// Used when an agent has no allowed commands of its own; new agents start with the same list (`src/lib/agents.ts`).
-/// The read-only helpers at the end are the ones agents use in pipes.
-pub const DEFAULT_TOOLS: [&str; 28] = [
+/// The read-only helpers near the end are the ones agents use in pipes; `sleep` lets an agent wait in the foreground
+/// (for CI, a release or a deploy) between checks, as "How this run works" tells it.
+pub const DEFAULT_TOOLS: [&str; 29] = [
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(composer:*)",
     "Bash(php:*)", "Bash(./vendor/bin/*)", "Bash(cargo:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)",
     "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(sort:*)", "Bash(uniq:*)", "Bash(cut:*)", "Bash(diff:*)", "Bash(grep:*)", "Bash(jq:*)",
-    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)",
+    "Bash(pwd:*)", "Bash(which:*)", "Bash(tree:*)", "Bash(sleep:*)",
 ];
 
 /// What the UI hears about.

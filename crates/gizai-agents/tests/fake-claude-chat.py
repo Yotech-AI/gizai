@@ -8,7 +8,16 @@ The prompt (stdin) decides what happens:
   FAKE_CHAT_HANG                  hangs after init until SIGINT (exit 130)
   FAKE_CHAT_CRASH                 exits 1 with an error on stderr, before init
   FAKE_LOST_SESSION + --resume    exits 1 before init, like Claude Code when the session file is gone
-Each run appends {argv, prompt} to fake-calls.jsonl next to its MCP config, for the tests to read.
+  FAKE_CHAT_WAIT                  after init, writes fake-waiting and waits for a fake-go file (both next to the MCP config)
+  FAKE_IGNORE_STOP (with WAIT)    ignores SIGINT and, once fake-go is there, finishes a short answer normally
+  FAKE_CHAT_SLOW                  after init, takes 3 s before it answers (the UI test queues a message meanwhile)
+  FAKE_CHAT_FAIL                  after init (and the wait), ends with an error result and exits 1
+  FAKE_CHAT_LIMIT                 after init (and the wait), Claude Code's usage-limit answer (fixtures/chat-limit.jsonl)
+                                  and exit 1, unless FAKE_HAS_USAGE=1 is in the environment (another account)
+Each run appends {argv, prompt, account} to fake-calls.jsonl next to its MCP config, for the tests to read; `account`
+is its CLAUDE_CONFIG_DIR. Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
+to the MCP config, never in the account's folder), and --resume from another account exits 1 before init, like Claude
+Code when the session file isn't in its CLAUDE_CONFIG_DIR.
 Costs are cumulative per session, as Claude Code reports them: 0.01 on a new session, 0.02 when resumed."""
 import json, os, re, signal, subprocess, sys, time
 
@@ -35,9 +44,23 @@ resume = flag("--resume")
 sid = resume or flag("--session-id") or "none"
 config = flag("--mcp-config")
 prompt = sys.stdin.read()
+account = os.environ.get("CLAUDE_CONFIG_DIR", "")
+here = os.path.dirname(config) if config else None
 if config:
-    with open(os.path.join(os.path.dirname(config), "fake-calls.jsonl"), "a") as f:
-        f.write(json.dumps({"argv": argv, "prompt": prompt}) + "\n")
+    with open(os.path.join(here, "fake-calls.jsonl"), "a") as f:
+        f.write(json.dumps({"argv": argv, "prompt": prompt, "account": account}) + "\n")
+
+def sessions():
+    try:
+        return json.load(open(os.path.join(here, "fake-sessions.json")))
+    except Exception:
+        return {}
+
+def remember(session):
+    if here and session not in sessions():
+        s = sessions()
+        s[session] = account
+        json.dump(s, open(os.path.join(here, "fake-sessions.json"), "w"))
 
 if "FAKE_NOT_LOGGED_IN" in prompt:
     # What Claude Code 2.1.289 prints without a login: a synthetic assistant text, then an error result.
@@ -48,7 +71,7 @@ if "FAKE_NOT_LOGGED_IN" in prompt:
 if "FAKE_CHAT_CRASH" in prompt:
     print("error: the fake was told to crash", file=sys.stderr)
     sys.exit(1)
-if resume and "FAKE_LOST_SESSION" in prompt:
+if resume and ("FAKE_LOST_SESSION" in prompt or sessions().get(resume, account) != account):
     print(f"No conversation found with session ID: {resume}", file=sys.stderr)
     sys.exit(1)
 
@@ -73,8 +96,42 @@ if status == "connected":
     names = [t["name"] for t in rpc(2, "tools/list").get("result", {}).get("tools", [])]
 else:
     names = []
+remember(sid)
 out({"type": "system", "subtype": "init", "session_id": sid, "model": "fake-model",
      "tools": ["Read"] + ["mcp__gizai__" + n for n in names], "mcp_servers": [{"name": "gizai", "status": status}]})
+
+def end_mcp():
+    try:
+        mcp.stdin.close()
+        mcp.wait(timeout=5)
+    except Exception:
+        pass
+
+if "FAKE_CHAT_WAIT" in prompt:
+    signal.signal(signal.SIGINT, signal.SIG_IGN if "FAKE_IGNORE_STOP" in prompt else (lambda *_: sys.exit(130)))
+    open(os.path.join(here, "fake-waiting"), "w").close()
+    t0 = time.time()
+    while not os.path.exists(os.path.join(here, "fake-go")) and time.time() - t0 < 30:
+        time.sleep(0.05)
+if "FAKE_CHAT_SLOW" in prompt:
+    time.sleep(3)
+if "FAKE_IGNORE_STOP" in prompt:
+    out({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Finished just in time."}]}, "session_id": sid})
+    end_mcp()
+    out({"type": "result", "subtype": "success", "is_error": False, "result": "Finished just in time.", "total_cost_usd": 0.01, "num_turns": 1,
+         "session_id": sid, "usage": {"input_tokens": 1000, "output_tokens": 100}})
+    sys.exit(0)
+if "FAKE_CHAT_FAIL" in prompt:
+    end_mcp()
+    out({"type": "result", "subtype": "success", "is_error": True, "result": "API Error: 500 the fake failed", "total_cost_usd": 0, "num_turns": 1, "session_id": sid})
+    sys.exit(1)
+if "FAKE_CHAT_LIMIT" in prompt and os.environ.get("FAKE_HAS_USAGE") != "1":
+    end_mcp()
+    for line in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "chat-limit.jsonl")):
+        ev = json.loads(line.replace("SESSION_ID", sid))
+        if ev.get("type") != "system":
+            out(ev)
+    sys.exit(1)
 
 if "FAKE_CHAT_HANG" in prompt:
     signal.signal(signal.SIGINT, lambda *_: sys.exit(130))

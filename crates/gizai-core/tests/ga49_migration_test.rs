@@ -398,17 +398,17 @@ fn routing_rules_are_gone_and_schema_is_current() {
     assert!(!has_table(&c, "ga49_workers"), "the temp helper table is gone");
     let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(v, db::SCHEMA_VERSION);
-    assert_eq!(v, 11);
+    assert_eq!(v, 12);
     let branches: i64 = c.query_row("SELECT count(*) FROM teams WHERE branches_json IS NOT NULL", [], |r| r.get(0)).unwrap();
     assert_eq!(branches, 0, "teams keep the default branches (NULL)");
 }
 
 #[test]
-fn a_before_v11_backup_is_made_and_still_opens_as_schema_9() {
+fn a_before_v12_backup_is_made_and_still_opens_as_schema_9() {
     let f = migrated();
     let snaps = backup_names(&f);
     assert_eq!(snaps.len(), 1, "{snaps:?}");
-    assert!(snaps[0].starts_with("gizai-before-v11-") && snaps[0].ends_with(".db"), "{snaps:?}");
+    assert!(snaps[0].starts_with("gizai-before-v12-") && snaps[0].ends_with(".db"), "{snaps:?}");
     let b = raw(&f.backups.join(&snaps[0]));
     let v: i64 = b.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
     assert_eq!(v, 9, "the backup is the schema 9 database");
@@ -441,7 +441,7 @@ fn opening_the_migrated_database_again_changes_nothing() {
     assert_eq!(first, second, "a second open changes nothing");
     assert_eq!(backup_names(&f).len(), 1, "and makes no new backup");
     let v: i64 = raw(&f.path).query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-    assert_eq!(v, 11);
+    assert_eq!(v, 12);
 }
 
 #[test]

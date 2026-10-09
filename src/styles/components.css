@@ -391,6 +391,19 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .composer-box textarea::placeholder { color: var(--text-3); }
 .composer-box .stop-btn { border-color: var(--live); color: var(--live); background: transparent; }
 .composer-hint { display: flex; gap: 14px; margin-top: 6px; font-size: var(--fs-xs); color: var(--text-3); }
+.composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.composer-foot .composer-hint { margin-top: 0; }
+.runs-on { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-3); }
+.runs-on .select { height: 24px; padding: 0 26px 0 8px; font-size: var(--fs-xs); width: auto; max-width: 260px; background-position: right 6px center; }
+.chat-queue { display: flex; flex-direction: column; gap: 8px; margin: 0 0 22px; }
+.chat-msg.user.queued .bubble { border-style: dashed; color: var(--text-2); }
+.chat-msg.user.queued .bubble.editing { width: min(560px, 85%); padding: 6px; }
+.chat-msg.user.queued .bubble.editing textarea { width: 100%; resize: vertical; }
+.chat-queue .q-edit { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.chat-queue .q-meta { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 2px; font-size: var(--fs-xs); color: var(--text-3); }
+.chat-queue .q-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.chat-note.has-actions { margin-bottom: 8px; }
+.chat-note-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 auto 22px; }
 .chat-banner { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 8px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--raised); font-size: var(--fs-sm); color: var(--text-2); }
 .chat-banner .btn { margin-left: auto; }
 .chat-banner.bad { border-color: var(--danger-soft); color: var(--danger); }

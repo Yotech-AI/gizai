@@ -566,7 +566,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     };
     // Step back to schema 6 as it was: none of 0011's columns, agents on columns or branches, routing rules on a label and
     // on a column, no Deploy column (the seed's has no place in schema 6), workflow_states and runs with 0001's CHECKs,
-    // no Testing switch, none of 0008's board check columns and no agent folders (0009).
+    // no Testing switch, none of 0008's board check columns, no agent folders (0009) and no chat Runs on or queue (0012).
     let c = rusqlite::Connection::open(&path).unwrap();
     let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN; DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;
         DELETE FROM workflow_states WHERE category='deploy';
@@ -585,7 +585,8 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
                   INSERT INTO routing_rules (id, created_at, updated_at, team_id, kind, match_state_id, target_role, priority)
                     SELECT 'rule-column', 1, 1, team_id, 'column', id, 'qa', 20 FROM workflow_states WHERE name='Testing';");
     sql.push_str("CREATE INDEX runs_task ON runs(task_id, created_at); CREATE INDEX runs_agent_period ON runs(agent_actor_id, started_at);
-                  ALTER TABLE tasks DROP COLUMN testing; ALTER TABLE agent_configs DROP COLUMN folders_json; COMMIT; PRAGMA user_version = 6;");
+                  ALTER TABLE tasks DROP COLUMN testing; ALTER TABLE agent_configs DROP COLUMN folders_json;
+                  DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json; ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; COMMIT; PRAGMA user_version = 6;");
     c.execute_batch(&sql).unwrap();
     assert!(c.execute("UPDATE workflow_states SET category='deploy' WHERE name='Review'", []).is_err(), "schema 6 has no deploy category");
     let before: Vec<Rows> = SNAPSHOTS.iter().map(|q| rows(&c, q)).collect();
@@ -593,7 +594,7 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert!(before[4].len() >= 2, "the summaries are comments");
     drop(c);
 
-    // Gizai opens it: 0007, 0008, 0009, 0010 and 0011 run.
+    // Gizai opens it: 0007 to 0012 run.
     let db = Db::open(&path).unwrap();
     let after: Vec<Option<Rows>> = db.read(|c| Ok(SNAPSHOTS.iter().enumerate().map(|(i, q)| (i != RULES).then(|| rows(c, q))).collect())).unwrap();
     for (i, q) in SNAPSHOTS.iter().enumerate() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupMessages, toolCard, toolName } from "./chat";
+import { applyDraft, chatRunsOn, groupMessages, toolCard, toolName, withSnapshot, type DraftChange, type LiveDraft } from "./chat";
 import type { ChatMessage } from "../types";
 
 const base: ChatMessage = { id: "m", threadId: "t", role: "tool", authorId: "a", authorName: "Team Lead", bodyMd: null, runId: "r", toolName: null, tool: null, createdAt: 1_000_000 };
@@ -52,5 +52,46 @@ describe("groupMessages", () => {
   it("gives system notes their own group", () => {
     const g = groupMessages([m("a1", "agent", 0), m("s1", "system", 10), m("a2", "agent", 20)]);
     expect(g.map((x) => x.side)).toEqual(["agent", "system", "agent"]);
+  });
+});
+
+// GA-50 (was GA-23): the text being written must not drop words when a snapshot (chat_live) and live changes cross.
+describe("the live text", () => {
+  const delta = (text: string, seq: number): DraftChange => ({ kind: "delta", text, seq });
+  const block = (seq: number): DraftChange => ({ kind: "block", seq });
+
+  it("adds each change once, in order", () => {
+    const d = [delta("Hello ", 1), delta("wor", 2), delta("ld", 3)].reduce(applyDraft, { text: "", seq: 0 } as LiveDraft);
+    expect(d).toEqual({ text: "Hello world", seq: 3 });
+    expect(applyDraft(d, delta("ld", 3))).toBe(d);
+    expect(applyDraft(d, block(4))).toEqual({ text: "", seq: 4 });
+  });
+
+  it("keeps the words heard while a snapshot was asked for", () => {
+    // The snapshot was taken after change 2; changes 3 and 4 arrived before it came back.
+    const heard = [block(1), delta("Hello ", 2), delta("wor", 3), delta("ld", 4)];
+    expect(withSnapshot({ text: "Hello ", seq: 2 }, heard)).toEqual({ text: "Hello world", seq: 4 });
+  });
+
+  it("doesn't add words twice when the snapshot holds them already", () => {
+    const heard = [delta("Hello ", 2), delta("wor", 3)];
+    expect(withSnapshot({ text: "Hello wor", seq: 3 }, heard)).toEqual({ text: "Hello wor", seq: 3 });
+    // out of order events are put in order first
+    expect(withSnapshot({ text: "", seq: 0 }, [delta("b", 2), delta("a", 1)]).text).toBe("ab");
+  });
+
+  it("starts again at a new block that came after the snapshot", () => {
+    expect(withSnapshot({ text: "Old block", seq: 5 }, [block(6), delta("New", 7)])).toEqual({ text: "New", seq: 7 });
+  });
+});
+
+describe("chatRunsOn", () => {
+  const clis = [{ id: "claude_code" }, { id: "cc2" }];
+  it("is the chat's own pick while it is still in Settings, else the Team Lead's", () => {
+    expect(chatRunsOn("cc2", "claude_code", clis)).toBe("cc2");
+    expect(chatRunsOn(null, "cc2", clis)).toBe("cc2");
+    expect(chatRunsOn("gone", "claude_code", clis)).toBe("claude_code");
+    expect(chatRunsOn(undefined, null, clis)).toBe("claude_code");
+    expect(chatRunsOn("cc2", "claude_code", null)).toBe("cc2");
   });
 });

@@ -254,13 +254,26 @@ export type ChatThread = { id: string; agentId: string; title: string; sessionId
   tasks?: string[];
   answeredAt?: number | null; dismissedAt?: number | null;
   /** A Team Lead chat that still waits for you (it is in the Inbox). */
-  waiting?: boolean };
+  waiting?: boolean;
+  /** The chat's own Runs on (a coding CLI's id); null: it follows the Team Lead's. */
+  cli?: string | null;
+  /** The coding CLI whose account holds the chat's session. */
+  sessionCli?: string | null };
 /** role: user | agent | tool | system. Tool messages carry `tool` = {id, input, result?, isError?}. */
 export type ChatMessage = { id: string; threadId: string; role: string; authorId?: string | null; authorName?: string | null;
-  bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number };
-export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null };
+  bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number;
+  /** A note's details: {kind: "switch", cli, cliName} where the chat moved to another CLI, {kind: "limit", cli, cliName, limit, resets?, messageIds}
+   *  where an answer hit a usage limit. */
+  meta?: ChatNoteMeta | null };
+export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
+/** `seq`: the last change to the text being written that `draft` holds. */
+export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
+/** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */
+export type QueuedMessage = { id: string; threadId: string; bodyMd: string; createdAt: number; updatedAt: number; held: boolean };
+/** A coding CLI in Runs on under the chat's text box; `problem`: why it can't run the chat. */
+export type ChatCli = { id: string; name: string; kind: CliKind; problem?: string | null };
 export type ChatEvent =
-  | { kind: "delta"; threadId: string; text: string }
-  | { kind: "block"; threadId: string }
+  | { kind: "delta"; threadId: string; text: string; seq: number }
+  | { kind: "block"; threadId: string; seq: number }
   | { kind: "tool"; threadId: string; name: string }
   | { kind: "message"; threadId: string; message: ChatMessage };

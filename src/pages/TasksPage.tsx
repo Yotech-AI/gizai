@@ -5,6 +5,7 @@ import { continueAfterRunForMe, dismissChat, getTeam, listChatThreads, listProje
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
+import { PENDING_MS } from "../lib/usePending";
 import { asksToRun, chatLabel, needsYou, waitingChats } from "../lib/inbox";
 import { relTime } from "../lib/format";
 import type { ChatThread } from "../types";
@@ -51,10 +52,11 @@ function LeadChats({ chats, onDismiss }: { chats: ChatThread[]; onDismiss: (id: 
 function RunForMeCard({ task, agent }: { task: Task; agent?: string | null }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Busy until the card leaves the Inbox (its hold is cleared as the run starts); a missed reload never leaves it spinning.
   const done = () => {
     setBusy(true);
     setErr(null);
-    continueAfterRunForMe(task.id).catch((e) => { setBusy(false); setErr(String(e)); });
+    continueAfterRunForMe(task.id).then(() => setTimeout(() => setBusy(false), PENDING_MS), (e) => { setBusy(false); setErr(String(e)); });
   };
   return (
     <div className="panel-row run-for-me-card">

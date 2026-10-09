@@ -775,7 +775,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         None => log_dir.join(format!("{session}.jsonl")),
     };
     let wt_path = wt.path.to_string_lossy().to_string();
-    // A Continue (a person's, the Team Lead's, Done, continue) is `nudge`; Gizai's own nudge `result_nudge`.
+    // A Continue (a person's, the Team Lead's, Done, continue) is recorded as `nudge`. Gizai's own nudge is too, marked
+    // nudged (`create_nudge`), and reads as `result_nudge`.
     let db_trigger = if resume.is_some() { "nudge" } else { trigger };
     let log = log_path.to_string_lossy();
     let run_id = if resume.as_ref().is_some_and(|r| r.nudge) {

@@ -368,7 +368,7 @@ a.member:hover { border-color: var(--line-2); }
 .usage-bars .seg-cost, .usage-bars .seg-in, .legend i.seg-in { background: var(--accent); border-radius: 1px; }
 .usage-bars .seg-out, .legend i.seg-out { background: var(--c-violet); border-radius: 1px; }
 .axis.one { justify-content: center; }
-.usage-panel { overflow: hidden; }
+.usage-panel { overflow-x: auto; }
 .usage-table th { position: static; background: none; }
 .usage-table td { max-width: 320px; }
 .usage-table tr:last-child td { border-bottom: 0; }
@@ -377,11 +377,10 @@ a.member:hover { border-color: var(--line-2); }
 .usage-table .usage-name > a:hover { text-decoration: underline; }
 .usage-table .usage-name .icon { color: var(--text-3); }
 .usage-table .usage-name .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.usage-table .usage-note-inline { margin-left: 8px; font-size: var(--fs-xs); }
 .usage-table .share { width: 140px; }
 .usage-share { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .usage-share .track { width: 80px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; display: inline-block; }
 .usage-share .track i { display: block; height: 100%; background: var(--accent); }
 .usage-foot { margin: 0; max-width: 760px; font-size: var(--fs-sm); }
 .usage-utc { font-size: var(--fs-sm); }
-@media (max-width: 960px) { .usage-table .share { display: none; } .usage-table .usage-note-inline { display: none; } }
+@media (max-width: 960px) { .usage-table .share { display: none; } }

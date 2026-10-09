@@ -35,6 +35,17 @@ export function formatUsageCost(t: Pick<UsageTotals, "costUsdMicros" | "unknownC
   return `${formatCost(t.costUsdMicros)} + unknown`;
 }
 
+/** The known part of the API cost, large on a card: "$1.23", or "Unknown" when the runs that used tokens reported no cost. */
+export function knownCost(t: Pick<UsageTotals, "costUsdMicros" | "unknownCostRuns">): string {
+  return t.costUsdMicros <= 0 && t.unknownCostRuns > 0 ? "Unknown" : formatCost(t.costUsdMicros);
+}
+
+/** Under a known cost: "+ an unknown cost for 3 runs"; "" when all of it is known or none of it is. */
+export function unknownCostLine(t: Pick<UsageTotals, "costUsdMicros" | "unknownCostRuns">): string {
+  if (t.unknownCostRuns <= 0 || t.costUsdMicros <= 0) return "";
+  return `+ an unknown cost for ${t.unknownCostRuns === 1 ? "1 run" : `${t.unknownCostRuns} runs`}`;
+}
+
 /** Why part of a cost is unknown (a title), or undefined when it is all known. */
 export function unknownCostNote(n: number): string | undefined {
   if (n <= 0) return undefined;

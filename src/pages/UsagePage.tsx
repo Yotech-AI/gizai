@@ -7,8 +7,8 @@ import { usageSummary } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import {
-  COST_NOTE, DEFAULT_PERIOD, INPUT_LABEL, PERIODS, barHeights, dayLabel, formatTokenCount, formatUsageCost, fullCount, periodDays,
-  periodPhrase, runsLabel, shareBasis, shareOf, unknownCostNote,
+  COST_NOTE, DEFAULT_PERIOD, INPUT_LABEL, PERIODS, barHeights, dayLabel, formatTokenCount, formatUsageCost, fullCount, knownCost, periodDays,
+  periodPhrase, runsLabel, shareBasis, shareOf, unknownCostLine, unknownCostNote,
 } from "../lib/usage";
 import type { Usage, UsageDay, UsagePeriod, UsageTotals } from "../types";
 import { roleIcon } from "../components/Avatar";
@@ -29,7 +29,8 @@ function Metrics({ t }: { t: UsageTotals }) {
   return (
     <div className="stats">
       <div className="stat-card"><h4>API cost</h4><span className="sub">An estimate at API prices, not a bill</span>
-        <div className="t-metric usage-metric"><Cost t={t} /></div></div>
+        <div className="t-metric usage-metric" title={unknownCostNote(t.unknownCostRuns)}>{knownCost(t)}</div>
+        {unknownCostLine(t) && <span className="sub usage-unknown" title={unknownCostNote(t.unknownCostRuns)}>{unknownCostLine(t)}</span>}</div>
       <div className="stat-card"><h4>{INPUT_LABEL}</h4><span className="sub">Cache reads and writes count as input</span>
         <div className="t-metric usage-metric"><Tokens n={t.inputTokens} /></div></div>
       <div className="stat-card"><h4>Output tokens</h4><span className="sub">What the models wrote</span>
@@ -82,7 +83,8 @@ function TotalTab({ u }: { u: Usage }) {
   );
 }
 
-type Row = { id: string; name: ReactNode; note?: string; totals: UsageTotals };
+/** `title`: what the line counts, on hover over its name. */
+type Row = { id: string; name: ReactNode; title?: string; totals: UsageTotals };
 
 /** The agents or the projects with their usage, and the total they add up to. */
 function UsageTable({ rows, total, nameHeader, label }: { rows: Row[]; total: UsageTotals; nameHeader: string; label: string }) {
@@ -101,7 +103,7 @@ function UsageTable({ rows, total, nameHeader, label }: { rows: Row[]; total: Us
             const share = shareOf(r.totals, total, basis);
             return (
               <tr key={r.id}>
-                <td><span className="usage-name">{r.name}</span>{r.note && <span className="usage-note-inline faint">{r.note}</span>}</td>
+                <td title={r.title}><span className="usage-name">{r.name}</span></td>
                 <td className="muted">{runsLabel(r.totals)}</td>
                 <td className="num"><Tokens n={r.totals.inputTokens} /></td>
                 <td className="num"><Tokens n={r.totals.outputTokens} /></td>
@@ -132,7 +134,7 @@ function AgentsTab({ u }: { u: Usage }) {
     return {
       id: a.agentId, totals: a.totals,
       name: <a href={href({ page: "agent", id: a.agentId })}><Role className="icon" />{a.name}</a>,
-      note: a.totals.chatTurns > 0 ? "chat turns included" : undefined,
+      title: a.totals.chatTurns > 0 ? `${a.name}'s runs, its chat turns included` : undefined,
     };
   });
   return <UsageTable rows={rows} total={u.total} nameHeader="Agent" label="Usage per agent" />;
@@ -143,8 +145,10 @@ function ProjectsTab({ u }: { u: Usage }) {
     id: p.projectId, totals: p.totals,
     name: <a href={href({ page: "project", id: p.projectId })}><span className="dot" style={{ background: p.color ?? "var(--text-3)" }} />{p.name}<span className="id">{p.key}</span></a>,
   }));
-  rows.push({ id: "chat", totals: u.chat, name: <><MessagesSquare className="icon" />Chat (no project)</>, note: "the Team Lead's chat turns and board checks" });
-  if (u.noProject.runs > 0) rows.push({ id: "no-project", totals: u.noProject, name: <><FolderKanban className="icon" />Cards without a project</> });
+  rows.push({ id: "chat", totals: u.chat, name: <><MessagesSquare className="icon" />Chat (no project)</>,
+    title: "The Team Lead's chat turns and board checks: they have no card, so no project" });
+  if (u.noProject.runs > 0) rows.push({ id: "no-project", totals: u.noProject, name: <><FolderKanban className="icon" />Cards without a project</>,
+    title: "Runs on cards that have no project" });
   return <UsageTable rows={rows} total={u.total} nameHeader="Project" label="Usage per project" />;
 }
 

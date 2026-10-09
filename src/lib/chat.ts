@@ -77,7 +77,7 @@ export const SUGGESTIONS: { label: string; text: string }[] = [
   { label: "What needs my attention?", text: "What needs my attention today?" },
   { label: "Add a client", text: "Add a client: " },
   { label: "Plan a project", text: "Plan a new project for " },
-  { label: "Set up my team", text: "Set up my software team: a Frontend, a Backend and a QA agent, with the usual routing rules." },
+  { label: "Set up my team", text: "Set up my software team: a Frontend, a Backend and a QA agent, on their usual columns." },
 ];
 
 /** The text being written, and the last change to it that it holds (ChatStatus.seq). */

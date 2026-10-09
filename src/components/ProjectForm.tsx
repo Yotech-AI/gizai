@@ -45,10 +45,11 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
     const t = setTimeout(() => checkRepo(repoPath).then(setRepo).catch(() => setRepo(null)), 300);
     return () => clearTimeout(t);
   }, [repoPath]);
-  // Offer the folder's GitHub remote as the link until you type one yourself.
+  // Offer the folder's GitHub or Bitbucket remote as the link until you type one yourself.
+  const remote = repo?.github || repo?.bitbucket;
   useEffect(() => {
-    if (repo?.github && v && !urlTouched && !v.repoUrl?.trim()) setV({ ...v, repoUrl: repo.github });
-  }, [repo?.github]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (remote && v && !urlTouched && !v.repoUrl?.trim()) setV({ ...v, repoUrl: remote });
+  }, [remote]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!v || !initial) return null;
   const set = (k: keyof ProjectInput, val: unknown) => setV({ ...v, [k]: val });
   const chooseFolder = async () => {
@@ -87,11 +88,11 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
           <Field label="Git repository" htmlFor="p-repo" wide {...repoNote}>
             <div className="input-group"><input id="p-repo" className="input mono" placeholder="/home/you/Code/project" value={v.repoPath ?? ""} onChange={(e) => set("repoPath", e.target.value)} />
               <button type="button" className="btn" onClick={chooseFolder}>Choose…</button></div></Field>
-          <Field label="GitHub repository" htmlFor="p-url" wide
+          <Field label="Repository" htmlFor="p-url" wide
             hint={v.repoUrl?.trim() ? "New cards start from the main branch fetched from here; agents hear when it moves on"
-              : repo?.isGit && !repo.github ? "This folder has no GitHub remote: paste the link, or leave it empty to start from the local branch"
-              : "Optional. With a link, new cards start from the main branch fetched from GitHub"}>
-            <input id="p-url" className="input mono" placeholder="https://github.com/owner/name" value={v.repoUrl ?? ""}
+              : repo?.isGit && !remote ? "This folder has no GitHub or Bitbucket remote: paste the link, or leave it empty to start from the local branch"
+              : "Optional. With a GitHub or Bitbucket link, new cards start from the main branch fetched from there"}>
+            <input id="p-url" className="input mono" placeholder="https://github.com/owner/name or https://bitbucket.org/workspace/name" value={v.repoUrl ?? ""}
               onChange={(e) => { setUrlTouched(true); set("repoUrl", e.target.value); }} /></Field>
           <Field label="Main branch" htmlFor="p-branch" hint="New task branches start here"><input id="p-branch" className="input mono" value={v.defaultBranch ?? "main"} onChange={(e) => set("defaultBranch", e.target.value)} /></Field>
         </FormSection>

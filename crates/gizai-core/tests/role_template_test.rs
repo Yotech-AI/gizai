@@ -107,3 +107,30 @@ fn no_default_text_or_command_list_names_our_company_or_its_repositories() {
         }
     }
 }
+
+#[test]
+fn every_working_role_hears_that_gizai_pushes_its_branch_after_the_run_and_keeps_git_push() {
+    // GA-56: Gizai pushes the card's branch's commits when a run ends, so a refused push is no reason for needs_decision.
+    for role in ["backend", "frontend", "design", "docs"] {
+        let t = role_template(role);
+        assert!(t.contains("Gizai also pushes the branch's commits when your run ends, so a refused push is no reason for needs_decision: \
+                            mention it in your hand-over and end with the outcome the work deserves."), "{role}: {t}");
+        assert!(t.contains("whether your push went through (Gizai pushes the branch after the run either way)"), "{role}: {t}");
+        assert!(t.contains("- ready_for_testing: the work is committed and the hand-over is written."), "{role}: {t}");
+        assert!(!t.contains("committed (and pushed)"), "{role}: {t}");
+    }
+    let qa = role_template("qa");
+    assert!(qa.contains("If the push is refused, go on: Gizai pushes this branch's commits when your run ends, before the card moves on."), "{qa}");
+    assert!(qa.contains("A refused `git push` is no reason for needs_decision: Gizai pushes the branch when your run ends, so mention it in \
+                         your summary and end with the outcome the work deserves."), "{qa}");
+    assert!(qa.contains("If your push was refused, also give it `--head <branch>`"), "{qa}");
+    assert!(!qa.contains("when pushing or opening the pull request fails"), "a failed push is no longer a reason to stop: {qa}");
+    let devops = role_template("devops");
+    assert!(devops.contains("The one exception is a refused push of the card's own branch: Gizai pushes that branch's commits when your run ends"), "{devops}");
+    assert!(devops.contains("Gizai pushes nothing else: not a pull request's branch, not a tag."), "{devops}");
+    assert!(devops.contains("if only that push is refused, go on, since Gizai pushes it after the run"), "{devops}");
+    // they all keep git push in their allowed commands
+    for role in ["backend", "frontend", "design", "docs", "qa", "devops"] {
+        assert!(role_tools(role).iter().any(|t| t == "Bash(git push:*)"), "{role}: {:?}", role_tools(role));
+    }
+}

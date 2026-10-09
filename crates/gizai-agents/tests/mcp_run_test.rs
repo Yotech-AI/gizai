@@ -1,6 +1,7 @@
 // GA-39: an agent's MCP servers in one Claude Code run or chat turn (`mcp_run`): the per-run MCP config, which tools are
 // allowed or refused, the prompt line for outside servers, and what Claude Code's init line says about each server
 // (`cli::Parser` → notes and `RunEvent::McpServers`).
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use gizai_agents::cli::{self, CliSpec, Kind, Parser, RunFolder, TaskRun};
@@ -82,6 +83,8 @@ fn a_server_with_some_tools_off_allows_the_ones_on_by_full_name_and_refuses_the_
     assert!(mcp_run::permissions(&[]) == (vec![], vec![]), "no servers: nothing allowed, nothing refused");
 }
 
+// Linux and macOS: file modes. Windows has none; the file is in the user's own profile (docs/PLATFORMS.md).
+#[cfg(unix)]
 #[test]
 fn the_config_file_is_written_for_its_owner_only_also_over_one_left_behind() {
     let tmp = tempfile::tempdir().unwrap();

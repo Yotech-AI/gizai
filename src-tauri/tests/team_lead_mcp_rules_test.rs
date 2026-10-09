@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-39: the Team Lead's rules around MCP servers.
 // - After a chat answer used a tool from outside Gizai (an MCP server of its own, the web, the browser), Gizai's tools
 //   that act are refused for the rest of that answer, and work again in the next message.

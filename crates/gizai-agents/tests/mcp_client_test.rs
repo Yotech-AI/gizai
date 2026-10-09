@@ -1,5 +1,7 @@
 //! List tools (mcp_client) against fake MCP servers: a python stdio server (tests/fake-mcp-server.py) and a std-only
 //! HTTP server (tests/support/fake_mcp_http.rs); and what each tool does in plain words (mcp_tools).
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::Path;
 use std::time::{Duration, Instant};
 

@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-39: Stop, the time cap and quitting end the MCP servers a run started, also a server that starts a helper in a
 // process group of its own (setsid) and ends it only when it gets SIGINT or SIGTERM. The fake claude
 // (fake-claude-mcp.py) starts the fake server (fake-mcp-server.sh) as its child, in the run's process group, like Claude

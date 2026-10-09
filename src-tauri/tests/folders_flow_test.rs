@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-45: an agent's folders end to end, with the fake CLIs (never the real ones): what a task run's command line gets,
 // a missing folder skipped with a note in the run log, the Team Lead's tools that can't change the list, and the
 // check update_checkout (GA-44) asks before it updates a folder.

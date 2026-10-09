@@ -1,3 +1,5 @@
+// Linux and macOS only: process groups and signals, with shell scripts as fake CLIs. Windows: os_test.rs.
+#![cfg(unix)]
 use gizai_agents::{claude::ClaudeArgs, process::{spawn, Caps}, stream::RunEvent};
 use std::time::{Duration, Instant};
 

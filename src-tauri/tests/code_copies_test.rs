@@ -1,6 +1,8 @@
 //! GA-44: the Team Lead's own read-only copies of the projects' code (`<data dir>/code/<KEY>`), refreshed before each
 //! chat turn, and the note and update of an outdated linked folder. "GitHub" is a local bare repository; runs use the
 //! fake Claude Code, never the real one.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};

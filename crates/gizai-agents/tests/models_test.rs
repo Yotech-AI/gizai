@@ -1,4 +1,6 @@
-use gizai_agents::models::{ModelOption, fetch_models, parse_models};
+#[cfg(unix)]
+use gizai_agents::models::{ModelOption, fetch_models};
+use gizai_agents::models::parse_models;
 
 const FIXTURE: &str = include_str!("fixtures/models-init.jsonl");
 
@@ -25,6 +27,8 @@ fn other_lines_and_other_requests_are_not_a_model_list() {
     assert!(parse_models(r#"{"type":"control_response","response":{"subtype":"error","request_id":"r1","error":"nope"}}"#, "r1").is_none());
 }
 
+// Linux and macOS only: the fake Claude Code is a shell script, and /bin/false is Unix's.
+#[cfg(unix)]
 #[tokio::test]
 async fn asks_a_running_claude_code_and_lets_it_exit() {
     let tmp = tempfile::tempdir().unwrap();
@@ -34,6 +38,7 @@ async fn asks_a_running_claude_code_and_lets_it_exit() {
     assert_eq!(models[2].value, "fable");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_claude_code_that_gives_no_list_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();

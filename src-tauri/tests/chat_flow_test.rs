@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // Chat turns end to end: Gizai starts a (fake) Claude Code, which starts the real gizai-mcp shim, which calls
 // Gizai's tools over the socket; the conversation, the run and the session are recorded.
 use std::path::PathBuf;

@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use gizai_agents::github::{self, PullRequest};
 use std::path::{Path, PathBuf};
 

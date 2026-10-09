@@ -5,6 +5,8 @@
 //! all, so a push that doesn't go over ssh fails. Covers Open pull request on a Bitbucket card in Review (push over SSH,
 //! one pull request into the project's main branch, or the open one kept), the PR check (merge → Deploy or Done and
 //! clean-up, declined and superseded → closed, draft) and the missing login.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};

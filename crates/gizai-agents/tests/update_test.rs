@@ -1,6 +1,8 @@
 //! Gizai's own updates, the core: versions, GitHub's latest-release answer, the release check (curl against a file and
 //! a local HTTP server, never GitHub), getting a release's source from a local repository, and running its install.sh
 //! (a stub) to build and install it, with Stop. Nothing here touches a real install.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};

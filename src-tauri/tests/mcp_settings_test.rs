@@ -1,6 +1,8 @@
 //! Settings → MCP servers end to end without the OS keychain: add, edit and remove a command server and an address
 //! server, their values in a keychain in memory (never in SQLite, the views or the Team Lead's tools), the name rules,
 //! and List tools against fake servers (crates/gizai-agents/tests/fake-mcp-server.py and a local HTTP server).
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

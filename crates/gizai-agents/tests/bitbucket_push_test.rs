@@ -1,6 +1,8 @@
 //! GA-59: pushes to Bitbucket Cloud without Bitbucket. A fake ssh as your own GIT_SSH_COMMAND (kept, as Gizai keeps one
 //! you set) logs its arguments and serves "Bitbucket" from local bare repositories, only to git@bitbucket.org, so
 //! nothing here reaches bitbucket.org or github.com. Every test in this file that runs git or ssh runs that fake ssh.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

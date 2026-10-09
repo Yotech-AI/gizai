@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // Import from Claude Code (GA-39): which file holds a Claude Code's MCP servers, and what `read` makes of it. Everything
 // happens in scratch config folders in a tempdir: never the real ~/.claude.json or ~/.claude.
 use std::collections::BTreeMap;

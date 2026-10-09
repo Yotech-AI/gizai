@@ -1,5 +1,7 @@
 //! GA-30: a card's worktree is prepared before its agent starts, takes over a finished card's worktree, and Settings →
 //! Data lists and removes the worktrees of finished cards. Runs use the fake Claude Code, never the real one.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

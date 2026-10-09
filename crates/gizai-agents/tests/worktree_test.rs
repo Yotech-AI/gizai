@@ -442,6 +442,8 @@ fn the_exclude_line_goes_on_a_line_of_its_own_and_only_once() {
     assert_eq!(std::fs::read_to_string(common.join("info/exclude")).unwrap(), "  /.gizai-tmp/  \n");
 }
 
+// Linux and macOS only: Unix symlinks (a symlink on Windows needs Developer Mode or an administrator).
+#[cfg(unix)]
 #[test]
 fn emptying_the_temp_folder_removes_links_and_never_follows_them() {
     let tmp = tempfile::tempdir().unwrap();

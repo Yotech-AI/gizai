@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // Agents on Codex, Gemini, another coding CLI or a second account (GA-3), run end to end with a fake CLI
 // (crates/gizai-agents/tests/fake-cli.sh), never the real ones.
 use gizai_core::clis::Cli;

@@ -143,11 +143,15 @@ fn remove_takes_the_copy_out_of_gits_list_and_never_touches_anything_outside_the
     assert_eq!(git_out(&repo, &["branch", "--show-current"]), "feature/x");
     assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "work in progress\n");
     copies::remove(&dir, &root).unwrap(); // gone already: fine
-    // a link in the folder of copies loses only the link, never what it points to
-    let keep = tmp.path().join("keep");
-    std::fs::create_dir(&keep).unwrap();
-    std::fs::write(keep.join("important.txt"), "mine\n").unwrap();
-    std::os::unix::fs::symlink(&keep, root.join("LINK")).unwrap();
-    copies::remove(&root.join("LINK"), &root).unwrap();
-    assert!(!root.join("LINK").exists() && keep.join("important.txt").is_file());
+    // a link in the folder of copies loses only the link, never what it points to (a Unix symlink: one on Windows
+    // needs Developer Mode or an administrator)
+    #[cfg(unix)]
+    {
+        let keep = tmp.path().join("keep");
+        std::fs::create_dir(&keep).unwrap();
+        std::fs::write(keep.join("important.txt"), "mine\n").unwrap();
+        std::os::unix::fs::symlink(&keep, root.join("LINK")).unwrap();
+        copies::remove(&root.join("LINK"), &root).unwrap();
+        assert!(!root.join("LINK").exists() && keep.join("important.txt").is_file());
+    }
 }

@@ -1,5 +1,7 @@
 //! GA-49 QA: the column decides who works a card. Each column has agents, Auto or Manual, and a next column; labels
 //! never route. End to end with the fake `claude` (and a fake gh for the merge), never the real ones.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};

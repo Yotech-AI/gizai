@@ -1,5 +1,7 @@
 //! Review on GitHub, end to end with a fake gh and "GitHub" as local bare repositories: Open pull request on a card
 //! in Review, a pull request an agent opened, and the PR check that moves a merged card to Done.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

@@ -2,6 +2,8 @@
 //! "installed" Gizai (a stub that says it is this version) in <prefix>/lib/gizai, a local repository with the release
 //! tag v9.9.9 whose install.sh is a stub, and a file shaped like GitHub's latest-release answer. Files in control/
 //! make the stub fail where a test wants it to.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

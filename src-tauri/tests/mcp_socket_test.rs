@@ -1,3 +1,5 @@
+// Linux and macOS only: the Unix socket, with Python scripts as fake CLIs. Windows: mcp_pipe_test.rs.
+#![cfg(unix)]
 // The MCP socket: a turn's token opens Gizai's tools; anything else is turned away.
 use std::path::Path;
 

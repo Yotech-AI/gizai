@@ -121,3 +121,30 @@ fn other_failures_and_limits_another_account_doesnt_solve_are_not_usage_limits()
         assert_eq!(usage_limit(text), None, "{text}");
     }
 }
+
+// GA-62: chat turns and board checks read the same rate_limit_event; and the Fable model's own limit, in both of Claude
+// Code's wordings ("You've hit your Fable limit · resets …" and "You've reached your Fable limit."), is a usage limit.
+
+#[test]
+fn a_chat_turns_rate_limit_event_is_a_limits_event() {
+    let evs: Vec<ChatEvent> = include_str!("fixtures/run-limits.jsonl").lines().flat_map(parse_line).collect();
+    let infos: Vec<&serde_json::Value> = evs.iter().filter_map(|e| match e { ChatEvent::Limits { info } => Some(info), _ => None }).collect();
+    assert_eq!(infos.len(), 1, "{evs:?}");
+    assert_eq!(infos[0]["unifiedWindows"]["five_hour"]["resetsAt"], 1_791_565_200);
+    assert!(matches!(&parse_line(r#"{"type":"rate_limit_event","rate_limit_info":[]}"#)[..], [ChatEvent::Other { raw_type }] if raw_type == "rate_limit_event"));
+}
+
+#[test]
+fn the_fable_limit_is_a_usage_limit_in_both_wordings() {
+    for (text, resets) in [
+        ("You've reached your Fable limit.", None),
+        ("You've reached your Fable limit. Switch to another model with /model to keep going.", None),
+        ("You’ve reached your Fable limit.", None),
+        ("You've hit your Fable limit · resets Oct 14, 9am (Europe/Amsterdam)", Some("Oct 14, 9am (Europe/Amsterdam)")),
+    ] {
+        let l = usage_limit(text).unwrap_or_else(|| panic!("{text}"));
+        assert_eq!((l.limit.as_str(), l.resets.as_deref()), ("Fable limit", resets), "{text}");
+    }
+    // Reaching a spend limit is no usage limit, in the new wording either.
+    assert_eq!(usage_limit("You've reached your monthly spend limit. Raise it at claude.ai/settings/usage"), None);
+}

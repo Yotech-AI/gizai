@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"S-acct-2","model":"claude-haiku-4-5","tools":[],"mcp_servers":[]}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1791561600,"rateLimitType":"five_hour","utilization":0.91,"unifiedWindows":{"five_hour":{"utilization":0.91,"resetsAt":1791561600},"seven_day":{"utilization":0.35,"resetsAt":1792054800}},"isUsingOverage":false},"uuid":"u-2","session_id":"S-acct-2"}
+{"type":"result","subtype":"success","is_error":false,"result":"hi","total_cost_usd":0.001,"usage":{"input_tokens":10,"output_tokens":2},"num_turns":1,"session_id":"S-acct-2"}

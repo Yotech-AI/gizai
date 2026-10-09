@@ -187,7 +187,8 @@ fn a_card_worktree_with_uncommitted_work_is_kept_with_its_branch() {
     assert_eq!(r.kept, Some((a.path.clone(), "it has uncommitted changes".to_string())), "{r:?}");
     assert!(r.removed.is_none() && !r.branch_deleted);
     assert!(a.path.join("notes.txt").exists() && has_branch(&repo, &a.branch), "nothing lost");
-    assert_eq!(r.phrases(&a.branch), [format!("kept its worktree {} (it has uncommitted changes)", a.path.display())]);
+    // the path as git gives it (with / on Windows)
+    assert_eq!(r.phrases(&a.branch), [format!("kept its worktree {} (it has uncommitted changes)", git_path(&a.path))]);
 }
 
 #[test]

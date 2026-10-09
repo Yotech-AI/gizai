@@ -825,6 +825,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     };
     let allowed_tools: Vec<String> =
         if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() };
+    // Web search, fetching pages and the CLI's other tools come only from their switches (agent form → Tools), never from the
+    // allowed commands, whoever put them there: with a switch off, the tool is absent.
+    let (allowed_tools, by_switch): (Vec<String>, Vec<String>) =
+        allowed_tools.into_iter().partition(|t| !gizai_agents::tool_catalog::only_by_switch(t));
+    if !by_switch.is_empty() {
+        notes.push(format!("Left out of {}'s allowed commands: {}. Web search, fetching pages and the CLI's other tools come only from \
+                            their switches (agent form → Tools).", agent.name, by_switch.join(", ")));
+    }
     let permission_mode = agent.permission_mode.clone().unwrap_or_default();
     // "How this run works" ends every task prompt, new and continued.
     let rules = prompt::RunRules {

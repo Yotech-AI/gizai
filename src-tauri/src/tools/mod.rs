@@ -253,7 +253,7 @@ const AGENT_FIELDS: [(&str, &str, &str); 10] = [
     ("instructions_md", "string", "Instructions sent with every run (Markdown). Omit on create to use the role's template; it must end by asking for the GIZAI_RESULT line"),
     ("cards_at_once", "integer", "How many cards it works on at the same time, each in its own git worktree (1–10, default 1)"),
     ("permission_mode", "string", "Permission mode for task runs, in its CLI's terms. Claude Code: acceptEdits (the usual), dontAsk, auto, plan or manual. Codex: workspace-write (the usual) or read-only. Gemini: auto_edit (the usual), plan or default"),
-    ("allowed_tools", "string[]", "Commands it may run without asking, like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
+    ("allowed_tools", "string[]", "Commands it may run without asking, each as Bash(…), like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
     ("monthly_budget_usd", "number", "Monthly spending cap in dollars; empty = no cap"),
     ("title", "string", "Job title shown on the team page"),
 ];

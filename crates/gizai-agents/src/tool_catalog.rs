@@ -197,6 +197,19 @@ pub fn valid_name(n: &str) -> bool {
     !n.is_empty() && n.len() <= 64 && !n.starts_with("mcp__") && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
+/// Whether an entry of an agent's allowed commands (Claude Code style: `Bash(git status:*)`, `WebFetch(domain:docs.rs)`)
+/// names a tool only the agent form's Tools switches give: web search, fetching pages, a built-in tool with a switch of its
+/// own (one the catalog doesn't know) or one Gizai keeps off. A run leaves such an entry out, so with its switch off the
+/// tool is absent whatever the list says. MCP tools stay: a server that's off isn't in the run's config, and a tool
+/// switched off is refused.
+pub fn only_by_switch(entry: &str) -> bool {
+    let name = entry.split('(').next().unwrap_or_default().trim();
+    match find(Kind::ClaudeCode, name) {
+        Some(t) => t.how != how::ALWAYS && t.how != how::ELSEWHERE,
+        None => valid_name(name),
+    }
+}
+
 /// What each CLI can be given of the Web switches: (search, fetch, fetch with a domain list), each None when it can, else why.
 pub fn web_support(kind: Kind) -> (Option<&'static str>, Option<&'static str>, Option<&'static str>) {
     match kind {

@@ -71,6 +71,32 @@ pub fn suggest_key(name: &str) -> String {
     k
 }
 
+/// A key for a new project called `name` that none of `taken` is: `suggest_key(name)`, else that key with a number (2, 3,
+/// …) for which its last letters make room, so it is never longer than 6 characters: "ABCDEF" → "ABCDE2" … "ABCDE9",
+/// "ABCD10".
+pub fn free_key(name: &str, taken: &[String]) -> String {
+    let base = suggest_key(name);
+    let is_taken = |k: &str| taken.iter().any(|t| t.eq_ignore_ascii_case(k));
+    let mut k = base.clone();
+    let mut n = 2;
+    // At most 5 digits, so a letter still starts the key.
+    while is_taken(&k) && n < 100_000 {
+        let num = n.to_string();
+        k = format!("{}{num}", &base[..base.len().min(6 - num.len())]);
+        n += 1;
+    }
+    k
+}
+
+/// `free_key` for a new project: none of the projects has the key yet (`create` refuses one that is used).
+pub fn unused_key(db: &Db, name: &str) -> Result<String> {
+    let taken = db.read(|c| {
+        let mut st = c.prepare("SELECT key FROM projects")?;
+        Ok(st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?)
+    })?;
+    Ok(free_key(name, &taken))
+}
+
 fn normalise_key(key: &str) -> Result<String> {
     let k = key.trim().to_uppercase();
     if !(2..=6).contains(&k.len()) || !k.chars().all(|c| c.is_ascii_alphanumeric()) || !k.chars().next().unwrap().is_ascii_alphabetic() {

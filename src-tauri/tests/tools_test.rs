@@ -114,6 +114,18 @@ async fn create_project_suggests_a_key_and_links_the_client_by_name() {
 }
 
 #[tokio::test]
+async fn create_project_suggests_a_key_of_at_most_six_characters_after_nine_collisions() {
+    let t = setup();
+    // GA-25: the tenth got ABCDE10, a key the project form can't hold. An archived project's key counts too.
+    t.ok("create_project", json!({"name": "a b c d e f g h", "status": "archived"})).await;
+    let mut keys = vec![];
+    for _ in 0..11 {
+        keys.push(t.ok("create_project", json!({"name": "a b c d e f g h"})).await["project"]["key"].as_str().unwrap().to_string());
+    }
+    assert_eq!(keys, ["ABCDE2", "ABCDE3", "ABCDE4", "ABCDE5", "ABCDE6", "ABCDE7", "ABCDE8", "ABCDE9", "ABCD10", "ABCD11", "ABCD12"]);
+}
+
+#[tokio::test]
 async fn update_project_keeps_repo_and_colour() {
     let t = setup();
     let id = t.project("Kade portal", "KADE");

@@ -45,7 +45,7 @@ export function UpdateNotice() {
   const [err, setErr] = useState<string | null>(null);
   const n = status ? notice(status) : null;
   if (!status || !n) return null;
-  const settings = href({ page: "settings" });
+  const settings = href({ page: "settings" }); // opens Settings → General, which has Updates
   const start = () => {
     setErr(null);
     startUpdate(n.version).then(setStatus).catch((e) => setErr(String(e)));

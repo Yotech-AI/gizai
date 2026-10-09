@@ -149,7 +149,7 @@ const chips = ViewPlugin.fromClass(class {
 });
 
 const theme = EditorView.theme({
-  "&": { fontSize: "var(--fs-md)", color: "var(--text)", backgroundColor: "transparent", minHeight: "inherit" },
+  "&": { fontSize: "var(--fs-prose)", color: "var(--text)", backgroundColor: "transparent", minHeight: "inherit" },
   ".cm-scroller": { minHeight: "inherit" },
   "&.cm-focused": { outline: "none" },
   ".cm-content": { fontFamily: "var(--font-sans)", lineHeight: "1.6", padding: "0", caretColor: "var(--text)" },

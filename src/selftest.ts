@@ -1107,6 +1107,31 @@ export async function appearanceProbe(phase: "set" | "kept") {
     && JSON.stringify(defaults.pressed) === JSON.stringify({ chat: ["15"], ui: ["13.5"], docs: ["15"], theme: ["Dark"], density: ["Comfortable"] })
     && defaults.nav.family === "Atkinson Hyperlegible Next";
 
+  // Tabs work like the Usage page's, in the address; an edit not saved yet survives a switch to another tab and back.
+  const tabTo = async (label: string) => {
+    [...document.querySelectorAll('.tabs button[role="tab"]')].find((b) => textOf(b) === label)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return !!(await waitFor(() => (textOf(q('.tabs button[aria-selected="true"]')) === label ? true : null), 3000));
+  };
+  const shownPanels = () => [...document.querySelectorAll(".settings-panel")].filter((p) => p.getClientRects().length > 0).map((p) => p.getAttribute("aria-label"));
+  await tabTo("Agents and runs");
+  const onAgents = { address: location.hash, shown: shownPanels() };
+  const runsAtOnce = q<HTMLInputElement>("#s-max");
+  const before = runsAtOnce?.value ?? "";
+  const edited = before === "9" ? "8" : "9";
+  if (runsAtOnce) typeInto(runsAtOnce, edited);
+  await sleep(150);
+  await tabTo("General");
+  const onGeneral = { address: location.hash, shown: shownPanels(), quit_first: textOf(q('.settings-panel[aria-label="General"] .form-section > header h3')),
+    value: q<HTMLInputElement>("#s-max")?.value };
+  await tabTo("Agents and runs");
+  const back = q<HTMLInputElement>("#s-max")?.value;
+  if (runsAtOnce) typeInto(runsAtOnce, before); // nothing was saved; put the field back as it was
+  await tabTo("Appearance");
+  const switching = { on_agents: onAgents, on_general: onGeneral, back, edited, address: location.hash };
+  const switchingOk = onAgents.address === "#/settings/agents" && JSON.stringify(onAgents.shown) === '["Agents and runs"]' && !!runsAtOnce
+    && onGeneral.address === "#/settings/general" && JSON.stringify(onGeneral.shown) === '["General"]' && onGeneral.quit_first === "Quit"
+    && onGeneral.value === edited && back === edited && switching.address === "#/settings/appearance" && !!appearancePanel()?.getClientRects().length;
+
   // Each font choice in its own font, and every font loads from the app.
   const choices = [...panel.querySelectorAll(".font-choice")].map((c) => [c.getAttribute("data-font") ?? "", box(c.querySelector(".fc-name")).family, box(c.querySelector(".fc-sample .mono")).family]);
   const loads: Record<string, number> = {};
@@ -1235,10 +1260,10 @@ export async function appearanceProbe(phase: "set" | "kept") {
   restoreView();
   await sleep(1500); // WebKit writes localStorage to disk a moment later
 
-  const ok = tabOk && controlsOk && defaultsOk && choicesOk && bigOk && growsOk(dark) && growsOk(lightPages) && editorsOk && lightOk && compactOk && fontsOk;
-  return { ok, phase, tab_ok: tabOk, controls_ok: controlsOk, defaults_ok: defaultsOk, choices_ok: choicesOk, big_ok: bigOk, dark_ok: growsOk(dark),
+  const ok = tabOk && switchingOk && controlsOk && defaultsOk && choicesOk && bigOk && growsOk(dark) && growsOk(lightPages) && editorsOk && lightOk && compactOk && fontsOk;
+  return { ok, phase, tab_ok: tabOk, switching_ok: switchingOk, controls_ok: controlsOk, defaults_ok: defaultsOk, choices_ok: choicesOk, big_ok: bigOk, dark_ok: growsOk(dark),
     light_pages_ok: growsOk(lightPages), editors_ok: editorsOk, light_ok: lightOk, compact_ok: compactOk, fonts_ok: fontsOk,
-    tabs, controls, defaults, choices, loads, small0, row0, col0, big, dark, light, light_pages: lightPages, editors, compact, fonts,
+    tabs, switching, controls, defaults, choices, loads, small0, row0, col0, big, dark, light, light_pages: lightPages, editors, compact, fonts,
     found: { task: task?.identifier ?? null, doc: !!docId, chat: !!chat } };
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { docVersionBody, docVersions, getDoc, getProject, renameDoc, saveDoc } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
@@ -68,7 +68,7 @@ export function DocPage({ id }: { id: string }) {
         <div className="crumbs">
           {doc.kind === "memory" ? (
             // A memory note (GA-19): Memory, its folders, its title. The Memory page itself comes with GA-68.
-            <>{["Memory", ...(doc.path ?? "").split("/").slice(0, -1)].map((f, i) => <span key={i}><span>{f}</span><span className="sep">/</span></span>)}</>
+            <>{["Memory", ...(doc.path ?? "").split("/").slice(0, -1)].map((f, i) => <Fragment key={i}><span>{f}</span><span className="sep">/</span></Fragment>)}</>
           ) : (
             <><a href={href({ page: "projects" })}>Projects</a><span className="sep">/</span>
               {project && <><a href={href({ page: "project", id: project.id })}>{project.name}</a><span className="sep">/</span></>}</>

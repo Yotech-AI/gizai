@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { runCommits, runEvents } from "../api";
-import { commitCount, elapsed, formatCost, formatTokens, lastAgentText, resumeCommand, runReason, toolCalls } from "../lib/runs";
+import { commitCount, elapsed, formatCost, formatTokens, lastAgentText, resumeCommand, runReason, toolCalls, triggerName } from "../lib/runs";
 import { relTime } from "../lib/format";
 import type { Commit, Run, SeqEvent } from "../types";
 import { MarkdownView } from "./MarkdownView";
@@ -51,7 +51,7 @@ function RunRow({ r }: { r: Run }) {
     <div className={`run-row${open ? " open" : ""}`}>
       <button className="panel-row" aria-expanded={open} onClick={toggle}>
         <ChevronRight className="icon sm chev" />{outcomeBadge(r)}<span className="chip-id">{r.id.slice(-8)}</span>
-        <span className="grow">{r.agentName} <span className="faint">· {r.roleKey}</span>
+        <span className="grow">{r.agentName} <span className="faint">· {r.roleKey} · {triggerName(r)}</span>
           {commits && commits.length > 0 && <span className="faint"> · {commitCount(commits.length)}</span>}{reason && <span className="faint"> · {reason}</span>}</span>
         <span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" title={when(r.createdAt)}>{relTime(r.createdAt)}</span>
       </button>

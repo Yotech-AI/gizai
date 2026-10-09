@@ -124,7 +124,10 @@ export const getSettings = () => invoke<T.Settings>("get_settings");
 export const saveSettings = (settings: T.Settings) => invoke<void>("save_settings", { settings });
 export const startRun = (taskId: string, agentId: string | null) => invoke<string>("start_run", { taskId, agentId });
 export const stopRun = (runId: string) => invoke<void>("stop_run", { runId });
-export const continueRun = (runId: string) => invoke<string>("continue_run", { runId });
+/** Continue with your note for the agent, if you wrote one: it goes into the continued run's prompt and on the card as your comment. */
+export const continueRun = (runId: string, note?: string | null) => invoke<string>("continue_run", { runId, note: note?.trim() || null });
+/** Run this for me: Done, continue. You ran the commands the card's latest run asked for; that run continues. Returns the new run's id. */
+export const continueAfterRunForMe = (taskId: string) => invoke<string>("continue_after_run_for_me", { taskId });
 export const listRuns = (taskId: string) => invoke<T.Run[]>("list_runs", { taskId });
 /** The commits a finished run made, oldest first. */
 export const runCommits = (runId: string) => invoke<T.Commit[]>("run_commits", { runId });

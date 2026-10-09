@@ -466,14 +466,20 @@ pub(crate) async fn start_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
 }
 
 /// Continue on the card's latest run, like the Continue button (`runs::continue_run`); a run that ended asking for a
-/// decision continues too, with what was written on the card since (`runs::continue_answered`).
+/// decision continues too, with what was written on the card since (`runs::continue_answered`). A `note` goes to the
+/// agent with it and on the card as the Team Lead's comment (`runs::continue_answered_with_note`, GA-31).
 pub(crate) async fn continue_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let last = gizai_core::runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().next()
         .ok_or_else(|| format!("{} has no run to continue: start_agent_run starts one", t.identifier))?;
     check_free_slot(cx, Some(&last.agent_id))?;
-    let (run_id, _done) = crate::runs::continue_answered(cx.st, &last.id).await?;
+    let note = a.opt("note").filter(|n| !n.trim().is_empty());
+    let noted = note.is_some();
+    let (run_id, _done) = crate::runs::continue_answered_with_note(cx.st, &last.id, cx.actor, note).await?;
     cx.changed("tasks");
+    if noted {
+        cx.changed("comments");
+    }
     let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
     Ok(json!({"ok": true, "done": "continued", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
               "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
@@ -571,9 +577,10 @@ pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
     Ok(json!({"ok": true, "file": {"id": f.id, "name": f.name, "size_bytes": f.size_bytes}, "link": l}))
 }
 
-/// Spec §8: the Team Lead attaches only a file the user named in this chat, or one inside its copies of the projects'
-/// code (`code`), never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked
-/// files, so a repository's .env isn't among them.
+/// Spec §8: the Team Lead attaches only a file the user named in this chat, one the user added to a message in this chat
+/// (its copy in the Team Lead's folder, `chat::lead_file_path`), or one inside its copies of the projects' code (`code`),
+/// never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked files, so a
+/// repository's .env isn't among them.
 fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), String> {
     let real = path.canonicalize().map_err(|_| format!("can't read {raw}"))?;
     let in_copy = crate::code::dirs(cx.st).iter()
@@ -588,10 +595,15 @@ fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), 
             .filter_map(|m| m.body_md.as_deref())
             .any(|b| b.contains(raw) || b.contains(&*real.to_string_lossy()) || b.contains(&*path.to_string_lossy()))
     });
-    if named {
+    let added = cx.thread.is_some_and(|t| {
+        gizai_core::chat::thread_files(cx.db(), t).unwrap_or_default().iter()
+            .filter_map(|f| crate::chat::lead_file_path(cx.st, f).canonicalize().ok())
+            .any(|p| p == real)
+    });
+    if named || added {
         Ok(())
     } else {
-        Err(format!("I can only attach a file you named in this chat or one inside my copies of the projects' code; {raw} is neither. Ask the user to give the path."))
+        Err(format!("I can only attach a file you named in this chat, one you added to a message here, or one inside my copies of the projects' code; {raw} is none of these. Ask the user to give the path."))
     }
 }
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # UI tests in a HEADLESS cage against a fresh copy of the demo data (.devdata/demo):
 #  1. board: drags a To do card into In progress with pointer events; checks the database.
-#  2. task page: opens the description editor, types, saves with Ctrl+Enter; checks the database.
+#  2. task page: opens the description editor, types, saves with Ctrl+Enter; checks the database. GA-41: in the editor
+#     @ lists the kinds and @task. only tasks; ↓, Escape (closes only the picker), Enter and a click link a task and a
+#     project without closing the edit box; @zzqq stays a mention; the saved links show as chips and one opens its project.
 #  3. doc page: saves with Ctrl+S, then forces a conflict and keeps our text.
 #  4. team page (GA-53): Design first and one empty spot per branch; the Development spot opens the agent form with its
 #     role and no wake-up; picking a role fills in its instructions and allowed commands until the list is edited (GA-63),
@@ -15,6 +17,11 @@
 #     through the real gizai-mcp shim and socket, and the answer links the task it created. Then Runs on under the
 #     text box: it lists the Claude Code accounts (Codex disabled, with why) and picking Claude Code 2 saves it; while a
 #     slow answer is written, Enter queues a message, which shows as queued and goes by itself when the answer is done.
+#     GA-41: + opens upward with Add files and Link an item, which opens the @ picker above the text box; Enter links a
+#     task without sending and the sent message shows it as a chip; Tauri's drag-and-drop events (sent through its event
+#     system: a real OS drop can't be made headless) show the drop state and add a file (a folder is refused), which is
+#     sent and shown; the text box stops growing at 200 px; while the Team Lead is paused, + and drops are off; after
+#     reopening the chat the chip and the file are still there and the chip opens the task.
 #  7. usage (GA-33): Usage in the sidebar's Company section above Team; the Total, Agents and Projects tabs and the period
 #     switch against prep_usage's runs (an unknown cost, a chat turn, a run 20 days ago), and the tabs agree; then the
 #     Projects list's AI usage column, sorted by its header.

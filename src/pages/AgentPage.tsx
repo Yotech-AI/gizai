@@ -12,7 +12,7 @@ import { andList, boardOrder } from "../lib/columns";
 import { useCurrentTeam } from "../lib/team";
 import { cliName } from "../lib/clis";
 import { useClis } from "../lib/useClis";
-import { formatCost, dayRate } from "../lib/runs";
+import { formatCost, dayRate, triggerName } from "../lib/runs";
 import { useDrawer } from "../lib/drawers";
 import type { DayStat, Run } from "../types";
 import { Avatar } from "../components/Avatar";
@@ -21,8 +21,7 @@ import { MarkdownView } from "../components/MarkdownView";
 import { outcomeBadge } from "../components/RunPanel";
 import { RunHistory } from "../components/RunHistory";
 
-const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat", board_check: "Board check", nudge: "Continue" };
-const md = (ms: number) => { const d = new Date(ms); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
+const md =(ms: number) => { const d = new Date(ms); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
 
 function Bars({ days, mode }: { days: DayStat[]; mode: "activity" | "success" }) {
   const max = Math.max(1, ...days.map((d) => d.succeeded + d.failed + d.other));
@@ -116,7 +115,7 @@ export function AgentPage({ id }: { id: string }) {
             ) : last ? (
               <div className="run-card">
                 <div className="run-head">{last.status === "succeeded" && last.outcome !== "no_result" ? <Check className="icon" style={{ color: "var(--success)" }} /> : last.status === "cancelled" ? <X className="icon" style={{ color: "var(--text-3)" }} /> : <CircleAlert className="icon" style={{ color: "var(--danger)" }} />}
-                  {outcomeBadge(last)}<span className="chip-id">{last.id.slice(-8)}</span><span className="badge info">{TRIGGER[last.trigger] ?? last.trigger}</span>
+                  {outcomeBadge(last)}<span className="chip-id">{last.id.slice(-8)}</span><span className="badge info">{triggerName(last)}</span>
                   {taskOf(last) && <span className="muted"><span className="id">{taskOf(last)!.identifier}</span> {taskOf(last)!.title}</span>}
                   <span className="right">{relTime(last.endedAt ?? last.createdAt)}</span></div>
                 <div className="run-summary">{last.summaryMd ? <MarkdownView md={last.summaryMd} /> : <span className="muted">{last.error ?? "No summary."}</span>}</div>

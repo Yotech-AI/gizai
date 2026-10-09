@@ -14,7 +14,10 @@ The prompt (stdin) decides what happens:
   FAKE_CHAT_FAIL                  after init (and the wait), ends with an error result and exits 1
   FAKE_CHAT_LIMIT                 after init (and the wait), Claude Code's usage-limit answer (fixtures/chat-limit.jsonl)
                                   and exit 1, unless FAKE_HAS_USAGE=1 is in the environment (another account)
-Each run appends {argv, prompt, account} to fake-calls.jsonl next to its MCP config, for the tests to read; `account`
+  FAKE_ATTACH_TO <task>           calls attach_file with the first file the prompt names ("- name: /path", the files added
+                                  to a message) and that task, instead of get_overview
+  FAKE_READ_FILES                 reads every file the prompt names that way; the last answer is "Read: <their text>"
+Each run appends {argv, prompt, account, cwd} to fake-calls.jsonl next to its MCP config, for the tests to read; `account`
 is its CLAUDE_CONFIG_DIR. Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
 to the MCP config, never in the account's folder), and --resume from another account exits 1 before init, like Claude
 Code when the session file isn't in its CLAUDE_CONFIG_DIR.
@@ -48,7 +51,7 @@ account = os.environ.get("CLAUDE_CONFIG_DIR", "")
 here = os.path.dirname(config) if config else None
 if config:
     with open(os.path.join(here, "fake-calls.jsonl"), "a") as f:
-        f.write(json.dumps({"argv": argv, "prompt": prompt, "account": account}) + "\n")
+        f.write(json.dumps({"argv": argv, "prompt": prompt, "account": account, "cwd": os.getcwd()}) + "\n")
 
 def sessions():
     try:
@@ -150,7 +153,12 @@ def say(text, index=0):
 
 say("Sure, on it.")
 m = re.search(r"create task (.+?) in ([A-Za-z0-9]+)", prompt)
-name, args = ("create_task", {"project": m.group(2), "title": m.group(1)}) if m else ("get_overview", {})
+added = re.findall(r"^- .+?: (/.+)$", prompt, re.M)
+attach = re.search(r"FAKE_ATTACH_TO ([A-Za-z0-9-]+)", prompt)
+if attach and added:
+    name, args = "attach_file", {"path": added[0], "task": attach.group(1)}
+else:
+    name, args = ("create_task", {"project": m.group(2), "title": m.group(1)}) if m else ("get_overview", {})
 out({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "mcp__gizai__" + name, "input": args}]}, "session_id": sid})
 res = rpc(3, "tools/call", {"name": name, "arguments": args}).get("result", {"content": [{"type": "text", "text": "no answer"}], "isError": True})
 text = res["content"][0]["text"]
@@ -160,6 +168,8 @@ try:
 except Exception:
     ident = None
 final = f"Done: {ident}." if ident else "Here is the overview."
+if "FAKE_READ_FILES" in prompt:
+    final = "Read: " + " | ".join(open(p).read() for p in added)
 say(final)
 mcp.stdin.close()
 mcp.wait(timeout=5)

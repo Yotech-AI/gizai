@@ -158,7 +158,7 @@ export function TaskPage({ id }: { id: string }) {
             <input className="title-input" aria-label="Title" value={title} readOnly={archived} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setTitle(task.title); (e.target as HTMLInputElement).blur(); } }} />
             <EditableMarkdown label="Description" value={task.descriptionMd} readOnly={archived}
-              placeholder="Describe the task. Markdown works: headings, bold, checklists, KADE-12 refs, @mentions."
+              placeholder="Describe the task. Markdown works: headings, bold, checklists. @ links a task, project, client or agent."
               onSave={(md) => updateTask(id, { descriptionMd: md }).catch(fail)} />
             <EditableMarkdown label="Acceptance criteria" value={task.acceptanceMd ?? ""} hint="QA checks these one by one" readOnly={archived}
               placeholder="- [ ] What must be true when this task is done"
@@ -190,7 +190,7 @@ export function TaskPage({ id }: { id: string }) {
                 {comments && comments.length === 0 && <p className="faint">No comments yet.</p>}
                 {!archived && <div className="composer" style={{ marginTop: 14 }}>
                   <MarkdownEditor key={composerKey} value="" onChange={setDraft} onSave={post} ariaLabel="New comment" minHeight={72} hint="Ctrl+Enter posts"
-                    placeholder="Write a comment. Mention @someone or a task like KADE-12." />
+                    placeholder="Write a comment. @ links a task, project, client or agent." />
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                     <button className="btn primary" disabled={!draft.trim()} onClick={() => post(draft)}>Comment</button>
                   </div>

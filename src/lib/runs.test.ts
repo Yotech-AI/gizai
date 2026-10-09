@@ -126,3 +126,20 @@ describe("noteIsGood", () => {
     expect(noteIsGood("")).toBe(false);
   });
 });
+
+import { triggerName } from "./runs";
+
+describe("triggerName (GA-31)", () => {
+  it("tells Gizai's nudge from a Continue, also for a nudge recorded before GA-31", () => {
+    expect(triggerName({ trigger: "result_nudge", nudged: true })).toBe("Nudge");
+    expect(triggerName({ trigger: "result_nudge" })).toBe("Nudge");
+    expect(triggerName({ trigger: "nudge", nudged: true })).toBe("Nudge");
+    expect(triggerName({ trigger: "nudge", nudged: false })).toBe("Continue");
+    expect(triggerName({ trigger: "nudge" })).toBe("Continue");
+  });
+  it("names the other triggers, and shows an unknown one as it is", () => {
+    expect(["manual", "routed", "assigned", "chat", "board_check"].map((trigger) => triggerName({ trigger })))
+      .toEqual(["Manual", "Heartbeat", "Assigned", "Chat", "Board check"]);
+    expect(triggerName({ trigger: "webhook" })).toBe("webhook");
+  });
+});

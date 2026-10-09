@@ -263,6 +263,12 @@ a.member:hover { border-color: var(--line-2); }
 .lead-chat { display: flex; align-items: center; gap: 10px; }
 .lead-chat a { color: var(--text); text-decoration: none; min-width: 0; }
 .lead-chat a:hover { text-decoration: underline; }
+/* Run this for me in the Inbox: a held card, then the commands its agent asks you to run */
+.panel-row.run-for-me-card { display: block; padding: 10px 14px; }
+.panel-row.run-for-me-card:hover { background: none; }
+.run-for-me-card > a { display: block; color: var(--text); text-decoration: none; }
+.run-for-me-card > a:hover { text-decoration: underline; }
+.run-for-me-card .run-for-me { margin-top: 8px; }
 .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-scroll { flex: 1; min-height: 0; overflow: auto; }
 .chat-composer { border-top: 1px solid var(--line); background: var(--bg); }

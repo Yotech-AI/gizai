@@ -2,18 +2,18 @@
 // otherwise the last run's result and a Run button with an agent picker.
 import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "lucide-react";
-import { continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
+import { continueAfterRunForMe, continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { usePending } from "../lib/usePending";
-import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, noteIsGood, resumeCommand, runReason } from "../lib/runs";
+import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, noteIsGood, resumeCommand, runReason, triggerName } from "../lib/runs";
 import { relTime, textEnd } from "../lib/format";
 import type { Refusal, Run, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
 import { BusyButton } from "./BusyButton";
 import { MarkdownView } from "./MarkdownView";
+import { RunForMe } from "./RunForMe";
 
-const TRIGGER: Record<string, string> = { manual: "Manual", routed: "Heartbeat", assigned: "Assigned", nudge: "Continue" };
 export function outcomeBadge(r: Run) {
   const b = badgeOf(r);
   return <span className={`badge ${b.cls}`}>{b.text}</span>;
@@ -84,6 +84,9 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
   const [suggested, setSuggested] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Continue with a message: your note goes to the agent with Continue, and on the card as your comment.
+  const [note, setNote] = useState("");
+  useEffect(() => setNote(""), [task.id]);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { if (!live) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [live]);
   useEffect(() => { setAgentId(""); suggestAgent(task.id).then(setSuggested).catch(() => setSuggested(null)); }, [task.id, task.stateId, task.assigneeId]);
@@ -92,12 +95,19 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
   const fail = (e: unknown) => setErr(String(e));
   // Run and Continue spin until the panel shows the live run, or that the run ended (it can end before it shows live);
   // Stop spins until the live run is gone.
-  const pending = usePending<"start" | "resume" | "stop">((k, runId) => k === "stop" ? !live
+  const pending = usePending<"start" | "resume" | "ranForMe" | "stop">((k, runId) => k === "stop" ? !live
     : !!(live && run) || !!runs?.some((r) => r.id === runId && r.endedAt != null));
   const start = () => { setErr(null); pending.act("start", () => startRun(task.id, agentId || null), fail); };
-  const resume = () => { if (run) { setErr(null); pending.act("resume", () => continueRun(run.id), fail); } };
+  const resume = () => {
+    if (!run) return;
+    setErr(null);
+    pending.act("resume", () => continueRun(run.id, note).then((id) => { setNote(""); return id; }), fail);
+  };
+  // Run this for me: you ran what the agent asked for; its run continues with a note that says so.
+  const ranForMe = () => { setErr(null); pending.act("ranForMe", () => continueAfterRunForMe(task.id), fail); };
   const stop = () => { if (run) pending.act("stop", () => stopRun(run.id), fail); };
   const continuable = !!run && canContinue(run);
+  const asks = task.hold ? task.runForMe ?? [] : [];
   const copy = async () => {
     if (!run?.worktreePath || !run.sessionId) return;
     try { await navigator.clipboard.writeText(resumeCommand(run.worktreePath, run.sessionId)); setCopied(true); setTimeout(() => setCopied(false), 2000); }
@@ -127,14 +137,15 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
 
   // A long hold reason (usually the agent's whole summary, which the comments show) shows its end, about two lines; hover shows all.
   const reasonEnd = task.holdReason ? textEnd(task.holdReason, 160) : null;
-  const holdLine = `This card is on hold${task.holdReason ? ` (${(reasonEnd ?? task.holdReason).replace(/\.$/, "")})` : ""}. Clear the hold to run an agent.`;
+  const holdLine = `This card is on hold${task.holdReason ? ` (${(reasonEnd ?? task.holdReason).replace(/\.$/, "")})` : ""}. ${asks.length
+    ? "Run what the agent asks for below, then press Done, continue." : "Clear the hold to run an agent."}`;
   const holdTitle = reasonEnd ? task.holdReason ?? undefined : undefined;
   const icon = !run ? null : run.status === "succeeded" && run.outcome !== "no_result" ? <Check className="icon" style={{ color: "var(--success)" }} />
     : run.status === "cancelled" ? <X className="icon" style={{ color: "var(--text-3)" }} /> : <CircleAlert className="icon" style={{ color: "var(--danger)" }} />;
   return (
     <section className="run-card" aria-label="Agent run">
       <div className="run-head">
-        {run ? <>{icon}{outcomeBadge(run)}<span className="chip-id">{run.id.slice(-8)}</span><span className="badge info">{TRIGGER[run.trigger] ?? run.trigger}</span>
+        {run ? <>{icon}{outcomeBadge(run)}<span className="chip-id">{run.id.slice(-8)}</span><span className="badge info">{triggerName(run)}</span>
           <span className="who">{run.agentName}</span></> : <span className="title">Agent run</span>}
         <span className="right">{run && <span>{relTime(run.endedAt ?? run.createdAt)}</span>}</span>
       </div>
@@ -146,6 +157,9 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
             {run.summaryMd ? <MarkdownView md={run.summaryMd} /> : <span className="run-reason">{runReason(run) ?? "No summary."}</span>}
             {run.summaryMd && run.error && <div className="warn" style={{ color: "var(--warning)", fontSize: "var(--fs-sm)" }}>{run.error}</div>}
             {!!run.refused?.length && <Refused list={run.refused} />}
+            {asks.length > 0 && <RunForMe commands={asks} agent={run.agentName}
+              action={<BusyButton className="btn sm primary" pending={pending} name="ranForMe" busyLabel="Continuing…" icon={<StepForward className="icon" />}
+                onClick={ranForMe}>Done, continue</BusyButton>} />}
             <div style={{ display: "flex", gap: 14, marginTop: 8, color: "var(--text-3)", fontSize: "var(--fs-sm)" }}>
               <span>{formatCost(run.costUsdMicros)}</span>{run.branch && <span className="mono">{run.branch}</span>}
               <button className="link" onClick={() => setShowLast((s) => !s)}>{showLast ? "Hide output" : "Show output"}</button></div>
@@ -153,6 +167,13 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
         {err && <div role="alert" style={{ color: "var(--danger)", marginTop: 6 }}>{err}</div>}
       </div>
       {showLast && run && <Stream events={events} />}
+      {agents.length > 0 && continuable && (
+        <div className="run-note">
+          <input className="input" aria-label={`Note for ${run!.agentName}`} value={note} disabled={!!pending.busy} maxLength={4000}
+            placeholder={`A note for ${run!.agentName} with Continue (optional), like: use the existing CSV writer`}
+            onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); resume(); } }} />
+        </div>
+      )}
       {agents.length > 0 && (
         <div className="run-actions">
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`

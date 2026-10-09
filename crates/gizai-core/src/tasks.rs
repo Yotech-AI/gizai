@@ -10,7 +10,9 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
     s.category, t.priority, t.assignee_actor_id, a.name, a.kind, t.hold, t.hold_reason, t.bounce_count, t.fail_count,
     t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state, t.testing, t.deleted_at,
     CASE WHEN t.deleted_at IS NOT NULL THEN (SELECT x.name FROM changes ch JOIN actors x ON x.id = ch.actor_id
-      WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END, t.hold_at
+      WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END, t.hold_at,
+    CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
+      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -27,6 +29,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         assignee_kind: r.get(14)?, labels: vec![], hold: r.get(15)?, hold_reason: r.get(16)?, hold_at: r.get(28)?, bounce_count: r.get(17)?,
         fail_count: r.get(18)?, sort_key: r.get(19)?, branch: r.get(20)?, created_at: r.get(21)?, updated_at: r.get(22)?,
         pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0, archived_at: r.get(26)?, archived_by: r.get(27)?,
+        run_for_me: crate::runs::commands_of(r.get(29)?),
     })
 }
 
@@ -99,6 +102,15 @@ pub fn needs_you(db: &Db, you_id: &str) -> Result<Vec<Task>> {
 
 pub fn get(db: &Db, id: &str) -> Result<Task> {
     db.read(|c| get_in(c, id))
+}
+
+/// A card's id from its identifier (GA-12, case ignored), archived cards included.
+pub fn id_of(db: &Db, identifier: &str) -> Result<String> {
+    db.read(|c| {
+        c.query_row("SELECT id FROM tasks WHERE identifier = ?1 COLLATE NOCASE", [identifier.trim()], |r| r.get(0))
+            .optional()?
+            .ok_or_else(|| Error::NotFound(format!("task {identifier}")))
+    })
 }
 
 pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Task> {

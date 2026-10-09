@@ -27,7 +27,7 @@ Background, only when the card needs it:
 - **Never run against Brave or its profile.**
 - **No `git push`, no remotes, no GitHub posts.**
 - **Never write in `~/.claude`.** Never run `src-tauri/examples/chat_probe.rs`: it spends money and writes a session there.
-- **No sudo and no global installs.** If a system package is needed, finish what you can and ask for the exact command in your result.
+- **No sudo and no global installs.** If a system package is needed, finish what you can and ask for the exact command in `run_for_me` on a `needs_decision` result line (Run this for me): Jeffrey runs it and presses Done, continue, which resumes your run.
 
 ## Working rules
 

@@ -1,6 +1,7 @@
 //! Review on GitHub or Bitbucket. Open pull request (a card in Review) pushes the card's branch and opens its pull
 //! request: on GitHub over SSH with your keys, or over HTTPS with gh's login (Settings → GitHub → Push over), with your
 //! GitHub CLI (gh); on Bitbucket over SSH with your keys, with Bitbucket's API and your login (Settings → Bitbucket).
+//! The end of every run pushes the card's branch to the same place, the same way (`push_to`, `push_over_for`).
 //! The PR check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet:
 //! every two minutes, when a run moves a card to Review, and when you open such a card. A merge moves its card to
 //! Deploy (Done for a team without a Deploy column), where nothing starts by itself, and removes its worktree. Usable
@@ -132,10 +133,29 @@ fn forget_error(st: &AppState, key: &str) {
 }
 
 /// git's own words, without the "git:" prefix.
-fn plain(e: AgentError) -> String {
+pub(crate) fn plain(e: AgentError) -> String {
     match e {
         AgentError::Git(m) => m,
         other => other.to_string(),
+    }
+}
+
+/// Where a card's branch is pushed: through the repository's remote for the project's link `link` (your own name for it,
+/// origin first), the same place a run fetches main from; else to the link itself. Open pull request and Gizai's push
+/// after every run (`runs`) both push there.
+pub(crate) fn push_to(repo: &Path, link: &str) -> String {
+    crate::git::remote_for(repo, link).unwrap_or_else(|| link.to_string())
+}
+
+/// How a push to a project linked to `provider` ("github", "bitbucket" or "git") goes now: to GitHub over SSH with your
+/// keys or over HTTPS with gh's login, as Settings → GitHub → Push over says (the same as Open pull request); to
+/// Bitbucket over SSH with your keys; to another git URL as its address says (SSH's rules rewrite only GitHub's
+/// addresses). Over HTTPS it needs gh, and finding gh can start a login shell: blocking.
+pub(crate) fn push_over_for(st: &AppState, provider: &str) -> Result<PushOver, String> {
+    match provider {
+        "bitbucket" => Ok(PushOver::Bitbucket),
+        "github" if crate::github::push_over_name(st) == "https" => gh_bin(st).map(|gh| crate::github::push_over(st, &gh)),
+        _ => Ok(PushOver::Ssh),
     }
 }
 
@@ -223,9 +243,7 @@ fn open_blocking(via: &Via, card: &PrCard, title: &str, body: &str, over: &PushO
     if worktree::rev_parse(repo, &format!("refs/heads/{}", card.branch)).is_err() {
         return Err(format!("{}'s branch {} isn't in {} any more", card.identifier, card.branch, card.repo_path));
     }
-    // the same place a run fetches main from
-    let to = crate::git::remote_for(repo, &card.repo_url).unwrap_or_else(|| card.repo_url.clone());
-    worktree::push_branch_over(repo, &to, &card.branch, over).map_err(plain)?;
+    worktree::push_branch_over(repo, &push_to(repo, &card.repo_url), &card.branch, over).map_err(plain)?;
     let open = via.pulls_for_branch(card)?.into_iter().find(|p| p.state == "OPEN");
     let (url, state, created) = match open {
         Some(p) => (p.url.clone(), p.state().to_string(), false),

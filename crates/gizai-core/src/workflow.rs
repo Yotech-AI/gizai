@@ -381,29 +381,7 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
         let c = w.conn();
         let t = task_row(c, &task_id)?;
         let mut g = GateResult::default();
-
-        // Record the verdict on the run; a run still marked active is finished here.
-        let label = outcome.map(|o| o.outcome.clone()).unwrap_or_else(|| "no_result".into());
-        c.execute(
-            "UPDATE runs SET outcome=CASE WHEN ?2='no_result' AND outcome='error' THEN outcome ELSE ?2 END, outcome_json=?3, summary_md=?4,
-                    status=CASE WHEN status IN ('queued','running','waiting_approval') THEN 'succeeded' ELSE status END,
-                    ended_at=COALESCE(ended_at, ?5), updated_at=?5 WHERE id=?1",
-            rusqlite::params![run_id, label, outcome.map(serde_json::to_string).transpose()?, outcome.map(|o| o.summary.clone()), ids::now_ms()])?;
-        runs::release_claim(w, run_id)?;
-
-        // The agent's summary (and QA's issues) as a comment on the card.
-        if let Some(o) = outcome {
-            let mut body = o.summary.trim().to_string();
-            if !o.issues.is_empty() {
-                if !body.is_empty() { body.push_str("\n\n"); }
-                for (i, issue) in o.issues.iter().enumerate() {
-                    body.push_str(&format!("{}. {}\n", i + 1, strip_list_marker(issue)));
-                }
-            }
-            if !body.trim().is_empty() {
-                comments::add_in(w, &agent, &task_id, body.trim_end(), Some(run_id))?;
-            }
-        }
+        record_verdict(w, run_id, &agent, &task_id, outcome)?;
 
         let moved_by_hand = matches!(t.category.as_str(), "backlog" | "done" | "cancelled");
         // Moves the card to `to` (None: it stays), as the agent: into Review it is assigned to the person who reviews,
@@ -511,6 +489,46 @@ pub fn apply_outcome(db: &Db, run_id: &str, outcome: Option<&Outcome>) -> Result
         }
         Ok(g)
     })
+}
+
+/// Gizai couldn't push the card's branch after the run (GA-56); `reason` says why, in plain words. The run's verdict is
+/// recorded and the agent's summary posted, as `apply_outcome` does, but the card stays where it is, whatever the verdict,
+/// on hold "blocked" with the reason, so it shows in the Inbox: the next agent wouldn't find the branch. Nothing else
+/// changes: no column, assignee, implementer, bounce or failure count.
+pub fn hold_unpushed(db: &Db, run_id: &str, outcome: Option<&Outcome>, reason: &str) -> Result<GateResult> {
+    let run = runs::get(db, run_id)?;
+    let task_id = run.task_id.clone().ok_or_else(|| Error::Invalid("this run has no task".into()))?;
+    db.write(Some(&run.agent_id), |w| {
+        task_row(w.conn(), &task_id)?;
+        record_verdict(w, run_id, &run.agent_id, &task_id, outcome)?;
+        set_hold(w, &task_id, "blocked", reason)?;
+        Ok(GateResult { moved_to: None, hold: Some("blocked".into()) })
+    })
+}
+
+/// Records a finished run's verdict on the run (a run still marked active is finished here), releases the card's claim
+/// and posts the agent's summary, with QA's issues, as a comment on the card.
+fn record_verdict(w: &Writer, run_id: &str, agent: &str, task_id: &str, outcome: Option<&Outcome>) -> Result<()> {
+    let label = outcome.map(|o| o.outcome.clone()).unwrap_or_else(|| "no_result".into());
+    w.conn().execute(
+        "UPDATE runs SET outcome=CASE WHEN ?2='no_result' AND outcome='error' THEN outcome ELSE ?2 END, outcome_json=?3, summary_md=?4,
+                status=CASE WHEN status IN ('queued','running','waiting_approval') THEN 'succeeded' ELSE status END,
+                ended_at=COALESCE(ended_at, ?5), updated_at=?5 WHERE id=?1",
+        rusqlite::params![run_id, label, outcome.map(serde_json::to_string).transpose()?, outcome.map(|o| o.summary.clone()), ids::now_ms()])?;
+    runs::release_claim(w, run_id)?;
+    if let Some(o) = outcome {
+        let mut body = o.summary.trim().to_string();
+        if !o.issues.is_empty() {
+            if !body.is_empty() { body.push_str("\n\n"); }
+            for (i, issue) in o.issues.iter().enumerate() {
+                body.push_str(&format!("{}. {}\n", i + 1, strip_list_marker(issue)));
+            }
+        }
+        if !body.trim().is_empty() {
+            comments::add_in(w, agent, task_id, body.trim_end(), Some(run_id))?;
+        }
+    }
+    Ok(())
 }
 
 /// A merged pull request: the column a card in Review goes to (Review's next column; without one, the team's first

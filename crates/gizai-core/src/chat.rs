@@ -207,9 +207,70 @@ pub fn runs_on(db: &Db, thread: &ChatThread, lead_adapter: Option<&str>) -> Resu
 
 /// Newest activity first.
 pub fn list_threads(db: &Db) -> Result<Vec<ChatThread>> {
+    threads(db, None)
+}
+
+/// Chat → Recent: the `limit` chats with the newest activity, newest first.
+pub fn recent_threads(db: &Db, limit: usize) -> Result<Vec<ChatThread>> {
+    threads(db, Some(limit))
+}
+
+fn threads(db: &Db, limit: Option<usize>) -> Result<Vec<ChatThread>> {
+    // SQLite reads a negative LIMIT as no limit.
+    let limit = limit.map_or(-1, |n| i64::try_from(n).unwrap_or(i64::MAX));
     db.read(|c| {
-        let mut st = c.prepare(&format!("SELECT {THREAD_COLS} FROM chat_threads WHERE deleted_at IS NULL ORDER BY updated_at DESC, rowid DESC"))?;
-        with_tasks(c, st.query_map([], thread_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut st = c.prepare(&format!("SELECT {THREAD_COLS} FROM chat_threads WHERE deleted_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?1"))?;
+        with_tasks(c, st.query_map([limit], thread_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    })
+}
+
+/// A chat the Archive finds, with the newest of its messages (yours or the Team Lead's) whose text matches. No message:
+/// only its title matches, or there was nothing to search for.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadHit {
+    pub thread: ChatThread,
+    pub message: Option<ChatMessage>,
+}
+
+/// `text` anywhere, for `LIKE … ESCAPE '\'`: its `%` and `_` match themselves.
+fn like_pattern(text: &str) -> String {
+    let mut p = String::from("%");
+    for ch in text.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            p.push('\\');
+        }
+        p.push(ch);
+    }
+    p.push('%');
+    p
+}
+
+/// Chat → Archive: the chats whose title, or the text of one of your messages or the Team Lead's, holds `query` (case
+/// ignored for A to Z), newest activity first, each once. Tool calls, Gizai's notes and deleted chats and messages are
+/// left out. An empty query lists every chat.
+pub fn search_threads(db: &Db, query: &str) -> Result<Vec<ThreadHit>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(list_threads(db)?.into_iter().map(|thread| ThreadHit { thread, message: None }).collect());
+    }
+    let pattern = like_pattern(query);
+    db.read(|c| {
+        // One pass over the messages: per chat, the newest one that matches.
+        let mut st = c.prepare(&format!(
+            "SELECT {THREAD_COLS}, hit.message_rowid FROM chat_threads
+             LEFT JOIN (SELECT thread_id, MAX(rowid) AS message_rowid FROM chat_messages
+                        WHERE deleted_at IS NULL AND role IN ('user', 'agent') AND body_md LIKE ?1 ESCAPE '\\' GROUP BY thread_id) hit
+               ON hit.thread_id = chat_threads.id
+             WHERE chat_threads.deleted_at IS NULL AND (COALESCE(title, 'New chat') LIKE ?1 ESCAPE '\\' OR hit.message_rowid IS NOT NULL)
+             ORDER BY chat_threads.updated_at DESC, chat_threads.rowid DESC"))?;
+        let found = st.query_map([&pattern], |r| Ok((thread_row(r)?, r.get::<_, Option<i64>>(16)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let (threads, rowids): (Vec<_>, Vec<_>) = found.into_iter().unzip();
+        let mut msg = c.prepare(&format!("{MSG_SELECT} WHERE m.rowid=?1"))?;
+        with_tasks(c, threads)?.into_iter().zip(rowids).map(|(thread, rowid)| -> Result<ThreadHit> {
+            let message = rowid.map(|r| msg.query_row([r], msg_row)).transpose()?;
+            Ok(ThreadHit { thread, message })
+        }).collect()
     })
 }
 

@@ -472,8 +472,20 @@ pub fn usage_summary(st: State<AppState>, period: String) -> R<gizai_core::usage
 // ---- chat with the Team Lead ----
 use crate::chat;
 
+/// The chats, newest activity first: the `limit` newest (Chat → Recent), or all of them (the Inbox).
 #[tauri::command]
-pub fn list_chat_threads(st: State<AppState>) -> R<Vec<gizai_core::chat::ChatThread>> { gizai_core::chat::list_threads(&st.db).map_err(e) }
+pub fn list_chat_threads(st: State<AppState>, limit: Option<usize>) -> R<Vec<gizai_core::chat::ChatThread>> {
+    match limit {
+        Some(n) => gizai_core::chat::recent_threads(&st.db, n),
+        None => gizai_core::chat::list_threads(&st.db),
+    }.map_err(e)
+}
+/// One chat, also one older than those in Recent (opened from the Archive).
+#[tauri::command]
+pub fn get_chat_thread(st: State<AppState>, thread_id: String) -> R<gizai_core::chat::ChatThread> { gizai_core::chat::get_thread(&st.db, &thread_id).map_err(e) }
+/// Chat → Archive: the chats whose title or messages (yours and the Team Lead's) hold `query`; all of them for an empty one.
+#[tauri::command]
+pub fn search_chat_threads(st: State<AppState>, query: String) -> R<Vec<gizai_core::chat::ThreadHit>> { gizai_core::chat::search_threads(&st.db, &query).map_err(e) }
 #[tauri::command]
 pub fn chat_messages(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::ChatMessage>> { gizai_core::chat::messages(&st.db, &thread_id).map_err(e) }
 /// Sends a message (in a new thread when `thread_id` is None, which runs on `cli` when one was picked under the text box)

@@ -8,6 +8,12 @@
 //! Agents at work (runs and chat answers) are stopped before Gizai quits, however it is asked to: Quit Gizai
 //! completely (the tray or Settings), a signal, logging out (SIGTERM) or shutting down. They are recorded as stopped
 //! because Gizai quit, and none outlives Gizai.
+//!
+//! Windows: logging off and shutting down reach Gizai as WM_ENDSESSION, which Tauri's event loop (tao) turns into its
+//! last event (`RunEvent::Exit`) before it ends the process: agents at work end at once there (`end_agents`, within the
+//! seconds Windows gives) and are recorded as stopped because Gizai quit. Gizai asks to be among the first programs
+//! Windows ends, so it gets there before its agents hear of the logoff. Agents never outlive Gizai on Windows anyway:
+//! they run in Job Objects that end with it.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -64,11 +70,15 @@ pub fn end_web_content(app: &AppHandle) {
             wv.inner().terminate_web_process();
         });
     }
+    // macOS and Windows: their web views have no such crash; their page process ends with Gizai.
+    #[cfg(not(target_os = "linux"))]
+    let _ = app;
 }
 
 /// SIGTERM (`kill`, logging out, the headless test scripts), SIGINT (Ctrl+C) and SIGHUP (a closed terminal)
 /// quit Gizai the way Quit Gizai completely does: agents at work are stopped first, and a second signal quits at
 /// once. A signal that was ignored when Gizai started (nohup, a background job in a script) stays ignored.
+#[cfg(unix)]
 pub fn on_signals(app: &AppHandle) {
     use tokio::signal::unix::{SignalKind, signal};
     // Registered now rather than in the tasks, so a signal right after setup quits this way too.
@@ -93,7 +103,58 @@ pub fn on_signals(app: &AppHandle) {
     }
 }
 
+/// Windows, a Gizai with a console (a dev build, started from a terminal): Ctrl+C, Ctrl+Break and closing that console
+/// quit Gizai the way Quit Gizai completely does, and a second one quits at once. A closed console gives Gizai only a
+/// moment before Windows ends it: its agents end with it through their Job Objects. An installed Gizai has no console;
+/// logging off and shutting down reach it as WM_ENDSESSION (see the top of this file). Gizai also asks Windows to end it
+/// before the programs it started (shutdown level 0x300; programs start at 0x280), so its agents are still at work when
+/// it records them as stopped because Gizai quit.
+#[cfg(windows)]
+pub fn on_signals(app: &AppHandle) {
+    use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
+    // SAFETY: a plain call with no pointers; failing only leaves the usual order.
+    unsafe {
+        windows_sys::Win32::System::Threading::SetProcessShutdownParameters(0x300, 0);
+    }
+    // Registered now rather than in the tasks, so an event right after setup quits this way too.
+    let rt = tauri::async_runtime::handle();
+    let _in_runtime = rt.inner().enter();
+    let quit = |name: &'static str| {
+        let app = app.clone();
+        move || {
+            runs::mark_closing(app.state::<AppState>().inner());
+            eprintln!("gizai: quitting on {name}");
+            app.exit(0);
+        }
+    };
+    if let Ok(mut events) = ctrl_c() {
+        let quit = quit("Ctrl+C");
+        tauri::async_runtime::spawn(async move {
+            while events.recv().await.is_some() {
+                quit();
+            }
+        });
+    }
+    if let Ok(mut events) = ctrl_break() {
+        let quit = quit("Ctrl+Break");
+        tauri::async_runtime::spawn(async move {
+            while events.recv().await.is_some() {
+                quit();
+            }
+        });
+    }
+    if let Ok(mut events) = ctrl_close() {
+        let quit = quit("a closed console");
+        tauri::async_runtime::spawn(async move {
+            while events.recv().await.is_some() {
+                quit();
+            }
+        });
+    }
+}
+
 /// Whether `sig` is set to be ignored (SIG_IGN).
+#[cfg(unix)]
 fn ignored(sig: libc::c_int) -> bool {
     // SAFETY: with no new action, sigaction only reads the current one into memory we own.
     unsafe {

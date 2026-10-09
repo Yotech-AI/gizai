@@ -11,13 +11,13 @@ Settings → MCP servers holds one list for all agents. A server is either:
 - **a command** (stdio): a program with its arguments and environment lines, like `npx -y @acme/mcp-server` with `ACME_TOKEN=…`;
 - **an address** (Streamable HTTP, or the older SSE): like `https://os.oranjeuil.nl/api/mcp`, with header lines.
 
-Its name takes letters, digits, `-` and `_`; its tools are called `mcp__<name>__<tool>`. `gizai` and `chrome-devtools` are taken.
+Its name takes letters, digits, `-` and `_`; its tools are called `mcp__<name>__<tool>`. `gizai` and `chrome-devtools` are taken. A name can't have two `_` in a row or end with `_`: Claude Code reads `__` as where the name ends, so `gizai__notes` would pass for Gizai's own server.
 
 Gizai builds no tools and installs no servers: a server's command is what you enter or import. Gizai only hands the servers an agent has on to its run.
 
 ### Secrets stay in the keychain
 
-Environment values, header values and sign-in tokens live in the OS keychain (Secret Service, through the `keyring` crate), under `mcp/<server id>/…`. The settings table keeps only their names. Once saved, a value is never shown again: the form says it is saved and lets you type a new one. Values never go into logs, run output, error messages or the Team Lead's tools. A run gets them only in its own MCP config file, readable by you alone (0600) and deleted when the run ends.
+Environment values, header values and sign-in tokens live in the OS keychain (Secret Service, through the `keyring` crate), under `mcp/<server id>/…`. The settings table keeps only their names. Once saved, a value is never shown again: the form says it is saved and lets you type a new one. A value is kept under its line's name, so a line you rename needs its value typed again (the old name's value goes when you save). Values never go into logs, run output, error messages or the Team Lead's tools. A run gets them only in its own MCP config file, readable by you alone (0600) and deleted when the run ends.
 
 Headless tests and QA runs use a file instead of the keychain: `GIZAI_FAKE_KEYCHAIN=/path/to/file.json`.
 
@@ -25,7 +25,7 @@ Headless tests and QA runs use a file instead of the keychain: `GIZAI_FAKE_KEYCH
 
 **List tools** starts the server (or calls its address), asks for its tools (`initialize`, `tools/list`) and stops it again. Do this before you switch a server on. For an `npx` server it also fetches the package once, so runs don't wait for the download (it may take up to 2 minutes). A server that fails shows why in plain words.
 
-Each tool shows its name, title, description and parameters (name, type, required or not, description), and what the server says about it, in plain words with a risk:
+Each tool shows its name, title, description and parameters (name, type, required or not, description; in the order the server lists them), and what the server says about it, in plain words with a risk:
 
 | The server says | Risk |
 | --- | --- |

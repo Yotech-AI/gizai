@@ -704,7 +704,7 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
     let copies = if copies.is_empty() { String::new() } else {
         format!("## Your copies of the projects' code\n\n\
                  Gizai keeps a read-only copy of each project's code for you, at the commit a new card of the project starts from \
-                 (its main branch as last fetched from GitHub, else its local default branch). A copy has the tracked files only: \
+                 (its main branch as last fetched from GitHub, Bitbucket or its other link, else its local default branch). A copy has the tracked files only: \
                  no vendor/, node_modules/ or .env.\n{copies}\n")
     };
     // The folders from its agent form (Permissions → Folders) that are there: read only in chat, whatever they are set to.

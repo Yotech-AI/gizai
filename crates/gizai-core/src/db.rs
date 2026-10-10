@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 pub struct Db {
     conn: Mutex<Connection>,
@@ -34,6 +34,7 @@ fn migrations() -> Migrations<'static> {
         M::up_with_hook(include_str!("../migrations/0013_bitbucket.sql"), bitbucket_links),
         M::up(include_str!("../migrations/0014_memory.sql")),
         M::up(include_str!("../migrations/0015_lead_merges.sql")),
+        M::up(include_str!("../migrations/0016_memory_groups.sql")),
     ])
 }
 

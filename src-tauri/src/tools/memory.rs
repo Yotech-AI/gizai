@@ -10,7 +10,7 @@ fn who(cx: &Cx) -> Result<Who, String> {
     let who = Who::of(cx.db(), cx.actor).map_err(err)?;
     let chat = gizai_core::team::chat_agent(cx.db()).ok().flatten().is_some_and(|a| a.actor_id == cx.actor);
     Ok(match who {
-        Who::Agent(id) if chat => Who::Lead(id),
+        Who::Agent(id) | Who::Shares(id, _) if chat => Who::Lead(id),
         other => other,
     })
 }

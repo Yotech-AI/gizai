@@ -198,7 +198,7 @@ pub fn rename_doc(app: AppHandle, st: State<AppState>, id: String, title: String
 
 // ---- memory (GA-19; the Memory page is GA-68) ----
 /// An agent's own notes in Memory: the Team Lead's `Team Lead/Notes` (made the first time), another agent's
-/// `Agents/<name>/Notes`; None when it has none.
+/// `Agents/<name>/Notes`, or for an agent that shares another agent's folder (GA-96) that folder's; None when it has none.
 #[tauri::command]
 pub fn agent_notes(app: AppHandle, st: State<AppState>, agent_id: String) -> R<Option<gizai_core::memory::Note>> {
     use gizai_core::memory::{self, Who};
@@ -214,8 +214,11 @@ pub fn agent_notes(app: AppHandle, st: State<AppState>, agent_id: String) -> R<O
         }
         return memory::get(&st.db, &you, &id).map(Some).map_err(e);
     }
-    Ok(memory::list(&st.db, &you).map_err(e)?.into_iter()
-        .find(|n| n.owner_id.as_deref() == Some(agent_id.as_str()) && n.title().eq_ignore_ascii_case(memory::NOTES)))
+    let owner = agent.shares_memory_with.unwrap_or(agent_id);
+    let notes: Vec<memory::Note> = memory::list(&st.db, &you).map_err(e)?.into_iter()
+        .filter(|n| n.owner_id.as_deref() == Some(owner.as_str()) && n.title().eq_ignore_ascii_case(memory::NOTES)).collect();
+    // The one right in its folder first.
+    Ok(notes.iter().find(|n| n.path.split('/').count() == 3).or(notes.first()).cloned())
 }
 /// The Memory page (GA-68) works as you, a person: you read and write every note.
 fn as_you(st: &State<AppState>) -> gizai_core::memory::Who { gizai_core::memory::Who::Person(st.you_id.clone()) }

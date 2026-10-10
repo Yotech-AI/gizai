@@ -33,13 +33,21 @@ pub fn lead_block(st: &AppState, agent: &Member) -> String {
 }
 
 /// The Memory block of a new task run of `agent` (role `role`) on a card of `project`: the Team Lead's as in chat, another
-/// agent's from its own notes and the shared notes for this project, its client and its role. Empty when memory is off.
+/// agent's from its own notes (an agent in a group: the group's, GA-96) and the shared notes for this project, its client
+/// and its role. Empty when memory is off.
 pub fn run_block(st: &AppState, agent: &Member, role: &str, project: &Project) -> Block {
     if !memory::agent_uses(&st.db, &agent.actor_id) {
         return Block::default();
     }
     let lead = agent.is_lead || gizai_core::team::chat_agent(&st.db).ok().flatten().is_some_and(|a| a.actor_id == agent.actor_id);
-    let who = if lead { Who::Lead(agent.actor_id.clone()) } else { Who::Agent(agent.actor_id.clone()) };
+    let who = if lead {
+        Who::Lead(agent.actor_id.clone())
+    } else {
+        match &agent.shares_memory_with {
+            Some(owner) if *owner != agent.actor_id => Who::Shares(agent.actor_id.clone(), owner.clone()),
+            _ => Who::Agent(agent.actor_id.clone()),
+        }
+    };
     if lead && let Err(e) = memory::ensure_lead_notes(&st.db, &agent.actor_id, &you(st)) {
         eprintln!("gizai: making Team Lead/Notes failed: {e}");
     }
@@ -79,9 +87,9 @@ paths, with {} notes, were left out)", r.imported.len(), r.skipped.len(), r.left
     }
 }
 
-/// Saves the `learned` lines on a run's result line (`outcome::learned`) in its agent's own notes, dated and with the
-/// card, the run on the note's version. Nothing when there are none or memory is off for the agent. Returns what to note
-/// in the run's log (lines left out, a failed save).
+/// Saves the `learned` lines on a run's result line (`outcome::learned`) in its agent's own notes (an agent in a group: the
+/// group's `Notes`, with its name), dated and with the card, the run on the note's version. Nothing when there are none or
+/// memory is off for the agent. Returns what to note in the run's log (lines left out, a failed save).
 pub fn save_learned(st: &AppState, run_id: &str, agent_id: &str, card: &str, lines: &[String]) -> Vec<String> {
     if lines.is_empty() || !memory::agent_uses(&st.db, agent_id) {
         return vec![];

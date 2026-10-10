@@ -340,6 +340,9 @@ pub struct AgentInput {
     /// Memory (GA-19): its runs get a Memory section and its `learned` lines are kept. None: on for a new agent,
     /// unchanged on update.
     pub use_memory: Option<bool>,
+    /// Memory (GA-96): the id of the agent whose memory folder it shares (that agent's group's owner when it shares one
+    /// itself; never the Team Lead), or "" for its own folder. None: its own folder for a new agent, unchanged on update.
+    pub shares_memory_with: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

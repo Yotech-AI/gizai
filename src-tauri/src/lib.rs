@@ -218,6 +218,10 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     } else {
         gizai_core::seed::ensure_seed(&db, &display_name())
     }.map_err(|e| e.to_string())?;
+    // Memory (GA-96): a group of agents sharing one folder whose owner was removed goes on with its next agent.
+    if let Err(e) = gizai_core::memory::ensure_groups(&db, &seed.you_id) {
+        eprintln!("gizai: handing shared memory folders on failed: {e}");
+    }
     // Memory (GA-19): agents made before it get their own folder, Agents/<name>/, with a Notes note.
     if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
         eprintln!("gizai: making the agents' memory folders failed: {e}");

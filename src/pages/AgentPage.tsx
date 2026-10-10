@@ -1,7 +1,7 @@
 // An agent's page (Paperclip's agent page): who it is, what it is doing, how its runs went, and its settings.
 import { useState } from "react";
-import { Check, CircleAlert, MessagesSquare, Pause, Pencil, Play, Plus, X } from "lucide-react";
-import { agentNextTask, agentRuns, agentStats, getAgent, getTeam, listTasks, setAgentStatus, startRun } from "../api";
+import { Check, CircleAlert, MessagesSquare, NotebookText, Pause, Pencil, Play, Plus, X } from "lucide-react";
+import { agentNextTask, agentNotes, agentRuns, agentStats, getAgent, getTeam, listTasks, setAgentStatus, startRun } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -58,6 +58,8 @@ export function AgentPage({ id }: { id: string }) {
   const { data: tasks } = useData(() => listTasks({}));
   const [teamId] = useCurrentTeam();
   const { data: team } = useData(() => getTeam(teamId), [teamId]);
+  // Its own notes in Memory (GA-19): Team Lead/Notes for the Team Lead, Agents/<name>/Notes for another agent.
+  const { data: notes } = useData(() => agentNotes(id).catch(() => null), [id]);
   const live = useLiveRuns().filter((r) => r.agentId === id);
   const open = useDrawer();
   const [msg, setMsg] = useState<string | null>(null);
@@ -66,7 +68,8 @@ export function AgentPage({ id }: { id: string }) {
   const pending = usePending<"run">((_, runId) => live.length > 0 || runId === null || !!runs?.some((r) => r.id === runId && r.endedAt != null));
   if (error) return <div className="error-banner">{error}</div>;
   if (!agent) return null;
-  const taskOf = (r: Run) => tasks?.find((t) => t.id === r.taskId);
+  // A Team Lead's run on a question (GA-70) has no card of its own: it is about the card the question is on.
+  const taskOf = (r: Run) => tasks?.find((t) => t.id === (r.taskId ?? r.questionTaskId));
   // The columns it is on decide when it works (Team → Workflow); shown when the agent is on the team picked there.
   const columns = team?.members.some((m) => m.actorId === id) ? boardOrder(team.states).filter((s) => s.agentIds?.includes(id)) : null;
   const onColumns = !columns ? "" : columns.length ? ` · on ${andList(columns.map((s) => `${s.name} (${s.auto ? "Auto" : "Manual"})`))}` : " · on no column";
@@ -93,6 +96,7 @@ export function AgentPage({ id }: { id: string }) {
               <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""}{agent.chatEnabled && agent.boardCheckMinutes ? ` · checks the board every ${agent.boardCheckMinutes} min` : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""}{onColumns}</p></div>
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
+              {notes && <a className="btn" href={href({ page: "memory", scope: notes.path.startsWith("Agents/") ? id : undefined, id: notes.id })} title={`Memory: ${notes.path}`}><NotebookText className="icon" />Notes</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>
               <BusyButton className="btn" pending={pending} name="run" busyLabel="Starting…" icon={<Play className="icon" />} onClick={runNext} disabled={state !== "idle"}>Run</BusyButton>
               <button className="btn" onClick={() => setAgentStatus(id, agent.status === "active" ? "paused" : "active").catch((e) => setMsg(String(e)))}>
@@ -139,10 +143,11 @@ export function AgentPage({ id }: { id: string }) {
             <div className="section-head"><h3>Recent runs</h3></div>
             <div className="panel">
               {(runs ?? []).map((r) => { const t = taskOf(r); return (
-                <a key={r.id} className="panel-row" href={r.taskId ? href({ page: "task", id: r.taskId }) : r.trigger === "chat" ? href({ page: "chat" }) : undefined}
-                  title={r.trigger === "board_check" ? r.summaryMd ?? r.error ?? undefined : undefined}>
+                <a key={r.id} className="panel-row" href={(r.taskId ?? r.questionTaskId) ? href({ page: "task", id: (r.taskId ?? r.questionTaskId)! }) : r.trigger === "chat" ? href({ page: "chat" }) : undefined}
+                  title={r.trigger === "board_check" || r.trigger === "question" ? r.summaryMd ?? r.error ?? undefined : undefined}>
                   {t && <span className="id">{t.identifier}</span>}
                   {r.trigger === "board_check" ? <span className="grow ellipsis"><span className="badge info">Board check</span> <span className="muted">{(r.summaryMd ?? r.error ?? "").split("\n")[0]}</span></span>
+                    : r.trigger === "question" ? <span className="grow ellipsis"><span className="badge info">Question</span> <span className="muted">{t?.title ?? "A deleted task"}</span></span>
                     : <span className="grow">{t?.title ?? (r.trigger === "chat" ? "Chat answer" : "A deleted task")}</span>}
                   {outcomeBadge(r)}<span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" style={{ width: 80, textAlign: "right" }}>{relTime(r.createdAt)}</span>
                 </a>); })}

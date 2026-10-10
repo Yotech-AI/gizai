@@ -22,12 +22,16 @@ export type Project = {
   aiCostUsdMicros: number; aiUnknownCostRuns: number;
   /** How a new worktree is prepared: paths copied from the main checkout, the install of what is missing, a setup command. */
   worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
+  /** Team Lead may merge (GA-86): the Team Lead may merge a pull request QA passed, once its checks are green. Off by default. */
+  leadMayMerge?: boolean;
 };
 export type ProjectInput = {
   clientId?: string | null; name: string; key: string; status?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null;
   defaultBranch?: string | null; color?: string | null; budgetAmountMinor?: number | null; budgetHours?: number | null;
   /** Left out (null): kept as they are. */
   worktreeCopy?: string[] | null; worktreeInstall?: boolean | null; worktreeSetup?: string | null;
+  /** Left out (null): kept as it is. Only a person sets it (here, in the app). */
+  leadMayMerge?: boolean | null;
 };
 export type Label = { id: string; name: string; color?: string | null };
 export type Task = {
@@ -45,6 +49,8 @@ export type Task = {
   archivedAt?: number | null; archivedBy?: string | null;
   /** Run this for me: while the card is on hold, the commands its latest run asks you to run; Done, continue resumes that run. */
   runForMe?: string[];
+  /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
+  withLead?: boolean;
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -86,6 +92,8 @@ export type Member = {
   tools?: AgentTools;
   /** Its CLI's own tools switched on: web search, fetching pages, built-in tools (agent form → Tools). */
   cliTools?: CliTools;
+  /** Its runs get a Memory section and its learned lines are kept (on when absent). */
+  useMemory?: boolean;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -121,6 +129,8 @@ export type AgentInput = {
   boardCheckMinutes?: number | null;
   /** Its folders; null/absent leaves them unchanged on update (none for a new agent). */
   folders?: AgentFolder[] | null;
+  /** Memory for its runs; null/absent: on for a new agent, unchanged on update. */
+  useMemory?: boolean | null;
 };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
 export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";
@@ -142,7 +152,9 @@ export type ColumnRemoval = { cards: number; archived: number; defaultTarget?: s
 /** A label with the number of cards that carry it. */
 export type LabelInfo = { id: string; name: string; color?: string | null; cards: number };
 export type AppInfo = { version: string; data_dir: string; selftest: boolean; you_id: string; start_route?: string | null; selftest_mode?: string | null; data_label?: string | null };
-export type Doc = { id: string; projectId?: string | null; title: string; bodyMd: string; currentVersion: number; updatedAt: number };
+export type Doc = { id: string; projectId?: string | null; title: string; bodyMd: string; currentVersion: number; updatedAt: number;
+  /** "memory" for a memory note (GA-19), with its path like "Team Lead/Notes"; "doc" for a project's. */
+  kind?: string; path?: string | null };
 export type DocVersion = { version: number; authorName?: string | null; createdAt: number };
 export type FileRow = { id: string; name: string; mime?: string | null; sizeBytes: number; sha256: string; createdAt: number };
 export type FileOwner = "client" | "project" | "task" | "comment" | "doc";
@@ -181,7 +193,47 @@ export type Run = {
   nudged?: boolean;
   /** Run this for me: the commands its needs_decision result asks you to run for it. */
   runForMe?: string[];
+  /** The memory notes its prompt was given (GA-19). */
+  memory?: GivenNote[];
+  /** It ended asking for a decision and the Team Lead took the question (GA-70): what it did with it. */
+  lead?: LeadAnswer | null;
+  /** A Team Lead's run on a question (trigger question, GA-70): the card the question is on. */
+  questionTaskId?: string | null;
 };
+/** What the Team Lead did with a run's question (GA-70). state: asking (it looks at it now), answering (it answered and Gizai
+ *  continues the agent), answered, escalated (it asked you: the Inbox), dropped (the card moved on before it was done),
+ *  skipped (it can't run here, reason says why: the question went to you as before) or limit (the limits sent it to you,
+ *  reason says which). */
+export type LeadAnswer = {
+  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | "skipped" | "limit" | string;
+  leadId?: string | null;
+  /** The Team Lead's run on the question. */
+  runId?: string | null;
+  /** Escalated: why you decide. */
+  reason?: string | null;
+  /** Answered: the start of its answer (the card's comment has it all). */
+  answer?: string | null;
+  /** The memory note the answer was kept in. */
+  note?: string | null;
+  /** What the Team Lead's run on it cost (it counts toward the Team Lead's budget). */
+  costUsdMicros: number;
+  /** You answered after it escalated, and the Team Lead kept your answer in memory. */
+  learned?: boolean;
+  /** Escalated: the Team Lead's comment that asks you. */
+  commentId?: string | null;
+};
+/** A memory note a run's prompt was given: its path, its length and how much of it the prompt showed (less when cut). */
+export type GivenNote = { path: string; chars: number; shown: number };
+/** A note in Gizai's Memory (GA-19): a doc of kind memory, with a path like "Team Lead/Notes". */
+export type MemoryNote = { id: string; path: string; scope: "shared" | "agent"; ownerId?: string | null; bodyMd: string; currentVersion: number;
+  updatedAt: number; updatedBy?: string | null; chars: number };
+/** What saving a memory note did. */
+export type MemorySaved = { id: string; path: string; version: number; created: boolean };
+/** A memory search result: the note (without its text) and the line that matched. */
+export type MemoryHit = { note: MemoryNote; snippet: string };
+/** A note's last saved version (Memory → Recently changed): who wrote it, the run and its card when a run did, and when. */
+export type MemoryChange = { note: MemoryNote; version: number; at: number; authorId?: string | null; authorName?: string | null;
+  authorKind?: string | null; runId?: string | null; taskId?: string | null; taskIdentifier?: string | null };
 /** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
 export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */

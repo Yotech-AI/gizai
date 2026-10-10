@@ -1,9 +1,11 @@
-// The sidebar (design system: Sidebar): quick actions, work areas, projects and the team's agents scroll; the
-// company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
+// The sidebar (design system: Sidebar): quick actions, work areas, projects, the team's agents and their memory scroll;
+// the company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
 // data than the usual folder says so there.
-import { Building2, ChartColumn, FlaskConical, FolderKanban, Inbox, ListTodo, MessagesSquare, Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon } from "lucide-react";
-import { getTeam, listChatThreads, listProjects, listTasks } from "../api";
-import { href, type Route } from "../router";
+import { Building2, ChartColumn, Crown, FlaskConical, FolderKanban, Inbox, Library, ListTodo, MessagesSquare, Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon } from "lucide-react";
+import { getTeam, listChatThreads, listProjects, listTasks, memoryNotes } from "../api";
+import { go, href, type Route } from "../router";
+import { leadOf, memoryScope, noteCount } from "../lib/memory";
+import type { Member, MemoryNote } from "../types";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -33,6 +35,8 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
   const live = useLiveRuns();
   const chatLive = useChatLive();
   const agents = (team.data?.members ?? []).filter((m) => m.kind === "agent");
+  const notes = useData(() => memoryNotes().catch(() => []));
+  const lead = leadOf(agents);
   const threads = useData(() => listChatThreads().catch(() => []));
   const inbox = inboxCount(allTasks.data ?? [], threads.data ?? [], youId);
   const is = (...pages: Route["page"][]) => pages.includes(route.page);
@@ -77,6 +81,9 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
         })}
       </div>
 
+      <MemorySection route={route} lead={lead} agents={agents} notes={notes.data ?? []}
+        setUpLead={() => { go({ page: "team" }); open({ kind: "agent", teamId: team.data?.id, preset: { name: "Team Lead", role: "lead", chat: true } }); }} />
+
       </div>
 
       <div className="side-foot">
@@ -91,5 +98,40 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
         {dataLabel && <div className="data-tag" title={dataDir}><FlaskConical className="icon sm" />Test data: {dataLabel}</div>}
       </div>
     </aside>
+  );
+}
+
+/** Memory (GA-68), under Agents: the Team Lead first (it opens every note), then each other agent (its own folder),
+ *  each with how many notes it opens. Without a Team Lead: the shared notes and a link that sets one up. */
+function MemorySection({ route, lead, agents, notes, setUpLead }: {
+  route: Route; lead: Member | null; agents: Member[]; notes: MemoryNote[]; setUpLead: () => void;
+}) {
+  const on = (scope?: string) => route.page === "memory" && route.scope === scope;
+  const count = (scope?: string, name?: string) => <span className="count" title="Notes">{noteCount(notes, memoryScope(scope, name))}</span>;
+  const LeadIcon = lead ? roleIcon(lead.roleKey) : Crown;
+  return (
+    <div className="nav-section" aria-label="Memory">
+      <div className="nav-label">Memory</div>
+      {lead ? (
+        <a className={`nav-item${on() ? " on" : ""}`} href={href({ page: "memory" })} title={`${lead.name}: every note (its own, the shared folders and each agent's)`}>
+          <LeadIcon className="icon" /><span>{lead.name}</span><span className="meta">{count()}</span>
+        </a>
+      ) : (
+        <>
+          <a className={`nav-item${on("shared") ? " on" : ""}`} href={href({ page: "memory", scope: "shared" })} title="The shared folders">
+            <Library className="icon" /><span>Shared notes</span><span className="meta">{count("shared")}</span>
+          </a>
+          <button className="nav-item" onClick={setUpLead}><Crown className="icon" /><span>Set up the Team Lead</span></button>
+        </>
+      )}
+      {agents.filter((a) => a.actorId !== lead?.actorId).map((a) => {
+        const Role = roleIcon(a.roleKey);
+        return (
+          <a key={a.actorId} className={`nav-item${on(a.actorId) ? " on" : ""}`} href={href({ page: "memory", scope: a.actorId })} title={`${a.name}: its own folder`}>
+            <Role className="icon" /><span>{a.name}</span><span className="meta">{count(a.actorId, a.name)}</span>
+          </a>
+        );
+      })}
+    </div>
   );
 }

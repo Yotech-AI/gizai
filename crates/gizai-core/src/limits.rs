@@ -346,7 +346,7 @@ pub fn account_dir(cli: &Cli, home: &str, inherited: &dyn Fn(&str) -> Option<Str
 }
 
 /// `path` with the home folder as `~` (`~/.codex`; on Windows `~\.codex`).
-fn tilde(path: &Path, home: &str) -> String {
+pub(crate) fn tilde(path: &Path, home: &str) -> String {
     match path.strip_prefix(home) {
         Ok(rest) if !home.is_empty() && rest.as_os_str().is_empty() => "~".into(),
         Ok(rest) if !home.is_empty() => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),

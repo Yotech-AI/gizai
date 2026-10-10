@@ -31,6 +31,18 @@ describe("New worktrees", () => {
     expect([v.worktreeCopy, v.worktreeInstall, v.worktreeSetup]).toEqual([[".env", "vendor/"], false, "php artisan migrate"]);
   });
 
+  it("GA-86: shows Team Lead may merge off for a new project, and keeps a project's own switch", () => {
+    const html = renderToStaticMarkup(<ProjectDrawer onClose={() => {}} />);
+    expect(html).toContain("Merging");
+    expect(html).toMatch(/<input type="checkbox"\/>Team Lead may merge/);
+    expect(html).toContain("Releases and deploys stay yours");
+    expect(toProjectInput(null).leadMayMerge).toBe(false);
+    const p = { id: "p1", number: "P-1", key: "SHOP", name: "Shop", status: "active", defaultBranch: "main", openTasks: 0, doneTasks: 0, updatedAt: 0,
+      worktreeCopy: [], worktreeInstall: true, leadMayMerge: true } as unknown as Project;
+    expect(toProjectInput(p).leadMayMerge).toBe(true);
+    expect(toProjectInput({ ...p, leadMayMerge: undefined } as Project).leadMayMerge).toBe(false);
+  });
+
   it("reads the copy list one path per line, skipping blank lines", () => {
     expect(copyPaths(".env\n  node_modules/  \n\n vendor/\ntarget/\n")).toEqual([".env", "node_modules/", "vendor/", "target/"]);
     expect(copyPaths("")).toEqual([]);

@@ -28,6 +28,8 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
     const n = pullNumber(d.pullRequest);
     const pr = n == null ? "a pull request" : `pull request #${n}`;
     const on = hostName(d.pullRequest);
+    // The Team Lead's merge_pull_request (GA-86)
+    if (d.merged) return `merged ${pr} on ${on}`;
     if (d.opened) return `opened ${pr} on ${on}`;
     const state = typeof d.prState === "string" ? d.prState : "open";
     return state === "draft" ? `saw ${pr} as a draft on ${on}` : `saw ${pr} ${state} on ${on}`;

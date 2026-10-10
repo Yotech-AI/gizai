@@ -62,6 +62,7 @@ export function ProjectPage({ id }: { id: string }) {
                     ? <a href={p.repoUrl} onClick={(e) => { e.preventDefault(); openUrl(p.repoUrl!).catch(() => {}); }}>{p.repoUrl.replace(/^https:\/\//, "")}</a>
                     : <span className="faint">Not linked: cards start from the local branch</span>}</span>
                   <span className="k">Main branch</span><span className="mono">{p.defaultBranch}</span>
+                  <span className="k">Merging</span><span>{p.leadMayMerge ? "Team Lead may merge" : <span className="faint">You merge</span>}</span>
                   {p.repoPath && <><span className="k">Status</span><span>{repo == null ? "Checking…" : !repo.isGit ? <span style={{ color: "var(--danger)" }}>Not a git repository</span> : <>On <span className="mono">{repo.branch ?? "?"}</span>{repo.dirty ? <span style={{ color: "var(--warning)" }}> · uncommitted changes</span> : " · clean"}</>}</span></>}
                 </div></section>
               <section><div className="section-head"><h3>Budget</h3></div>

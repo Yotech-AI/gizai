@@ -109,6 +109,10 @@ pub struct Project {
     pub worktree_install: bool,
     /// …and this command runs in it.
     pub worktree_setup: Option<String>,
+    /// Team Lead may merge (GA-86): the Team Lead's merge_pull_request may merge a pull request QA passed, once its checks
+    /// are green. Off by default; only a person sets it, in the app.
+    #[serde(default)]
+    pub lead_may_merge: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -132,6 +136,9 @@ pub struct ProjectInput {
     pub worktree_install: Option<bool>,
     /// The command a new worktree runs after the install ("" removes it); None keeps it.
     pub worktree_setup: Option<String>,
+    /// Team Lead may merge; None keeps it (off for a new project). Only a person may give it (`projects::create`/`update`
+    /// refuse it from an agent).
+    pub lead_may_merge: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -184,6 +191,10 @@ pub struct Task {
     /// (`Run::run_for_me`); Done, continue resumes that run. Empty otherwise.
     #[serde(default)]
     pub run_for_me: Vec<String>,
+    /// GA-70: the card is on hold for a decision and its question is with the Team Lead, which answers it or asks you; it
+    /// isn't in the Inbox meanwhile (`questions`).
+    #[serde(default)]
+    pub with_lead: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -258,6 +269,12 @@ pub struct Doc {
     pub body_md: String,
     pub current_version: i64,
     pub updated_at: i64,
+    /// `doc` (a project's), or `memory` for a memory note (`memory`).
+    #[serde(default)]
+    pub kind: String,
+    /// A memory note's folder and title, like `Team Lead/Notes`.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +337,9 @@ pub struct AgentInput {
     /// The folders besides its worktree its file tools may use (`folders`). None: none for a new agent, unchanged on
     /// update. Only the agent form sets them: the Team Lead's tools always leave None.
     pub folders: Option<Vec<crate::folders::Folder>>,
+    /// Memory (GA-19): its runs get a Memory section and its `learned` lines are kept. None: on for a new agent,
+    /// unchanged on update.
+    pub use_memory: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -374,6 +394,16 @@ pub struct Run {
     /// wrote them (`run_for_me` on its result line); empty for any other run.
     #[serde(default)]
     pub run_for_me: Vec<String>,
+    /// Memory (GA-19): the notes its prompt was given, with their size and how much it showed; empty without memory.
+    #[serde(default)]
+    pub memory: Vec<crate::memory::Given>,
+    /// GA-70: it ended asking for a decision and the Team Lead took the question: what it did with it (looking at it,
+    /// answered, escalated to you) and what that cost. None when the question went to you directly.
+    #[serde(default)]
+    pub lead: Option<crate::questions::LeadAnswer>,
+    /// GA-70: a Team Lead's run on a question (trigger `question`, no card of its own): the card the question is on.
+    #[serde(default)]
+    pub question_task_id: Option<String>,
 }
 
 /// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI

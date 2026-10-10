@@ -5,7 +5,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 GZ=$PWD; DEV=$GZ/.devdata; BIN=$GZ/target/release/gizai
-DATA=$DEV/single; OTHER=$DEV/single-other; rm -rf "$DATA" "$OTHER"; mkdir -p "$DATA" "$OTHER" "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
+# CLAUDE: an empty Claude Code account folder (CLAUDE_CONFIG_DIR) for the Gizais, so they don't import your own Claude
+# Code memory notes (~/.claude) into this test's data when they start (GA-85).
+DATA=$DEV/single; OTHER=$DEV/single-other; CLAUDE=$DEV/single-claude; rm -rf "$DATA" "$OTHER" "$CLAUDE"
+mkdir -p "$DATA" "$OTHER" "$CLAUDE" "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
 OUT=$DEV/single-result.txt; rm -f "$OUT"
 RUNNER=$DEV/single-runner.sh
 cat > "$RUNNER" <<RUN
@@ -29,6 +32,7 @@ chmod +x "$RUNNER"
 env -i HOME="$HOME" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$DEV/run" \
   WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
   GIZAI_DATA_DIR="$DATA" XDG_DATA_HOME="$DEV/xdg/data" XDG_CACHE_HOME="$DEV/xdg/cache" XDG_CONFIG_HOME="$DEV/xdg/config" \
+  CLAUDE_CONFIG_DIR="$CLAUDE" \
   __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
   timeout -k 5 60 dbus-run-session -- cage -- "$RUNNER" > "$DEV/single.log" 2>&1
 cat "$OUT" 2>/dev/null || { echo "SINGLE FAIL: no result (see .devdata/single.log)"; exit 1; }

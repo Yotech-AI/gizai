@@ -19,6 +19,9 @@ fn board_() -> B {
     let be = agent("Backend Agent", "backend", "on_assign");
     let qa = agent("QA Agent", "qa", "on_assign");
     let lead = agent("Team Lead", "lead", "manual");
+    // These tests look at held cards as the board check finds them: an agent's question goes to the Inbox at once, not
+    // to the Team Lead first (GA-70; questions_test checks that step and the board check with it).
+    gizai_core::questions::set_enabled(&db, false).unwrap();
     B { db, you: s.you_id, project, be, qa, lead, team: s.team_id }
 }
 
@@ -508,8 +511,9 @@ fn rows(c: &rusqlite::Connection, sql: &str) -> Rows {
 
 /// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns, no agent folders (0009),
 /// none of 0011's column setup (no column agents, Auto or next columns, branches; an empty routing_rules table back)
-/// and no chat Runs on or queue (0012).
+/// and no chat Runs on or queue (0012), no memory (0014) and no Team Lead may merge (0015).
 pub fn back_to_7(c: &rusqlite::Connection) {
+    let undo14 = format!("ALTER TABLE projects DROP COLUMN lead_may_merge; {}", undo_0014());
     let m7 = include_str!("../migrations/0007_card_flow.sql");
     let start = m7.find("CREATE TABLE runs_new (").unwrap();
     let end = start + m7[start..].find(") STRICT;").unwrap() + ") STRICT;".len();
@@ -518,7 +522,7 @@ pub fn back_to_7(c: &rusqlite::Connection) {
     let m1 = include_str!("../migrations/0001_init.sql");
     let start = m1.find("CREATE TABLE routing_rules (").unwrap();
     let rules = &m1[start..start + m1[start..].find(") STRICT;").unwrap() + ") STRICT;".len()];
-    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN;
+    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; {undo14}
         ALTER TABLE runs DROP COLUMN findings_json;
         {runs7}; INSERT INTO runs_v7 SELECT * FROM runs; DROP TABLE runs; ALTER TABLE runs_v7 RENAME TO runs;
         CREATE INDEX runs_task ON runs(task_id, created_at); CREATE INDEX runs_agent_period ON runs(agent_actor_id, started_at);
@@ -532,6 +536,20 @@ pub fn back_to_7(c: &rusqlite::Connection) {
         ALTER TABLE teams DROP COLUMN branches_json; {rules};
         DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json; ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli;
         COMMIT; PRAGMA user_version = 7;")).unwrap();
+}
+
+/// Undoes GA-19's 0014: docs rebuilt as 0001 made them (owner_actor_id has a foreign key, so it can't be dropped), its
+/// memory notes and their versions and links gone, no use_memory or memory_json. Runs inside an open transaction.
+pub fn undo_0014() -> String {
+    let m1 = include_str!("../migrations/0001_init.sql");
+    let start = m1.find("CREATE TABLE docs (").unwrap();
+    let docs = m1[start..start + m1[start..].find(") STRICT;").unwrap() + ") STRICT;".len()].replacen("CREATE TABLE docs (", "CREATE TABLE docs_v13 (", 1);
+    format!("DELETE FROM doc_links WHERE source_type = 'doc' AND source_id IN (SELECT id FROM docs WHERE kind = 'memory');
+        DELETE FROM doc_versions WHERE doc_id IN (SELECT id FROM docs WHERE kind = 'memory');
+        {docs}; INSERT INTO docs_v13 SELECT id, created_at, updated_at, deleted_at, version, created_by, updated_by, org_id, project_id, client_id,
+        parent_id, title, body_md, mirror_path, current_version, sort_key FROM docs WHERE kind = 'doc';
+        DROP TABLE docs; ALTER TABLE docs_v13 RENAME TO docs;
+        ALTER TABLE agent_configs DROP COLUMN use_memory; ALTER TABLE runs DROP COLUMN memory_json;")
 }
 
 const SNAPSHOTS: [&str; 6] = [

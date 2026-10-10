@@ -326,8 +326,9 @@ fn schema_10_gives_existing_sessions_the_cli_of_their_last_turn() {
         say(&db, &id, "user", "Hi");
         (id, fresh)
     };
-    // One schema step back: 0012 hadn't run.
+    // One schema step back: 0012 hadn't run (nor GA-19's 0014 and GA-86's 0015, which come after it).
     let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE projects DROP COLUMN lead_may_merge; {} COMMIT;", undo_0014())).unwrap();
     c.execute_batch("DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json;
                      ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; PRAGMA user_version = 11;").unwrap();
     drop(c);
@@ -338,4 +339,18 @@ fn schema_10_gives_existing_sessions_the_cli_of_their_last_turn() {
     assert_eq!(chat::get_thread(&db, &fresh).unwrap().session_cli, None);
     assert_eq!(chat::messages(&db, &id).unwrap()[0].meta, None);
     assert!(chat::queue(&db, &id).unwrap().is_empty());
+}
+
+/// Undoes GA-19's 0014: docs rebuilt as 0001 made them (owner_actor_id has a foreign key, so it can't be dropped), its
+/// memory notes and their versions and links gone, no use_memory or memory_json. Runs inside an open transaction.
+fn undo_0014() -> String {
+    let m1 = include_str!("../migrations/0001_init.sql");
+    let start = m1.find("CREATE TABLE docs (").unwrap();
+    let docs = m1[start..start + m1[start..].find(") STRICT;").unwrap() + ") STRICT;".len()].replacen("CREATE TABLE docs (", "CREATE TABLE docs_v13 (", 1);
+    format!("DELETE FROM doc_links WHERE source_type = 'doc' AND source_id IN (SELECT id FROM docs WHERE kind = 'memory');
+        DELETE FROM doc_versions WHERE doc_id IN (SELECT id FROM docs WHERE kind = 'memory');
+        {docs}; INSERT INTO docs_v13 SELECT id, created_at, updated_at, deleted_at, version, created_by, updated_by, org_id, project_id, client_id,
+        parent_id, title, body_md, mirror_path, current_version, sort_key FROM docs WHERE kind = 'doc';
+        DROP TABLE docs; ALTER TABLE docs_v13 RENAME TO docs;
+        ALTER TABLE agent_configs DROP COLUMN use_memory; ALTER TABLE runs DROP COLUMN memory_json;")
 }

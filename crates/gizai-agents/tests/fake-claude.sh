@@ -16,6 +16,7 @@
 # can change things while the run is still live.
 # FAKE_RUN_FOR_ME in the prompt finishes like run-for-me: a needs_decision whose result line asks the user to run two
 # commands (`run_for_me`, GA-31). FAKE_ASKS finishes like run-asks: a needs_decision without them (an older result line).
+# FAKE_LEARNED in the prompt finishes like run-learned: run-ok with two `learned` lines on its result line (GA-19).
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -27,6 +28,8 @@ esac
 prompt="$(cat)"   # the prompt comes in on stdin, like claude -p
 echo "prompt chars: ${#prompt}" >&2
 echo "argv: $*" >&2
+# Claude Code's own memory switch (GA-85): what Gizai gave it, or "unset".
+echo "auto memory: ${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}" >&2
 if [ -n "${FAKE_TEMP:-}" ]; then
   echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2
   if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
@@ -41,6 +44,7 @@ fixture="$here/fixtures/run-ok.jsonl"
 case "$prompt" in *FAKE_REFUSED*) fixture="$here/fixtures/run-refused.jsonl" ;; esac
 case "$prompt" in *FAKE_NO_RESULT*) fixture="$here/fixtures/run-no-result.jsonl" ;; esac
 case "$prompt" in *FAKE_RUN_FOR_ME*) fixture="$here/fixtures/run-for-me.jsonl" ;; *FAKE_ASKS*) fixture="$here/fixtures/run-asks.jsonl" ;; esac
+case "$prompt" in *FAKE_LEARNED*) fixture="$here/fixtures/run-learned.jsonl" ;; esac
 if [ -n "${FAKE_NO_RESULT:-}" ]; then fixture="$here/fixtures/run-no-result.jsonl"; fi
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
 case "$prompt" in *FAKE_REFUSED_THEN_HANG*) prompt=refusedhang ;; esac
@@ -63,7 +67,10 @@ if [ "$prompt" = "crash" ]; then
 fi
 if [ "$prompt" = "hang" ] || [ "$prompt" = "stubborn" ]; then
   if [ "$prompt" = "hang" ]; then trap 'exit 130' INT; else trap '' INT; fi
-  head -n1 "$here/fixtures/run-ok.jsonl"
+  # The first line with builtins, not `head -n1`: a test stops the run as soon as it reads that line, and bash 3.2
+  # (macOS) drops a SIGINT that comes while it waits for a command that then exits normally, so it would miss its trap.
+  IFS= read -r first < "$here/fixtures/run-ok.jsonl"
+  printf '%s\n' "$first"
   sleep 600 &
   wait $!
   exit 0

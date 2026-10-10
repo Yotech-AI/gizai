@@ -13,7 +13,9 @@ const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.tri
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
                     r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha,
                     COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]'), r.nudged,
-                    json_extract(r.outcome_json, '$.run_for_me')";
+                    json_extract(r.outcome_json, '$.run_for_me'), r.memory_json, json_extract(r.outcome_json, '$.lead'),
+                    (SELECT l.cost_usd_micros FROM runs l WHERE l.id = json_extract(r.outcome_json, '$.lead.run')),
+                    CASE WHEN r.trigger = 'approval' THEN json_extract(r.outcome_json, '$.task') END";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     let nudged = r.get::<_, i64>(25)? != 0;
@@ -26,13 +28,23 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
         refused: serde_json::from_str(&r.get::<_, String>(24)?).unwrap_or_default(),
         nudged,
         run_for_me: commands_of(r.get(26)?),
+        memory: r.get::<_, Option<String>>(27)?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
+        lead: crate::questions::lead_of(r.get(28)?, r.get(29)?),
+        question_task_id: r.get(30)?,
     })
 }
 
 /// The trigger a run reports (`Run::trigger`): Gizai's nudge is stored as `nudge` with `nudged` set, and reported as
-/// `result_nudge` (`RESULT_NUDGE`), apart from a Continue. Older nudges (GA-54) read the same way.
+/// `result_nudge` (`RESULT_NUDGE`), apart from a Continue. Older nudges (GA-54) read the same way. The Team Lead's run on
+/// a question (GA-70) is stored as `approval`, which nothing else uses, and reported as `question`.
 pub(crate) fn reported_trigger(stored: String, nudged: bool) -> String {
-    if nudged && stored == "nudge" { RESULT_NUDGE.to_string() } else { stored }
+    if nudged && stored == "nudge" {
+        RESULT_NUDGE.to_string()
+    } else if stored == crate::questions::STORED_TRIGGER {
+        crate::questions::TRIGGER.to_string()
+    } else {
+        stored
+    }
 }
 
 /// The commands of a verdict's `run_for_me` (`outcome_json`, see `workflow::apply_outcome_with`), as JSON text; none
@@ -340,8 +352,8 @@ pub fn last_qa_issues(db: &Db, task_id: &str) -> Result<Vec<String>> {
 }
 
 /// At start-up: runs left queued or running by a previous Gizai can't be followed any more. Marks them
-/// failed ("interrupted") and releases their claims. A chat answer gets no outcome (it has none), and its chat a note
-/// that it was interrupted. Returns how many there were.
+/// failed ("interrupted") and releases their claims. A chat answer and a Team Lead's run on a question get no outcome
+/// (they have none), and a chat a note that it was interrupted. Returns how many there were.
 pub fn recover_interrupted(db: &Db) -> Result<usize> {
     db.write(None, |w| {
         let runs: Vec<(String, String, Option<String>)> = {
@@ -349,7 +361,9 @@ pub fn recover_interrupted(db: &Db) -> Result<usize> {
             st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?
         };
         for (id, trigger, thread) in &runs {
-            if trigger != "chat" {
+            // A Team Lead's run on a question keeps its outcome_json (the question it was on): `questions::recover`
+            // sends that question to you next.
+            if trigger != "chat" && trigger != crate::questions::STORED_TRIGGER {
                 finish_in(w, id, "failed", None, 0, 0, 0, Some("interrupted"))?;
                 continue;
             }

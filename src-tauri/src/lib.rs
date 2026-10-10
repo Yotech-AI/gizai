@@ -1,3 +1,4 @@
+pub mod ask_lead;
 pub mod bitbucket;
 pub mod board;
 pub mod chat;
@@ -10,6 +11,7 @@ pub mod github;
 pub mod limits;
 pub mod mcp;
 pub mod mcp_servers;
+pub mod memory;
 pub mod notifications;
 pub mod pulls;
 mod quit;
@@ -216,6 +218,10 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     } else {
         gizai_core::seed::ensure_seed(&db, &display_name())
     }.map_err(|e| e.to_string())?;
+    // Memory (GA-19): agents made before it get their own folder, Agents/<name>/, with a Notes note.
+    if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
+        eprintln!("gizai: making the agents' memory folders failed: {e}");
+    }
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
@@ -228,6 +234,10 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
         }
     }
     let _ = gizai_core::runs::recover_interrupted(&db);
+    // Questions that waited for the Team Lead (GA-70): its run on them is gone, so they go to you.
+    if let Err(e) = gizai_core::questions::recover(&db) {
+        eprintln!("gizai: sending the questions that waited for the Team Lead to the Inbox failed: {e}");
+    }
     // Messages queued in a chat wait for Send now: the answer they waited for is gone.
     let _ = gizai_core::chat::hold_all_queues(&db);
     chat::remove_stray_configs(&dir);
@@ -447,6 +457,12 @@ pub fn run() {
             // Desktop notifications go to the desktop (a test run only writes them to stderr).
             state.desktop = notifications::real(app.handle(), test_run);
             app.manage(state.clone());
+            // Memory (GA-85): the notes agents kept in Claude Code's own memory come into Gizai's, each file once. Not in
+            // headless test and screenshot runs: they run in your own home folder, with your Claude Code accounts.
+            if !test_run {
+                let st = state.clone();
+                tauri::async_runtime::spawn_blocking(move || memory::import_claude(&st));
+            }
             // After manage: quitting reads the state.
             quit::on_signals(app.handle());
             // The tray icon, with Open Gizai and Quit Gizai completely: closing the window only hides it.
@@ -541,7 +557,9 @@ pub fn run() {
             commands::list_archived_tasks, commands::archive_task, commands::restore_task,
             commands::list_teams, commands::get_team, commands::check_repo,
             commands::list_docs, commands::get_doc, commands::create_doc, commands::save_doc, commands::rename_doc,
-            commands::doc_versions, commands::doc_version_body,
+            commands::doc_versions, commands::doc_version_body, commands::agent_notes, commands::memory_enabled, commands::set_memory_enabled,
+            commands::memory_notes, commands::memory_create, commands::memory_move, commands::memory_search, commands::memory_recent,
+            commands::ask_lead_enabled, commands::set_ask_lead_enabled,
             commands::add_files, commands::list_files, commands::remove_file, commands::open_file,
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
             commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,

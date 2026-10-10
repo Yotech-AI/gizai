@@ -64,7 +64,9 @@ export type AgentDraft = { name: string; role: string; model: string; instructio
   /** Its MCP servers switched on or off, with the tools switched off of each (Tools; saved apart from the rest). */
   mcp: AgentServer[];
   /** Its CLI's own tools: web search, fetching pages, built-in tools (Tools; saved apart from the rest). */
-  cliTools: CliTools };
+  cliTools: CliTools;
+  /** Use memory: its runs get a Memory section and its learned lines are kept. */
+  memory: boolean };
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
@@ -76,6 +78,7 @@ export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
     folders: (m?.folders ?? []).map((f) => ({ path: f.path, access: f.access })),
     mcp: (m?.tools?.mcp ?? []).map((s) => ({ serverId: s.serverId, on: s.on, toolsOff: [...s.toolsOff] })),
     cliTools: cliToolsFrom(m?.cliTools),
+    memory: m?.useMemory !== false,
   };
 }
 
@@ -94,5 +97,6 @@ export function inputFrom(d: AgentDraft): AgentInput {
     // The board check belongs to the agent with Chat on: off with Chat.
     boardCheckMinutes: d.chat && d.boardCheck ? Number(d.boardMinutes) || 0 : 0,
     folders: foldersFrom(d.folders),
+    useMemory: d.memory,
   };
 }

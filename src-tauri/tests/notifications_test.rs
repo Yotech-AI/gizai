@@ -2,6 +2,8 @@
 // Inbox (`look`) and the watch that looks again after a poke (`watch`), with the switches in Settings; and "The Team Lead
 // answered" (`answered`), also at the end of a real (fake Claude Code) chat answer. Every test hands Gizai a desktop
 // that only records what it would show, so no test shows a real notification.
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::collections::HashSet;
 #[cfg(unix)]
 use std::path::PathBuf;
@@ -439,6 +441,7 @@ fn the_switches_are_all_on_by_default_and_are_kept_after_a_restart() {
     off.notifications = Switches { hold: false, waiting: true, lead_asks: false, lead_answered: false };
     runs::save_settings(&st, &off).unwrap();
     drop(st);
+    data_lock::released_blocking(&dir.path().join("data"));
     let st = gizai_lib::test_state(dir.path());
     assert_eq!(runs::get_settings(&st).notifications, Switches { hold: false, waiting: true, lead_asks: false, lead_answered: false });
     assert_eq!(notifications::switches(&st.db), runs::get_settings(&st).notifications);

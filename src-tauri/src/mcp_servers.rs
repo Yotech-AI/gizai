@@ -524,10 +524,11 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
     let known = |id: &str| lists.get(id).map(|c| c.tools.iter().filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string)).collect())
         .unwrap_or_default();
     for a in on {
-        // The built-in browser: always hidden with a throwaway profile, its options checked (`browser_target`).
+        // The built-in browser: always hidden with a throwaway profile, its options checked (`browser_target`). On Windows
+        // its entry starts npx by name through cmd (`browser::entry`).
         if a.server_id == core_mcp::BROWSER {
             match browser_target(st, agent.cli_tools.insecure_certs) {
-                Ok(t) => out.push(RunServer { name: core_mcp::BROWSER.into(), entry: mcp_run::stdio(&t.command, &t.args, &t.env),
+                Ok(t) => out.push(RunServer { name: core_mcp::BROWSER.into(), entry: browser::entry(&t.command, &t.args, &t.env),
                                               tools_off: a.tools_off.clone(), known_tools: known(core_mcp::BROWSER) }),
                 Err(e) => notes.push(format!("Left out the browser ({}): {e}. Settings → MCP servers says what it needs.", core_mcp::BROWSER)),
             }
@@ -588,7 +589,7 @@ fn npx(path: &std::ffi::OsStr) -> Result<String, String> {
 fn browser_target(st: &AppState, insecure_certs: bool) -> Result<Target, String> {
     let entry = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
     let path = crate::runs::command_path();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = gizai_core::clis::home();
     let program = browser::program_for_run(&entry.program, &home, &path)?;
     let args = browser::args(&entry.version, program.as_deref(), insecure_certs);
     browser::safe(&args)?;
@@ -617,7 +618,7 @@ pub struct BrowserView {
 pub fn browser_view(st: &AppState) -> Result<BrowserView, String> {
     let entry = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
     let path = crate::runs::command_path();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = gizai_core::clis::home();
     let needs = browser::needs(&path, &entry.program, &home);
     let program = browser::program_for_run(&entry.program, &home, &path).ok().flatten();
     let command = format!("npx {}", browser::args(&entry.version, program.as_deref(), false).join(" "));
@@ -635,7 +636,7 @@ pub fn browser_view(st: &AppState) -> Result<BrowserView, String> {
 /// version that isn't exact are refused. Another version lists other tools, so what List tools found goes.
 pub fn save_browser(st: &AppState, entry: core_mcp::BrowserEntry) -> Result<BrowserView, String> {
     if !entry.program.trim().is_empty() {
-        browser::check_program(&entry.program, &std::env::var("HOME").unwrap_or_default())?;
+        browser::check_program(&entry.program, &gizai_core::clis::home())?;
     }
     let old = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
     let saved = core_mcp::set_browser(&st.db, entry).map_err(|e| e.to_string())?;
@@ -733,7 +734,7 @@ pub fn tools_view(st: &AppState, agent_id: Option<&str>, cli_id: &str) -> Result
 
     let entry = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
     let path = crate::runs::command_path();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = gizai_core::clis::home();
     let cached = core_mcp::tool_lists(&st.db).map_err(|e| e.to_string())?.remove(core_mcp::BROWSER);
     let btools = cached.filter(|c| c.listed_at > 0).map(|c| mcp_tools::describe_all(&c.tools)).unwrap_or_default();
     let (risk, summary) = summary(&btools);

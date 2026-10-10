@@ -11,6 +11,10 @@
 //!   `CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS` from starting a detached process that asks npm for its latest version;
 //! - `--browserUrl`, `--wsEndpoint` and `--autoConnect` connect to a running browser, and `--userDataDir` and `--channel`
 //!   pick a real profile or install: Gizai never passes them (`safe`).
+//!
+//! Windows (GA-79): Node is `node.exe` and npx `npx.cmd`, found by PATHEXT; Google Chrome is in Program Files or, installed
+//! for one user, in `%LOCALAPPDATA%` (`find_browser`); a full path has a drive letter; and a run's entry goes through
+//! `cmd /c` (`entry`). Linux and macOS do what they did before.
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -51,6 +55,40 @@ pub fn env(path: &OsStr) -> Vec<(String, String)> {
          ("PATH".into(), path.to_string_lossy().into_owned())]
 }
 
+/// The browser's entry in a run's MCP config: `npx` (a path) with the server's arguments and environment lines, as
+/// `mcp_run::stdio` makes it. List tools starts the same npx through `os::command` instead.
+///
+/// Windows: npm's npx is a batch file (`npx.cmd`), which goes through `cmd /c`. Claude Code puts quotes around each
+/// argument with a space, and when the text after `/c` starts with a quote and has more than two, cmd strips the first and
+/// the last (`cmd /?`): `cmd /c "C:\Program Files\nodejs\npx.cmd" … "--executablePath=C:\Program Files\…\chrome.exe"`
+/// would run `C:\Program`. So npx goes by its name, `cmd /c npx …` as Claude Code's docs show, found on the PATH line with
+/// its own folder first: the text after `/c` starts without a quote, cmd keeps every quote, and npx hands
+/// `--executablePath=…` on as one argument. `NoDefaultCurrentDirectoryInExePath` keeps cmd from looking for npx in the run's
+/// folder (the project) before the PATH.
+pub fn entry(npx: &str, args: &[String], env: &[(String, String)]) -> serde_json::Value {
+    #[cfg(windows)]
+    {
+        let p = Path::new(npx);
+        let batch = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+        if let (true, Some(dir), Some(name)) = (batch, p.parent().filter(|d| !d.as_os_str().is_empty()), p.file_stem()) {
+            let mut env = env.to_vec();
+            match env.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case("PATH")) {
+                Some((_, v)) => {
+                    let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(v.as_str()));
+                    if let Ok(joined) = std::env::join_paths(dirs) {
+                        *v = joined.to_string_lossy().into_owned();
+                    }
+                }
+                None => env.push(("PATH".into(), dir.display().to_string())),
+            }
+            env.push(("NoDefaultCurrentDirectoryInExePath".into(), "1".into()));
+            let args: Vec<String> = ["/c".into(), name.to_string_lossy().into_owned()].into_iter().chain(args.iter().cloned()).collect();
+            return crate::mcp_run::stdio("cmd", &args, &env);
+        }
+    }
+    crate::mcp_run::stdio(npx, args, env)
+}
+
 /// Checks a command line for the browser: `--headless` and `--isolated` there, no option that connects to a running
 /// browser or uses a real profile, and only an exact version of the package. Why not, in plain words.
 pub fn safe(args: &[String]) -> Result<(), String> {
@@ -81,8 +119,12 @@ pub fn exact_version(v: &str) -> bool {
         && (v.split_once('-').is_none() || (!pre.is_empty() && pre.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')))
 }
 
-/// `~/…` with the home folder filled in.
+/// `~/…` with the home folder filled in. On Windows `~\…` and `~/…` are in your profile folder (`home`), with backslashes.
 fn expand_home(s: &str, home: &str) -> String {
+    #[cfg(windows)]
+    if let Some(rest) = s.strip_prefix("~\\").or_else(|| s.strip_prefix("~/")).filter(|_| !home.is_empty()) {
+        return format!("{}\\{}", home.trim_end_matches(['\\', '/']), rest.replace('/', "\\"));
+    }
     match s.strip_prefix("~/") {
         Some(rest) if !home.is_empty() => format!("{}/{rest}", home.trim_end_matches('/')),
         _ if s == "~" && !home.is_empty() => home.to_string(),
@@ -96,14 +138,25 @@ pub fn is_brave(path: &Path) -> bool {
     brave(path) || std::fs::canonicalize(path).is_ok_and(|c| brave(&c))
 }
 
-/// The browser program you set: a full path to a program that is there, and never Brave's.
+/// The full path the messages give as an example: Chromium's on Linux and macOS, Google Chrome's usual place on Windows.
+#[cfg(not(windows))]
+pub const EXAMPLE_PROGRAM: &str = "/usr/bin/chromium";
+#[cfg(windows)]
+pub const EXAMPLE_PROGRAM: &str = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+
+/// The browser program you set: a full path to a program that is there, and never Brave's. On Windows a full path has a
+/// drive letter (or is on a share): `C:\…\chrome.exe`, not `\…` or `chrome.exe`.
 pub fn check_program(raw: &str, home: &str) -> Result<PathBuf, String> {
     let p = expand_home(raw.trim(), home);
     if is_brave(Path::new(&p)) {
         return Err("Brave can't be the agents' browser: pick Google Chrome or Chromium".into());
     }
-    if !p.starts_with('/') {
-        return Err(format!("give the browser program as a full path, like /usr/bin/chromium: not \"{}\"", raw.trim()));
+    #[cfg(not(windows))]
+    let full = p.starts_with('/');
+    #[cfg(windows)]
+    let full = Path::new(&p).is_absolute();
+    if !full {
+        return Err(format!("give the browser program as a full path, like {EXAMPLE_PROGRAM}: not \"{}\"", raw.trim()));
     }
     let path = PathBuf::from(&p);
     if !os::executable(&path) {
@@ -113,10 +166,25 @@ pub fn check_program(raw: &str, home: &str) -> Result<PathBuf, String> {
 }
 
 /// Google Chrome where Chrome DevTools MCP looks for it by itself (its stable channel).
+#[cfg(not(windows))]
 const CHROME_HOME: [&str; 2] = ["/opt/google/chrome/chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
 const CHROME_NAMES: [&str; 3] = ["google-chrome-stable", "google-chrome", "chrome"];
+#[cfg(not(windows))]
 const CHROMIUM: [&str; 3] = ["/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/lib/chromium/chromium", "/usr/lib/chromium-browser/chromium-browser"];
 const CHROMIUM_NAMES: [&str; 2] = ["chromium", "chromium-browser"];
+
+/// Windows: Google Chrome's places, `Google\Chrome\Application\chrome.exe` under %ProgramFiles%, %ProgramFiles(x86)% and,
+/// for an install for one user, %LOCALAPPDATA%, read from those environment variables. The server finds Chrome by itself
+/// in all three. Checked in chrome-devtools-mcp 1.10.1's Puppeteer (@puppeteer/browsers, the stable channel), without
+/// starting a browser: it tries that same file under %PROGRAMFILES%, %ProgramW6432%, %ProgramFiles(x86)% and %LOCALAPPDATA%,
+/// then under C:\Program Files, C:\Program Files (x86), D:\Program Files and D:\Program Files (x86), and takes the first
+/// one there; Claude Code starts the server with its own environment, which has those variables. Chromium has no usual
+/// place on Windows: only on PATH (`chromium.exe`) or set by its path.
+#[cfg(windows)]
+fn windows_chrome() -> impl Iterator<Item = PathBuf> {
+    ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"].into_iter().filter_map(std::env::var_os).filter(|d| !d.is_empty())
+        .map(|d| PathBuf::from(d).join(r"Google\Chrome\Application\chrome.exe"))
+}
 
 /// A browser Gizai found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,15 +198,26 @@ pub struct Found {
 
 /// Google Chrome, else Chromium, in the usual places and on `path` (Brave's never counts).
 pub fn find_browser(path: &OsStr) -> Option<Found> {
+    #[cfg(not(windows))]
     let on_path = |name: &str| std::env::split_paths(path).map(|d| d.join(name)).find(|p| os::executable(p) && !is_brave(p));
+    // Windows: by PATHEXT, like Node and npx (`chrome` is chrome.exe, `chromium` chromium.exe)
+    #[cfg(windows)]
+    let on_path = |name: &str| self::on_path(name, path).filter(|p| !is_brave(p));
+    #[cfg(not(windows))]
     if let Some(p) = CHROME_HOME.iter().map(PathBuf::from).find(|p| os::executable(p)) {
+        return Some(Found { path: p, name: "Google Chrome", by_itself: true });
+    }
+    #[cfg(windows)]
+    if let Some(p) = windows_chrome().find(|p| os::executable(p) && !is_brave(p)) {
         return Some(Found { path: p, name: "Google Chrome", by_itself: true });
     }
     if let Some(p) = CHROME_NAMES.iter().find_map(|n| on_path(n)) {
         return Some(Found { path: p, name: "Google Chrome", by_itself: false });
     }
-    CHROMIUM_NAMES.iter().find_map(|n| on_path(n)).or_else(|| CHROMIUM.iter().map(PathBuf::from).find(|p| os::executable(p) && !is_brave(p)))
-        .map(|p| Found { path: p, name: "Chromium", by_itself: false })
+    let chromium = CHROMIUM_NAMES.iter().find_map(|n| on_path(n));
+    #[cfg(not(windows))]
+    let chromium = chromium.or_else(|| CHROMIUM.iter().map(PathBuf::from).find(|p| os::executable(p) && !is_brave(p)));
+    chromium.map(|p| Found { path: p, name: "Chromium", by_itself: false })
 }
 
 /// Whether a Node version (`v24.21.0`) is one the pinned server takes: ^20.19.0 || ^22.12.0 || >=23.
@@ -148,8 +227,12 @@ pub fn node_ok(version: &str) -> bool {
     major >= 23 || (major == 22 && minor >= 12) || (major == 20 && minor >= 19)
 }
 
-/// A program on `path`, by name.
+/// A program on `path`, by name. On Windows by PATHEXT (`os::find_in`): `node` is node.exe and `npx` npx.cmd, not the
+/// `npx` without an extension next to it in Node's folder, which Windows can't run.
 pub fn on_path(name: &str, path: &OsStr) -> Option<PathBuf> {
+    #[cfg(windows)]
+    return os::find_in(name, path);
+    #[cfg(not(windows))]
     std::env::split_paths(path).map(|d| d.join(name)).find(|p| os::executable(p))
 }
 
@@ -173,7 +256,8 @@ pub fn needs(path: &OsStr, program: &str, home: &str) -> Needs {
     let node = on_path("node", path);
     if let Some(node) = &node {
         n.node = Some(node.display().to_string());
-        n.node_version = std::process::Command::new(node).arg("--version").env("PATH", path).stdin(std::process::Stdio::null())
+        // os::command: no console window flashes on Windows
+        n.node_version = os::command(node).arg("--version").env("PATH", path).stdin(std::process::Stdio::null())
             .output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     }
     match (&node, n.node_version.as_deref()) {

@@ -1,6 +1,8 @@
-//! The Team Lead's tools: Gizai's clients, projects, tasks, agents, docs, files and inbox, served over MCP.
+//! The Team Lead's tools: Gizai's clients, projects, tasks, agents, docs, memory, files and inbox, served over MCP.
 //! Each tool takes human references (KADE-12, "Kade portal", "Backend Agent"), calls gizai-core as the agent
 //! (so activity shows who did it) and tells open screens what changed, exactly like the UI's commands.
+mod memory;
+mod merge;
 mod read;
 mod resolve;
 mod write;
@@ -21,20 +23,37 @@ pub struct GizaiTools {
     pub check: Option<String>,
     /// The run the token was minted for: the chat answer (or board check) whose Claude Code makes the calls.
     pub run: Option<String>,
+    /// GA-70: the question (the run that asked) a Team Lead's run on a question was minted for: only the tools that
+    /// read work there (`IN_A_QUESTION`).
+    pub question: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
     fn list(&self) -> Vec<ToolDef> {
-        catalog()
+        // A run on a question only reads: it isn't offered the rest.
+        catalog().into_iter().filter(|t| self.question.is_none() || t.read_only).collect()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
         self.call_with_meta(name, args, &Value::Null).await
     }
     async fn call_with_meta(&self, name: &str, args: Value, meta: &Value) -> Result<Value, String> {
+        if self.question.is_some() && !reads_only(name) {
+            return Err(IN_A_QUESTION.replace("{tool}", name));
+        }
         // The answer's stream shows the tool use each call comes from, with the id Claude Code gives the call.
         let from = Stream { run: self.run.as_deref().unwrap_or_default(), tool_use: meta.get("claudecode/toolUseId").and_then(Value::as_str) };
         call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), Some(from), name, args).await
     }
+}
+
+/// Why a Team Lead's run on a question (GA-70) can't use a tool that changes something: Gizai does what its result line
+/// says (answers on the card and continues the agent, or asks the user).
+const IN_A_QUESTION: &str = "{tool} can't be used while you look at an agent's question: you only look things up (memory, the card, \
+    docs, your copies of the code). End with your GIZAI_RESULT line: Gizai answers on the card and continues the agent, or asks the user.";
+
+/// A tool that only reads (`ToolDef::read_only`): the gets, lists and reads, check_board and the memory reads.
+fn reads_only(name: &str) -> bool {
+    catalog().iter().any(|t| t.name == name && t.read_only)
 }
 
 /// The chat answer a call over MCP comes from: its run, and the tool use the client named for the call, if it did.
@@ -64,9 +83,11 @@ pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, ar
 const NOT_IN_A_CHECK: [&str; 6] = ["attach_file", "create_agent", "update_agent", "set_agent_status", "add_column", "set_column"];
 
 /// What a chat answer may no longer do once it used a tool from outside Gizai (an MCP server of its own, the web, the
-/// browser): the user confirms it in a new message (`chat::used_outside`).
-pub const NOT_AFTER_OUTSIDE: [&str; 9] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
-    "set_column", "attach_file", "update_checkout"];
+/// browser): the user confirms it in a new message (`chat::used_outside`). Memory's writes too: a note goes into every
+/// answer, board check and run after it. A board check uses no tool from outside Gizai (`chat::check_once`). Merging a
+/// pull request too (GA-86); a board check may merge.
+pub const NOT_AFTER_OUTSIDE: [&str; 13] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
+    "set_column", "attach_file", "update_checkout", "memory_write", "memory_append", "memory_move", "merge_pull_request"];
 
 /// How long a call of a tool in `NOT_AFTER_OUTSIDE` in a chat answer waits for the answer's stream to show it
 /// (`chat::wait_shown`). Not shown by then, it is refused, and the model can call it again.
@@ -136,9 +157,16 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         "stop_agent_run" => write::stop_run(&cx, &a),
         "create_doc" => write::create_doc(&cx, &a),
         "write_doc" => write::write_doc(&cx, &a),
+        "memory_list" => memory::list(&cx, &a),
+        "memory_search" => memory::search(&cx, &a),
+        "memory_read" => memory::read(&cx, &a),
+        "memory_write" => memory::write(&cx, &a),
+        "memory_append" => memory::append(&cx, &a),
+        "memory_move" => memory::move_note(&cx, &a),
         "attach_file" => write::attach_file(&cx, &a).await,
         "add_person" => write::add_person(&cx, &a),
         "update_checkout" => write::update_checkout(&cx, &a).await,
+        "merge_pull_request" => merge::merge_pull_request(&cx, &a).await,
         other => Err(format!("unknown tool {other}")),
     }
 }
@@ -250,7 +278,8 @@ fn schema(props: &[(&str, &str, &str)], required: &[&str]) -> Value {
 }
 
 fn tool(name: &str, description: &str, props: &[(&str, &str, &str)], required: &[&str]) -> ToolDef {
-    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_") || name == "check_board";
+    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_") || name == "check_board"
+        || matches!(name, "memory_list" | "memory_search" | "memory_read");
     ToolDef { name: name.into(), description: description.into(), input_schema: schema(props, required), read_only }
 }
 
@@ -289,7 +318,7 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         tool("get_overview", "A summary of the organisation: clients, active projects, tasks per column, how many items wait in the inbox, the agents and who is working now. Start here.", &[], &[]),
         tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person), tasks waiting for them in Review or Deploy, and the chats you started that wait for their answer.", &[], &[]),
-        tool("check_board", "What on the board needs attention now: answered cards (a person commented after a needs-a-decision hold), held cards, cards no agent will start (and why) and cards whose run stopped part-way; then per agent its cards at once, the cards it works on, its free slots and whether its pull is paused (and why), and the free \"Runs at once\".", &[], &[]),
+        tool("check_board", "What on the board needs attention now: answered cards (a person commented after a needs-a-decision hold), held cards, cards no agent will start (and why), cards whose run stopped part-way, and cards in Review that QA passed in a project that lets you merge (merge_pull_request); then per agent its cards at once, the cards it works on, its free slots and whether its pull is paused (and why), and the free \"Runs at once\".", &[], &[]),
         tool("start_chat", "Asks the user something in a new chat that waits at the top of their Inbox: a question, or an approval you need. One waiting chat per card: when a card already has one, the message is added to that chat. Returns a link to it.",
              &[("title", "string", "A short title, like \"GA-12: pick the export format\""), ("kind", "enum:question|approval", "question, or approval for something you want to do"),
                ("tasks", "string[]", "The identifiers of the cards it is about, like GA-12"), ("body_md", "string", "Your first message (Markdown): what you found, what you recommend and what you need")],
@@ -370,12 +399,29 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("create_doc", "Adds a doc to a project, optionally with its first text.", &[PROJECT, ("title", "string", "Doc title"), ("body_md", "string", "Text (Markdown)")], &["project", "title"]),
         tool("write_doc", "Saves new text for a doc as a new version (the whole text, not a diff).",
              &[("doc", "string", "The doc's title or id"), ("body_md", "string", "The complete new text (Markdown)"), ("project", "string", "Project key or name, when titles repeat")], &["doc", "body_md"]),
+        tool("memory_list", "The notes in Gizai's Memory, by path (folder and title), with version and size. Shared folders: Clients/, Projects/, Standards/, Workflows/, Deployments/, Dependencies/, Decisions/, Lessons/. Each agent has its own folder (Agents/<name>/), and you have Team Lead/.",
+             &[("folder", "string", "Only the notes in this folder, like Standards or Agents/Backend Agent")], &[]),
+        tool("memory_search", "Searches the memory notes: words and \"quoted phrases\" (case ignored), path:Folder to look in one folder (path:\"Team Lead\"), tag:name for a tag. Best matches first, each with the line that matched. Look here before you ask the user.",
+             &[("query", "string", "Words, \"a phrase\", path:Folder, tag:name"), ("limit", "integer", "At most this many notes (default 20)")], &["query"]),
+        tool("memory_read", "One memory note's whole text (Markdown with YAML properties), its version (memory_write needs it) and the notes that link to it.",
+             &[("note", "string", "The note's path (Standards/Rust style), its title or its id")], &["note"]),
+        tool("memory_write", "Saves a whole memory note as a new version, or makes it when the path is new; for a note that exists, give the version you read (changed since: nothing is saved). Keep what the repository and the board can't tell: decisions and reasons, preferences, gotchas. Link [[Folder/Note]], KADE-12, @handle. YAML properties on top: type, tags, client, project, applies_to (roles or all: who gets it in a run), source. A text with a key or token is refused.",
+             &[("path", "string", "Folder and title, like Decisions/Memory in the database"), ("body_md", "string", "The complete text (Markdown)"),
+               ("version", "integer", "The version you read; leave it out for a new note")], &["path", "body_md"]),
+        tool("memory_append", "Adds text to a memory note without rewriting it: at the end of the section under heading (a new section at the end when the note has none), else at the end of the note. Makes the note when the path is new.",
+             &[("note", "string", "The note's path, title or id, like Team Lead/Notes"), ("text", "string", "The text to add (Markdown), like a dated bullet"),
+               ("heading", "string", "The section to add it to, like Open threads")], &["note", "text"]),
+        tool("memory_move", "Moves a memory note to another path, or to a folder (end with /, the title stays), and rewrites the links that point to it; copy: true copies it instead. Use it to promote a useful note from an agent's folder into a shared folder.",
+             &[("note", "string", "The note's path, title or id"), ("to", "string", "The new path (Standards/Rust style) or folder (Standards/)"),
+               ("copy", "boolean", "Copy instead of move: the original stays")], &["note", "to"]),
         tool("attach_file", "Copies a local file (absolute path, or ~/…) into Gizai and attaches it to one task, project or client.",
              &[("path", "string", "Absolute path of the file"), ("task", "string", "Task identifier"), ("project", "string", "Project key or name"), ("client", "string", "Client name")], &["path"]),
         tool("add_person", "Adds a person (a colleague or reviewer) to Gizai.", &[("name", "string", "Full name"), ("email", "string", "Email")], &["name"]),
         tool("update_checkout", "Chat only, and only after the user said yes in this chat: updates a project's linked folder (the user's own checkout, where new cards copy vendor/ and node_modules/ from) to main as last fetched. A fast-forward, then composer install or npm ci where a lock file changed or a folder is missing; never the setup command. Changes nothing, and says why, with uncommitted changes, a merge or rebase in progress, a local main with its own commits, another branch unless switch is true, or a folder set to read in the Team Lead's folders. Answers at once; the result comes as a message in this chat.",
              &[PROJECT, ("switch", "boolean", "When the folder is on another branch: switch it to the default branch first (that branch stays as it is). Only when the user agreed to the switch"),
                ("folder", "string", "The folder to update; only the project's linked folder is allowed (the default)")], &["project"]),
+        tool("merge_pull_request", "Merges a card's own pull request on GitHub with a merge commit, only when every rule holds: its project's Team Lead may merge switch is on (only the user sets it, in the app); the card is in Review with testing on; its latest QA verdict is qa_pass on the pull request's latest commit; GitHub can merge it; every check on it succeeded; no release card of the project is in Deploy. Otherwise it refuses with the reason and changes nothing: never work around a refusal. After a merge the card gets your comment and moves on to Deploy. Releases and deploys stay the user's.",
+             &[TASK], &["task"]),
     ]
 }
 

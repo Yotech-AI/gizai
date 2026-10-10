@@ -67,7 +67,7 @@ fn lead_chats(cx: &Cx) -> Result<Vec<Value>, String> {
 pub(crate) fn inbox(cx: &Cx) -> Result<Value, String> {
     let items: Vec<Value> = tasks::needs_you(cx.db(), &cx.st.you_id).map_err(err)?.iter().map(|t| json!({
         "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name,
-        "why": if t.hold.is_some() { "on hold" } else { "waiting for your review" },
+        "why": if t.hold.is_some() && !t.with_lead { "on hold" } else { "waiting for your review" },
         "hold": t.hold, "reason": t.hold_reason, "assignee": t.assignee_name,
     })).collect();
     Ok(json!({"count": items.len(), "items": items, "team_lead_chats": lead_chats(cx)?}))
@@ -121,6 +121,8 @@ pub(crate) fn get_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         "id": p.id, "key": p.key, "number": p.number, "name": p.name, "client": p.client_name, "status": p.status, "goal_md": p.goal_md,
         "repo_path": p.repo_path, "default_branch": p.default_branch, "color": p.color,
         "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()),
+        // GA-86: whether merge_pull_request may merge its pull requests (the user's switch, set in the app)
+        "team_lead_may_merge": p.lead_may_merge,
     }, "tasks_by_column": by_column, "docs": docs, "files": file_lines(files::list(cx.db(), "project", &p.id).map_err(err)?)}))
 }
 
@@ -169,6 +171,8 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
         "id": t.id, "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
         "hold_reason": t.hold_reason, "testing": t.testing, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
+        // GA-70: its question is with you (the Team Lead's run on it answers or asks the user).
+        "with_team_lead": t.with_lead,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
         "archived": t.archived_at.is_some(), "archived_on": t.archived_at.map(ymd), "archived_by": t.archived_by,
     }, "comments": comments, "runs": runs, "files": file_lines(files::list(cx.db(), "task", &t.id).map_err(err)?)}))

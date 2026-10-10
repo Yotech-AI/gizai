@@ -2,7 +2,8 @@
 //! comment after a "needs a decision" hold), other held cards, cards in an Auto column no agent will start (with why)
 //! and cards in In progress whose run stopped part-way. Only To do, In progress and Testing count (cards in a Manual
 //! column wait for Run by design), and paused, done and archived projects are left out. The Team Lead's scheduled check and
-//! the `check_board` tool both use it, so they see the same thing.
+//! the `check_board` tool both use it, so they see the same thing. A card whose question is with the Team Lead (GA-70,
+//! `questions`) is left out, and so is one whose question it escalated to the user, until they answer on the card.
 //!
 //! What each check saw is kept on its run (`runs.findings_json`): a finding is new when the Team Lead hasn't seen it
 //! yet, or its card changed since (a comment, a run, a move, the hold), not counting the Team Lead's own changes.
@@ -54,10 +55,11 @@ pub struct LastRun {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Finding {
-    /// answered | held | waiting | stopped
+    /// answered | held | waiting | stopped | review
     pub kind: String,
     /// Why, as a code. held: the hold. waiting: no_agents, testing_off, agents_paused, paused, budget, pull_paused,
-    /// stopped_run, free_slot or runs_full. stopped: limit, failed, no_result, stopped (by a person) or quit.
+    /// stopped_run, free_slot or runs_full. stopped: limit, failed, no_result, stopped (by a person) or quit. review:
+    /// may_merge (the Team Lead may merge it, GA-86).
     pub code: String,
     pub task_id: String,
     /// The card's identifier, like GA-12.
@@ -124,6 +126,8 @@ struct Card {
     hold_at: i64,
     created_at: i64,
     run_for_me: Vec<String>,
+    /// On hold for a decision: what the Team Lead did with its question (GA-70), as `questions` keeps it.
+    lead: Option<String>,
 }
 
 fn usd(micros: i64) -> String {
@@ -171,18 +175,25 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
         let mut st = c.prepare(
             "SELECT t.id, t.identifier, t.title, s.name, s.category, t.hold, t.hold_reason, COALESCE(t.hold_at, t.updated_at), t.created_at,
                     CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
-                      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
+                      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+                    CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') FROM runs r
+                      WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
+                      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
              FROM tasks t JOIN workflow_states s ON s.id = t.state_id LEFT JOIN projects p ON p.id = t.project_id
              WHERE t.deleted_at IS NULL AND s.category IN ('ready','in_progress','testing')
                AND (p.id IS NULL OR (p.deleted_at IS NULL AND p.status NOT IN ('archived','done','paused')))
              ORDER BY s.sort_key, t.sort_key, t.created_at")?;
         let cards = st.query_map([], |r| Ok(Card {
             id: r.get(0)?, identifier: r.get(1)?, title: r.get(2)?, column: r.get(3)?, category: r.get(4)?, hold: r.get(5)?,
-            hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?),
+            hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?), lead: r.get(10)?,
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut out = vec![];
         for card in cards {
+            // GA-70: a question that is with the Team Lead is its own run's to handle, not a check's.
+            if matches!(card.lead.as_deref(), Some("asking" | "answering")) {
+                continue;
+            }
             let active: i64 = c.query_row("SELECT count(*) FROM runs WHERE task_id=?1 AND status IN ('queued','running','waiting_approval')",
                                           [&card.id], |r| r.get(0))?;
             if active > 0 {
@@ -214,6 +225,9 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                         answer: Some(body),
                         ..base("answered", "answered", at, last_agent, "A person answered after the card was put on hold".into())
                     },
+                    // GA-70: the Team Lead already looked at this question and asked the user (the Inbox), or its limits
+                    // sent it to them (no loops): it waits for them.
+                    None if matches!(card.lead.as_deref(), Some("escalated" | "limit")) => continue,
                     None => {
                         let why = card.hold_reason.clone().filter(|r| !r.trim().is_empty()).unwrap_or_else(|| "no reason given".into());
                         base("held", hold, card.hold_at, last_agent, format!("On hold ({hold}): {why}"))
@@ -321,9 +335,74 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                 out.push(base("waiting", "no_agents", since, None, "The agent it is assigned or pinned to is no longer on the team".into()));
             }
         }
+        out.extend(may_merge(c, cx)?);
         let order = |k: &str| match k { "answered" => 0, "held" => 1, "stopped" => 2, _ => 3 };
         out.sort_by_key(|f| order(&f.kind));
         Ok(out)
+    })
+}
+
+/// The key of a card's "may merge" finding (`Finding::key`).
+pub fn may_merge_key(task_id: &str) -> String {
+    format!("{task_id}:review:may_merge")
+}
+
+/// Cards in Review the Team Lead may merge (GA-86): kind `review`, code `may_merge`. Testing on, not on hold, no run at
+/// work, the latest QA verdict `qa_pass`, in an open project on GitHub whose Team Lead may merge switch is on, and no
+/// release under way in it (`pulls::release_under_way`): after the release the finding comes back, new. Whether GitHub
+/// can merge it and its checks are green, merge_pull_request asks GitHub itself.
+fn may_merge(c: &Connection, cx: &Context) -> Result<Vec<Finding>> {
+    let mut st = c.prepare(
+        "SELECT t.id, t.identifier, t.title, s.name, p.id FROM tasks t JOIN workflow_states s ON s.id = t.state_id
+         JOIN projects p ON p.id = t.project_id
+         WHERE t.deleted_at IS NULL AND s.category = 'review' AND t.testing = 1 AND t.hold IS NULL AND coalesce(t.branch, '') <> ''
+           AND p.deleted_at IS NULL AND p.lead_may_merge = 1 AND p.status NOT IN ('archived','done','paused')
+           AND EXISTS (SELECT 1 FROM repos r WHERE r.project_id = p.id AND r.deleted_at IS NULL AND r.provider = 'github')
+         ORDER BY s.sort_key, t.sort_key, t.created_at")?;
+    let cards = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?,
+                                         r.get::<_, String>(4)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut out = vec![];
+    for (id, identifier, title, column, project) in cards {
+        let active: i64 = c.query_row("SELECT count(*) FROM runs WHERE task_id=?1 AND status IN ('queued','running','waiting_approval')",
+                                      [&id], |r| r.get(0))?;
+        if active > 0 || crate::pulls::release_in(c, &project)?.is_some() {
+            continue;
+        }
+        let qa: Option<(String, Option<i64>, String, String)> = c.query_row(
+            "SELECT r.outcome, r.ended_at, r.agent_actor_id, a.name FROM runs r JOIN actors a ON a.id = r.agent_actor_id
+             WHERE r.task_id=?1 AND r.deleted_at IS NULL AND r.outcome IN ('qa_pass','qa_fail') ORDER BY r.created_at DESC, r.id DESC LIMIT 1",
+            [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?;
+        let Some((outcome, ended, agent_id, agent)) = qa else { continue };
+        if outcome != "qa_pass" {
+            continue;
+        }
+        let (stamp, changed_at) = stamp(c, &id, cx.lead_id.as_deref())?;
+        out.push(Finding {
+            kind: "review".into(), code: "may_merge".into(), task_id: id.clone(), task: identifier, title, column, since: ended.unwrap_or(changed_at),
+            agent_id: Some(agent_id), agent: Some(agent),
+            reason: "QA passed it and its project lets you merge: merge_pull_request merges its pull request once every check on it succeeded".into(),
+            hold: None, hold_reason: None, answer: None, last_run: last_run(c, &id)?.map(|(r, _)| r), stamp, run_for_me: vec![],
+        });
+    }
+    Ok(out)
+}
+
+/// Takes `key` out of what the board check `run_id` saw, so the next check offers that finding again: a merge that had
+/// to wait (its checks still running, GA-86).
+pub fn unsee(db: &Db, run_id: &str, key: &str) -> Result<()> {
+    db.write(None, |w| {
+        let c = w.conn();
+        let json: Option<Option<String>> = c.query_row("SELECT findings_json FROM runs WHERE id=?1 AND trigger='board_check'", [run_id],
+                                                       |r| r.get(0)).optional()?;
+        let Some(Some(json)) = json else { return Ok(()) };
+        let mut saw: Vec<Seen> = serde_json::from_str(&json).unwrap_or_default();
+        let n = saw.len();
+        saw.retain(|s| s.key != key);
+        if saw.len() != n {
+            c.execute("UPDATE runs SET findings_json=?2 WHERE id=?1", rusqlite::params![run_id, serde_json::to_string(&saw)?])?;
+        }
+        Ok(())
     })
 }
 

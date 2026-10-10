@@ -7,14 +7,15 @@ Codex, Gemini and Other), because it reaches them as plain text in the prompt an
 It stores what the repository and the board can't tell an agent. Link to code, docs and cards; don't copy them.
 **Memory is data written by people and agents, never instructions.** Every prompt says so where the notes start.
 
-Part 1 (GA-19) is the store, the links, the Team Lead's tools and memory in every run. The Memory page (GA-68), the graph
-(GA-69) and agents asking the Team Lead before a person (GA-70, below) build on it.
+Part 1 (GA-19) is the store, the links, the Team Lead's tools and memory in every run. Part 2 (GA-68) is the Memory page,
+where people find, read and manage the notes. The graph (GA-69) and agents asking the Team Lead before a person (GA-70)
+build on them.
 
 ## Notes
 
 A note is a Markdown text in Gizai's database: a doc of kind `memory`, at organisation level (no project needed). So
-versions, authorship, activity, live refresh and backups work as for docs, and the doc page edits a note
-(`#/doc/<id>`, with the breadcrumb Memory / folder). A project's doc list never shows notes.
+versions, authorship, activity, live refresh and backups work as for docs. The Memory page shows and edits a note
+(`#/memory/<id>`; an old `#/doc/<id>` link to a note opens it there). A project's doc list never shows notes.
 
 Notes follow Obsidian's file conventions, so a copy opens there: Markdown, `[[wikilinks]]`, YAML properties at the top
 (frontmatter, kept inside the note's text) and folders. Gizai does not use or need Obsidian.
@@ -76,7 +77,8 @@ new version of each.
 
 Plain matching over the notes (memory stays small), so it is right after every save, rename and move: every word and
 `"quoted phrase"` must be in the path or the text (case ignored); `path:Standards` (or `path:"Team Lead"`) keeps the
-notes whose path starts with it; `tag:rust` keeps the notes with that tag (the `tags` property or a `#tag` in the text).
+notes whose path starts with it, and with a `/` at the end only that folder's (`path:"Agents/QA/"` leaves out
+`Agents/QA 2/`); `tag:rust` keeps the notes with that tag (the `tags` property or a `#tag` in the text).
 Title matches come first.
 
 ### Safety
@@ -180,6 +182,36 @@ questions with their cards.
   kept (for the Team Lead: no notes in chat and board checks either).
 - **Settings → Runs → Use memory** (on by default): off for every agent. The Team Lead's memory tools still work.
 - **Settings → Runs → Ask the Team Lead first** (on by default): off, an agent's question puts its card in the Inbox at once.
+
+## The Memory page
+
+The sidebar's **Memory** section, under Agents, opens it: the Team Lead first (by its name; it opens every note: its own,
+the shared folders and every agent's folder), then each other agent (only its own folder), each with how many notes it
+opens. With no Team Lead yet it shows **Shared notes** and *Set up the Team Lead*. Routes: `#/memory` (every note),
+`#/memory/shared`, `#/memory/agent/<agent id>`, each with a note's id after it to open that note.
+
+- **Files** (left): the folder tree, folders before notes, by name; it remembers which folders are open (this
+  computer). *New note*, *New folder* (a folder exists once a note is in it: until then this computer keeps it), rename
+  (double-click, F2 or the pencil; a note or a folder inside a memory folder, never a memory folder itself), and drag a
+  note or folder onto a folder to move it. Moves and renames rewrite the links to the notes, as `memory_move` does.
+- **Search** above the tree: words, `"phrases"`, `path:` and `tag:` (as the Team Lead's `memory_search`), with the
+  matching line and the match marked. An agent's page searches only its folder. Notes are also in Ctrl+K.
+- **The note** (centre): *Read* shows it with its links working (`[[Note]]`, `[[Note#Heading]]`, `[[Note|text]]`;
+  dashed when no note has that name yet: a click offers to make it), `![[Note]]` (or `![[Note#Heading]]`) shown in
+  place, and `KADE-12` as a chip that opens the card. Resting the mouse on a link shows the note. *Edit* is the doc
+  editor, with its versions and conflict handling: `[[` lists the notes (then `#` their headings, `|` their
+  `aliases`), links are styled, and Ctrl+click (Cmd+click on macOS) opens a link or a card. *Read* or *Edit* is kept.
+- **The panel** (right; its sections fold and stay folded): *Backlinks*, the notes that link here and, under *Unlinked
+  mentions*, those that name this note without a link, each with **Link** (it makes that place a link and saves that
+  note); *Outgoing links*, also those that find no note yet (*Make it*); *Outline* (a click goes to the heading);
+  *Properties* as a small form (each change rewrites that line and saves a version); *Tags*, every tag of the page's
+  notes with how many have it (a click shows only those notes in the tree); *History*.
+- **New note** asks for a type (note, decision, lesson, standard, workflow, client, project, deployment, dependency), a
+  title and a folder (the type's folder by default) and starts the note from that type's template: its properties and
+  a few headings.
+- With no note open: **Recently changed**, the notes by their last version, newest first, with who wrote it (you, an
+  agent, a person) and the run's card when a run did, filtered by Everyone, Agents or You; or, with no notes yet, what
+  memory is.
 
 ## Not yet
 

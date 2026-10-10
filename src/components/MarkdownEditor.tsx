@@ -3,7 +3,9 @@
 // task refs (KADE-12) and @mentions shown as chips, and links to Gizai items (gizai:) as one chip each. A toolbar formats
 // the selection (design system: MarkdownEditor). Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+K format; Ctrl+Enter or Ctrl+S saves
 // (Cmd on macOS), Escape cancels. Typing @ opens the item picker at the cursor, which links a task, project, client,
-// agent, person or doc.
+// agent, person or doc. Ctrl+click on a task ref (KADE-12) opens its card. In a memory note (`wiki`, GA-68) typing [[
+// opens the note picker (then # a heading, | an alias), and [[wikilinks]] are styled, dashed when they find no note yet;
+// Ctrl+click opens one and hovering one shows its preview.
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Bold, Code, Heading, Italic, Link, List, ListChecks, ListOrdered, Minus, Table, TextQuote, type LucideIcon } from "lucide-react";
 import { activeFormats, format, type FormatCmd } from "../lib/mdFormat";
@@ -12,7 +14,10 @@ import { loadPickItems } from "../lib/pickItems";
 import { openItem } from "../lib/openItem";
 import { modClick, modKey } from "../lib/keys";
 import { ItemPicker, type PickerAt } from "./ItemPicker";
-import { Compartment, EditorState, Prec, RangeSetBuilder } from "@codemirror/state";
+import { WikiPicker } from "./memory/WikiPicker";
+import { findWikiTrigger, TASK_REF, wikilinks, wikiRows, type WikiLink, type WikiRow, type WikiTrigger } from "../lib/memory";
+import type { MemoryNote } from "../types";
+import { Compartment, EditorState, Prec, RangeSetBuilder, StateEffect } from "@codemirror/state";
 import {
   Decoration, EditorView, MatchDecorator, ViewPlugin, WidgetType, drawSelection, keymap, placeholder as cmPlaceholder,
   type DecorationSet, type ViewUpdate,
@@ -151,6 +156,76 @@ const chips = ViewPlugin.fromClass(class {
   provide: (p) => EditorView.atomicRanges.of((view) => view.plugin(p)?.items ?? Decoration.none),
 });
 
+/** Wikilinks in a memory note (GA-68): what the editor needs from the Memory page. */
+export type WikiSupport = {
+  /** The notes the [[ picker lists. */
+  notes: readonly MemoryNote[];
+  /** The note being edited: a title finds the note in its folder first, and [[# lists its headings. */
+  current: MemoryNote | null;
+  /** Whether a link's note part finds a note (else it is dashed: a note to make). */
+  finds: (target: string) => boolean;
+  /** Ctrl+click on a link: open its note, or offer to make it. */
+  open: (link: WikiLink) => void;
+  /** The mouse is on a link (its box on screen), or left it (null). */
+  hover?: (link: WikiLink | null, at: DOMRect | null) => void;
+};
+
+/** The notes changed: the links' styles follow. */
+const wikiChanged = StateEffect.define<null>();
+const wikiMark = Decoration.mark({ class: "cm-wikilink" });
+const wikiMissing = Decoration.mark({ class: "cm-wikilink missing" });
+
+function wikiDecorations(view: EditorView, wiki: WikiSupport | undefined): DecorationSet {
+  if (!wiki) return Decoration.none;
+  const b = new RangeSetBuilder<Decoration>();
+  let done = -1;
+  for (const { from, to } of view.visibleRanges) {
+    const start = Math.max(view.state.doc.lineAt(from).from, done + 1);
+    const end = view.state.doc.lineAt(to).to;
+    if (start > end) continue;
+    for (const l of wikilinks(view.state.sliceDoc(start, end), true)) b.add(start + l.start, start + l.end, !l.target || wiki.finds(l.target) ? wikiMark : wikiMissing);
+    done = end;
+  }
+  return b.finish();
+}
+
+const wikiPlugin = (get: () => WikiSupport | undefined) => ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = wikiDecorations(view, get()); }
+  update(u: ViewUpdate) {
+    if (u.docChanged || u.viewportChanged || u.transactions.some((t) => t.effects.some((e) => e.is(wikiChanged)))) this.decorations = wikiDecorations(u.view, get());
+  }
+}, { decorations: (v) => v.decorations });
+
+/** A memory note's properties (its frontmatter, `---` … `---` on the first lines) read as plain small text, not as
+ *  Markdown: without this, its last line and the closing `---` show as a big heading. */
+const frontmatterLine = Decoration.line({ class: "cm-frontmatter" });
+function frontmatterDecorations(view: EditorView, on: boolean): DecorationSet {
+  const doc = view.state.doc;
+  if (!on || doc.lines < 2 || doc.line(1).text.trimEnd() !== "---") return Decoration.none;
+  let end = 0;
+  for (let i = 2; i <= Math.min(doc.lines, 300) && !end; i++) if (["---", "..."].includes(doc.line(i).text.trimEnd())) end = i;
+  if (!end) return Decoration.none;
+  const b = new RangeSetBuilder<Decoration>();
+  for (let i = 1; i <= end; i++) b.add(doc.line(i).from, doc.line(i).from, frontmatterLine);
+  return b.finish();
+}
+const frontmatterPlugin = (on: () => boolean) => ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = frontmatterDecorations(view, on()); }
+  update(u: ViewUpdate) { if (u.docChanged) this.decorations = frontmatterDecorations(u.view, on()); }
+}, { decorations: (v) => v.decorations });
+
+/** The wikilink (with its position in the text) or task ref at a point of the text, if any. */
+function linkAt(view: EditorView, pos: number): { wiki: WikiLink } | { task: string } | null {
+  const line = view.state.doc.lineAt(pos);
+  const off = pos - line.from;
+  const w = wikilinks(line.text, true).find((l) => off >= l.start && off < l.end);
+  if (w) return { wiki: { ...w, start: w.start + line.from, end: w.end + line.from } };
+  for (const m of line.text.matchAll(TASK_REF)) if (off >= m.index && off < m.index + m[0].length) return { task: m[0] };
+  return null;
+}
+
 const theme = EditorView.theme({
   "&": { fontSize: "var(--fs-prose)", color: "var(--text)", backgroundColor: "transparent", minHeight: "inherit" },
   ".cm-scroller": { minHeight: "inherit" },
@@ -166,6 +241,12 @@ const theme = EditorView.theme({
   ".cm-chip": { borderRadius: "4px", padding: "0 3px", fontSize: "0.92em" },
   ".cm-chip-ref": { fontFamily: "var(--font-mono)", background: "var(--hover)", color: "var(--accent)" },
   ".cm-chip-mention": { background: "var(--accent-soft)", color: "var(--accent)" },
+  ".cm-wikilink": { color: "var(--accent)", textDecoration: "underline", textDecorationColor: "var(--accent-soft)", textUnderlineOffset: "3px" },
+  ".cm-wikilink.missing": { color: "var(--text-2)", textDecorationStyle: "dashed", textDecorationColor: "var(--text-3)" },
+  // Markdown's own link colour inside a [[link]] would hide that it finds no note.
+  ".cm-wikilink.missing *": { color: "inherit !important" },
+  ".cm-frontmatter": { fontFamily: "var(--font-mono)", fontSize: "0.86em", lineHeight: "1.55", color: "var(--text-2)" },
+  ".cm-frontmatter *": { fontSize: "inherit !important", fontWeight: "inherit !important", color: "inherit !important", fontStyle: "inherit !important" },
 });
 
 // `key` is the shortcut's letter, shown with the modifier: Ctrl+B, or Cmd+B on macOS.
@@ -212,17 +293,36 @@ function insertRow(view: EditorView, row: PickRow): boolean {
   return true;
 }
 
+/** The `[[…` before the cursor (`findWikiTrigger`), for a plain cursor in the editor that has the focus. */
+function wikiTriggerAt(view: EditorView): WikiTrigger | null {
+  const sel = view.state.selection.main;
+  if (!sel.empty || view.root.activeElement !== view.contentDOM) return null;
+  const line = view.state.doc.lineAt(sel.head);
+  return findWikiTrigger(line.text.slice(0, sel.head - line.from), line.from);
+}
+
+/** Puts a picked note, heading or alias in the `[[…` before the cursor, closes the link with ]] (unless it is closed
+ *  already) and puts the cursor after it. False when the cursor is no longer in one. */
+function insertWiki(view: EditorView, row: WikiRow): boolean {
+  const t = wikiTriggerAt(view);
+  if (!t) return false;
+  const head = view.state.selection.main.head;
+  const close = view.state.sliceDoc(head, head + 2) === "]]" ? "" : "]]";
+  view.dispatch({ changes: { from: t.from, to: head, insert: row.insert + close }, selection: { anchor: t.from + row.insert.length + 2 }, scrollIntoView: true, userEvent: "input.complete" });
+  return true;
+}
+
 /** Enter in an editor that sends (the chat composer): Shift+Enter adds a line, continuing a list or quote. */
 const newLine = (v: EditorView) => insertNewlineContinueMarkup(v) || insertNewlineAndIndent(v);
 
 /** What a parent can do with the editor (the chat composer): focus it, empty it after sending, and start a link (+ → Link an
- *  item types @ at the cursor, which opens the picker). */
-export type EditorHandle = { focus: () => void; clear: () => void; startLink: () => void };
+ *  item types @ at the cursor, which opens the picker); and (a memory note's outline) put the cursor at a place, in sight. */
+export type EditorHandle = { focus: () => void; clear: () => void; startLink: () => void; goto: (pos: number) => void };
 
 type Pick = { from: number; query: string; at: PickerAt | null };
 
 export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEnter, placeholder, autoFocus, ariaLabel, minHeight, hint, toolbar = true,
-  disabled = false, pickerUp, handle, className }: {
+  disabled = false, pickerUp, handle, className, wiki }: {
   value: string;
   onChange?: (md: string) => void;
   onSave?: (md: string) => void;
@@ -243,11 +343,14 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
   pickerUp?: boolean;
   handle?: MutableRefObject<EditorHandle | null>;
   className?: string;
+  /** A memory note's editor: [[ links notes (GA-68). */
+  wiki?: WikiSupport;
 }) {
   const [active, setActive] = useState<Set<FormatCmd>>(new Set());
   const activeKey = useRef("");
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const hovered = useRef<string | null>(null); // the wikilink the mouse is on
   const cb = useRef({ onChange, onSave, onBlur, onCancel, onEnter });
   cb.current = { onChange, onSave, onBlur, onCancel, onEnter };
   const conf = useRef({ editable: new Compartment(), placeholder: new Compartment() });
@@ -263,8 +366,20 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
   const selected = Math.min(chosen, Math.max(0, rows.length - 1));
   // A search that finds nothing closes it, so Enter and Escape do what they did: `@name` stays a plain mention.
   const open = !!pick && (rows.length > 0 || items === null || !!itemsError);
-  const pk = useRef({ open, rows, selected });
-  pk.current = { open, rows, selected };
+  // The [[ picker: open while the cursor is in a [[… that finds rows (unless Escape closed that one).
+  const wikiRef = useRef(wiki);
+  wikiRef.current = wiki;
+  const [wpick, setWpick] = useState<{ t: WikiTrigger; at: PickerAt | null } | null>(null);
+  const [wchosen, setWchosen] = useState(0);
+  const wdismissed = useRef<number | null>(null);
+  const wshown = useRef<string | null>(null); // the [[… the selection belongs to: a new one selects the first row again
+  const wrows = useMemo(() => (wpick && wiki ? wikiRows(wpick.t, wiki.notes, wiki.current) : []), [wpick?.t.from, wpick?.t.query, wpick?.t.part, wiki?.notes, wiki?.current]); // eslint-disable-line react-hooks/exhaustive-deps
+  const wselected = Math.min(wchosen, Math.max(0, wrows.length - 1));
+  const wopen = !!wpick && wrows.length > 0;
+  const pk = useRef({ open, rows, selected, wopen, wrows, wselected });
+  pk.current = { open, rows, selected, wopen, wrows, wselected };
+  // New notes (one made, moved or renamed): the links' styles follow.
+  useEffect(() => { viewRef.current?.dispatch({ effects: wikiChanged.of(null) }); }, [wiki?.notes]);
   const wanted = !!pick;
   useEffect(() => {
     if (!wanted) return;
@@ -275,7 +390,22 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
 
   // The query the selection belongs to: a new one selects the first row again.
   const shownQuery = useRef<string | null>(null);
+  const followWiki = (view: EditorView): boolean => {
+    const t = wikiRef.current ? wikiTriggerAt(view) : null;
+    if (!t) wdismissed.current = null;
+    if (!t || wdismissed.current === t.from) { setWpick(null); return false; }
+    const key = `${t.from}:${t.part}:${t.query}`;
+    if (wshown.current !== key) { wshown.current = key; setWchosen(0); }
+    setWpick((p) => ({ t, at: p?.t.from === t.from ? p.at : null }));
+    view.requestMeasure({
+      key: "wiki-picker",
+      read: (v) => v.coordsAtPos(t.from),
+      write: (c) => { if (c) setWpick((p) => (p && p.t.from === t.from ? { ...p, at: { left: c.left, top: c.top, bottom: c.bottom } } : p)); },
+    });
+    return true;
+  };
   const follow = (view: EditorView) => {
+    if (followWiki(view)) { setPick(null); return; }
     const t = triggerAt(view);
     if (!t) dismissed.current = null;
     if (!t || dismissed.current === t.from) { shownQuery.current = null; setPick(null); return; }
@@ -290,6 +420,10 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
   const pickRow = (view: EditorView, i: number) => {
     const row = pk.current.rows[i];
     if (row && insertRow(view, row)) view.focus();
+  };
+  const pickWiki = (view: EditorView, i: number) => {
+    const row = pk.current.wrows[i];
+    if (row && insertWiki(view, row)) view.focus();
   };
 
   useEffect(() => {
@@ -323,7 +457,31 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
             { key: "Mod-k", run: (v) => run(v, "link") },
           ])),
           history(), drawSelection(), EditorView.lineWrapping,
-          markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), livePreview, chips, theme,
+          markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), livePreview, chips, wikiPlugin(() => wikiRef.current), frontmatterPlugin(() => !!wikiRef.current), theme,
+          EditorView.domEventHandlers({
+            // Ctrl+click (Cmd+click on macOS) on a wikilink opens it, on a task ref its card.
+            mousedown: (e, v) => {
+              if (!modClick(e)) return false;
+              const pos = v.posAtCoords({ x: e.clientX, y: e.clientY });
+              const hit = pos === null ? null : linkAt(v, pos);
+              if (!hit) return false;
+              e.preventDefault();
+              if ("wiki" in hit) wikiRef.current?.open(hit.wiki);
+              else openItem("task", hit.task).catch(() => {});
+              return true;
+            },
+            mousemove: (e, v) => {
+              const hover = wikiRef.current?.hover;
+              if (!hover) return false;
+              const el = (e.target as HTMLElement | null)?.closest?.(".cm-wikilink") as HTMLElement | null;
+              const pos = el ? v.posAtCoords({ x: e.clientX, y: e.clientY }) : null;
+              const hit = pos === null ? null : linkAt(v, pos);
+              const key = hit && "wiki" in hit ? `${hit.wiki.start}:${hit.wiki.end}` : null;
+              if (key !== hovered.current) { hovered.current = key; hover(hit && "wiki" in hit ? hit.wiki : null, el && key ? el.getBoundingClientRect() : null); }
+              return false;
+            },
+            mouseleave: () => { if (hovered.current) { hovered.current = null; wikiRef.current?.hover?.(null, null); } return false; },
+          }),
           conf.current.placeholder.of(cmPlaceholder(placeholder ?? "")),
           conf.current.editable.of([EditorView.editable.of(!disabled), EditorState.readOnly.of(disabled)]),
           keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -342,17 +500,21 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
       }),
     });
     function move(by: number) {
+      const { wopen, wrows, wselected } = pk.current;
+      if (wopen) { setWchosen((wselected + by + wrows.length) % wrows.length); return true; }
       const { open, rows, selected } = pk.current;
       if (!open) return false;
       if (rows.length) setSelected((selected + by + rows.length) % rows.length);
       return true;
     }
     function choose(v: EditorView) {
+      if (pk.current.wopen) { pickWiki(v, pk.current.wselected); return true; }
       if (!pk.current.open) return false;
       if (pk.current.rows.length) pickRow(v, pk.current.selected);
       return true;
     }
     function close(v: EditorView) {
+      if (pk.current.wopen) { wdismissed.current = wikiTriggerAt(v)?.from ?? null; setWpick(null); return true; }
       if (!pk.current.open) return false;
       dismissed.current = triggerAt(v)?.from ?? null;
       shownQuery.current = null;
@@ -383,6 +545,13 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
     if (!handle) return;
     handle.current = {
       focus: () => viewRef.current?.focus(),
+      goto: (pos) => {
+        const v = viewRef.current;
+        if (!v) return;
+        const at = Math.min(pos, v.state.doc.length);
+        v.focus();
+        v.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "start", yMargin: 24 }) });
+      },
       clear: () => {
         const v = viewRef.current;
         if (v && v.state.doc.length) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: "" } });
@@ -405,12 +574,16 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
     <ItemPicker at={pick.at} up={pickerUp} query={pick.query} rows={rows} loading={items === null} error={itemsError} selected={selected}
       onSelect={setSelected} onPick={(i) => { if (viewRef.current) pickRow(viewRef.current, i); }} />
   ) : null;
+  const wpicker = wopen && wpick?.at ? (
+    <WikiPicker at={wpick.at} up={pickerUp} part={wpick.t.part} rows={wrows} selected={wselected}
+      onSelect={setWchosen} onPick={(i) => { if (viewRef.current) pickWiki(viewRef.current, i); }} />
+  ) : null;
   const surface = <div className="md-surface" ref={host} style={{ minHeight }} />;
   const cls = `md-editor${className ? ` ${className}` : ""}${disabled ? " disabled" : ""}`;
-  if (!toolbar) return <div className={cls}>{surface}{picker}</div>;
+  if (!toolbar) return <div className={cls}>{surface}{picker}{wpicker}</div>;
   return (
     <div className={cls}>
-      {picker}
+      {picker}{wpicker}
       <div className="md-toolbar" role="toolbar" aria-label="Formatting">
         {TOOLS.map((t, i) => t === "sep" ? <span key={i} className="sep" /> : (
           <button key={t.cmd} type="button" title={t.key ? `${t.label} (${modKey()}+${t.key})` : t.label} aria-label={t.label} aria-pressed={active.has(t.cmd)}

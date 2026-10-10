@@ -217,6 +217,43 @@ pub fn agent_notes(app: AppHandle, st: State<AppState>, agent_id: String) -> R<O
     Ok(memory::list(&st.db, &you).map_err(e)?.into_iter()
         .find(|n| n.owner_id.as_deref() == Some(agent_id.as_str()) && n.title().eq_ignore_ascii_case(memory::NOTES)))
 }
+/// The Memory page (GA-68) works as you, a person: you read and write every note.
+fn as_you(st: &State<AppState>) -> gizai_core::memory::Who { gizai_core::memory::Who::Person(st.you_id.clone()) }
+/// Every note by path; with their text when `text` (the Memory page's tree, links, tags and previews).
+#[tauri::command]
+pub fn memory_notes(st: State<AppState>, text: bool) -> R<Vec<gizai_core::memory::Note>> {
+    let you = as_you(&st);
+    if text { gizai_core::memory::list_with_text(&st.db, &you) } else { gizai_core::memory::list(&st.db, &you) }.map_err(e)
+}
+/// A new note at `path` (folder and title) with `body_md` as its first version. Refused when the path is taken, in a
+/// folder memory doesn't have, or with a secret in it.
+#[tauri::command]
+pub fn memory_create(app: AppHandle, st: State<AppState>, path: String, body_md: String) -> R<gizai_core::memory::Saved> {
+    let you = as_you(&st);
+    if gizai_core::memory::find(&st.db, path.trim().trim_matches('/')).map_err(e)?.is_some() {
+        return Err(format!("{} exists already", path.trim().trim_matches('/')));
+    }
+    let saved = gizai_core::memory::write(&st.db, &you, &path, &body_md, None, None).map_err(e)?;
+    changed(&app, "docs");
+    Ok(saved)
+}
+/// Moves (renames) note `id` to `to`: a whole path, or a folder ending in `/` that keeps its title. The links to it follow.
+#[tauri::command]
+pub fn memory_move(app: AppHandle, st: State<AppState>, id: String, to: String) -> R<gizai_core::memory::Note> {
+    let n = gizai_core::memory::move_note(&st.db, &as_you(&st), &id, &to, false).map_err(e)?;
+    changed(&app, "docs");
+    Ok(n)
+}
+/// Searches the notes: words, "phrases", path:Folder and tag:name (`memory::search`).
+#[tauri::command]
+pub fn memory_search(st: State<AppState>, query: String, limit: Option<usize>) -> R<Vec<gizai_core::memory::Hit>> {
+    gizai_core::memory::search(&st.db, &as_you(&st), &query, limit.unwrap_or(50)).map_err(e)
+}
+/// The notes by their last saved version, newest first: who wrote each (a person, an agent, a run) and when.
+#[tauri::command]
+pub fn memory_recent(st: State<AppState>, limit: Option<usize>) -> R<Vec<gizai_core::memory::Change>> {
+    gizai_core::memory::recent(&st.db, &as_you(&st), limit.unwrap_or(30)).map_err(e)
+}
 /// Memory for every agent (Settings → Runs): on unless switched off.
 #[tauri::command]
 pub fn memory_enabled(st: State<AppState>) -> bool { gizai_core::memory::enabled(&st.db) }

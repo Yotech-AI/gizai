@@ -223,6 +223,13 @@ export type GivenNote = { path: string; chars: number; shown: number };
 /** A note in Gizai's Memory (GA-19): a doc of kind memory, with a path like "Team Lead/Notes". */
 export type MemoryNote = { id: string; path: string; scope: "shared" | "agent"; ownerId?: string | null; bodyMd: string; currentVersion: number;
   updatedAt: number; updatedBy?: string | null; chars: number };
+/** What saving a memory note did. */
+export type MemorySaved = { id: string; path: string; version: number; created: boolean };
+/** A memory search result: the note (without its text) and the line that matched. */
+export type MemoryHit = { note: MemoryNote; snippet: string };
+/** A note's last saved version (Memory → Recently changed): who wrote it, the run and its card when a run did, and when. */
+export type MemoryChange = { note: MemoryNote; version: number; at: number; authorId?: string | null; authorName?: string | null;
+  authorKind?: string | null; runId?: string | null; taskId?: string | null; taskIdentifier?: string | null };
 /** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
 export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */

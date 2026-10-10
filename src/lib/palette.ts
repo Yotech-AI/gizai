@@ -1,4 +1,4 @@
-export type PaletteItem = { kind: "task" | "project" | "client" | "action"; id: string; label: string; hint?: string };
+export type PaletteItem = { kind: "task" | "project" | "client" | "note" | "action"; id: string; label: string; hint?: string };
 
 export const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 

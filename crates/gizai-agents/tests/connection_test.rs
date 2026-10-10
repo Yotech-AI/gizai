@@ -436,6 +436,10 @@ fn known_limit_a_repository_whose_name_starts_with_the_projects_pushes_to_an_add
     let c = PushOver::Ssh.run_config("acme/shop", &strings(&["https://github.com/acme/shop", "https://github.com/acme/shop.git"]), &[]);
     assert_eq!(urls(&r, &c, "api"), ("git@github.com:acme/shop.git-api".into(), "https://github.com/acme/shop-api".into()));
     assert_eq!(urls(&r, &c, "front"), ("git@github.com:acme/shop.gitfront.git".into(), "https://github.com/acme/shopfront.git".into()));
+    // over HTTPS, when a remote of the project is written as git@github.com:, the same for git@github.com:acme/shop-…
+    git(&r, &["remote", "add", "api-ssh", "git@github.com:acme/shop-api.git"]);
+    let c = PushOver::Https { gh: tmp.path().join("gh") }.run_config("acme/shop", &strings(&["https://github.com/acme/shop", "git@github.com:acme/shop.git"]), &[]);
+    assert_eq!(urls(&r, &c, "api-ssh"), ("https://github.com/acme/shop.git-api.git".into(), "git@github.com:acme/shop-api.git".into()));
 }
 
 #[test]

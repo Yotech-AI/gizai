@@ -241,8 +241,14 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .run-stream .tool b { color: var(--live); font-weight: 500; }
 .run-stream .err { color: var(--danger); }
 .run-stream .ok { color: var(--success); }
-.run-actions { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
-.run-actions .grow { flex: 1; color: var(--text-3); font-size: var(--fs-sm); }
+/* The agent picker, Continue and Run keep their size: the picker is as wide as its longest option (at least 220px), so no
+   agent's name is cut off at any Interface size, and the text beside them wraps instead. Where that text would get
+   narrower than 6em (a narrow window), the buttons and then the picker move to the next line, on the right; only a name
+   wider than the whole row is cut off. */
+.run-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.run-actions .grow { flex: 1; min-width: 6em; overflow-wrap: anywhere; color: var(--text-3); font-size: var(--fs-sm); }
+.run-actions .select { width: auto; min-width: 220px; max-width: 100%; height: calc(28px + var(--ui-box, 0px)); }
+.run-buttons { display: flex; align-items: center; gap: 8px; }
 /* Continue with a message: the note box above Continue */
 .run-note { padding: 10px 14px 0; border-top: 1px solid var(--line); }
 .run-note .input { height: calc(30px + var(--ui-box, 0px)); }

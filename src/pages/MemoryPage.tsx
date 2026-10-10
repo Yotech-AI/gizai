@@ -58,7 +58,6 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const timers = useRef<{ show?: number; hide?: number }>({});
-  useEffect(() => { setTag(null); setQuery(""); }, [route.scope]);
 
   const scopeName = scope.kind === "agent" ? agent?.name ?? own ?? "Agent" : scope.kind === "shared" ? "Shared notes" : lead?.name ?? "All notes";
   const open = (note: MemoryNote, heading?: string) => {

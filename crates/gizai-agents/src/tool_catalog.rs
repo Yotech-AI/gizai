@@ -279,17 +279,38 @@ pub fn log_tools(path: &std::path::Path) -> Option<Vec<String>> {
     None
 }
 
+/// Windows' own variables a program needs to start (node stops at once without SystemRoot), and where the Git Bash is that
+/// Claude Code runs its Bash tool in (docs/PLATFORMS.md, "Git Bash"): `ask_claude` passes them on from Gizai's environment
+/// when set.
+#[cfg(windows)]
+const WINDOWS_VARS: [&str; 12] = ["SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT", "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "CLAUDE_CODE_GIT_BASH_PATH"];
+
+/// How much of the line Claude Code last wrote to stderr the error of `ask_claude` shows.
+const STDERR_CHARS: usize = 300;
+/// How much of the end of Claude Code's stderr `ask_claude` reads for that line.
+const STDERR_TAIL: u64 = 64 * 1024;
+
 /// Asks the installed Claude Code for its tools without a login: starts `claude` with a scratch `CLAUDE_CONFIG_DIR` and
 /// HOME in `scratch` and only PATH from Gizai's environment (no API key or token can reach it, so nothing can be spent, and
 /// nothing is written in ~/.claude), reads its init line (printed before its "Not logged in" error), and ends its process
 /// group (its Job Object on Windows: `os::Tree`). Takes a second or two. `bin`: the Claude Code program; `path`: the PATH
 /// it gets.
+///
+/// Windows: a program doesn't start without some of Windows' own variables, so it also gets those of `WINDOWS_VARS` that
+/// Gizai's environment has, with USERPROFILE (the home folder there) in the scratch home and TEMP and TMP in the scratch
+/// tmp folder. Nothing else: still no key or token.
+///
+/// Its stderr goes to `stderr.log` in `scratch`: when it gives no list, the error ends with the last line it wrote there.
 pub async fn ask_claude(bin: &std::path::Path, scratch: &std::path::Path, path: &OsStr) -> Result<Vec<String>, String> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let (home, config, tmp) = (scratch.join("home"), scratch.join("config"), scratch.join("tmp"));
     for d in [&home, &config, &tmp] {
         std::fs::create_dir_all(d).map_err(|e| format!("couldn't make a scratch folder {}: {e}", d.display()))?;
     }
+    // a file, not a pipe: it can't fill up and block Claude Code, and the caller removes the scratch folder afterwards
+    let err_log = scratch.join("stderr.log");
+    let stderr = std::fs::File::create(&err_log).map_err(|e| format!("couldn't make a scratch file {}: {e}", err_log.display()))?;
     let mut cmd = os::tokio_command(bin);
     cmd.env_clear()
         .env("PATH", path).env("HOME", &home).env("CLAUDE_CONFIG_DIR", &config).env("TMPDIR", &tmp).env("LANG", "C.UTF-8")
@@ -299,8 +320,17 @@ pub async fn ask_claude(bin: &std::path::Path, scratch: &std::path::Path, path: 
         .current_dir(&home)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(stderr)
         .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        for k in WINDOWS_VARS {
+            if let Some(v) = std::env::var_os(k) {
+                cmd.env(k, v);
+            }
+        }
+        cmd.env("USERPROFILE", &home).env("TEMP", &tmp).env("TMP", &tmp);
+    }
     let (mut child, tree) = os::spawn_tree_tokio(&mut cmd).map_err(|e| format!("couldn't start {}: {e}", bin.display()))?;
     let mut stdin = child.stdin.take().expect("stdin is piped");
     let stdout = child.stdout.take().expect("stdout is piped");
@@ -326,6 +356,26 @@ pub async fn ask_claude(bin: &std::path::Path, scratch: &std::path::Path, path: 
     }
     match found {
         Some(t) if !t.is_empty() => Ok(t),
-        _ => Err("Claude Code gave no list of its tools (is it installed and up to date?)".into()),
+        _ => {
+            let none = "Claude Code gave no list of its tools (is it installed and up to date?)";
+            Err(match last_line(&err_log) {
+                Some(said) => format!("{none}: {said}"),
+                None => none.into(),
+            })
+        }
     }
+}
+
+/// The last non-empty line of the file at `p` (read from its last `STDERR_TAIL` bytes), trimmed and cut to
+/// `STDERR_CHARS` characters; None when it has nothing but blanks, or can't be read.
+fn last_line(p: &std::path::Path) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(p).ok()?;
+    let from = f.metadata().ok()?.len().saturating_sub(STDERR_TAIL);
+    let mut bytes = vec![];
+    f.seek(SeekFrom::Start(from)).ok()?;
+    f.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let line = text.split(['\n', '\r']).map(str::trim).rfind(|l| !l.is_empty())?;
+    Some(line.chars().take(STDERR_CHARS).collect())
 }

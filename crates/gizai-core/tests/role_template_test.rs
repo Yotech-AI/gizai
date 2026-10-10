@@ -67,6 +67,29 @@ fn devops_releases_and_deploys_by_the_projects_own_flow_without_our_projects() {
 }
 
 #[test]
+fn devops_keeps_a_projects_deploy_note_in_gizais_memory_not_in_claude_codes() {
+    // GA-85: the same content and format, in Deployments/<KEY>, reported as learned lines for the Team Lead to fold in.
+    let o = role_template("devops");
+    let section = &o[o.find("## Memory: how each project is deployed").expect("its section")..o.find("## Outcomes").unwrap()];
+    for want in ["Each project has one deploy note in Gizai's Memory, Deployments/<KEY> (Deployments/KADE for project KADE)",
+                 "`type: deployment`, `project: <KEY>` and `applies_to: devops`", "comes into your run in the Memory section",
+                 "At the start of a run, read this project's deploy note there.", "the repo's own docs and workflows win",
+                 "Report what changed as `learned` lines on your result line", "The Team Lead folds them into the deploy note.",
+                 "No deploy note yet: also put the whole note, in the format above, in your summary",
+                 // the format stays
+                 "Deploy mode: manual (the team deploys it by hand) or agent", "Gotchas: what is easy to get wrong",
+                 "Last checked: date, commit, and the files you read", "Never deploy a manual project"] {
+        assert!(section.contains(want), "{want} missing in {section}");
+    }
+    for gone in ["MEMORY.md", "memory directory", "deploy-<KEY>", "your memory", "If you cannot save memory"] {
+        assert!(!o.contains(gone), "{gone}: {o}");
+    }
+    assert!(o.contains("Find out how a project is deployed, for its deploy note in Gizai's Memory"), "{o}");
+    assert!(o.contains("'Memory:' with what you reported for the deploy note"), "{o}");
+    assert!(o.contains("Never put secret values in a learned line or a summary"), "{o}");
+}
+
+#[test]
 fn design_is_the_frontend_text_with_its_own_name_and_job() {
     let d = role_template("design");
     let (first, _) = d.split_once('\n').unwrap();

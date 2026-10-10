@@ -107,6 +107,22 @@ fn argv_can_switch_off_hooks_and_skills() {
 }
 
 #[test]
+fn exec_can_switch_off_claude_codes_own_memory_after_the_accounts_lines() {
+    // GA-85: Claude Code's own variable, set to 1 after the account's own lines (the last one wins), not in the arguments.
+    let env = vec![("CLAUDE_CONFIG_DIR".to_string(), "/home/u/.claude-2".to_string()),
+                   ("CLAUDE_CODE_DISABLE_AUTO_MEMORY".to_string(), "0".to_string())];
+    let on = ClaudeArgs { disable_auto_memory: true, env: env.clone(), ..args() };
+    let e = on.exec();
+    assert_eq!(e.env.last(), Some(&(gizai_agents::claude::AUTO_MEMORY_OFF.to_string(), "1".to_string())));
+    assert_eq!(&e.env[..2], &env[..], "the account's lines stay, before it");
+    assert_eq!(e.args, on.argv(), "no argument for it");
+    assert!(!e.args.iter().any(|a| a.contains("AUTO_MEMORY") || a.contains("autoMemory")), "{:?}", e.args);
+    // off unless asked for
+    assert_eq!(ClaudeArgs { env: env.clone(), ..args() }.exec().env, env);
+    assert!(args().exec().env.is_empty());
+}
+
+#[test]
 fn argv_passes_the_effort_level() {
     let a = ClaudeArgs { effort: Some("xhigh".into()), ..args() }.argv();
     assert_eq!(a[a.iter().position(|x| x == "--effort").unwrap() + 1], "xhigh");

@@ -48,7 +48,9 @@ fn claude_code_runs_as_before_with_its_accounts_environment() {
     s.env = vec![("CLAUDE_CONFIG_DIR".into(), "/home/u/.claude-2".into())];
     let e = cli::task_exec(&s, &TaskRun { model: Some("opus".into()), effort: Some("max".into()), ..run() });
     assert_eq!(e.bin, std::path::PathBuf::from("/bin/fake"));
-    assert_eq!(e.env, vec![("CLAUDE_CONFIG_DIR".to_string(), "/home/u/.claude-2".to_string())]);
+    // GA-85: then Claude Code's own memory off, after the account's lines
+    assert_eq!(e.env, vec![("CLAUDE_CONFIG_DIR".to_string(), "/home/u/.claude-2".to_string()),
+                           ("CLAUDE_CODE_DISABLE_AUTO_MEMORY".to_string(), "1".to_string())]);
     assert_eq!(e.stdin, "Do the card", "the prompt goes in on stdin");
     let a = e.args.join(" ");
     for want in ["-p", "--session-id S-1", "--permission-mode acceptEdits", "--disable-slash-commands", r#"{"disableAllHooks":true}"#, "--model opus", "--effort max"] {
@@ -325,11 +327,14 @@ fn every_cli_gets_the_runs_temp_folder_as_tmpdir_tmp_and_temp_after_its_own_envi
     for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
         let mut s = spec(kind, "");
         s.env.push(("TMPDIR".into(), "/tmp".into()));
+        // GA-85: Claude Code also gets its own memory off, after the CLI's own lines; the others nothing more
+        let own: Vec<(String, String)> = s.env.iter().cloned()
+            .chain((kind == Kind::ClaudeCode).then(|| ("CLAUDE_CODE_DISABLE_AUTO_MEMORY".to_string(), "1".to_string()))).collect();
         let e = cli::task_exec(&s, &TaskRun { temp_dir: Some(temp.into()), ..run() });
-        assert_eq!(&e.env[..2], &s.env[..], "{kind:?}: the CLI's own lines stay");
-        assert_eq!(&e.env[2..], &want[..], "{kind:?}");
+        assert_eq!(&e.env[..own.len()], &own[..], "{kind:?}: the CLI's own lines stay");
+        assert_eq!(&e.env[own.len()..], &want[..], "{kind:?}");
         // without a temp folder (Gizai couldn't make it), the environment is the CLI's own
-        assert_eq!(cli::task_exec(&s, &run()).env, s.env, "{kind:?}");
+        assert_eq!(cli::task_exec(&s, &run()).env, own, "{kind:?}");
     }
 }
 

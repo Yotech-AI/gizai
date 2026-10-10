@@ -52,6 +52,113 @@ impl PullRequest {
 pub const FIELDS: &str = "number,url,state,isDraft,headRefOid,commits";
 const LIMIT: Duration = Duration::from_secs(60);
 
+/// What the Team Lead's merge_pull_request (GA-86) checks before a merge, as `gh pr view --json` gives it.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PullDetails {
+    pub number: u64,
+    pub url: String,
+    /// OPEN, CLOSED or MERGED
+    pub state: String,
+    pub is_draft: bool,
+    /// From a fork: another repository's branch.
+    pub is_cross_repository: bool,
+    pub head_ref_name: String,
+    /// Its latest commit.
+    pub head_ref_oid: String,
+    /// The branch it goes into.
+    pub base_ref_name: String,
+    /// MERGEABLE, CONFLICTING or UNKNOWN (GitHub is still working it out).
+    pub mergeable: String,
+    /// CLEAN, UNSTABLE, BLOCKED, BEHIND, DIRTY, DRAFT, HAS_HOOKS or UNKNOWN.
+    pub merge_state_status: String,
+    /// Every check on its latest commit: GitHub Actions jobs and other check runs, and commit statuses.
+    #[serde(deserialize_with = "null_as_empty")]
+    pub status_check_rollup: Vec<CheckItem>,
+}
+
+/// One check on a pull request: a check run (status and conclusion) or a commit status (state).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CheckItem {
+    /// CheckRun or StatusContext
+    #[serde(rename = "__typename")]
+    pub kind: String,
+    /// A check run's name.
+    pub name: String,
+    /// A commit status's name.
+    pub context: String,
+    pub workflow_name: String,
+    /// A check run's: QUEUED, IN_PROGRESS, COMPLETED, WAITING, PENDING or REQUESTED.
+    pub status: String,
+    /// A completed check run's: SUCCESS, FAILURE, NEUTRAL, CANCELLED, SKIPPED, TIMED_OUT, ACTION_REQUIRED, STALE, …
+    pub conclusion: String,
+    /// A commit status's: SUCCESS, PENDING, EXPECTED, ERROR or FAILURE.
+    pub state: String,
+}
+
+/// How a check stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckState {
+    /// Succeeded; a skipped or neutral check run counts too, as GitHub's own merge rules count it.
+    Passed,
+    /// Still queued or running.
+    Running,
+    Failed,
+}
+
+impl CheckItem {
+    /// Its name as GitHub shows it: "CI / ubuntu-24.04" for a job, else the check's or the status's name.
+    pub fn label(&self) -> String {
+        let name = if self.name.is_empty() { &self.context } else { &self.name };
+        match self.workflow_name.as_str() {
+            "" => name.clone(),
+            w => format!("{w} / {name}"),
+        }
+    }
+
+    pub fn standing(&self) -> CheckState {
+        if self.kind == "StatusContext" || (self.status.is_empty() && !self.state.is_empty()) {
+            return match self.state.as_str() {
+                "SUCCESS" => CheckState::Passed,
+                "PENDING" | "EXPECTED" | "" => CheckState::Running,
+                _ => CheckState::Failed,
+            };
+        }
+        if self.status != "COMPLETED" {
+            return CheckState::Running;
+        }
+        match self.conclusion.as_str() {
+            "SUCCESS" | "NEUTRAL" | "SKIPPED" => CheckState::Passed,
+            _ => CheckState::Failed,
+        }
+    }
+}
+
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<CheckItem>, D::Error> {
+    Ok(Option::<Vec<CheckItem>>::deserialize(d)?.unwrap_or_default())
+}
+
+/// The fields of `PullDetails`.
+pub const DETAIL_FIELDS: &str =
+    "number,url,state,isDraft,isCrossRepository,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,statusCheckRollup";
+
+/// Pull request `number` of `repo` ("owner/name") as GitHub has it now, with its checks. `dir` is where gh runs.
+pub fn pull_details(gh: &Path, dir: &Path, repo: &str, number: u64) -> Result<PullDetails, String> {
+    let n = number.to_string();
+    let out = run_gh(gh, dir, &["pr", "view", &n, "--repo", repo, "--json", DETAIL_FIELDS], None)?;
+    serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))
+}
+
+/// Merges pull request `number` of `repo` with a merge commit (never squash or rebase), only while `head` is still its
+/// latest commit (GitHub refuses it otherwise). Never with admin rights or auto-merge, and no branch is deleted.
+/// Returns gh's own words.
+pub fn merge_pull(gh: &Path, dir: &Path, repo: &str, number: u64, head: &str) -> Result<String, String> {
+    let n = number.to_string();
+    let out = run_gh(gh, dir, &["pr", "merge", &n, "--repo", repo, "--merge", "--match-head-commit", head], None)?;
+    Ok(out.trim().to_string())
+}
+
 /// The pull requests from `branch` in `repo` ("owner/name"), in any state, newest first. `dir` is where gh runs
 /// (the project's repository).
 pub fn pulls_for_branch(gh: &Path, dir: &Path, repo: &str, branch: &str) -> Result<Vec<PullRequest>, String> {

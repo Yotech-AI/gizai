@@ -95,6 +95,9 @@ pub struct CliTools {
     pub insecure_certs: bool,
     /// The CLI's other tools switched on, by name: allowed in its task runs (a tool the catalog doesn't know among them).
     pub builtin: Vec<String>,
+    /// Slash commands and skills (Built-in tools), on Claude Code only: its task runs go without `--disable-slash-commands`
+    /// and get `SlashCommand` and `Skill`. Never in chat.
+    pub slash_commands: bool,
 }
 
 impl CliTools {
@@ -391,7 +394,8 @@ pub fn valid_tool_name(n: &str) -> bool {
 /// Saves the agent's CLI tools (agent form → Tools → Web and Built-in tools; never the Team Lead). Domains and names are
 /// cleaned; one that can't be used is refused with why.
 pub fn set_cli_tools(db: &Db, actor: &str, agent_id: &str, tools: CliTools) -> Result<CliTools> {
-    let mut clean = CliTools { web_search: tools.web_search, web_fetch: tools.web_fetch, insecure_certs: tools.insecure_certs, ..Default::default() };
+    let mut clean = CliTools { web_search: tools.web_search, web_fetch: tools.web_fetch, insecure_certs: tools.insecure_certs,
+                               slash_commands: tools.slash_commands, ..Default::default() };
     for raw in tools.fetch_domains.iter().filter(|d| !d.trim().is_empty()) {
         let d = clean_domain(raw).ok_or_else(|| Error::Invalid(format!("\"{}\" isn't a domain: write it like docs.rs or *.example.com", raw.trim())))?;
         if !clean.fetch_domains.contains(&d) {
@@ -409,7 +413,8 @@ pub fn set_cli_tools(db: &Db, actor: &str, agent_id: &str, tools: CliTools) -> R
     clean.builtin.sort();
     agent_cli(db, agent_id)?;
     let change = serde_json::json!({"web_search": clean.web_search, "web_fetch": clean.web_fetch, "fetch_domains": clean.fetch_domains,
-                                    "insecure_certs": clean.insecure_certs, "builtin_tools_on": clean.builtin});
+                                    "insecure_certs": clean.insecure_certs, "builtin_tools_on": clean.builtin,
+                                    "slash_commands": clean.slash_commands});
     write_extra(db, actor, agent_id, "cli", serde_json::to_value(&clean)?, change)?;
     Ok(clean)
 }

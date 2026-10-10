@@ -65,9 +65,10 @@ pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, ar
 const NOT_IN_A_CHECK: [&str; 6] = ["attach_file", "create_agent", "update_agent", "set_agent_status", "add_column", "set_column"];
 
 /// What a chat answer may no longer do once it used a tool from outside Gizai (an MCP server of its own, the web, the
-/// browser): the user confirms it in a new message (`chat::used_outside`).
-pub const NOT_AFTER_OUTSIDE: [&str; 9] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
-    "set_column", "attach_file", "update_checkout"];
+/// browser): the user confirms it in a new message (`chat::used_outside`). Memory's writes too: a note goes into every
+/// answer, board check and run after it. A board check uses no tool from outside Gizai (`chat::check_once`).
+pub const NOT_AFTER_OUTSIDE: [&str; 12] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
+    "set_column", "attach_file", "update_checkout", "memory_write", "memory_append", "memory_move"];
 
 /// How long a call of a tool in `NOT_AFTER_OUTSIDE` in a chat answer waits for the answer's stream to show it
 /// (`chat::wait_shown`). Not shown by then, it is refused, and the model can call it again.

@@ -1835,13 +1835,16 @@ const accessibleName = (el: Element) => el.getAttribute("aria-label") || textOf(
  *  when the page opens again; Animate grows the graph in the order the notes were made; Restore puts the defaults back.
  *  c: the local graph beside Note 0 lists its connections, follows depth, incoming and outgoing, and follows the note
  *  that is opened; an agent's page and the shared page show only their notes and what those name; reduced motion gives a
- *  layout that doesn't move. The graph's prefs are put back at the end. */
+ *  layout that doesn't move. d: a click on a dim dot offers New note with its name, next to the note that links it; on a
+ *  card, an agent or a tag dot opens the card, the agent, or the tree filtered by the tag. The graph's prefs are put back
+ *  at the end. */
 async function memoryGraphProbe(args: string) {
   const [part = "", agentId = "", hubId = ""] = args.split(" ");
   const prefs = Object.fromEntries(GRAPH_PREFS.map((k) => [k, localStorage.getItem(k)]));
   try {
     if (part === "graph-a") return await graphPartA(hubId);
     if (part === "graph-b") return await graphPartB();
+    if (part === "graph-d") return await graphPartD(agentId);
     return await graphPartC(agentId, hubId);
   } catch (e) {
     return { ok: false, part, stage: graphStage, error: String(e) };
@@ -2332,4 +2335,59 @@ async function graphPartC(agentId: string, hubId: string) {
 
   const ok = localOk && reachable && depthOk && followOk && closedOk && agentOk && sharedOk && reducedOk;
   return { ok, part: "c", local_ok: localOk, reachable, depth_ok: depthOk, follow_ok: followOk, closed_ok: closedOk, agent_ok: agentOk, shared_ok: sharedOk, reduced_ok: reducedOk, ...out };
+}
+
+async function graphPartD(agentId: string) {
+  const out: Record<string, unknown> = {};
+  const ready = async () => {
+    await waitFor(() => (location.hash === "#/memory/graph" && gdots(globalCanvas()).some((d) => d.kind === "card") ? true : null), 6000);
+    await settledIn(globalCanvas, 6000);
+  };
+  const clickDot = (label: string) => {
+    const c = globalCanvas(), d = dotNamed(c, label);
+    if (!c || !d) return false;
+    c.dispatchEvent(pe("pointerdown", d.x, d.y));
+    c.dispatchEvent(pe("pointerup", d.x, d.y));
+    return true;
+  };
+  if (location.hash !== "#/memory/graph") location.hash = "#/memory/graph";
+  await ready();
+  const notes0 = textOf(q(".graph-count"));
+
+  // A dim dot: New note with its name, in the folder of the note that links it (Note 40 is in Clients); nothing is made.
+  clickDot("Missing 40");
+  const title = await waitFor(() => q<HTMLInputElement>(".drawer #mem-title"), 4000);
+  out.missing = { title: title?.value, folder: q<HTMLSelectElement>(".drawer #mem-folder")?.value, hash: location.hash };
+  if (title) buttonByText(q(".drawer") ?? document, "Cancel")?.click();
+  await waitFor(() => (!q(".drawer #mem-title") ? true : null), 3000);
+  const missingOk = title?.value === "Missing 40" && q<HTMLSelectElement>("#mem-folder") === null && (out.missing as { folder?: string }).folder === "Clients"
+    && location.hash === "#/memory/graph";
+
+  // A card: its page.
+  clickDot("KADE-1");
+  const card = !!(await waitFor(() => (location.hash.startsWith("#/task/") ? true : null), 4000));
+  out.card_hash = location.hash;
+  history.back();
+  await ready();
+
+  // An agent: its page.
+  clickDot("Backend Agent");
+  const agent = !!(await waitFor(() => (location.hash === `#/agent/${agentId}` ? true : null), 4000));
+  out.agent_hash = location.hash;
+  history.back();
+  await ready();
+
+  // A tag (Tags on): the notes with it, in the tree.
+  q<HTMLButtonElement>("button.graph-panel-open")?.click();
+  const p = await waitFor(() => q(".graph-panel"), 3000);
+  checkbox(p ?? document, "Tags")?.click();
+  await waitFor(() => (dotNamed(globalCanvas(), "#topic1") ? true : null), 3000);
+  await settledIn(globalCanvas, 6000);
+  clickDot("#topic1");
+  const filtered = await waitFor(() => q(".mem-filter"), 4000);
+  out.tag = { hash: location.hash, filter: textOf(filtered), tree: document.querySelectorAll(".mem-tree .mem-item.note").length };
+  const tagOk = !!filtered && textOf(filtered?.querySelector(".mem-tag.on")) === "topic1" && textOf(filtered?.querySelector(".faint")) === "20 notes" && !location.hash.endsWith("/graph");
+
+  const ok = missingOk && card && agent && tagOk && textOf(q(".graph-count")) === "" && notes0.startsWith("502 notes");
+  return { ok, part: "d", missing_ok: missingOk, card, agent, tag_ok: tagOk, notes0, ...out };
 }

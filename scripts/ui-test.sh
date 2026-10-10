@@ -54,14 +54,15 @@
 #     who wrote what; the Team Lead's page searches every note (path:"Team Lead" its own), the shared page none of theirs.
 #     Then on the demo data (no agents, no notes): Shared notes and Set up the Team Lead in the sidebar, the page says
 #     what memory is, the tree has only the shared folders, and Set up the Team Lead opens the agent form.
-# 13. memory graph (GA-69), against prep_graph's 500 notes, in three starts on the same data: (a) #/memory/graph loads and
+# 13. memory graph (GA-69), against prep_graph's 500 notes, in four starts on the same data: (a) #/memory/graph loads and
 #     settles quickly, a dot's size follows its links, missing notes are dim dots; pointing at a dot lights it and its lines
 #     in the accent and dims the rest, a click opens the note, Notes | Graph and Back, dragging a dot (the layout follows),
 #     the wheel zooms around the pointer, labels fade in, panning, the zoom buttons and keys, the arrow keys' connections
 #     list, and no teal or magenta pixel in dark or light; (b) the settings panel's Filters, Groups, Display and Forces,
 #     kept when the page opens again, Animate and Restore; (c) the local graph (depth, incoming, outgoing, its connections,
 #     following the open note), an agent's page and the shared page show only their notes and what those name, and reduced
-#     motion gives a still layout.
+#     motion gives a still layout; (d) a click on a dim dot offers New note with its name, on a card, agent or tag dot opens
+#     the card, the agent or the tree filtered by the tag.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -119,4 +120,5 @@ GRAPH=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_graph
 DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-a $GRAPH" scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-b $GRAPH" scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-c $GRAPH" scripts/smoke-cage.sh || fail=1
+DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-d $GRAPH" scripts/smoke-cage.sh || fail=1
 exit $fail

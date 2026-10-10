@@ -334,7 +334,8 @@ export type GraphSettings = {
   depth: number;
   incoming: boolean;
   outgoing: boolean;
-  /** The panel's sections that are open. */
+  /** The settings panel is open, and which of its sections. */
+  panel: boolean;
   open: string[];
 };
 
@@ -357,7 +358,7 @@ export const GRAPH_DEFAULTS: GraphSettings = {
   query: "", tags: false, orphans: true, existingOnly: false, hidden: [], groups: null,
   arrows: false, textFade: RANGES.textFade.value, nodeSize: RANGES.nodeSize.value, linkThickness: RANGES.linkThickness.value,
   centre: RANGES.centre.value, repel: RANGES.repel.value, linkForce: RANGES.linkForce.value, linkDistance: RANGES.linkDistance.value,
-  depth: RANGES.depth.value, incoming: true, outgoing: true, open: ["filters"],
+  depth: RANGES.depth.value, incoming: true, outgoing: true, panel: false, open: ["filters"],
 };
 
 /** The global graph's and the local graph's settings, each kept on its own. */
@@ -386,7 +387,7 @@ export function parseGraphSettings(raw: unknown): GraphSettings {
     groups,
     arrows: bool("arrows"), textFade: num("textFade"), nodeSize: num("nodeSize"), linkThickness: num("linkThickness"),
     centre: num("centre"), repel: num("repel"), linkForce: num("linkForce"), linkDistance: num("linkDistance"),
-    depth: num("depth"), incoming: bool("incoming"), outgoing: bool("outgoing"),
+    depth: num("depth"), incoming: bool("incoming"), outgoing: bool("outgoing"), panel: bool("panel"),
     open: Array.isArray(o.open) ? o.open.filter((s): s is string => (GRAPH_SECTIONS as readonly unknown[]).includes(s)) : [...GRAPH_DEFAULTS.open],
   };
 }

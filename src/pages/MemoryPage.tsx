@@ -161,7 +161,7 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
       <div className="split memory">
         {graphOn ? (
           all.data && <GlobalGraph notes={notes} inScope={inPage} settings={prefs.global} onSettings={(g) => keepPrefs({ ...prefs, global: g })}
-            onReset={() => keepPrefs({ ...prefs, global: { ...GRAPH_DEFAULTS, open: prefs.global.open } })} onOpen={openNode} focus={lastNote.current} />
+            onReset={() => keepPrefs({ ...prefs, global: { ...GRAPH_DEFAULTS, panel: prefs.global.panel, open: prefs.global.open } })} onOpen={openNode} focus={lastNote.current} />
         ) : <>
           <Files scope={scope} scopeName={scopeName} notes={scoped} selected={route.id ?? null} tag={tag} onTag={setTag} query={query} onQuery={setQuery}
             onOpen={open} onNewNote={(folder) => setNewNote({ folder })} onError={setErr} />
@@ -179,7 +179,7 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
           )}
           {route.id && local && all.data && (
             <LocalGraph notes={notes} inScope={inPage} noteId={route.id} settings={prefs.local} onSettings={(l) => keepPrefs({ ...prefs, local: l })}
-              onReset={() => keepPrefs({ ...prefs, local: { ...GRAPH_DEFAULTS, open: prefs.local.open } })} onOpen={openNode} onClose={() => showLocal(false)} />
+              onReset={() => keepPrefs({ ...prefs, local: { ...GRAPH_DEFAULTS, panel: prefs.local.panel, open: prefs.local.open } })} onOpen={openNode} onClose={() => showLocal(false)} />
           )}
         </>}
       </div>

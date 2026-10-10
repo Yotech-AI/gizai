@@ -32,7 +32,14 @@ function useGraphSources() {
 /** The whole graph of every note (links resolve among all of them), and the notes by id. */
 function useFullGraph(notes: readonly MemoryNote[]) {
   const src = useGraphSources();
-  const graph = useMemo(() => buildGraph({ notes, ...src }), [notes, src.cards, src.projects, src.clients, src.people, src.agents]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Built again only when what it is made of changed, not each time the notes are read again after a write elsewhere.
+  const key = [
+    notes.map((n) => `${n.id}:${n.currentVersion}:${n.path}`).join("|"),
+    src.cards.map((c) => `${c.identifier}:${c.title}`).join("|"), src.projects.map((p) => `${p.id}:${p.key}:${p.name}`).join("|"),
+    src.clients.map((c) => `${c.id}:${c.name}`).join("|"), src.people.map((p) => `${p.id}:${p.handle}:${p.name}`).join("|"),
+    src.agents.map((a) => `${a.actorId}:${a.handle}:${a.name}`).join("|"),
+  ].join("\n");
+  const graph = useMemo(() => buildGraph({ notes, ...src }), [key]); // eslint-disable-line react-hooks/exhaustive-deps
   const byId = useMemo(() => new Map(notes.map((n) => [n.id, n])), [notes]);
   return { graph, byId };
 }
@@ -72,7 +79,8 @@ export function GlobalGraph({ notes, inScope, settings, onSettings, onReset, onO
   const view = useMemo(() => graphView(graph, settings, byId, { scope }), [graph, settings, byId, scope]);
   const groups = settings.groups ?? defaultGroups(scoped);
   const colors = useGroupColors(view, byId, groups);
-  const [panel, setPanel] = useState(true);
+  const panel = settings.panel;
+  const setPanel = (on: boolean) => onSettings({ ...settings, panel: on });
   const [chosen, setChosen] = useState<string | null>(null);
   const canvas = useRef<GraphHandle>(null);
   const notesShown = view.nodes.filter((n) => n.kind === "note").length;
@@ -116,7 +124,8 @@ export function LocalGraph({ notes, inScope, settings, onSettings, onReset, onOp
   const view = useMemo(() => graphView(graph, settings, byId, { centre }), [graph, settings, byId, centre]);
   const groups = settings.groups ?? defaultGroups(scoped);
   const colors = useGroupColors(view, byId, groups);
-  const [panel, setPanel] = useState(false);
+  const panel = settings.panel;
+  const setPanel = (on: boolean) => onSettings({ ...settings, panel: on });
   const [chosen, setChosen] = useState<string | null>(null);
   const canvas = useRef<GraphHandle>(null);
   const note = byId.get(noteId);

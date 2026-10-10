@@ -277,6 +277,11 @@ export function GraphCanvas({ graph, settings, colors, focus, centre, selected, 
     }
     // d3 puts the rest (on the first load: all of them) on a spiral around the middle.
     for (const d of next.values()) if (Number.isNaN(d.x)) { delete (d as Partial<Dot>).x; delete (d as Partial<Dot>).y; }
+    // The same dots and lines again (the notes were read again after a write elsewhere): nothing moves.
+    const key = (l: { source: unknown; target: unknown }) => `${typeof l.source === "object" ? (l.source as Dot).id : l.source}\n${typeof l.target === "object" ? (l.target as Dot).id : l.target}`;
+    const before = new Set(s.lines.map(key));
+    const changed = first || graph.nodes.length !== old.size || graph.nodes.some((n) => !old.has(n.id))
+      || graph.links.length !== s.lines.length || graph.links.some((l) => !before.has(key(l)));
     s.dots = next;
     s.lines = graph.links.map((link) => ({ source: link.source, target: link.target, link }));
     s.grow = null;
@@ -284,8 +289,7 @@ export function GraphCanvas({ graph, settings, colors, focus, centre, selected, 
     sim.nodes([...next.values()]);
     (sim.force("link") as ReturnType<typeof forceLink<Dot, Line>>).links(s.lines);
     applyForces();
-    const changed = first || graph.nodes.length !== old.size || graph.nodes.some((n) => !old.has(n.id));
-    if (s.reduced) settleNow(); else sim.alpha(Math.max(sim.alpha(), first ? 1 : changed ? 0.5 : 0.15));
+    if (changed) { if (s.reduced) settleNow(); else sim.alpha(Math.max(sim.alpha(), first ? 1 : 0.5)); }
     wake();
   }, [graph]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -305,13 +309,17 @@ export function GraphCanvas({ graph, settings, colors, focus, centre, selected, 
 
   // A change of a force, the dot size or the local graph's note moves the layout again (and fits the view again for a
   // new note).
+  const forces = `${settings.centre} ${settings.repel} ${settings.linkForce} ${settings.linkDistance} ${settings.nodeSize} ${centre}`;
+  const lastForces = useRef(forces);
   useEffect(() => {
+    if (lastForces.current === forces) return; // the first render: the graph's own effect laid it out
+    lastForces.current = forces;
     const s = st.current;
     for (const d of s.dots.values()) d.r = nodeRadius(d.node.links, settings.nodeSize);
     applyForces();
     if (s.reduced) settleNow(); else sim.alpha(Math.max(sim.alpha(), 0.3));
     wake();
-  }, [settings.centre, settings.repel, settings.linkForce, settings.linkDistance, settings.nodeSize, centre]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [forces]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { st.current.fit = true; wake(); }, [centre]); // eslint-disable-line react-hooks/exhaustive-deps
   // Anything else only draws again.
   useEffect(() => { wake(); }, [colors, focus, selected, settings.arrows, settings.textFade, settings.linkThickness]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -411,7 +419,8 @@ export function GraphCanvas({ graph, settings, colors, focus, centre, selected, 
     const [px, py] = local(e);
     const dot = dotAt(px, py);
     s.drag = { dot, x0: px, y0: py, view0: { ...s.view }, moved: false, id: e.pointerId };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // A pointer that isn't down for the browser (a probe's event) can't be captured; the drag works without.
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not captured */ }
     if (!dot) e.currentTarget.style.cursor = "grabbing";
   };
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {

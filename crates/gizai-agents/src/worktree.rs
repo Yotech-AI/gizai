@@ -297,6 +297,33 @@ pub fn remotes(repo: &Path) -> Result<Vec<(String, String)>, AgentError> {
     Ok(out)
 }
 
+/// The URLs of the repository's remotes as written in its git config (`remote.<name>.url`), before any rewrite:
+/// (name, URL).
+pub fn remote_urls(repo: &Path) -> Vec<(String, String)> {
+    config_matching(repo, r"^remote\..*\.url$").into_iter()
+        .filter_map(|(key, url)| Some((key.strip_prefix("remote.")?.strip_suffix(".url")?.to_string(), url)))
+        .collect()
+}
+
+/// The starts of the addresses your own git config rewrites (`url.<base>.insteadOf` and `url.<base>.pushInsteadOf`), in
+/// every config file the repository reads.
+pub fn own_rewrites(repo: &Path) -> Vec<String> {
+    config_matching(repo, r"^url\..*\.(insteadof|pushinsteadof)$").into_iter().map(|(_, start)| start).collect()
+}
+
+/// Every git setting of the repository whose key matches `pattern`, as written: (key, value). Not the GIT_CONFIG_COUNT
+/// settings of Gizai's own environment: a run's own take their place (`connection::git_env`).
+fn config_matching(repo: &Path, pattern: &str) -> Vec<(String, String)> {
+    let out = crate::os::command("git").arg("-C").arg(repo).args(["config", "-z", "--get-regexp", pattern])
+        .env_remove("GIT_CONFIG_COUNT").output();
+    // git says nothing (exit code 1) when no setting matches
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).split('\0')
+            .filter_map(|entry| entry.split_once('\n')).map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        _ => vec![],
+    }
+}
+
 /// The ref `fetch_start` fetches `branch` into: `refs/remotes/<remote>/<branch>` through the repository's remote, else
 /// a ref git's branch list doesn't show (`refs/gizai/base/<branch>`).
 pub fn start_ref(remote: Option<&str>, branch: &str) -> String {

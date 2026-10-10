@@ -5,6 +5,11 @@ import { RISK_BADGE, toolsSummary } from "../lib/mcp";
 import type { BrowserView } from "../types";
 import { McpToolList } from "./McpTools";
 
+/** The Browser program field's hint: a full path as this system writes one (Google Chrome's usual place on Windows,
+ * `EXAMPLE_PROGRAM` in crates/gizai-agents/src/browser.rs). */
+export const browserProgramHint = () => `A full path, like ${typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent || "")
+  ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : "/usr/bin/chromium"}. Brave's is refused.`;
+
 /** Settings → MCP servers, at the top: the built-in browser (Chrome DevTools MCP), like the built-in Claude Code in Coding
  * CLIs. Always hidden with a throwaway profile; only its version and browser program can change. Gizai installs nothing:
  * the form says what is missing and what to install. */
@@ -49,7 +54,7 @@ export function BrowserEntryRow() {
             <label>Version<input className="input mono" value={edit.version} onChange={(e) => setEdit({ ...edit, version: e.target.value })} placeholder="1.10.1" />
               <span className="hint">An exact version of chrome-devtools-mcp, never latest.</span></label>
             <label>Browser program<input className="input mono" value={edit.program} onChange={(e) => setEdit({ ...edit, program: e.target.value })} placeholder="Empty: Google Chrome, else Chromium" />
-              <span className="hint">A full path, like /usr/bin/chromium. Brave's is refused.</span></label>
+              <span className="hint">{browserProgramHint()}</span></label>
             <span className="cl-actions"><button className="btn ghost sm" disabled={!!busy} onClick={() => setEdit(null)}>Cancel</button>
               <button className="btn primary sm" disabled={!!busy || !edit.version.trim()} onClick={() => run("save", () => saveBrowserEntry(edit))}>{busy === "save" ? "Saving…" : "Save browser"}</button></span>
           </div>

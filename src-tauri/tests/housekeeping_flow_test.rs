@@ -1,5 +1,7 @@
 // Housekeeping in the app (GA-25): Gizai prunes old run and chat logs and dead tokens when it starts, and a run whose
 // log was pruned says so.
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::fs::{self, File};
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
@@ -47,6 +49,7 @@ fn gizai_prunes_old_logs_and_dead_tokens_when_it_starts() {
     file_at(&data.join("runs/s2.jsonl"), now - 29 * DAY);
     file_at(&data.join("chat/a1.jsonl"), now - 45 * DAY);
     file_at(&data.join("chat/check-s3.jsonl"), now - DAY);
+    data_lock::released_blocking(&data);
     let st = gizai_lib::test_state(tmp.path());
     assert_eq!(names(&data.join("runs")), ["s2.jsonl"]);
     assert_eq!(names(&data.join("chat")), ["check-s3.jsonl"]);

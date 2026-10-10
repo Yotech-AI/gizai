@@ -2,6 +2,8 @@
 #![cfg(unix)]
 // Chat turns end to end: Gizai starts a (fake) Claude Code, which starts the real gizai-mcp shim, which calls
 // Gizai's tools over the socket; the conversation, the run and the session are recorded.
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -731,6 +733,7 @@ async fn after_a_restart_a_queued_message_waits_and_an_answer_cut_off_by_a_crash
         (thread, run)
         // Gizai crashes here: nothing else is recorded.
     };
+    data_lock::released(&data).await;
     let again = gizai_lib::open_state(data, Arc::new(|_| {})).unwrap();
     let q = chat::queue(&again.db, &thread).unwrap();
     assert!(q.len() == 1 && q[0].held, "it waits for Send now: {q:?}");

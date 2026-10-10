@@ -1,7 +1,9 @@
 //! Memory in Gizai's prompts (GA-19): the Memory block of the Team Lead's chat answers, board checks and task runs and
 //! of every agent's task run (`gizai_core::memory::prompt_block`), and the `learned` lines a run's result adds to its
 //! agent's own notes. Plain text in the prompt and a list on the result line, so it works the same on every coding CLI.
+//! At start-up, the notes agents kept in Claude Code's own memory come in (GA-85, `gizai_core::memory_import`).
 use gizai_core::memory::{self, Block, Context, Who};
+use gizai_core::memory_import::{self, Report};
 use gizai_core::model::Project;
 use gizai_core::team::Member;
 
@@ -46,6 +48,31 @@ pub fn run_block(st: &AppState, agent: &Member, role: &str, project: &Project) -
         eprintln!("gizai: reading memory for {}'s run failed: {e}", agent.name);
         Block::default()
     })
+}
+
+/// Claude Code's own memory notes into Gizai's memory, once per file (GA-85): the Markdown files in `projects/*/memory/`
+/// of every Claude Code account in Settings → Coding CLIs (its CLAUDE_CONFIG_DIR, else Gizai's, else ~/.claude) become
+/// notes in `Team Lead/Imported/`, and `Team Lead/Notes` gets an open thread to sort them. When Gizai starts, after the
+/// migrations; your home folder is $HOME (your profile folder on Windows).
+pub fn import_claude(st: &AppState) -> Report {
+    let home = gizai_core::clis::home();
+    let inherited = |name: &str| std::env::var(name).ok();
+    let day = crate::tools::ymd(gizai_core::ids::now_ms());
+    let done = memory_import::claude_dirs(&st.db, &home, &inherited)
+        .and_then(|dirs| memory_import::import(&st.db, &dirs, &home, &st.you_id, &you(st), &day));
+    match done {
+        Ok(r) => {
+            if !r.imported.is_empty() || !r.skipped.is_empty() {
+                eprintln!("gizai: {} notes came from Claude Code's own memory into Team Lead/Imported/ ({} files could not)", r.imported.len(), r.skipped.len());
+                (st.notify)(crate::runs::Note::RowsChanged("docs"));
+            }
+            r
+        }
+        Err(e) => {
+            eprintln!("gizai: importing Claude Code's own memory notes failed: {e}");
+            Report::default()
+        }
+    }
 }
 
 /// Saves the `learned` lines on a run's result line (`outcome::learned`) in its agent's own notes, dated and with the

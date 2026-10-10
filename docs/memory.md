@@ -131,8 +131,9 @@ When a task agent ends its run with `needs_decision`, the Team Lead looks at the
 1. **Who gets it.** The Team Lead takes it when the step is on (Settings → Runs → Ask the Team Lead first, on by default),
    agents aren't paused in Settings, the Team Lead (the agent with Chat on) is active, runs on a Claude Code CLI and is
    under its monthly budget, the asking agent isn't the Team Lead and its CLI can continue a session, and the limits allow
-   it: one try per question, two per card, and the question right after a Team Lead answer goes to you (no loops).
-   Otherwise, and for a `run_for_me` request, a gate's hold (QA bounces, an answer the role can't give) or a failed push,
+   it: one try per question, two per card, and the question right after a Team Lead answer goes to you (no loops; the
+   board check leaves such a question to you as well, and the Runs tab says which limit sent it). Otherwise, and for a
+   `run_for_me` request, a gate's hold (QA bounces, an answer the role can't give) or a failed push,
    the card goes to the Inbox as before.
 2. **Meanwhile.** The card stays on hold `needs_decision` but is "with the Team Lead": not in the Inbox (`tasks::needs_you`
    and the UI's `needsYou`), no notification, and the board check leaves it out. The card's Hold row says With the Team
@@ -165,7 +166,7 @@ When a task agent ends its run with `needs_decision`, the Team Lead looks at the
    wrote since are kept in `Decisions/<project name>` as the Team Lead's, with the card, once per question.
 
 The question's record is kept under `lead` in the asking run's `outcome_json` (state `asking`, `answering`, `answered`,
-`escalated`, `dropped` when you took the card over first, or `skipped`), and the Team Lead's run is stored with trigger `approval` and
+`escalated`, `dropped` when you took the card over first, `skipped`, or `limit`), and the Team Lead's run is stored with trigger `approval` and
 read as `question`: no new columns. The Runs tab shows on the asking run who answered, the answer or the reason, and what
 the Team Lead's look cost; that cost counts toward the Team Lead's budget. The Team Lead's agent page lists its runs on
 questions with their cards.

@@ -53,7 +53,7 @@ function RunRow({ r }: { r: Run }) {
         <ChevronRight className="icon sm chev" />{outcomeBadge(r)}<span className="chip-id">{r.id.slice(-8)}</span>
         <span className="grow">{r.agentName} <span className="faint">· {r.roleKey} · {triggerName(r)}</span>
           {commits && commits.length > 0 && <span className="faint"> · {commitCount(commits.length)}</span>}{reason && <span className="faint"> · {reason}</span>}
-          {r.lead && <span className="faint"> · {leadText({ ...r.lead, reason: null })}</span>}</span>
+          {r.lead && <span className="faint"> · {leadText({ ...r.lead, reason: r.lead.state === "escalated" ? null : r.lead.reason })}</span>}</span>
         <span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" title={when(r.createdAt)}>{relTime(r.createdAt)}</span>
       </button>
       {open && (

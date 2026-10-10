@@ -6,7 +6,8 @@
 //!
 //! What the Team Lead did is kept with the question: under `lead` in the asking run's `outcome_json` (state `asking`,
 //! `answering` while Gizai continues the agent, then `answered`, `escalated`, `dropped` when the card moved on without
-//! it, or `skipped` when the Team Lead can't run here at all, which goes to you as before). The Team Lead's own run is a run without a card, stored with trigger `approval` (the runs table's CHECK takes no
+//! it, or `skipped` when the Team Lead can't run here at all, which goes to you as before; `limit` when the limits sent
+//! the question to you, so the board check leaves it to you as well). The Team Lead's own run is a run without a card, stored with trigger `approval` (the runs table's CHECK takes no
 //! new trigger without rebuilding the whole table) and read as `question`, its `outcome_json` naming the run that asked.
 //! So the runs table needs no new column.
 //!
@@ -46,8 +47,9 @@ pub fn set_enabled(db: &Db, on: bool) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 pub struct LeadAnswer {
     /// `asking` (the Team Lead looks at it now), `answering` (it answered, and Gizai continues the agent), `answered`,
-    /// `escalated` (it asked you: the Inbox), `dropped` (the card moved on before it was done) or `skipped` (it can't run
-    /// here, `reason` says why: the question went to you as before).
+    /// `escalated` (it asked you: the Inbox), `dropped` (the card moved on before it was done), `skipped` (it can't run
+    /// here, `reason` says why: the question went to you as before) or `limit` (the limits sent it to you, `reason`
+    /// says which).
     pub state: String,
     /// The Team Lead.
     pub lead_id: Option<String>,
@@ -143,19 +145,24 @@ pub(crate) fn hand_over_in(w: &Writer, run_id: &str, task_id: &str, agent_id: &s
             return Ok(None);
         }
     }
+    // The limits: the question goes to the person, and the board check leaves it to them too (state `limit`).
+    let limit = |why: &str| -> Result<Option<String>> {
+        save_stored(w, run_id, &Stored { state: "limit".into(), at: ids::now_ms(), reason: Some(why.into()), ..Default::default() })?;
+        Ok(None)
+    };
     let tries: i64 = c.query_row(
         "SELECT count(*) FROM runs WHERE task_id=?1 AND id<>?2 AND json_extract(outcome_json, '$.lead.lead') IS NOT NULL
            AND json_extract(outcome_json, '$.lead.state') <> 'skipped'",
         rusqlite::params![task_id, run_id], |r| r.get(0))?;
     if tries >= MAX_PER_CARD {
-        return Ok(None);
+        return limit("the Team Lead already took two questions on this card");
     }
     // The question right after a Team Lead answer goes to the person: no loops.
     let before: Option<Option<String>> = c.query_row(
         "SELECT json_extract(outcome_json, '$.lead.state') FROM runs WHERE task_id=?1 AND id<>?2 AND outcome='needs_decision' AND deleted_at IS NULL
          ORDER BY created_at DESC, id DESC LIMIT 1", rusqlite::params![task_id, run_id], |r| r.get(0)).optional()?;
     if matches!(before.flatten().as_deref(), Some("answering" | "answered")) {
-        return Ok(None);
+        return limit("the Team Lead answered this card's last question");
     }
     save_stored(w, run_id, &Stored { state: "asking".into(), lead: Some(lead.actor_id.clone()), at: ids::now_ms(), ..Default::default() })?;
     Ok(Some(lead.actor_id))

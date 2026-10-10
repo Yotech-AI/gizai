@@ -197,10 +197,11 @@ export type Run = {
   questionTaskId?: string | null;
 };
 /** What the Team Lead did with a run's question (GA-70). state: asking (it looks at it now), answering (it answered and Gizai
- *  continues the agent), answered, escalated (it asked you: the Inbox), dropped (the card moved on before it was done) or
- *  skipped (it can't run here, reason says why: the question went to you as before). */
+ *  continues the agent), answered, escalated (it asked you: the Inbox), dropped (the card moved on before it was done),
+ *  skipped (it can't run here, reason says why: the question went to you as before) or limit (the limits sent it to you,
+ *  reason says which). */
 export type LeadAnswer = {
-  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | "skipped" | string;
+  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | "skipped" | "limit" | string;
   leadId?: string | null;
   /** The Team Lead's run on the question. */
   runId?: string | null;

@@ -224,8 +224,9 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                         answer: Some(body),
                         ..base("answered", "answered", at, last_agent, "A person answered after the card was put on hold".into())
                     },
-                    // GA-70: the Team Lead already looked at this question and asked the user (the Inbox): it waits for them.
-                    None if card.lead.as_deref() == Some("escalated") => continue,
+                    // GA-70: the Team Lead already looked at this question and asked the user (the Inbox), or its limits
+                    // sent it to them (no loops): it waits for them.
+                    None if matches!(card.lead.as_deref(), Some("escalated" | "limit")) => continue,
                     None => {
                         let why = card.hold_reason.clone().filter(|r| !r.trim().is_empty()).unwrap_or_else(|| "no reason given".into());
                         base("held", hold, card.hold_at, last_agent, format!("On hold ({hold}): {why}"))

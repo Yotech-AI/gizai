@@ -320,6 +320,8 @@ fn budget(a: &Args, cur: Option<i64>) -> Result<Option<i64>, String> {
 
 fn agent_result(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
     cx.changed("actors");
+    // A new name, or joining or leaving a shared memory folder (GA-96), moves notes.
+    cx.changed("docs");
     let m = team::agent(cx.db(), id).map_err(err)?;
     let columns = gizai_core::columns::of_agent(cx.db(), &m.actor_id).unwrap_or_default();
     Ok(json!({"ok": true, "done": what, "agent": {"id": m.actor_id, "name": m.name, "role": m.role_key, "status": m.status, "columns": columns},
@@ -341,8 +343,19 @@ fn runs_on(cx: &Cx<'_>, a: &Args) -> Result<Option<gizai_core::clis::Cli>, Strin
     Ok(Some(c.clone()))
 }
 
+/// Memory (GA-96): `shares_memory_with` as the agent's id; Some("") for its own folder ("none" or empty); None when not
+/// given. A name no agent has is refused, so nothing changes.
+fn shares_memory_with(cx: &Cx<'_>, a: &Args) -> Result<Option<String>, String> {
+    let Some(want) = a.text("shares_memory_with") else { return Ok(None) };
+    if want.is_empty() || ["none", "own", "own folder", "its own folder"].contains(&want.to_lowercase().as_str()) {
+        return Ok(Some(String::new()));
+    }
+    Ok(Some(resolve::agent(cx, &want)?.actor_id))
+}
+
 pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     guard_agent_powers(a)?;
+    let shares = shares_memory_with(cx, a)?;
     let cli = runs_on(cx, a)?;
     // Only Claude Code has a model list to check against; Codex and Gemini take their own model names.
     if cli.as_ref().is_none_or(|c| c.kind == "claude_code") {
@@ -358,6 +371,7 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         allowed_tools, wakeup: String::new(),
         heartbeat_minutes: None, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
         max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None, use_memory: None,
+        shares_memory_with: shares,
     }).map_err(err)?;
     agent_result(cx, &id, "created")
 }
@@ -365,6 +379,7 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
 pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     guard_agent_powers(a)?;
     let m = resolve::agent(cx, &a.req("agent")?)?;
+    let shares = shares_memory_with(cx, a)?;
     // Moved to another kind of CLI: its model, effort and permission mode don't carry over unless given (the CLI's defaults).
     let kind_now = crate::clis::of_agent(cx.st, m.adapter.as_deref()).map(|c| c.kind).unwrap_or_default();
     let new_cli = runs_on(cx, a)?;
@@ -386,7 +401,7 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         wakeup: m.wakeup.clone().unwrap_or_default(),
         heartbeat_minutes: m.heartbeat_minutes,
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
-        board_check_minutes: a.int("board_check_minutes")?, folders: None, use_memory: None,
+        board_check_minutes: a.int("board_check_minutes")?, folders: None, use_memory: None, shares_memory_with: shares,
     }).map_err(err)?;
     crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "updated")

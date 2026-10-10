@@ -198,7 +198,7 @@ pub fn rename_doc(app: AppHandle, st: State<AppState>, id: String, title: String
 
 // ---- memory (GA-19; the Memory page is GA-68) ----
 /// An agent's own notes in Memory: the Team Lead's `Team Lead/Notes` (made the first time), another agent's
-/// `Agents/<name>/Notes`; None when it has none.
+/// `Agents/<name>/Notes`, or for an agent that shares another agent's folder (GA-96) that folder's; None when it has none.
 #[tauri::command]
 pub fn agent_notes(app: AppHandle, st: State<AppState>, agent_id: String) -> R<Option<gizai_core::memory::Note>> {
     use gizai_core::memory::{self, Who};
@@ -214,8 +214,11 @@ pub fn agent_notes(app: AppHandle, st: State<AppState>, agent_id: String) -> R<O
         }
         return memory::get(&st.db, &you, &id).map(Some).map_err(e);
     }
-    Ok(memory::list(&st.db, &you).map_err(e)?.into_iter()
-        .find(|n| n.owner_id.as_deref() == Some(agent_id.as_str()) && n.title().eq_ignore_ascii_case(memory::NOTES)))
+    let owner = agent.shares_memory_with.unwrap_or(agent_id);
+    let notes: Vec<memory::Note> = memory::list(&st.db, &you).map_err(e)?.into_iter()
+        .filter(|n| n.owner_id.as_deref() == Some(owner.as_str()) && n.title().eq_ignore_ascii_case(memory::NOTES)).collect();
+    // The one right in its folder first.
+    Ok(notes.iter().find(|n| n.path.split('/').count() == 3).or(notes.first()).cloned())
 }
 /// The Memory page (GA-68) works as you, a person: you read and write every note.
 fn as_you(st: &State<AppState>) -> gizai_core::memory::Who { gizai_core::memory::Who::Person(st.you_id.clone()) }
@@ -335,6 +338,8 @@ pub fn add_team(app: AppHandle, st: State<AppState>, name: String) -> R<String> 
 pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: AgentInput) -> R<String> {
     let id = team::add_agent(&st.db, &st.you_id, &team_id, input).map_err(e)?;
     changed(&app, "actors");
+    // Its memory folder, or the one it shares (GA-96).
+    changed(&app, "docs");
     // It landed on its role's usual columns: it may take their waiting cards.
     changed(&app, "workflow_states");
     pull_soon(&st);
@@ -344,6 +349,8 @@ pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: Ag
 pub fn update_agent(app: AppHandle, st: State<AppState>, actor_id: String, input: AgentInput) -> R<()> {
     team::update_agent(&st.db, &st.you_id, &actor_id, input).map_err(e)?;
     changed(&app, "actors");
+    // A new name moves its memory folder, and joining or leaving a shared folder moves notes (GA-96).
+    changed(&app, "docs");
     resume(&st, &actor_id);
     Ok(())
 }

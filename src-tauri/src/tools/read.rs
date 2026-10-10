@@ -213,6 +213,17 @@ pub(crate) fn get_agent(cx: &Cx, a: &Args) -> Result<Value, String> {
     v["fetch_domains"] = json!(c.fetch_domains);
     v["browser"] = json!(m.tools.browser_on());
     v["builtin_tools_on"] = json!(c.builtin);
+    // Memory: its switch, and the folder its notes are in (GA-96): its own, or the one it shares with another agent.
+    let agents: Vec<team::Member> = team::all_agents(cx.db()).map_err(err)?.into_iter().map(|(_, x)| x).collect();
+    let owner = m.shares_memory_with.as_ref().map(|id| agents.iter().find(|x| x.actor_id == *id).map(|x| x.name.clone()).unwrap_or_else(|| id.clone()));
+    v["use_memory"] = json!(m.use_memory);
+    v["shares_memory_with"] = json!(owner);
+    v["memory_folder"] = json!(if m.is_lead || m.chat_enabled {
+        format!("{}/", gizai_core::memory::LEAD)
+    } else {
+        format!("{}/{}/", gizai_core::memory::AGENTS, gizai_core::memory::folder_name(owner.as_deref().unwrap_or(&m.name)))
+    });
+    v["shared_by"] = json!(agents.iter().filter(|x| x.shares_memory_with.as_deref() == Some(m.actor_id.as_str())).map(|x| x.name.clone()).collect::<Vec<_>>());
     v["instructions_md"] = json!(m.instructions_md);
     let recent: Vec<Value> = runs::list_for_agent(cx.db(), &m.actor_id, 10).map_err(err)?.into_iter().map(|r| json!({
         "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "cost_usd": usd(r.cost_usd_micros), "error": r.error,

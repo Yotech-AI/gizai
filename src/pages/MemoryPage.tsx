@@ -3,8 +3,9 @@
 // with the search (words, "phrases", path: and tag:) above it; in the centre the note (NotePane) or, with none open,
 // Recently changed (who wrote what, so agents' additions can be reviewed) or what memory is; on the right the note's
 // panel. #/memory shows every note (the Team Lead's view), #/memory/shared the shared folders and
-// #/memory/agent/<id> one agent's own folder (router.ts). GA-69: Notes | Graph switches to the graph of those notes
-// (#/memory/graph and the like), and beside an open note the local graph can take the panel's place.
+// #/memory/agent/<id> one agent's own folder, or the folder it shares with other agents (GA-96) (router.ts). GA-69:
+// Notes | Graph switches to the graph of those notes (#/memory/graph and the like), and beside an open note the local
+// graph can take the panel's place.
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -20,7 +21,7 @@ import { openItem } from "../lib/openItem";
 import { GRAPH_DEFAULTS, parseGraphPrefs, type GraphNode, type GraphPrefs } from "../lib/graph";
 import { GlobalGraph, LocalGraph } from "../components/memory/MemoryGraph";
 import {
-  AGENTS, buildTree, findFolder, folderOf, foldersTo, hasTag, highlight, inScope, isNoteFolder, isOwnFolder, LEAD, leadOf, linkedNote, memoryScope, moveTarget, newNotePath,
+  AGENTS, buildTree, findFolder, folderOf, foldersTo, hasTag, highlight, inScope, isNoteFolder, isOwnFolder, LEAD, leadOf, linkedNote, memoryHome, memoryScope, moveTarget, newNotePath,
   notesIn, noteTemplate, NOTE_TYPES, rebase, scopedQuery, scopeRoots, searchWords, section, titleOf, titleProblem, today, TYPE_FOLDER, TYPE_HINT,
   TYPE_NAME, withoutFrontmatter, type MemoryScope, type NoteType, type TreeFolder, type WikiLink,
 } from "../lib/memory";
@@ -52,10 +53,13 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   const lead = leadOf(agents);
   const agent = route.scope && route.scope !== "shared" ? agents.find((a) => a.actorId === route.scope) ?? null : null;
   const notes = all.data ?? [];
+  // An agent that shares another agent's folder (GA-96) opens that folder, its group's.
+  const home = agent ? memoryHome(agent, agents, notes) : null;
   // An agent's folder by its name; before the team is there (or for an agent that is gone), by its notes.
   const own = route.scope && !agent ? notes.find((n) => n.ownerId === route.scope && n.path.startsWith("Agents/"))?.path.split("/")[1] : undefined;
-  const scope = memoryScope(route.scope, agent?.name ?? own);
-  const scoped = useMemo(() => notes.filter((n) => inScope(n, scope)), [notes, route.scope, agent?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+  const scope = memoryScope(home?.ownerId ?? route.scope, home?.name ?? own);
+  const scopeKey = JSON.stringify(scope);
+  const scoped = useMemo(() => notes.filter((n) => inScope(n, scope)), [notes, scopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [tag, setTag] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -67,7 +71,8 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   const [hover, setHover] = useState<Hover | null>(null);
   const timers = useRef<{ show?: number; hide?: number }>({});
 
-  const scopeName = scope.kind === "agent" ? agent?.name ?? own ?? "Agent" : scope.kind === "shared" ? "Shared notes" : lead?.name ?? "All notes";
+  const scopeName = scope.kind === "agent" ? (home?.shares ? `${agent?.name} · ${home.name}'s folder` : agent?.name ?? own ?? "Agent")
+    : scope.kind === "shared" ? "Shared notes" : lead?.name ?? "All notes";
   const open = (note: MemoryNote, heading?: string) => {
     setHover(null);
     setJump(heading ? { id: note.id, heading } : null);
@@ -108,7 +113,6 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   // The note open last: Notes opens it again, and the graph shows it in the accent.
   const lastNote = useRef<string | null>(null);
   if (route.id) lastNote.current = route.id;
-  const scopeKey = JSON.stringify(scope);
   const inPage = useMemo(() => (n: MemoryNote) => inScope(n, scope), [scopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
   /** A dot opens what it is: a note; for a link that finds none, New note with its name; a tag shows its notes in the
    *  tree; a card, project, client, agent or person its page. */

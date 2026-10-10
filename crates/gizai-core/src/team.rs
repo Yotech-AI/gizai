@@ -55,6 +55,9 @@ pub struct Member {
     pub cli_tools: crate::mcp_servers::CliTools,
     /// Memory (GA-19): its runs get a Memory section and its `learned` lines are kept (agent form; on by default).
     pub use_memory: bool,
+    /// Memory (GA-96): the agent whose memory folder it shares, its group's owner (agent form → Shares memory with);
+    /// None: its own folder.
+    pub shares_memory_with: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +112,7 @@ pub struct Team {
 const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g.adapter, g.instructions_md, a.handle, a.status, m.is_lead,
         g.model, g.permission_mode, g.allowed_tools_json, g.wakeup, g.heartbeat_minutes, g.budget_usd_micros, g.last_heartbeat_at, m.team_id,
         COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1), g.board_check_minutes, g.board_checked_at, g.board_check_paused,
-        g.folders_json, g.mcp_extra_json, COALESCE(g.use_memory, 1)
+        g.folders_json, g.mcp_extra_json, COALESCE(g.use_memory, 1), g.shares_memory_with
      FROM team_members m JOIN actors a ON a.id = m.actor_id LEFT JOIN agent_configs g ON g.actor_id = a.id";
 
 fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
@@ -125,7 +128,7 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
                 board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)?,
                 folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default(),
                 tools: crate::mcp_servers::parse_tools(extra.as_deref()), cli_tools: crate::mcp_servers::parse_cli_tools(extra.as_deref()),
-                use_memory: r.get::<_, i64>(26)? != 0 })
+                use_memory: r.get::<_, i64>(26)? != 0, shares_memory_with: r.get(27)? })
 }
 
 /// Every agent of every team, with its team id (for the heartbeat scheduler).
@@ -390,7 +393,12 @@ fn insert_agent(w: &crate::db::Writer, actor: &str, team_id: &str, a: &CleanAgen
     if input.use_memory == Some(false) {
         c.execute("UPDATE agent_configs SET use_memory = 0 WHERE actor_id = ?1", [&id])?;
     }
-    // Its own memory folder, Agents/<name>/, with a Notes note (the Team Lead's Team Lead/Notes is made on first use).
+    // The agent whose memory folder it shares (GA-96), else its own folder.
+    if let Some(with) = input.shares_memory_with.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        crate::memory::set_shares_in(w, actor, &id, Some(with))?;
+    }
+    // Its own memory folder, Agents/<name>/, with a Notes note, unless it shares one (the Team Lead's Team Lead/Notes is
+    // made on first use).
     crate::memory::ensure_agent_notes_in(w, &id)?;
     Ok(id)
 }
@@ -441,6 +449,12 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
             Some(false) => { c.execute("UPDATE agent_configs SET chat_enabled=0 WHERE actor_id=?1", [actor_id])?; }
             None => {}
         }
+        // Memory (GA-96): the folder it shares, else its own; the Team Lead keeps its notes in Team Lead/, so an agent that
+        // became it shares no folder and a group it owned goes on with its next agent.
+        if let Some(with) = input.shares_memory_with.as_deref().map(str::trim) {
+            crate::memory::set_shares_in(w, actor, actor_id, Some(with).filter(|s| !s.is_empty()))?;
+        }
+        crate::memory::lead_leaves_in(w, actor, actor_id)?;
         w.update("agent_configs", actor_id, serde_json::json!({"name": a.name, "role": a.role, "adapter": a.adapter, "permission_mode": a.permission_mode,
             "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes, "model": a.model, "effort": a.effort, "max_runs": input.max_runs, "board_check_minutes": input.board_check_minutes, "instructions_changed": instructions.is_some(),
             "folders_changed": a.folders_json.is_some()}))

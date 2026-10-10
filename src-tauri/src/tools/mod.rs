@@ -253,7 +253,7 @@ const AGENT_FIELDS: [(&str, &str, &str); 10] = [
     ("instructions_md", "string", "Instructions sent with every run (Markdown). Omit on create to use the role's template; it must end by asking for the GIZAI_RESULT line"),
     ("cards_at_once", "integer", "How many cards it works on at the same time, each in its own git worktree (1–10, default 1)"),
     ("permission_mode", "string", "Permission mode for task runs, in its CLI's terms. Claude Code: acceptEdits (the usual), dontAsk, auto, plan or manual. Codex: workspace-write (the usual) or read-only. Gemini: auto_edit (the usual), plan or default"),
-    ("allowed_tools", "string[]", "Commands it may run without asking, like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
+    ("allowed_tools", "string[]", "Commands it may run without asking, each as Bash(…), like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
     ("monthly_budget_usd", "number", "Monthly spending cap in dollars; empty = no cap"),
     ("title", "string", "Job title shown on the team page"),
 ];
@@ -326,7 +326,7 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions and allowed commands unless instructions_md or allowed_tools is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
-        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change) and its MCP servers and their tools are set only by the user, in the agent form.",
+        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change), its MCP servers and their tools, web search, fetching pages, the browser and its CLI's built-in tools are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
         tool("set_agent_status", "Pauses an agent (no new cards; its running cards finish) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
         tool("add_column", "Adds a column to the board, right after another one, and optionally sets it up. Backlog, review, done and cancelled columns take no agents; an Auto column needs a next column.",

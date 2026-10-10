@@ -87,6 +87,19 @@ pub struct TaskRun {
     pub mcp_config: Option<PathBuf>,
     /// Claude Code: more tools to refuse, like the MCP tools switched off (`mcp_run::permissions`).
     pub disallowed_tools: Vec<String>,
+    /// The agent's Web switches (agent form → Tools → Web), in each CLI's own terms (`task_exec`).
+    pub web: WebTools,
+}
+
+/// The Web switches of a run. Claude Code gets `WebSearch` and `WebFetch` (or one `WebFetch(domain:…)` per domain) in its
+/// allowed tools; Codex `web_search="live"`, or `"disabled"` when off; Gemini `web_fetch` among its allowed tools (its web
+/// search is its own policy's). Off by default.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebTools {
+    pub search: bool,
+    pub fetch: bool,
+    /// Claude Code: only these domains; none = any page.
+    pub fetch_domains: Vec<String>,
 }
 
 /// One of the agent's folders for a run (absolute, as it is on disk).
@@ -150,7 +163,9 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
         Kind::ClaudeCode => ClaudeArgs {
             bin: cli.bin.clone(), prompt: run.prompt.clone(), session_id: run.session_id.clone(), resume: run.resume,
             permission_mode: if run.permission_mode.is_empty() { "acceptEdits".into() } else { run.permission_mode.clone() },
-            allowed_tools: run.allowed_tools.clone(), model: run.model.clone(), max_budget_usd: run.max_budget_usd,
+            allowed_tools: run.allowed_tools.iter().cloned()
+                .chain(crate::tool_catalog::claude_web_rules(run.web.search, run.web.fetch, &run.web.fetch_domains)).collect(),
+            model: run.model.clone(), max_budget_usd: run.max_budget_usd,
             // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
             // for headless agents.
             disable_hooks: true, disable_skills: true, effort: run.effort.clone(), env: cli.env.clone(),
@@ -190,6 +205,8 @@ fn codex_args(run: &TaskRun) -> Vec<String> {
         a.extend(["-c".into(), format!("model_reasoning_effort={}", toml_str(e))]);
     }
     a.extend(["-c".into(), r#"approval_policy="never""#.into()]);
+    // Web search only when the agent has it on: Codex 0.154 takes "live", "indexed", "cached" or "disabled".
+    a.extend(["-c".into(), if run.web.search { r#"web_search="live""# } else { r#"web_search="disabled""# }.into()]);
     match run.permission_mode.as_str() {
         "danger-full-access" => a.push("--dangerously-bypass-approvals-and-sandbox".into()),
         "read-only" => a.extend(["-c".into(), r#"sandbox_mode="read-only""#.into()]),
@@ -232,6 +249,10 @@ fn gemini_args(run: &TaskRun) -> Vec<String> {
     a.extend([if run.resume { "--resume" } else { "--session-id" }.into(), run.session_id.clone()]);
     for t in run.allowed_tools.iter().filter_map(|t| gemini_tool(t)) {
         a.push(format!("--allowed-tools={t}"));
+    }
+    // Fetching pages only when the agent has it on (Gemini can't limit it to some domains).
+    if run.web.fetch {
+        a.push("--allowed-tools=web_fetch".into());
     }
     // Gemini's file tools may use these folders as well as the worktree, read and write: it has no read-only folder.
     for f in run.folders.iter().filter(|f| f.change) {

@@ -84,6 +84,8 @@ export type Member = {
   folders?: AgentFolder[];
   /** Its MCP servers switched on or off, with the tools switched off of each (agent form → Tools). */
   tools?: AgentTools;
+  /** Its CLI's own tools switched on: web search, fetching pages, built-in tools (agent form → Tools). */
+  cliTools?: CliTools;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -397,3 +399,30 @@ export type AgentServerView = {
   tools: McpToolView[]; summary: string; risk: string;
 };
 export type AgentMcpView = { disabled?: string | null; warning?: string | null; servers: AgentServerView[] };
+/** The CLI's own tools an agent has on (agent form → Tools; saved apart from the rest). Everything is off until switched on. */
+export type CliTools = {
+  webSearch: boolean; webFetch: boolean;
+  /** Only these domains for fetching; none = any page. */
+  fetchDomains: string[];
+  /** The browser accepts self-signed certificates (local .test sites). */
+  insecureCerts: boolean;
+  /** The CLI's other tools switched on, by name. */
+  builtin: string[];
+};
+/** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | switch | always | elsewhere | off. */
+export type CatalogTool = { id: string; label: string; group: string; description: string; risk: string; how: string; note: string; reported: boolean };
+/** What the hidden browser needs, found or not; `missing` says what to install. */
+export type BrowserNeeds = { node?: string | null; nodeVersion?: string | null; npx?: string | null; browser?: string | null; browserName?: string | null; missing: string[] };
+/** The agent form's Web, Browser and Built-in tools for the CLI picked in the form. */
+export type ToolsView = {
+  kind: CliKind;
+  /** Why the CLI can't take each Web switch; null = it can. */
+  web: { search?: string | null; fetch?: string | null; domains?: string | null };
+  browser: { disabled?: string | null; needs: BrowserNeeds; version: string; lastRun?: { status: string; at: number } | null;
+    tools: McpToolView[]; summary: string; risk: string };
+  builtin: { tools: CatalogTool[]; source: string; canAsk: boolean };
+  saved?: CliTools | null;
+};
+/** The built-in browser in Settings → MCP servers: only its version and browser program change. */
+export type BrowserEntry = { version: string; program: string };
+export type BrowserView = BrowserEntry & { id: string; command: string; needs: BrowserNeeds; problem?: string | null; listed?: McpListed | null; usedBy: string[] };

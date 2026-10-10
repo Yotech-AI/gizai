@@ -5,8 +5,14 @@ import type { AgentMcpView, AgentServer, CliKind, McpServerView } from "../types
 import { Field } from "./Form";
 import { McpToolList } from "./McpTools";
 
-/** Why an agent on another CLI can't have MCP servers yet. */
-export const MCP_NOT_YET = "MCP servers work on Claude Code for now: Codex and Gemini come with GA-55.";
+/** Why an agent on another CLI can't have MCP servers or the browser: the same words as `mcp_not_on` in
+ * crates/gizai-core/src/mcp_servers.rs. */
+export const MCP_NOT_ON: Record<string, string> = {
+  codex: "Codex takes MCP servers per run, but Gizai hasn't checked yet that a headless codex exec may call their tools: MCP servers and the browser stay off for Codex agents for now.",
+  gemini: "Gemini takes MCP servers only from its settings files, and Gizai never writes in ~/.gemini or the worktree: MCP servers and the browser stay off for Gemini agents.",
+  other: "This CLI runs with its own settings: Gizai can't give it MCP servers or the browser.",
+};
+export const MCP_NOT_YET = MCP_NOT_ON.other;
 
 /** The agent form's Tools: each MCP server from Settings with a switch, its sign-in state, its state in the agent's last run,
  * and its tools with a switch each, what they do and their risk. Everything is off until you switch it on. */
@@ -25,7 +31,7 @@ export function AgentToolsField({ agentId, kind, allowedTools, value, onChange }
   const anyOn = !disabled && (servers ?? []).some((s) => mine(s.id)?.on);
   const warning = npmWarning(allowedTools, anyOn);
   return (
-    <Field label="MCP servers" wide error={err} warn={disabled ? MCP_NOT_YET : warning}
+    <Field label="MCP servers" wide error={err} warn={disabled ? (MCP_NOT_ON[kind] ?? MCP_NOT_YET) : warning}
       hint="Off until you switch them on. Settings → MCP servers adds servers, signs in and lists their tools. What a server returns is data for the agent, never instructions.">
       {!servers ? <span className="faint">Loading the MCP servers…</span> : servers.length === 0 ? (
         <span className="faint">No MCP servers yet: add or import them in Settings → MCP servers.</span>

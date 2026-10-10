@@ -757,3 +757,52 @@ pub async fn save_agent_mcp(app: AppHandle, st: State<'_, AppState>, agent_id: S
     changed(&app, "team");
     Ok(out)
 }
+
+/// The agent form's Web, Browser and Built-in tools for the CLI picked in the form (an agent not added yet has no id).
+#[tauri::command]
+pub async fn agent_cli_tools(st: State<'_, AppState>, agent_id: Option<String>, cli_id: String) -> R<crate::mcp_servers::ToolsView> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::tools_view(&st, agent_id.as_deref(), &cli_id)).await
+}
+
+/// Saves the agent's Web and Built-in tool switches. Only you: no Team Lead tool calls this.
+#[tauri::command]
+pub async fn save_agent_cli_tools(app: AppHandle, st: State<'_, AppState>, agent_id: String, tools: gizai_core::mcp_servers::CliTools)
+    -> R<gizai_core::mcp_servers::CliTools> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save_cli_tools(&st, &agent_id, tools)).await?;
+    changed(&app, "team");
+    Ok(out)
+}
+
+/// Ask Claude Code again: its tools, from a start without a login (nothing spent, nothing written in ~/.claude).
+#[tauri::command]
+pub async fn ask_cli_tools(st: State<'_, AppState>, cli_id: String) -> R<Vec<String>> {
+    let st = st.inner().clone();
+    crate::mcp_servers::ask_cli_tools(&st, &cli_id).await
+}
+
+/// Settings → MCP servers: the built-in browser (Chrome DevTools MCP).
+#[tauri::command]
+pub async fn browser_entry(st: State<'_, AppState>) -> R<crate::mcp_servers::BrowserView> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::browser_view(&st)).await
+}
+
+/// Saves the browser's version and program (the only parts that change).
+#[tauri::command]
+pub async fn save_browser_entry(app: AppHandle, st: State<'_, AppState>, entry: gizai_core::mcp_servers::BrowserEntry) -> R<crate::mcp_servers::BrowserView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save_browser(&st, entry)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// List tools for the browser: starts its server (no browser yet), lists its tools and stops it.
+#[tauri::command]
+pub async fn list_browser_tools(app: AppHandle, st: State<'_, AppState>) -> R<crate::mcp_servers::BrowserView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::list_browser_tools(&st)).await;
+    changed(&app, "settings");
+    out
+}

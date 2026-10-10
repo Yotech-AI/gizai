@@ -8,7 +8,7 @@ use gizai_agents::mcp_client::{self, ListError, Target, Transport};
 use gizai_agents::mcp_run::{self, RunServer};
 use gizai_agents::mcp_tools::{self, ToolView};
 use gizai_agents::oauth::{self, TokenProblem};
-use gizai_agents::{mcp_import, secrets::Keychain};
+use gizai_agents::{browser, mcp_import, secrets::Keychain};
 use gizai_core::mcp_servers::{self as core_mcp, AgentTools, LastRun, McpServer};
 use gizai_core::team::Member;
 use serde::{Deserialize, Serialize};
@@ -475,10 +475,16 @@ pub fn npm_warning(allowed_tools: &[String], any_on: bool) -> Option<String> {
         Take npm and npx out of its commands, or switch the server off.".to_string())
 }
 
+/// The same warning when web search, fetching pages or the browser is on: a page could try to make it run code.
+pub fn npm_web_warning(allowed_tools: &[String], web_on: bool) -> Option<String> {
+    npm_warning(allowed_tools, web_on).map(|_| "This agent may run npm or npx, and web search, fetching pages or the browser is on: a web page \
+        could try to make it run code. Take npm and npx out of its commands, or switch those off.".to_string())
+}
+
 pub fn agent_view(st: &AppState, agent_id: &str) -> Result<AgentMcpView, String> {
     let agent = gizai_core::team::agent(&st.db, agent_id).map_err(|e| e.to_string())?;
     let kind = crate::clis::of_agent(st, agent.adapter.as_deref()).map(|c| c.kind).unwrap_or_default();
-    let disabled = (kind != "claude_code").then(|| "MCP servers work on Claude Code for now: Codex and Gemini come with GA-55.".to_string());
+    let disabled = core_mcp::mcp_not_on(&kind).map(str::to_string);
     let last = core_mcp::last_runs(&st.db).map_err(|e| e.to_string())?.remove(agent_id).unwrap_or_default();
     let servers = list(st)?.into_iter().map(|v| {
         let mine = agent.tools.mcp.iter().find(|o| o.server_id == v.server.id);
@@ -515,7 +521,18 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
     }
     let servers = core_mcp::list(&st.db).unwrap_or_default();
     let lists = core_mcp::tool_lists(&st.db).unwrap_or_default();
+    let known = |id: &str| lists.get(id).map(|c| c.tools.iter().filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string)).collect())
+        .unwrap_or_default();
     for a in on {
+        // The built-in browser: always hidden with a throwaway profile, its options checked (`browser_target`).
+        if a.server_id == core_mcp::BROWSER {
+            match browser_target(st, agent.cli_tools.insecure_certs) {
+                Ok(t) => out.push(RunServer { name: core_mcp::BROWSER.into(), entry: mcp_run::stdio(&t.command, &t.args, &t.env),
+                                              tools_off: a.tools_off.clone(), known_tools: known(core_mcp::BROWSER) }),
+                Err(e) => notes.push(format!("Left out the browser ({}): {e}. Settings → MCP servers says what it needs.", core_mcp::BROWSER)),
+            }
+            continue;
+        }
         let Some(s) = servers.iter().find(|s| s.id == a.server_id) else { continue };
         // A name the list doesn't take (only in a list saved before its rules): its tools could pass for Gizai's own.
         if let Some(why) = core_mcp::name_problem(&[], &s.name, &s.id) {
@@ -551,5 +568,235 @@ pub fn record_states(st: &AppState, agent_id: &str, states: &[gizai_agents::stre
     let pairs: Vec<(String, String)> = states.iter().map(|s| (s.name.clone(), s.status.clone())).collect();
     if let Err(e) = core_mcp::set_last_run(&st.db, agent_id, &pairs) {
         eprintln!("gizai: couldn't keep the MCP servers' states of {agent_id}'s run: {e}");
+    }
+}
+
+// ---- the built-in browser (Chrome DevTools MCP) ----
+
+/// The npx that starts the browser's server: `GIZAI_NPX` when set (tests point it at a fake), else the one on your login
+/// shell's PATH.
+fn npx(path: &std::ffi::OsStr) -> Result<String, String> {
+    if let Some(p) = std::env::var("GIZAI_NPX").ok().filter(|p| !p.trim().is_empty()) {
+        return Ok(p);
+    }
+    browser::on_path("npx", path).map(|p| p.display().to_string())
+        .ok_or_else(|| format!("npx isn't found: install {} (npx comes with it)", browser::NODE_NEEDED))
+}
+
+/// What a run (or List tools) starts for the browser: npx with the pinned server, always hidden with a throwaway profile,
+/// nothing sent to Google, and the browser program set or found (never Brave). Its options are checked once more.
+fn browser_target(st: &AppState, insecure_certs: bool) -> Result<Target, String> {
+    let entry = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
+    let path = crate::runs::command_path();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let program = browser::program_for_run(&entry.program, &home, &path)?;
+    let args = browser::args(&entry.version, program.as_deref(), insecure_certs);
+    browser::safe(&args)?;
+    Ok(Target { transport: Transport::Stdio, command: npx(&path)?, args, env: browser::env(&path), cwd: None, url: String::new(), headers: vec![] })
+}
+
+/// The built-in browser as Settings → MCP servers shows it, at the top of the list.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserView {
+    /// Its id and name: `chrome-devtools`.
+    pub id: String,
+    pub version: String,
+    /// The browser program you set; empty = Google Chrome, else Chromium, as Gizai finds them.
+    pub program: String,
+    /// The command a run starts, as you would type it.
+    pub command: String,
+    /// Node, npx and the browser: found or what to install.
+    pub needs: browser::Needs,
+    pub problem: Option<String>,
+    pub listed: Option<Listed>,
+    /// The agents that have it on.
+    pub used_by: Vec<String>,
+}
+
+pub fn browser_view(st: &AppState) -> Result<BrowserView, String> {
+    let entry = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
+    let path = crate::runs::command_path();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let needs = browser::needs(&path, &entry.program, &home);
+    let program = browser::program_for_run(&entry.program, &home, &path).ok().flatten();
+    let command = format!("npx {}", browser::args(&entry.version, program.as_deref(), false).join(" "));
+    let cached = core_mcp::tool_lists(&st.db).map_err(|e| e.to_string())?.remove(core_mcp::BROWSER);
+    let listed = cached.as_ref().filter(|c| c.listed_at > 0).map(|c| Listed {
+        server_name: c.server_name.clone(), server_version: c.server_version.clone(), listed_at: c.listed_at, tools: mcp_tools::describe_all(&c.tools),
+    });
+    let used_by = gizai_core::team::all_agents(&st.db).map_err(|e| e.to_string())?.into_iter().map(|(_, m)| m)
+        .filter(|m| m.tools.browser_on()).map(|m| m.name).collect();
+    Ok(BrowserView { id: core_mcp::BROWSER.into(), version: entry.version, program: entry.program, command, needs,
+                     problem: cached.and_then(|c| c.problem), listed, used_by })
+}
+
+/// Saves the browser's version and program (only those can change). Brave's program, a path that isn't a program, and a
+/// version that isn't exact are refused. Another version lists other tools, so what List tools found goes.
+pub fn save_browser(st: &AppState, entry: core_mcp::BrowserEntry) -> Result<BrowserView, String> {
+    if !entry.program.trim().is_empty() {
+        browser::check_program(&entry.program, &std::env::var("HOME").unwrap_or_default())?;
+    }
+    let old = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
+    let saved = core_mcp::set_browser(&st.db, entry).map_err(|e| e.to_string())?;
+    if saved.version != old.version {
+        let _ = core_mcp::change_tool_list(&st.db, core_mcp::BROWSER, |t| *t = Default::default());
+    }
+    browser_view(st)
+}
+
+/// List tools for the browser: starts the pinned server (which starts no browser until a tool is called), lists its tools
+/// and stops it. The first time npx fetches the package, which may take up to 2 minutes.
+pub fn list_browser_tools(st: &AppState) -> Result<BrowserView, String> {
+    let t = match browser_target(st, false) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = core_mcp::change_tool_list(&st.db, core_mcp::BROWSER, |c| c.problem = Some(e.clone()));
+            return Err(e);
+        }
+    };
+    match mcp_client::list_tools(&t, LIST_TIMEOUT) {
+        Ok(l) => core_mcp::set_tool_list(&st.db, core_mcp::BROWSER, &core_mcp::ToolList {
+            server_name: l.server_name, server_version: l.server_version, listed_at: gizai_core::ids::now_ms(), tools: l.tools,
+            needs_sign_in: false, www_authenticate: String::new(), problem: None,
+        }).map_err(|e| e.to_string())?,
+        Err(ListError::Failed(why)) | Err(ListError::NeedsSignIn { www_authenticate: why }) => {
+            core_mcp::change_tool_list(&st.db, core_mcp::BROWSER, |c| c.problem = Some(why)).map_err(|e| e.to_string())?;
+        }
+    }
+    browser_view(st)
+}
+
+// ---- the CLI's own tools (agent form → Tools → Web, Browser, Built-in tools) ----
+
+/// What the agent's CLI can be given of the Web switches: each None when it can, else why not.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSupport {
+    pub search: Option<String>,
+    pub fetch: Option<String>,
+    pub domains: Option<String>,
+}
+
+/// The Browser section: the agent's switch, why its CLI can't have it, what the browser needs, its tools.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserSection {
+    pub disabled: Option<String>,
+    pub needs: browser::Needs,
+    pub version: String,
+    pub last_run: Option<LastRun>,
+    pub tools: Vec<ToolView>,
+    pub summary: String,
+    pub risk: String,
+}
+
+/// The Built-in tools section: the catalog merged with what the CLI reported, and where the list comes from.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinSection {
+    pub tools: Vec<gizai_agents::tool_catalog::CatalogTool>,
+    /// Where the list comes from, in plain words.
+    pub source: String,
+    /// The CLI can be asked for its tools (Claude Code: Ask Claude Code again).
+    pub can_ask: bool,
+}
+
+/// The agent form's Tools besides the MCP servers, for the CLI picked in the form (`cli_id`) and the agent, if it exists.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsView {
+    pub kind: String,
+    pub web: WebSupport,
+    pub browser: BrowserSection,
+    pub builtin: BuiltinSection,
+    /// The agent's saved switches (None for a new agent).
+    pub saved: Option<core_mcp::CliTools>,
+}
+
+fn ago(at: i64) -> String {
+    let mins = (gizai_core::ids::now_ms() - at).max(0) / 60_000;
+    match mins {
+        0 => "just now".into(),
+        1..=59 => format!("{mins} min ago"),
+        60..=2879 => format!("{} h ago", mins / 60),
+        _ => format!("{} days ago", mins / 1440),
+    }
+}
+
+pub fn tools_view(st: &AppState, agent_id: Option<&str>, cli_id: &str) -> Result<ToolsView, String> {
+    use gizai_agents::tool_catalog;
+    let cli = gizai_core::clis::get(&st.db, cli_id).map_err(|e| e.to_string())?;
+    let kind = gizai_agents::cli::Kind::parse(&cli.kind).unwrap_or(gizai_agents::cli::Kind::Other);
+    let (search, fetch, domains) = tool_catalog::web_support(kind);
+    let web = WebSupport { search: search.map(str::to_string), fetch: fetch.map(str::to_string), domains: domains.map(str::to_string) };
+
+    let entry = core_mcp::browser(&st.db).map_err(|e| e.to_string())?;
+    let path = crate::runs::command_path();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let cached = core_mcp::tool_lists(&st.db).map_err(|e| e.to_string())?.remove(core_mcp::BROWSER);
+    let btools = cached.filter(|c| c.listed_at > 0).map(|c| mcp_tools::describe_all(&c.tools)).unwrap_or_default();
+    let (risk, summary) = summary(&btools);
+    let last_run = agent_id.and_then(|a| core_mcp::last_runs(&st.db).ok()?.remove(a)?.remove(core_mcp::BROWSER));
+    let browser = BrowserSection { disabled: core_mcp::mcp_not_on(&cli.kind).map(str::to_string), needs: browser::needs(&path, &entry.program, &home),
+                                   version: entry.version, last_run, tools: btools, summary, risk };
+
+    // What the CLI reported: this agent's last run or chat turn on this CLI, else what it said when asked.
+    let seen = agent_id.and_then(|a| core_mcp::seen_tools(&st.db).ok()?.remove(a)).filter(|s| s.cli_id == cli.id);
+    let asked = core_mcp::asked_tools(&st.db).map_err(|e| e.to_string())?.remove(&cli.id);
+    let (reported, source) = match (kind, seen, asked) {
+        (gizai_agents::cli::Kind::ClaudeCode, Some(s), _) => (Some(s.tools), format!("Gizai's catalog, with the tools {} reported in this agent's last run ({}).", cli.name, ago(s.at))),
+        (gizai_agents::cli::Kind::ClaudeCode, None, Some(a)) => (Some(a.tools), format!("Gizai's catalog, with the tools {} listed when asked ({}).", cli.name, ago(a.at))),
+        (gizai_agents::cli::Kind::ClaudeCode, None, None) => (None, "Gizai's catalog: after its first run, or Ask Claude Code again, it shows the tools Claude Code itself reports.".into()),
+        (k, _, _) => (None, tool_catalog::source_note(k).unwrap_or_default().to_string()),
+    };
+    let builtin = BuiltinSection { tools: tool_catalog::merged(kind, reported.as_deref()), source, can_ask: kind == gizai_agents::cli::Kind::ClaudeCode };
+    let saved = match agent_id {
+        Some(a) => Some(core_mcp::agent_cli_tools(&st.db, a).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    Ok(ToolsView { kind: cli.kind, web, browser, builtin, saved })
+}
+
+/// Saves the agent's Web and Built-in tool switches and the browser's certificate option. Only you: no Team Lead tool
+/// calls this. A switch its CLI can't take is refused with why.
+pub fn save_cli_tools(st: &AppState, agent_id: &str, tools: core_mcp::CliTools) -> Result<core_mcp::CliTools, String> {
+    use gizai_agents::tool_catalog;
+    let agent = gizai_core::team::agent(&st.db, agent_id).map_err(|e| e.to_string())?;
+    let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
+    let kind = gizai_agents::cli::Kind::parse(&cli.kind).unwrap_or(gizai_agents::cli::Kind::Other);
+    let (search, fetch, domains) = tool_catalog::web_support(kind);
+    for (on, why) in [(tools.web_search, search), (tools.web_fetch, fetch), (tools.web_fetch && !tools.fetch_domains.is_empty(), domains)] {
+        if let (true, Some(why)) = (on, why) {
+            return Err(format!("{} runs on {}: {why}", agent.name, cli.name));
+        }
+    }
+    if let Some(t) = tools.builtin.iter().find(|t| !tool_catalog::switchable(kind, t)) {
+        return Err(format!("{t} can't be switched on for {}: {} gives it through its own settings, or not at all", agent.name, cli.name));
+    }
+    core_mcp::set_cli_tools(&st.db, &st.you_id, agent_id, tools).map_err(|e| e.to_string())
+}
+
+/// Ask Claude Code again: its tools, from a start without a login (a scratch CLAUDE_CONFIG_DIR and HOME in Gizai's data
+/// folder, removed afterwards), kept for that CLI.
+pub async fn ask_cli_tools(st: &AppState, cli_id: &str) -> Result<Vec<String>, String> {
+    let cli = gizai_core::clis::get(&st.db, cli_id).map_err(|e| e.to_string())?;
+    if cli.kind != "claude_code" {
+        return Err(format!("{} can't be asked for its tools: the list is Gizai's catalog", cli.name));
+    }
+    let spec = crate::clis::spec(st, &cli, None)?;
+    let scratch = st.data_dir.join("scratch").join(format!("tools-{}", gizai_core::ids::new_id()));
+    let found = gizai_agents::tool_catalog::ask_claude(&spec.bin, &scratch, &crate::runs::command_path()).await;
+    let _ = std::fs::remove_dir_all(&scratch);
+    let tools = found?;
+    core_mcp::set_asked_tools(&st.db, &cli.id, &tools).map_err(|e| e.to_string())?;
+    Ok(core_mcp::builtin_names(&tools))
+}
+
+/// Keeps the tools a run's or chat turn's init line named (its log) as the agent's "seen in the last run".
+pub fn record_seen_tools(st: &AppState, agent_id: &str, cli_id: &str, log: &std::path::Path) {
+    if let Some(tools) = gizai_agents::tool_catalog::log_tools(log)
+        && let Err(e) = core_mcp::set_seen_tools(&st.db, agent_id, cli_id, &tools) {
+        eprintln!("gizai: couldn't keep the tools of {agent_id}'s run: {e}");
     }
 }

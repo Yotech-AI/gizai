@@ -202,6 +202,13 @@ pub(crate) fn get_agent(cx: &Cx, a: &Args) -> Result<Value, String> {
     v["mcp_servers"] = json!(m.tools.mcp.iter().filter_map(|o| servers.iter().find(|s| s.id == o.server_id).map(|s| json!({
         "name": s.name, "on": o.on, "tools_off": o.tools_off,
     }))).collect::<Vec<_>>());
+    // Its web tools, browser and built-in tools, to show: only the user switches them (agent form → Tools).
+    let c = &m.cli_tools;
+    v["web_search"] = json!(c.web_search);
+    v["web_fetch"] = json!(c.web_fetch);
+    v["fetch_domains"] = json!(c.fetch_domains);
+    v["browser"] = json!(m.tools.browser_on());
+    v["builtin_tools_on"] = json!(c.builtin);
     v["instructions_md"] = json!(m.instructions_md);
     let recent: Vec<Value> = runs::list_for_agent(cx.db(), &m.actor_id, 10).map_err(err)?.into_iter().map(|r| json!({
         "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "cost_usd": usd(r.cost_usd_micros), "error": r.error,

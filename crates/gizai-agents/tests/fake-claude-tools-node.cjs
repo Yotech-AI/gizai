@@ -5,7 +5,12 @@
 //   hang      first starts a child that writes the time into $HOME/beat every 100 ms (a server it left running), then
 //             prints its init line and waits until it is ended
 //   stubborn  as hang, but it and its child ignore SIGTERM: only SIGKILL (on Windows, ending its job) ends them
-// Both give up by themselves after a minute, so a failing test leaves nothing running.
+//   env       first writes the variables it got into $HOME/env.json (name: value), then goes on as without a mode
+//   stderr    no init line: writes two lines to stderr (Windows line ends, blank lines after them), then only the error
+//   stderr-long  as stderr, but its last line is "Error: " and 400 times é
+//   blank     as stderr, but only blank lines
+//   quiet     as stderr, but nothing on stderr
+// hang and stubborn give up by themselves after a minute, so a failing test leaves nothing running.
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -19,8 +24,21 @@ const init = {
   type: "system", subtype: "init", cwd: home, session_id: "S", model: "claude-opus-5-5",
   tools: ["Task", "Bash", "Read", "WebSearch", "WebFetch", "mcp__gizai__get_overview"], mcp_servers: [],
 };
+const said = {
+  stderr: "Claude Code warming up\r\nError: GA80 the last thing Claude Code said\r\n\r\n   \n",
+  "stderr-long": "Claude Code warming up\nError: " + "é".repeat(400) + "\n",
+  blank: "\n   \r\n\n",
+  quiet: "",
+};
 process.stdin.on("data", () => {});
 process.stdin.on("end", () => {
+  if (mode === "env") fs.writeFileSync(path.join(home, "env.json"), JSON.stringify({ ...process.env }));
+  if (mode in said) {
+    process.stderr.write(said[mode]);
+    console.log(JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: "S" }));
+    process.exitCode = 1;
+    return;
+  }
   if (mode !== "hang" && mode !== "stubborn") {
     console.log(JSON.stringify(init));
     console.log(JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", session_id: "S" }));

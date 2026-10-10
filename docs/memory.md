@@ -215,9 +215,11 @@ opens. With no Team Lead yet it shows **Shared notes** and *Set up the Team Lead
 
 ## The graph (GA-69)
 
-**Notes | Graph** at the top of the Memory page switches to the graph of the page's notes (`#/memory/graph`,
-`#/memory/shared/graph`, `#/memory/agent/<agent id>/graph`). With a note open, **Open local graph** (next to the
-panel's button) shows that note and its neighbours in the panel's place, and follows the note that is open.
+**Notes | Graph** at the top of the Memory page switches to the graph of the page's notes and what they link to and
+name (`#/memory/graph`, `#/memory/shared/graph`, `#/memory/agent/<agent id>/graph`): an agent's page or the shared
+page leaves out the other folders' notes and the cards, agents and missing notes only those name. With a note open,
+**Open local graph** (next to the panel's button) shows that note and its neighbours in the panel's place, and follows
+the note that is open.
 
 - **What it shows** (`src/lib/graph.ts`, `buildGraph`): each note is a dot, each link a line: `[[wikilinks]]` and
   embeds, card references (`KADE-12`), `@mentions`, the @ picker's links and the `client:` and `project:` properties.

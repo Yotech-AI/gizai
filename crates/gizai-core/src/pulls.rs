@@ -152,11 +152,16 @@ pub fn note_merged_by(db: &Db, actor: &str, task_id: &str, url: &str, head: &str
 /// devops (a release card, like "Release Gizai v0.6.0"). Main mustn't move under it, so the Team Lead doesn't merge
 /// then. The card's identifier and the agent's name.
 pub fn release_under_way(db: &Db, project_id: &str) -> Result<Option<(String, String)>> {
-    db.read(|c| Ok(c.query_row(
+    db.read(|c| release_in(c, project_id))
+}
+
+/// `release_under_way` on an open connection (the board check reads it in its own read).
+pub(crate) fn release_in(c: &rusqlite::Connection, project_id: &str) -> Result<Option<(String, String)>> {
+    Ok(c.query_row(
         "SELECT t.identifier, a.name FROM tasks t
          JOIN actors a ON a.id = t.assignee_actor_id AND a.kind = 'agent' AND a.deleted_at IS NULL
          WHERE t.project_id = ?1 AND t.deleted_at IS NULL AND t.state_category = 'deploy'
            AND EXISTS (SELECT 1 FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL AND m.role_key = 'devops')
          ORDER BY t.sort_key, t.created_at LIMIT 1",
-        [project_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?))
+        [project_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
 }

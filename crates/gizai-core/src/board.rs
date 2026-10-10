@@ -353,12 +353,7 @@ fn may_merge(c: &Connection, cx: &Context) -> Result<Vec<Finding>> {
     for (id, identifier, title, column, project) in cards {
         let active: i64 = c.query_row("SELECT count(*) FROM runs WHERE task_id=?1 AND status IN ('queued','running','waiting_approval')",
                                       [&id], |r| r.get(0))?;
-        let release: i64 = c.query_row(
-            "SELECT count(*) FROM tasks t JOIN actors a ON a.id = t.assignee_actor_id AND a.kind = 'agent' AND a.deleted_at IS NULL
-             WHERE t.project_id = ?1 AND t.deleted_at IS NULL AND t.state_category = 'deploy'
-               AND EXISTS (SELECT 1 FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL AND m.role_key = 'devops')",
-            [&project], |r| r.get(0))?;
-        if active > 0 || release > 0 {
+        if active > 0 || crate::pulls::release_in(c, &project)?.is_some() {
             continue;
         }
         let qa: Option<(String, Option<i64>, String, String)> = c.query_row(

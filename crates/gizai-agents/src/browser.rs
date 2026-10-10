@@ -14,6 +14,8 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use crate::os;
+
 /// The npm package.
 pub const PACKAGE: &str = "chrome-devtools-mcp";
 /// What Node the pinned version needs (its package.json `engines`: ^20.19.0 || ^22.12.0 || >=23).
@@ -94,11 +96,6 @@ pub fn is_brave(path: &Path) -> bool {
     brave(path) || std::fs::canonicalize(path).is_ok_and(|c| brave(&c))
 }
 
-fn executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
-}
-
 /// The browser program you set: a full path to a program that is there, and never Brave's.
 pub fn check_program(raw: &str, home: &str) -> Result<PathBuf, String> {
     let p = expand_home(raw.trim(), home);
@@ -109,7 +106,7 @@ pub fn check_program(raw: &str, home: &str) -> Result<PathBuf, String> {
         return Err(format!("give the browser program as a full path, like /usr/bin/chromium: not \"{}\"", raw.trim()));
     }
     let path = PathBuf::from(&p);
-    if !executable(&path) {
+    if !os::executable(&path) {
         return Err(format!("{p} isn't a program on this computer"));
     }
     Ok(path)
@@ -133,14 +130,14 @@ pub struct Found {
 
 /// Google Chrome, else Chromium, in the usual places and on `path` (Brave's never counts).
 pub fn find_browser(path: &OsStr) -> Option<Found> {
-    let on_path = |name: &str| std::env::split_paths(path).map(|d| d.join(name)).find(|p| executable(p) && !is_brave(p));
-    if let Some(p) = CHROME_HOME.iter().map(PathBuf::from).find(|p| executable(p)) {
+    let on_path = |name: &str| std::env::split_paths(path).map(|d| d.join(name)).find(|p| os::executable(p) && !is_brave(p));
+    if let Some(p) = CHROME_HOME.iter().map(PathBuf::from).find(|p| os::executable(p)) {
         return Some(Found { path: p, name: "Google Chrome", by_itself: true });
     }
     if let Some(p) = CHROME_NAMES.iter().find_map(|n| on_path(n)) {
         return Some(Found { path: p, name: "Google Chrome", by_itself: false });
     }
-    CHROMIUM_NAMES.iter().find_map(|n| on_path(n)).or_else(|| CHROMIUM.iter().map(PathBuf::from).find(|p| executable(p) && !is_brave(p)))
+    CHROMIUM_NAMES.iter().find_map(|n| on_path(n)).or_else(|| CHROMIUM.iter().map(PathBuf::from).find(|p| os::executable(p) && !is_brave(p)))
         .map(|p| Found { path: p, name: "Chromium", by_itself: false })
 }
 
@@ -153,7 +150,7 @@ pub fn node_ok(version: &str) -> bool {
 
 /// A program on `path`, by name.
 pub fn on_path(name: &str, path: &OsStr) -> Option<PathBuf> {
-    std::env::split_paths(path).map(|d| d.join(name)).find(|p| executable(p))
+    std::env::split_paths(path).map(|d| d.join(name)).find(|p| os::executable(p))
 }
 
 /// What the browser needs and whether it is here: Node (its version), npx and a browser.

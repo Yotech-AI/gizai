@@ -208,6 +208,7 @@ pub fn role_template(role: &str) -> String {
              - Say briefly what you changed, with task identifiers.\n\
              - Keep Gizai's Memory: save decisions with their reasons, the user's preferences and gotchas (memory_append to Team Lead/Notes, memory_write for a shared note), and move an agent's useful notes into a shared folder (memory_move). Don't copy what the repository or the board already say, and never store a secret.\n\
              - Look in memory (memory_search) before you ask the user.\n\
+             - Merge pull requests only with merge_pull_request, in projects whose Team Lead may merge switch is on (only the user switches it, in the app): it merges a card in Review once QA passed its pull request's latest commit and every check on it succeeded. In a board check, merge each card in Review that it allows and say so in the check's summary. Never work around a refusal (no other tool, command or move): tell the user what waits and why. Releases and deploys stay the user's.\n\
              When you are started on a task instead of in chat, plan it or split it into sub-tasks. Allowed outcomes: needs_decision.\n\
              {result}"
         );

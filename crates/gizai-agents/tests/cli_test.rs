@@ -339,6 +339,53 @@ fn every_cli_gets_the_runs_temp_folder_as_tmpdir_tmp_and_temp_after_its_own_envi
 }
 
 #[test]
+fn every_cli_gets_the_git_settings_of_its_own_push_after_its_own_environment_and_the_temp_folder() {
+    // GA-92: the CLI's own lines first (a GIT_CONFIG_COUNT of its own is overruled), then TMPDIR, TMP and TEMP, then git's
+    let temp = "/w/KADE-1/.gizai-tmp";
+    let settings = vec![("url.git@github.com:acme/shop.git.pushInsteadOf".to_string(), "https://github.com/acme/shop".to_string()),
+                        ("credential.https://github.com.helper".to_string(), String::new()),
+                        ("credential.https://github.com.helper".to_string(), "!'/opt/g h/gh' auth git-credential".to_string())];
+    let git: Vec<(String, String)> = [("GIT_CONFIG_COUNT", "3"),
+        ("GIT_CONFIG_KEY_0", "url.git@github.com:acme/shop.git.pushInsteadOf"), ("GIT_CONFIG_VALUE_0", "https://github.com/acme/shop"),
+        ("GIT_CONFIG_KEY_1", "credential.https://github.com.helper"), ("GIT_CONFIG_VALUE_1", ""),
+        ("GIT_CONFIG_KEY_2", "credential.https://github.com.helper"), ("GIT_CONFIG_VALUE_2", "!'/opt/g h/gh' auth git-credential")]
+        .iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temps: Vec<(String, String)> = ["TMPDIR", "TMP", "TEMP"].iter().map(|k| (k.to_string(), temp.to_string())).collect();
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        let mut s = spec(kind, "");
+        s.env.push(("GIT_CONFIG_COUNT".into(), "0".into()));
+        for resume in [false, true] {
+            let e = cli::task_exec(&s, &TaskRun { temp_dir: Some(temp.into()), git_config: settings.clone(), resume, ..run() });
+            let n = e.env.len();
+            assert_eq!(&e.env[n - git.len()..], &git[..], "{kind:?} resume={resume}");
+            assert_eq!(&e.env[n - git.len() - 3..n - git.len()], &temps[..], "{kind:?}");
+            assert_eq!(&e.env[..s.env.len()], &s.env[..], "{kind:?}: the CLI's own lines stay first");
+            let policy: Vec<String> = configs(&e.args).into_iter().filter(|c| c.starts_with("shell_environment_policy.")).collect();
+            if kind == Kind::Codex {
+                // Codex also gets them in its shell environment policy, as TOML strings, before the session it resumes
+                assert_eq!(policy, [r#"shell_environment_policy.set.GIT_CONFIG_COUNT="3""#,
+                    r#"shell_environment_policy.set.GIT_CONFIG_KEY_0="url.git@github.com:acme/shop.git.pushInsteadOf""#,
+                    r#"shell_environment_policy.set.GIT_CONFIG_VALUE_0="https://github.com/acme/shop""#,
+                    r#"shell_environment_policy.set.GIT_CONFIG_KEY_1="credential.https://github.com.helper""#,
+                    r#"shell_environment_policy.set.GIT_CONFIG_VALUE_1="""#,
+                    r#"shell_environment_policy.set.GIT_CONFIG_KEY_2="credential.https://github.com.helper""#,
+                    r#"shell_environment_policy.set.GIT_CONFIG_VALUE_2="!'/opt/g h/gh' auth git-credential""#], "resume={resume}");
+                assert_eq!(e.args.last().map(String::as_str), Some("-"));
+                if resume {
+                    assert_eq!(&e.args[e.args.len() - 2..], ["S-1", "-"]);
+                }
+            } else {
+                assert!(policy.is_empty(), "{kind:?}: {:?}", e.args);
+            }
+        }
+        // no settings (no link, or Push over HTTPS without gh): nothing of git's is added
+        let e = cli::task_exec(&s, &TaskRun { temp_dir: Some(temp.into()), ..run() });
+        assert_eq!(e.env.iter().filter(|(k, _)| k.starts_with("GIT_CONFIG_")).count(), 1, "{kind:?}: only the CLI's own line: {:?}", e.env);
+        assert!(!e.args.iter().any(|a| a.contains("shell_environment_policy")), "{kind:?}");
+    }
+}
+
+#[test]
 fn claude_codes_refusals_show_as_they_happen_with_their_reason_and_the_result_line_adds_only_new_ones() {
     let lines: Vec<&str> = include_str!("fixtures/run-refused.jsonl").lines().collect();
     let refused = |evs: &[RunEvent]| -> Vec<(String, String, String)> {

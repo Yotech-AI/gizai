@@ -355,3 +355,145 @@ fn over_https_a_push_uses_ghs_login_never_asks_and_never_shows_the_token() {
     assert_eq!(p.what, "GitHub refused gh's login for HTTPS");
     assert_eq!(std::fs::read_to_string(r.join(".git/config")).unwrap(), config, "no git config changed");
 }
+
+// ---- GA-92: a run's own push, as settings in its environment ----
+
+/// git with a task run's settings in its environment (`connection::git_env`), the way an agent's own git gets them.
+fn git_run(dir: &Path, settings: &[(String, String)], args: &[&str], stdin: &str) -> String {
+    let mut child = Command::new("git").arg("-C").arg(dir).args(args).envs(connection::git_env(settings))
+        .env("GIT_TERMINAL_PROMPT", "0").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+fn strings(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+/// The push and fetch address of the remote `name`, with a run's settings.
+fn urls(dir: &Path, settings: &[(String, String)], name: &str) -> (String, String) {
+    (git_run(dir, settings, &["remote", "get-url", "--push", name], ""), git_run(dir, settings, &["remote", "get-url", name], ""))
+}
+
+#[test]
+fn git_env_gives_git_config_count_and_a_key_and_value_for_each_setting_and_nothing_for_none() {
+    let settings = vec![("url.git@github.com:acme/shop.git.pushInsteadOf".to_string(), "https://github.com/acme/shop".to_string()),
+                        ("credential.https://github.com.helper".to_string(), String::new())];
+    let env = connection::git_env(&settings);
+    let want: Vec<(String, String)> = [("GIT_CONFIG_COUNT", "2"),
+        ("GIT_CONFIG_KEY_0", "url.git@github.com:acme/shop.git.pushInsteadOf"), ("GIT_CONFIG_VALUE_0", "https://github.com/acme/shop"),
+        ("GIT_CONFIG_KEY_1", "credential.https://github.com.helper"), ("GIT_CONFIG_VALUE_1", "")]
+        .iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    assert_eq!(env, want);
+    assert!(connection::git_env(&[]).is_empty());
+    // git reads them as settings of the command line, and no config file has them
+    let tmp = tempfile::tempdir().unwrap();
+    let r = repo(tmp.path(), "card");
+    let shown = git_run(&r, &settings, &["config", "--show-scope", "--get-regexp", r"^url\..*\.pushinsteadof$"], "");
+    assert_eq!(shown, "command\turl.git@github.com:acme/shop.git.pushinsteadof https://github.com/acme/shop");
+}
+
+#[test]
+fn over_ssh_a_run_pushes_only_the_projects_own_repository_to_git_at_github_com() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = repo(tmp.path(), "card");
+    let remotes = [("origin", "https://github.com/acme/shop"), ("dotgit", "https://github.com/acme/shop.git"),
+                   ("slash", "https://github.com/acme/shop/"), ("other", "https://github.com/acme/other"),
+                   ("other-ssh", "git@github.com:acme/other.git"), ("gitlab", "https://gitlab.com/acme/shop")];
+    for (name, url) in remotes {
+        git(&r, &["remote", "add", name, url]);
+    }
+    let config = std::fs::read_to_string(r.join(".git/config")).unwrap();
+    // the project's link and its remotes that are the same repository, as Gizai passes them
+    let c = PushOver::Ssh.run_config("acme/shop", &strings(&["https://github.com/acme/shop", "https://github.com/acme/shop",
+        "https://github.com/acme/shop.git", "https://github.com/acme/shop/"]), &[]);
+    assert!(c.iter().all(|(k, _)| k == "url.git@github.com:acme/shop.git.pushInsteadOf"), "push rules only, no insteadOf: {c:?}");
+    for name in ["origin", "dotgit", "slash"] {
+        let (push, fetch) = urls(&r, &c, name);
+        assert_eq!(push, "git@github.com:acme/shop.git", "{name}");
+        assert_eq!(fetch, remotes.iter().find(|(n, _)| *n == name).unwrap().1, "{name}: its fetch address stays");
+    }
+    for (name, url) in &remotes[3..] {
+        assert_eq!(urls(&r, &c, name), (url.to_string(), url.to_string()), "{name}: another repository stays as it is");
+    }
+    // fetches of the project's own address stay https
+    assert_eq!(git_run(&r, &c, &["ls-remote", "--get-url", "https://github.com/acme/shop"], ""), "https://github.com/acme/shop");
+    assert_eq!(std::fs::read_to_string(r.join(".git/config")).unwrap(), config, "no git config changed");
+}
+
+#[test]
+fn known_limit_a_repository_whose_name_starts_with_the_projects_pushes_to_an_address_no_repository_has() {
+    // GA-92's known limit (its hand-over): git matches a rule by the start of an address, so the rule for
+    // https://github.com/acme/shop also catches https://github.com/acme/shop-api. Its push goes to
+    // git@github.com:acme/shop.git-api, which no repository has, so it fails rather than landing anywhere else, and its
+    // fetch stays. When this changes, the push address should be the one written.
+    let tmp = tempfile::tempdir().unwrap();
+    let r = repo(tmp.path(), "card");
+    git(&r, &["remote", "add", "api", "https://github.com/acme/shop-api"]);
+    git(&r, &["remote", "add", "front", "https://github.com/acme/shopfront.git"]);
+    let c = PushOver::Ssh.run_config("acme/shop", &strings(&["https://github.com/acme/shop", "https://github.com/acme/shop.git"]), &[]);
+    assert_eq!(urls(&r, &c, "api"), ("git@github.com:acme/shop.git-api".into(), "https://github.com/acme/shop-api".into()));
+    assert_eq!(urls(&r, &c, "front"), ("git@github.com:acme/shop.gitfront.git".into(), "https://github.com/acme/shopfront.git".into()));
+}
+
+#[test]
+fn over_https_a_run_gets_ghs_login_for_github_com_only_and_an_ssh_remote_pushes_over_https() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = repo(tmp.path(), "card");
+    git(&r, &["remote", "add", "origin", "git@github.com:acme/shop.git"]);
+    git(&r, &["remote", "add", "other", "git@github.com:acme/other.git"]);
+    let dir = tmp.path().join("gh");
+    let gh = fake_gh(&dir);
+    std::fs::write(dir.join("logged-in"), "octocat").unwrap();
+    // your own credential helper, for every host
+    let own = tmp.path().join("own-helper");
+    write_script(&own, &format!("#!/bin/sh\necho \"$*\" >> '{}/own-helper-ran'\nprintf 'username=me\\npassword=own-secret\\n'\n", tmp.path().display()));
+    git(&r, &["config", "credential.helper", &format!("!{}", own.display())]);
+    let c = PushOver::Https { gh: gh.clone() }.run_config("acme/shop", &strings(&["https://github.com/acme/shop", "git@github.com:acme/shop.git"]), &[]);
+    // the ssh remote of the project pushes over https, and fetches as it is written; another repository stays
+    assert_eq!(urls(&r, &c, "origin"), ("https://github.com/acme/shop.git".into(), "git@github.com:acme/shop.git".into()));
+    assert_eq!(urls(&r, &c, "other"), ("git@github.com:acme/other.git".into(), "git@github.com:acme/other.git".into()));
+    // github.com's login comes from gh, and your own helper isn't asked
+    let filled = git_run(&r, &c, &["credential", "fill"], "protocol=https\nhost=github.com\npath=acme/shop.git\n\n");
+    assert!(filled.contains(&format!("password={TOKEN}")), "{filled}");
+    assert!(gh_calls(&dir).contains(&"auth git-credential get".to_string()), "{:?}", gh_calls(&dir));
+    assert!(!tmp.path().join("own-helper-ran").exists(), "your own helper isn't asked for github.com");
+    // another host still gets your own helper: only github.com changes
+    let filled = git_run(&r, &c, &["credential", "fill"], "protocol=https\nhost=gitlab.com\n\n");
+    assert!(filled.contains("password=own-secret"), "{filled}");
+    assert!(tmp.path().join("own-helper-ran").exists());
+}
+
+#[test]
+fn to_bitbucket_a_run_pushes_the_projects_https_remote_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = repo(tmp.path(), "card");
+    git(&r, &["remote", "add", "origin", "https://jefsev@bitbucket.org/acme/site.git"]);
+    git(&r, &["remote", "add", "plain", "https://bitbucket.org/acme/site"]);
+    git(&r, &["remote", "add", "other", "https://bitbucket.org/acme/other"]);
+    let c = PushOver::Bitbucket.run_config("acme/site", &strings(&["https://bitbucket.org/acme/site",
+        "https://jefsev@bitbucket.org/acme/site.git", "https://bitbucket.org/acme/site"]), &[]);
+    assert_eq!(urls(&r, &c, "origin"), ("git@bitbucket.org:acme/site.git".into(), "https://jefsev@bitbucket.org/acme/site.git".into()));
+    assert_eq!(urls(&r, &c, "plain"), ("git@bitbucket.org:acme/site.git".into(), "https://bitbucket.org/acme/site".into()));
+    assert_eq!(urls(&r, &c, "other"), ("https://bitbucket.org/acme/other".into(), "https://bitbucket.org/acme/other".into()));
+    assert!(!c.iter().any(|(k, _)| k.starts_with("credential.")), "no credential helper for Bitbucket: {c:?}");
+}
+
+#[test]
+fn an_address_your_own_rewrite_sends_elsewhere_is_left_to_yours() {
+    // a test's local GitHub: https://github.com/acme/ goes to a folder, for fetches and pushes alike
+    let tmp = tempfile::tempdir().unwrap();
+    let r = repo(tmp.path(), "card");
+    let local = tmp.path().join("github/acme");
+    git(&r, &["config", &format!("url.{}/.insteadOf", local.display()), "https://github.com/acme/"]);
+    git(&r, &["remote", "add", "origin", "https://github.com/acme/shop"]);
+    // (your global git config may have rewrites of its own: they are read too)
+    let own = worktree::own_rewrites(&r);
+    assert!(own.contains(&"https://github.com/acme/".to_string()), "{own:?}");
+    let c = PushOver::Ssh.run_config("acme/shop", &strings(&["https://github.com/acme/shop", "https://github.com/acme/shop"]), &own);
+    assert!(c.is_empty(), "{c:?}");
+    let to = format!("{}/shop", local.display());
+    assert_eq!(urls(&r, &PushOver::Ssh.run_config("acme/shop", &strings(&["https://github.com/acme/shop"]), &own), "origin"), (to.clone(), to));
+}

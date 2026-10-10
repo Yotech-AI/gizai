@@ -1359,6 +1359,8 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         Err(e) => return end("failed", Totals::default(), Some(e.to_string()), None),
     };
     let config_path = chat_dir.join(format!("{run_id}.mcp.json"));
+    // Only Gizai's server (not the Team Lead's own MCP servers or its web tools) and Read, Glob and Grep: a check uses no
+    // tool from outside Gizai, so nothing marks it the way a chat answer is (`mark_outside`, `tools::NOT_AFTER_OUTSIDE`).
     let config = json!({"mcpServers": {"gizai": {"type": "stdio", "command": shim.display().to_string(), "args": [],
         "env": {"GIZAI_SOCKET": st.mcp_socket.display().to_string(), "GIZAI_TOKEN": token}}}});
     let cleanup = |token: &str| {

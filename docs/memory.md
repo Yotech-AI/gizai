@@ -90,7 +90,10 @@ block (`-----BEGIN … PRIVATE KEY-----`) or an API token (`sk-…`, `ghp_…` a
 The Team Lead's tools: `memory_list`, `memory_search`, `memory_read`, `memory_write` (a whole note, with the version it
 read; a new path makes the note), `memory_append` (under a heading, without rewriting the note) and `memory_move` (move
 or copy, rewriting links). `memory_read`, `memory_append` and `memory_move` find a note by its path, its title (as a
-wikilink does) or its id. It sees every scope, and the activity feed shows it as the author.
+wikilink does) or its id. It sees every scope, and the activity feed shows it as the author. Once a chat answer has used
+a tool from outside Gizai (another MCP server, the web, the browser), `memory_write`, `memory_append` and `memory_move`
+are refused for the rest of that answer, like its other tools that act: it proposes the note, and saves it once you
+confirm in a new message.
 
 Every chat answer and every board check has the Team Lead's Memory block at the end of its system prompt, in old chats
 and new ones: its own notes (`Team Lead/`, `Notes` first) in full, at most **6,000 characters** (a note that doesn't fit

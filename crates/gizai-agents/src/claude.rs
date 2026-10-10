@@ -38,7 +38,8 @@ pub struct ClaudeArgs {
     pub no_session_persistence: bool,
     /// Run no hooks at all (`--settings {"disableAllHooks":true}`): not the user's, not a plugin's, not a repo's.
     pub disable_hooks: bool,
-    /// No skills or slash commands (`--disable-slash-commands`), so plugin skills can't steer a headless run.
+    /// No skills or slash commands (`--disable-slash-commands`), so plugin skills can't steer a headless run. Only a task
+    /// run of an agent with Slash commands and skills on goes without it (`TaskRun::slash_commands`); chat never does.
     pub disable_skills: bool,
     /// Claude Code's own memory off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`): an agent keeps its notes in Gizai's memory
     /// only, not in a second one that only this account sees (GA-85).

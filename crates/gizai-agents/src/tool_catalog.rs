@@ -17,6 +17,9 @@ use crate::os::{self, End};
 pub mod how {
     /// The Web switches (search, fetch): on, the run gets it.
     pub const WEB: &str = "web";
+    /// The Slash commands and skills switch (Claude Code's `SlashCommand` and `Skill`, one switch for both): on, the
+    /// agent's task runs get them.
+    pub const SLASH: &str = "slash";
     /// A switch of its own: on, it is allowed in the agent's task runs.
     pub const SWITCH: &str = "switch";
     /// Always there: the CLI uses it without asking.
@@ -54,6 +57,8 @@ const BY_MODE: &str = "On through the permission mode (Permissions → Permissio
 const BY_COMMANDS: &str = "Only the commands under Permissions → Allowed commands.";
 const NO_ASK: &str = "Claude Code uses it without asking.";
 const HEADLESS: &str = "For interactive sessions: a headless run can't use it.";
+/// The line of the Slash commands and skills switch, the same for both of its tools.
+const SLASH_LINE: &str = "Lets the agent run your slash commands and skills, like /design, including those from plugins; they can steer the run.";
 
 /// Claude Code 2.1.289: (id, label, group, description, risk, how, note).
 const CLAUDE: [Row; 33] = [
@@ -83,8 +88,8 @@ const CLAUDE: [Row; 33] = [
     ("EnterPlanMode", "Enter plan mode", "planning", "Switches itself to read-only planning.", "low", how::ALWAYS, NO_ASK),
     ("ExitPlanMode", "Leave plan mode", "planning", "Ends planning to start changing things.", "low", how::ELSEWHERE, "Only in the plan permission mode, where a headless run can't be approved."),
     ("AskUserQuestion", "Ask you a question", "planning", "Asks you to pick an answer.", "low", how::OFF, "A headless run can't ask: the agent asks in its result line (needs_decision) instead."),
-    ("Skill", "Skills", "other", "Loads a skill from a plugin or your settings.", "medium", how::OFF, "Gizai keeps skills and slash commands off in agent runs (--disable-slash-commands)."),
-    ("SlashCommand", "Slash commands", "other", "Runs one of your slash commands.", "medium", how::OFF, "Gizai keeps skills and slash commands off in agent runs (--disable-slash-commands)."),
+    ("SlashCommand", "Slash commands and skills", "other", SLASH_LINE, "medium", how::SLASH, ""),
+    ("Skill", "Slash commands and skills", "other", SLASH_LINE, "medium", how::SLASH, ""),
     ("ToolSearch", "Find more tools", "other", "Loads the full description of a tool it has but hasn't loaded yet.", "low", how::ALWAYS, NO_ASK),
     ("ListMcpResourcesTool", "MCP resources: list", "other", "Lists what its MCP servers offer to read.", "low", how::ALWAYS, NO_ASK),
     ("ReadMcpResourceTool", "MCP resources: read", "other", "Reads something an MCP server offers. Only its servers switched on.", "low", how::ALWAYS, NO_ASK),
@@ -185,7 +190,8 @@ pub fn merged(kind: Kind, reported: Option<&[String]>) -> Vec<CatalogTool> {
     out
 }
 
-/// Whether a run of `kind` can be given `id` through its own switch (an unknown reported tool, or a catalog switch).
+/// Whether a run of `kind` can be given `id` through its own switch (an unknown reported tool, or a catalog switch). Not
+/// `SlashCommand` and `Skill`: only the Slash commands and skills switch gives them.
 pub fn switchable(kind: Kind, id: &str) -> bool {
     match find(kind, id) {
         Some(t) => t.how == how::SWITCH,
@@ -199,9 +205,9 @@ pub fn valid_name(n: &str) -> bool {
 }
 
 /// Whether an entry of an agent's allowed commands (Claude Code style: `Bash(git status:*)`, `WebFetch(domain:docs.rs)`)
-/// names a tool only the agent form's Tools switches give: web search, fetching pages, a built-in tool with a switch of its
-/// own (one the catalog doesn't know) or one Gizai keeps off. A run leaves such an entry out, so with its switch off the
-/// tool is absent whatever the list says. MCP tools stay: a server that's off isn't in the run's config, and a tool
+/// names a tool only the agent form's Tools switches give: web search, fetching pages, slash commands and skills, a
+/// built-in tool with a switch of its own (one the catalog doesn't know) or one Gizai keeps off. A run leaves such an
+/// entry out, so with its switch off the tool is absent whatever the list says. MCP tools stay: a server that's off isn't in the run's config, and a tool
 /// switched off is refused.
 pub fn only_by_switch(entry: &str) -> bool {
     let name = entry.split('(').next().unwrap_or_default().trim();
@@ -229,6 +235,24 @@ pub fn web_support(kind: Kind) -> (Option<&'static str>, Option<&'static str>, O
 }
 
 const OTHER: &str = "This CLI runs with its own settings: Gizai passes it no tools.";
+
+/// Why a CLI of `kind` can't be given the Slash commands and skills switch; None on Claude Code, the only CLI it is
+/// checked with.
+pub fn slash_support(kind: Kind) -> Option<&'static str> {
+    match kind {
+        Kind::ClaudeCode => None,
+        Kind::Codex => Some("Gizai has no checked per-run switch for Codex's slash commands and skills: they stay off for Codex agents."),
+        Kind::Gemini => Some("Gizai has no checked per-run switch for Gemini's custom commands and skills (activate_skill), and never \
+                              writes in ~/.gemini: they stay off for Gemini agents."),
+        Kind::Other => Some(OTHER),
+    }
+}
+
+/// Claude Code's tools for the Slash commands and skills switch, for `--allowedTools` (task runs only): none while it
+/// is off.
+pub fn claude_slash_tools(on: bool) -> Vec<String> {
+    if on { ["SlashCommand", "Skill"].map(String::from).to_vec() } else { vec![] }
+}
 
 /// Claude Code's rules for the Web switches: `WebSearch`, and `WebFetch` or one `WebFetch(domain:…)` per domain. For
 /// `--allowedTools` (task runs and chat).

@@ -2,8 +2,8 @@
 // [[wikilinks]] as links (dashed when they find no note yet: a click offers to make it), ![[embeds]] shown in place,
 // card refs (KADE-12) as chips that open the card, and a preview when the mouse rests on a link. Raw HTML is never
 // rendered; other links open in the system browser, as in MarkdownView.
-import { createContext, useContext } from "react";
-import Markdown, { type Components } from "react-markdown";
+import { createContext, useContext, type ComponentProps } from "react";
+import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { viewUrl } from "../../lib/markdown";
@@ -76,47 +76,61 @@ const parseLink = (href: string, prefix: string): WikiLink | null => {
 const MAX_DEPTH = 2;
 const Depth = createContext(0);
 
+/** The note a view shows and what its links do, for the view's parts below. */
+const View = createContext<{ from: MemoryNote | null; links: NoteLinks } | null>(null);
+
+/** A link in the text: a wikilink, an embed, a card or a link out. */
+function Anchor({ href, children }: ComponentProps<"a"> & ExtraProps) {
+  const { from, links } = useContext(View)!;
+  const url = href ?? "";
+  if (url.startsWith(WIKI) || url.startsWith(EMBED)) {
+    const embed = url.startsWith(EMBED);
+    const l = parseLink(url, embed ? EMBED : WIKI);
+    if (!l) return <>{children}</>;
+    const note = l.target ? linkedNote(links.notes, l.target, from) : from;
+    if (embed) return <Embed link={l} note={note} from={from} links={links} />;
+    return (
+      <a href="#" className={`wikilink${note ? "" : " missing"}`} title={note ? note.path : `No note called ${l.target} yet: click to make it`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); links.hover(null, null, null); if (note) links.open(note, l.heading); else links.create(l, from); }}
+        onMouseEnter={(e) => links.hover(l, from, e.currentTarget.getBoundingClientRect())} onMouseLeave={() => links.hover(null, null, null)}>
+        {children}
+      </a>
+    );
+  }
+  const item = parseItemUrl(url);
+  if (item) return <ItemChip kind={item.kind} itemKey={item.key}>{children}</ItemChip>;
+  return (
+    <a href={url || undefined} title={url || undefined}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (url) openUrl(url).catch(() => {}); }}>{children}</a>
+  );
+}
+
+/** A paragraph that is only an embed is the embed's box. */
+function Para({ node, children }: ComponentProps<"p"> & ExtraProps) {
+  const kids = (node?.children ?? []).filter((c) => !(c.type === "text" && !c.value.trim()));
+  const lone = kids.length === 1 && kids[0]?.type === "element" && kids[0].tagName === "a" && String(kids[0].properties?.href ?? "").startsWith(EMBED);
+  return lone ? <div className="embed-para">{children}</div> : <p>{children}</p>;
+}
+
+/** The view's parts: the same on every render. New ones are new components to React, which then makes every link
+ *  again: the link under the mouse would be swapped while its preview opens, and never hear the mouse leave it. */
+const COMPONENTS: Components = {
+  a: Anchor,
+  p: Para,
+  img: ({ alt }) => <span className="faint">[image{alt ? `: ${alt}` : ""}]</span>,
+};
+
 /** A note's text as the reading view shows it: `from` is the note it is in (its folder decides what a title finds).
  *  `frontmatter`: the text has no properties block to take off (taken off already, or a part of a note). */
 export function NoteView({ md, from, links, frontmatter = false }: { md: string; from: MemoryNote | null; links: NoteLinks; frontmatter?: boolean }) {
-  const components: Components = {
-    a: ({ href, children }) => {
-      const url = href ?? "";
-      if (url.startsWith(WIKI) || url.startsWith(EMBED)) {
-        const embed = url.startsWith(EMBED);
-        const l = parseLink(url, embed ? EMBED : WIKI);
-        if (!l) return <>{children}</>;
-        const note = l.target ? linkedNote(links.notes, l.target, from) : from;
-        if (embed) return <Embed link={l} note={note} from={from} links={links} />;
-        return (
-          <a href="#" className={`wikilink${note ? "" : " missing"}`} title={note ? note.path : `No note called ${l.target} yet: click to make it`}
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); links.hover(null, null, null); if (note) links.open(note, l.heading); else links.create(l, from); }}
-            onMouseEnter={(e) => links.hover(l, from, e.currentTarget.getBoundingClientRect())} onMouseLeave={() => links.hover(null, null, null)}>
-            {children}
-          </a>
-        );
-      }
-      const item = parseItemUrl(url);
-      if (item) return <ItemChip kind={item.kind} itemKey={item.key}>{children}</ItemChip>;
-      return (
-        <a href={url || undefined} title={url || undefined}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (url) openUrl(url).catch(() => {}); }}>{children}</a>
-      );
-    },
-    // A paragraph that is only an embed is the embed's box.
-    p: ({ node, children }) => {
-      const kids = (node?.children ?? []).filter((c) => !(c.type === "text" && !c.value.trim()));
-      const lone = kids.length === 1 && kids[0]?.type === "element" && kids[0].tagName === "a" && String(kids[0].properties?.href ?? "").startsWith(EMBED);
-      return lone ? <div className="embed-para">{children}</div> : <p>{children}</p>;
-    },
-    img: ({ alt }) => <span className="faint">[image{alt ? `: ${alt}` : ""}]</span>,
-  };
   return (
-    <div className="prose note-view">
-      <Markdown remarkPlugins={[remarkGfm, memoryLinks(links.cards)]} skipHtml urlTransform={keepUrl} components={components}>
-        {frontmatter ? md : withoutFrontmatter(md)}
-      </Markdown>
-    </div>
+    <View.Provider value={{ from, links }}>
+      <div className="prose note-view">
+        <Markdown remarkPlugins={[remarkGfm, memoryLinks(links.cards)]} skipHtml urlTransform={keepUrl} components={COMPONENTS}>
+          {frontmatter ? md : withoutFrontmatter(md)}
+        </Markdown>
+      </div>
+    </View.Provider>
   );
 }
 

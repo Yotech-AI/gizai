@@ -451,6 +451,7 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .item-picker .opt > .icon { flex: none; color: var(--text-3); }
 .item-picker .opt .ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-picker .opt .faint { flex: 0 1 auto; max-width: 45%; }
+.item-picker .pop-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The tips fill the row's free width on one line: a tip that doesn't fit wraps onto a second line, which is cut off */
 .composer-hint { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; flex: 1; min-width: 0; height: 20px; overflow: hidden; font-size: var(--fs-xs); color: var(--text-3); }
 .composer-hint > span { display: inline-flex; align-items: center; gap: 4px; height: 20px; white-space: nowrap; }

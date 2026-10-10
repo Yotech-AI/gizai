@@ -839,9 +839,17 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
     )
 }
 
+/// Writes `text` to `path`, readable only by you: mode 0600 on Linux and macOS. On Windows a file in your profile (the
+/// data folder is in it) inherits that folder's access list: you, SYSTEM and Administrators can read it.
 fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
     f.write_all(text.as_bytes())
 }
 

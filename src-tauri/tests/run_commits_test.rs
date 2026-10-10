@@ -1,5 +1,7 @@
 //! GA-14: a run saves the commit it ended at (`runs.head_sha`), and Gizai lists the commits the run made for the Runs
 //! tab. Runs use the fake Claude Code, never the real one: FAKE_COMMIT_TWICE in the card makes it commit twice.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;

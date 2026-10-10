@@ -175,6 +175,37 @@ fn the_sign_in_address_carries_pkce_s256_state_the_resource_and_the_redirect() {
 }
 
 #[test]
+fn each_sign_in_has_its_own_state_and_verifier_of_32_random_bytes_as_43_base64url_characters() {
+    // GA-51: the bytes come from the system's random source (getrandom), not /dev/urandom, which Windows lacks.
+    let fake = FakeOtus::start(Config::otus());
+    let d = oauth::discover(&fake.mcp_url(), Some(&challenge(&fake))).unwrap();
+    let b64url_43 = |s: &str| s.len() == 43 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let states: Vec<String> = (0..8).map(|_| query_of(&oauth::begin(&d, None).unwrap().authorize_url)["state"].clone()).collect();
+    for s in &states {
+        assert!(b64url_43(s), "a state of 43 base64url characters: {s}");
+    }
+    let distinct: std::collections::HashSet<&String> = states.iter().collect();
+    assert_eq!(distinct.len(), states.len(), "every state differs: {states:?}");
+    // No fixed or zeroed bytes: each of the 43 places takes more than one value across the sign-ins.
+    for i in 0..43 {
+        let seen: std::collections::HashSet<u8> = states.iter().map(|s| s.as_bytes()[i]).collect();
+        assert!(seen.len() > 1, "place {i} is the same in every state: {states:?}");
+    }
+
+    // A whole sign-in: the PKCE verifier in the token request is 43 base64url characters too, and its S256 the challenge.
+    let p = oauth::begin(&d, None).unwrap();
+    let url = p.authorize_url.clone();
+    let (state, challenge_sent) = (query_of(&url)["state"].clone(), query_of(&url)["code_challenge"].clone());
+    let browser = std::thread::spawn(move || http("GET", &fake_otus::authorize(&url), &[], "").0);
+    oauth::finish(p, WAIT).unwrap();
+    assert_eq!(browser.join().unwrap(), 200);
+    let verifier = fake.log().token_requests[0]["code_verifier"].clone();
+    assert!(b64url_43(&verifier), "a verifier of 43 base64url characters: {verifier}");
+    assert_ne!(verifier, state, "the verifier and the state are drawn apart");
+    assert_eq!(b64url(&sha256(verifier.as_bytes())), challenge_sent);
+}
+
+#[test]
 fn finish_refuses_a_wrong_state_and_saves_the_tokens_of_the_right_answer() {
     let fake = FakeOtus::start(Config::otus());
     let d = oauth::discover(&fake.mcp_url(), Some(&challenge(&fake))).unwrap();

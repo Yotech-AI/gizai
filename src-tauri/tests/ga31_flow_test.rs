@@ -3,6 +3,8 @@
 //! holds the card with the commands shown, and Done, continue resumes the run with a note that they were run; the
 //! commands still show when the push after the run failed; Gizai's nudge continues a run that was already pushed, and
 //! the nudged run's end pushes again. "GitHub" is a local bare repository, as in push_after_run_test.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};

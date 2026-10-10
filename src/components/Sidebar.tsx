@@ -9,6 +9,7 @@ import { useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { inboxCount } from "../lib/inbox";
 import { useDrawer } from "../lib/drawers";
+import { modKey } from "../lib/keys";
 import { roleIcon } from "./Avatar";
 import { useChatLive } from "./chat/useChat";
 import { UpdateNotice } from "./UpdateNotice";
@@ -40,7 +41,7 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
     <aside className="side" aria-label="Navigation">
       <div className="side-main">
       <button className="nav-item" onClick={onNewTask}><SquarePen className="icon" /><span>New task</span><span className="meta"><span className="kbd">N</span></span></button>
-      <button className="nav-item" onClick={onSearch}><Search className="icon" /><span>Search</span><span className="meta"><span className="kbd">Ctrl K</span></span></button>
+      <button className="nav-item" onClick={onSearch}><Search className="icon" /><span>Search</span><span className="meta"><span className="kbd">{`${modKey()} K`}</span></span></button>
       <Item to={{ page: "inbox" }} icon={Inbox} label="Inbox" active={is("inbox")} meta={inbox > 0 ? <span className="count alert">{inbox}</span> : undefined} />
 
       <div className="nav-section">

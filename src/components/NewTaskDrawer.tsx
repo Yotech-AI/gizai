@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { addFiles, createTask, getTeam, listProjects, listUsers } from "../api";
 import { go } from "../router";
 import { addPaths, fileName } from "../lib/files";
+import { modKey } from "../lib/keys";
 import { useDropZone } from "../lib/useDropZone";
 import type { Person, Project, Team } from "../types";
 import { Drawer } from "./Drawer";
@@ -83,7 +84,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   return (
     <Drawer title="New task" subtitle="Its column decides which agents pick it up, and when." onClose={onClose} dirty={dirty}
       error={created ? `Task created. Not added: ${created.failed.join("; ")}` : err}
-      hint={noProjects || created ? undefined : "Ctrl+Enter creates"}
+      hint={noProjects || created ? undefined : `${modKey()}+Enter creates`}
       actions={noProjects ? <button className="btn ghost" onClick={onClose}>Close</button>
         : created ? <><button key="close" className="btn ghost" onClick={onClose}>Close</button>
           <button key="open" className="btn primary" autoFocus onClick={() => openTask(created.id)}>Open task</button></>

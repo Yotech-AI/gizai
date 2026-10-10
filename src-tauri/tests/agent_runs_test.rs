@@ -2,6 +2,8 @@
 //! emptied when the run ends; every task prompt ends with "How this run works"; the tool calls Claude Code refused are
 //! saved on the run and returned to the Team Lead. Runs use the fake CLIs (FAKE_TEMP=1 makes them print their
 //! environment and prompt), never the real ones.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;

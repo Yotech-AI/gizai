@@ -4,7 +4,6 @@ use gizai_agents::{AgentError, worktree};
 use gizai_core::model::Project;
 use serde::Serialize;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
@@ -22,7 +21,7 @@ pub struct RepoCheck {
 }
 
 fn git(path: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(path).args(args).output().ok()?;
+    let out = gizai_agents::os::command("git").arg("-C").arg(path).args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 

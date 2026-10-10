@@ -12,8 +12,14 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 libc = { workspace = true }
 sha2 = { workspace = true }
+getrandom = { workspace = true }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+# The keychain: Secret Service on Linux, the login keychain on macOS, Credential Manager on Windows.
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "apple-native", "windows-native"] }
+
+# Job Objects (an agent's whole process tree) and finding programs on Windows (see src/os.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

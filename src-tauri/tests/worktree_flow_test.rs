@@ -1,5 +1,7 @@
 //! GA-30: a card's worktree is prepared before its agent starts, takes over a finished card's worktree, and Settings →
 //! Data lists and removes the worktrees of finished cards. Runs use the fake Claude Code, never the real one.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -62,7 +64,7 @@ fn listed(repo: &Path, wt: &Path) -> bool {
 
 #[tokio::test]
 async fn a_new_worktree_is_prepared_before_the_agent_starts() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -85,7 +87,7 @@ async fn a_new_worktree_is_prepared_before_the_agent_starts() {
 
 #[tokio::test]
 async fn a_failing_setup_command_holds_the_card_blocked_and_is_not_a_failed_run() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -113,7 +115,7 @@ async fn a_failing_setup_command_holds_the_card_blocked_and_is_not_a_failed_run(
 
 #[tokio::test]
 async fn a_failing_setup_on_a_start_by_the_queue_puts_the_card_on_hold_and_the_agent_moves_on() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE.to_string()).unwrap();
@@ -131,7 +133,7 @@ async fn a_failing_setup_on_a_start_by_the_queue_puts_the_card_on_hold_and_the_a
 
 #[tokio::test]
 async fn a_new_card_takes_over_the_worktree_of_a_done_then_a_cancelled_card() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let log = tmp.path().join("setup.log");
@@ -178,7 +180,7 @@ async fn a_new_card_takes_over_the_worktree_of_a_done_then_a_cancelled_card() {
 
 #[tokio::test]
 async fn the_worktree_of_a_card_that_is_not_finished_is_never_taken_over() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let a = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -195,7 +197,7 @@ async fn the_worktree_of_a_card_that_is_not_finished_is_never_taken_over() {
 
 #[tokio::test]
 async fn a_done_cards_worktree_with_uncommitted_work_is_not_taken_over() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let a = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -211,7 +213,7 @@ async fn a_done_cards_worktree_with_uncommitted_work_is_not_taken_over() {
 
 #[tokio::test]
 async fn settings_data_lists_and_removes_the_worktrees_of_finished_cards() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let ids: Vec<String> = (0..3).map(|_| gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend")).collect();
@@ -253,4 +255,13 @@ async fn settings_data_lists_and_removes_the_worktrees_of_finished_cards() {
     assert!(by(testing).note.contains("no worktree of a Done or Cancelled card"), "{:?}", by(testing));
     let left: Vec<String> = gizai_lib::worktrees::list(&st).unwrap().into_iter().map(|w| w.task_id).collect();
     assert_eq!(left, [cancelled.clone()]);
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
 }

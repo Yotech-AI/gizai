@@ -1,6 +1,8 @@
 //! Push branch over SSH, with a fake ssh as your own GIT_SSH_COMMAND (kept, as Gizai keeps one you set): it logs its
 //! arguments and serves "GitHub" from local bare repositories, so nothing here reaches github.com. Every test in this
 //! file runs with that fake ssh.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

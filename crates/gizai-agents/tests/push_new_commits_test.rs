@@ -1,5 +1,7 @@
 //! GA-56: `worktree::push_new_commits`, Gizai's push after a run. "The remote" is a local bare repository, so nothing
 //! here reaches GitHub; a pre-receive hook in it writes down every push that reaches it.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

@@ -1,0 +1,92 @@
+# Installs Gizai from source on macOS (install.sh) and Windows (install.ps1) into a scratch folder, the way Gizai's own
+# update does: build only, then install, then install again over it (which replaces the programs). Then it uninstalls.
+# A release build takes a while, so it runs only on pull requests that change an installer, and by hand.
+# It signs, releases and uploads nothing.
+name: Install
+
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - install.ps1
+      - src-tauri/tauri.conf.json
+      - .github/workflows/install.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    name: install on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # macOS's own bash 3.2, as on a Mac. A scratch prefix and data folder: nothing goes in ~/Applications.
+      - name: install.sh (macOS)
+        if: runner.os == 'macOS'
+        env:
+          GIZAI_PREFIX: ${{ runner.temp }}/gizai
+          GIZAI_DATA_DIR: ${{ runner.temp }}/gizai-data
+        run: |
+          set -eu
+          /bin/bash ./install.sh --build-only
+          /bin/bash ./install.sh --skip-build
+          /bin/bash ./install.sh --skip-build
+          app="$GIZAI_PREFIX/lib/gizai/Gizai.app"
+          test -x "$app/Contents/MacOS/gizai"
+          test -x "$app/Contents/MacOS/gizai-mcp"
+          codesign --verify --deep --strict "$app"
+          "$GIZAI_PREFIX/bin/gizai" --version
+          "$GIZAI_PREFIX/lib/gizai/gizai" --version | grep -E '^gizai [0-9]+\.[0-9]+\.[0-9]+'
+          /bin/bash ./install.sh --uninstall
+          test ! -e "$GIZAI_PREFIX/lib/gizai"
+          test ! -e "$GIZAI_PREFIX/bin/gizai"
+
+      # Windows PowerShell 5.1, which Gizai's update runs. The Start menu shortcut must carry Gizai's AppUserModelID,
+      # without which Windows shows none of its notifications.
+      - name: install.ps1 (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          GIZAI_PREFIX: ${{ runner.temp }}\gizai
+          GIZAI_DATA_DIR: ${{ runner.temp }}\gizai-data
+        run: |
+          foreach ($step in @('-BuildOnly', '-SkipBuild', '-SkipBuild')) {
+            powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 $step
+            if ($LASTEXITCODE -ne 0) { "install.ps1 $step failed"; exit 1 }
+          }
+          $marker = Get-Content -LiteralPath "$env:GIZAI_PREFIX\gizai-installed.txt"
+          "installed: $marker"
+          if ("$marker" -notmatch '^gizai \d+\.\d+\.\d+') { 'gizai-installed.txt should say the version'; exit 1 }
+          if (-not (Test-Path -LiteralPath "$env:GIZAI_PREFIX\gizai-mcp.exe")) { 'gizai-mcp.exe is missing'; exit 1 }
+          $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+          $id = (New-Object -ComObject Shell.Application).NameSpace($menu).ParseName('Gizai.lnk').ExtendedProperty('System.AppUserModel.ID')
+          "shortcut app id: $id"
+          if ($id -ne 'ai.gizai.app') { 'the Start menu shortcut should carry ai.gizai.app'; exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
+          if ($LASTEXITCODE -ne 0) { 'install.ps1 -Uninstall failed'; exit 1 }
+          if (Test-Path -LiteralPath "$env:GIZAI_PREFIX\gizai.exe") { 'gizai.exe should be gone'; exit 1 }
+          if (Test-Path -LiteralPath (Join-Path $menu 'Gizai.lnk')) { 'the Start menu shortcut should be gone'; exit 1 }

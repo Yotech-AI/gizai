@@ -4,6 +4,7 @@
 //! Errors are plain sentences and never hold a value.
 use std::collections::{BTreeMap, HashMap};
 use std::io::{ErrorKind, Write};
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -144,6 +145,8 @@ impl FileKeychain {
     }
 
     /// Writes a new file next to it (0600 from the start) and renames it over the old one, so it is never half written.
+    /// Windows has no modes: a file in your own profile inherits its folder's ACL, which lets only you, SYSTEM and
+    /// Administrators read it.
     fn write(&self, values: &BTreeMap<String, String>) -> Result<(), String> {
         let text = serde_json::to_string_pretty(values).map_err(|_| self.refused("can't be written"))?;
         if let Some(dir) = self.path.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -153,7 +156,11 @@ impl FileKeychain {
         name.push(format!(".{}.new", std::process::id()));
         let new = self.path.with_file_name(name);
         let _ = std::fs::remove_file(&new);
-        let written = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&new)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let written = options.open(&new)
             .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()))
             .and_then(|()| std::fs::rename(&new, &self.path));
         written.map_err(|e| {

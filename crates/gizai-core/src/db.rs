@@ -72,12 +72,14 @@ pub fn stamp(ms: i64) -> String {
     format!("{y:04}{m:02}{d:02}-{:02}{:02}{:02}-{:03}", rem / 3_600_000, rem / 60_000 % 60, rem / 1000 % 60, rem % 1000)
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     /// POSIX: the C library reads TZ again (the libc crate has no binding for it on Linux).
     fn tzset();
 }
 
 /// How far local time is ahead of UTC at `ms`, in seconds (summer time included); 0 when the C library can't say.
+#[cfg(unix)]
 fn local_offset_secs(ms: i64) -> i64 {
     let t = ms.div_euclid(1000) as libc::time_t;
     // SAFETY: tzset only updates the C library's time zone; localtime_r writes nothing but `tm`, which is ours.
@@ -85,6 +87,33 @@ fn local_offset_secs(ms: i64) -> i64 {
         let mut tm: libc::tm = std::mem::zeroed();
         tzset();
         if libc::localtime_r(&t, &mut tm).is_null() { 0 } else { tm.tm_gmtoff as i64 }
+    }
+}
+
+/// How far local time is ahead of UTC at `ms`, in seconds (summer time included), by Windows' own time zone setting
+/// (TZ isn't read there): the instant turned into local time and back into a count. 0 when Windows can't say.
+#[cfg(windows)]
+fn local_offset_secs(ms: i64) -> i64 {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime};
+    // a FILETIME counts 100 ns since 1601-01-01 UTC, 11644473600 s before 1970
+    let Some(ticks) = ms.div_euclid(1000).checked_add(11_644_473_600).and_then(|s| s.checked_mul(10_000_000)).filter(|t| *t >= 0) else {
+        return 0;
+    };
+    let utc_ft = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+    // SAFETY: each call only reads and writes the structs here, which are ours (a null time zone: the one in effect).
+    unsafe {
+        let mut utc: SYSTEMTIME = std::mem::zeroed();
+        let mut local: SYSTEMTIME = std::mem::zeroed();
+        let mut local_ft: FILETIME = std::mem::zeroed();
+        if FileTimeToSystemTime(&utc_ft, &mut utc) == 0
+            || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) == 0
+            || SystemTimeToFileTime(&local, &mut local_ft) == 0
+        {
+            return 0;
+        }
+        let local_ticks = ((local_ft.dwHighDateTime as i64) << 32) | local_ft.dwLowDateTime as i64;
+        (local_ticks - ticks) / 10_000_000
     }
 }
 

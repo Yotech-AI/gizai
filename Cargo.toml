@@ -18,6 +18,8 @@ tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt-m
 libc = "0.2"
 tempfile = "3"
 sha2 = "0.10"
+# The system's random source on every system (getrandom on Linux, getentropy on macOS, ProcessPrng on Windows).
+getrandom = "0.4"
 
 [profile.release]
 lto = "thin"

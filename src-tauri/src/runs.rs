@@ -235,9 +235,19 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `p` is a program this system runs (`gizai_agents::os::executable`): a file with an execute bit on Linux and
+/// macOS, an `.exe`, `.cmd`… file on Windows.
 pub(crate) fn executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    gizai_agents::os::executable(p)
+}
+
+/// The program at the path `p` (a saved Claude Code or gh), when this system runs it. On Windows a path without its
+/// extension is tried with PATHEXT's (`…\claude` → `…\claude.exe`).
+pub(crate) fn program_at(p: &str) -> Option<PathBuf> {
+    if cfg!(windows) {
+        return gizai_agents::os::find_in(p, &std::env::var_os("PATH").unwrap_or_default());
+    }
+    executable(Path::new(p)).then(|| PathBuf::from(p))
 }
 
 /// Finds `claude` the way a login shell would, then in the usual install places. Saves what it finds.
@@ -249,8 +259,28 @@ pub fn detect_claude(st: &AppState) -> Option<String> {
     found
 }
 
-/// `detect_claude` without saving: where `claude` is installed, if it is.
+/// `detect_claude` without saving: where `claude` is installed, if it is. Linux: the way a login shell finds it, then
+/// the usual install places. macOS: on PATH (Gizai took your login shell's at start, `shell_path`), then the usual
+/// places. Windows: on PATH (`claude.exe`, or npm's `claude.cmd`), then where the native installer and npm put it.
 pub fn find_claude() -> Option<String> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    if cfg!(windows) {
+        let home = gizai_core::clis::home();
+        let appdata = std::env::var_os("APPDATA").map(PathBuf::from).filter(|a| a.is_absolute());
+        let usual = [(!home.is_empty()).then(|| Path::new(&home).join(".local").join("bin").join("claude.exe")),
+                     appdata.map(|a| a.join("npm").join("claude.cmd"))];
+        return gizai_agents::os::find_in("claude", &path)
+            .or_else(|| usual.into_iter().flatten().find(|p| executable(p)))
+            .map(|p| p.display().to_string());
+    }
+    if cfg!(target_os = "macos") {
+        let home = gizai_core::clis::home();
+        return gizai_agents::os::find_in("claude", &path).map(|p| p.display().to_string()).or_else(|| {
+            [".local/bin/claude", ".claude/local/claude"].iter().map(|rel| format!("{home}/{rel}"))
+                .chain(["/opt/homebrew/bin/claude".to_string(), "/usr/local/bin/claude".to_string()])
+                .find(|p| executable(Path::new(p)))
+        });
+    }
     let from_shell = std::process::Command::new("bash").args(["-lc", "command -v claude"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -274,10 +304,7 @@ pub(crate) fn claude_bin(st: &AppState, bin_override: Option<String>) -> Result<
             None => detect_claude(st),
         },
     };
-    match bin {
-        Some(b) if executable(Path::new(&b)) => Ok(PathBuf::from(b)),
-        _ => Err("Claude Code not found: set its path in Settings".into()),
-    }
+    bin.as_deref().and_then(program_at).ok_or_else(|| "Claude Code not found: set its path in Settings".into())
 }
 
 /// How long Claude Code's model list is kept before it is asked again.
@@ -675,10 +702,15 @@ async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &
     }
 }
 
-/// The PATH for the commands that prepare a worktree: Gizai's own, then the folders your login shell adds (started
-/// from the app launcher, Gizai often lacks ~/.local/bin, mise or nvm).
+/// The PATH for the commands that prepare a worktree (and the coding CLIs Settings finds and runs start): on Linux
+/// Gizai's own, then the folders your login shell adds (started from the app launcher, Gizai often lacks ~/.local/bin,
+/// mise or nvm). On macOS and Windows Gizai's own: macOS took your login shell's at start (`shell_path`), and a Windows
+/// app gets the full PATH.
 pub(crate) fn command_path() -> std::ffi::OsString {
     let own = std::env::var_os("PATH").unwrap_or_default();
+    if cfg!(any(windows, target_os = "macos")) {
+        return own;
+    }
     let login = std::process::Command::new("bash").args(["-lc", "printf '\\n%s' \"$PATH\""]).stdin(std::process::Stdio::null()).output().ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().last().map(str::to_string))
@@ -995,7 +1027,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
 
 /// The repository's shared git folder for a worktree (where its commits go), as an absolute path.
 fn git_common_dir(wt: &Path) -> Option<String> {
-    let out = std::process::Command::new("git").args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).current_dir(wt)
+    let out = gizai_agents::os::command("git").args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).current_dir(wt)
         .stdin(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
     let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!dir.is_empty()).then_some(dir)

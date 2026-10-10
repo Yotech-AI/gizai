@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { checkRepo, getProject, listClients, saveProject, type RepoCheck } from "../api";
 import { go } from "../router";
 import type { Project, ProjectInput } from "../types";
+import { modKey } from "../lib/keys";
 import { suggestKey } from "../lib/projectKey";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
@@ -69,7 +70,7 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
     : repo?.isGit ? { hint: `Git repository · on branch ${repo.branch ?? "?"}` } : { hint: "Agents work in their own git worktree of it." };
   return (
     <Drawer title={isNew ? "New project" : `Edit ${initial.name}`} subtitle="Projects hold tasks, docs and files. Agents work on projects linked to a git repository."
-      onClose={onClose} dirty={JSON.stringify(v) !== JSON.stringify(initial)} error={err} hint="Ctrl+Enter saves"
+      onClose={onClose} dirty={JSON.stringify(v) !== JSON.stringify(initial)} error={err} hint={`${modKey()}+Enter saves`}
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !v.name.trim()} onClick={save}>{isNew ? "Create project" : "Save changes"}</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }}>
         <FormSection title="Project" text={<>Its name, client and task key. Tasks become {v.key || "KEY"}-1, {v.key || "KEY"}-2…</>}>

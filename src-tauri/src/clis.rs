@@ -19,14 +19,19 @@ pub struct CliStatus {
 }
 
 fn home() -> String {
-    std::env::var("HOME").unwrap_or_default()
+    core_clis::home()
 }
 
-/// The program a command names: a path (`~` expanded) that is executable, or a name found in `path`.
+/// The program a command names: a path (`~` expanded) that is executable, or a name found in `path`. On Windows a path
+/// has `\` or `/` in it, and a name or path without its extension is tried with PATHEXT's: `codex` is found as npm's
+/// `codex.cmd` or as `codex.exe`.
 pub fn resolve_program(command: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     let c = core_clis::expand_home(command.trim(), &home());
     if c.is_empty() {
         return None;
+    }
+    if cfg!(windows) {
+        return gizai_agents::os::find_in(&c, path);
     }
     if c.contains('/') {
         let p = PathBuf::from(&c);
@@ -42,11 +47,29 @@ fn status(st: &AppState, cli: Cli, path: &std::ffi::OsStr) -> CliStatus {
         resolve_program(&cli.command, path)
     };
     let problem = match &found {
-        Some(_) => None,
+        Some(_) => git_bash_problem(&cli, path),
         None if cli.command.trim().is_empty() => Some(format!("{} not found: set its program", cli.name)),
         None => Some(format!("{} not found", cli.command.trim())),
     };
     CliStatus { path: found.map(|p| p.display().to_string()), problem, cli }
+}
+
+/// Windows: Claude Code runs its Bash tool in Git for Windows' bash and doesn't start without it, so a Claude Code CLI
+/// whose bash isn't there says why: its own CLAUDE_CODE_GIT_BASH_PATH line, else Gizai's, the bash next to git, or
+/// Git's usual places (`gizai_agents::os::git_bash`). The agent form shows it as a warning and the chat doesn't offer
+/// that CLI. None on Linux and macOS.
+fn git_bash_problem(cli: &Cli, path: &std::ffi::OsStr) -> Option<String> {
+    if !cfg!(windows) || cli.kind != "claude_code" {
+        return None;
+    }
+    let own = core_clis::env_pairs(cli, &home()).into_iter().find(|(k, _)| k.eq_ignore_ascii_case("CLAUDE_CODE_GIT_BASH_PATH"));
+    match own {
+        Some((_, bash)) if !Path::new(&bash).is_file() =>
+            Some(format!("CLAUDE_CODE_GIT_BASH_PATH is {bash}, which isn't there: point it to Git Bash's bash.exe")),
+        Some(_) => None,
+        None => gizai_agents::os::git_bash(path).is_none()
+            .then(|| "Claude Code needs Git for Windows (Git Bash): install it from git-scm.com, or set CLAUDE_CODE_GIT_BASH_PATH".to_string()),
+    }
 }
 
 /// Every CLI, Claude Code first, with the program each would run.
@@ -82,7 +105,13 @@ pub fn find(st: &AppState) -> Result<Vec<Cli>, String> {
 fn find_in(have: &[Cli], path: &std::ffi::OsStr) -> Vec<Cli> {
     let listed = |program: &str| have.iter().any(|c| {
         let cmd = core_clis::expand_home(c.command.trim(), &home());
-        Path::new(&cmd).file_name().is_some_and(|n| n == program) && c.env.is_empty()
+        // Windows: `codex` is codex.cmd or codex.exe there, in any case
+        let named = if cfg!(windows) {
+            Path::new(&cmd).file_stem().is_some_and(|n| n.eq_ignore_ascii_case(program))
+        } else {
+            Path::new(&cmd).file_name().is_some_and(|n| n == program)
+        };
+        named && c.env.is_empty()
     });
     KNOWN.iter()
         .filter(|(program, _, name, _)| !listed(program) && !have.iter().any(|c| c.name.eq_ignore_ascii_case(name)))

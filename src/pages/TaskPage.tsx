@@ -6,6 +6,7 @@ import { addComment, archiveTask, getTask, getTeam, listComments, listRuns, list
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { relTime } from "../lib/format";
+import { modKey } from "../lib/keys";
 import { describeChange } from "../lib/activity";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { PriorityIcon, StatusIcon } from "../components/StatusIcon";
@@ -52,7 +53,7 @@ function EditableMarkdown({ label, value, placeholder, hint, onSave, readOnly }:
       </div>
       {editing ? (
         <div className="md-edit-box">
-          <MarkdownEditor value={value} autoFocus ariaLabel={label} placeholder={placeholder} minHeight={120} hint="Ctrl+Enter saves · Esc cancels"
+          <MarkdownEditor value={value} autoFocus ariaLabel={label} placeholder={placeholder} minHeight={120} hint={`${modKey()}+Enter saves · Esc cancels`}
             onSave={save} onBlur={save} onCancel={cancel} />
         </div>
       ) : (
@@ -189,7 +190,7 @@ export function TaskPage({ id }: { id: string }) {
                 ))}
                 {comments && comments.length === 0 && <p className="faint">No comments yet.</p>}
                 {!archived && <div className="composer" style={{ marginTop: 14 }}>
-                  <MarkdownEditor key={composerKey} value="" onChange={setDraft} onSave={post} ariaLabel="New comment" minHeight={72} hint="Ctrl+Enter posts"
+                  <MarkdownEditor key={composerKey} value="" onChange={setDraft} onSave={post} ariaLabel="New comment" minHeight={72} hint={`${modKey()}+Enter posts`}
                     placeholder="Write a comment. @ links a task, project, client or agent." />
                   <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                     <button className="btn primary" disabled={!draft.trim()} onClick={() => post(draft)}>Comment</button>

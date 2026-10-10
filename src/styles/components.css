@@ -410,19 +410,25 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .tool-card .tc-h { font-size: var(--fs-xs); color: var(--text-3); }
 .tool-card pre { margin: 4px 0 8px; max-height: 240px; overflow: auto; font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.5; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.composer-box { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line-2); border-radius: var(--radius-l); background: var(--raised); }
+/* The composer: one box with the text on top and, under it, a row with + on the left, the tips, Runs on and Send (or
+   Stop) on the right. A click in the box around the text puts the cursor in the text. */
+.composer-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line-2); border-radius: var(--radius-xl); background: var(--raised); cursor: text; }
 .composer-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.composer-box.disabled { opacity: .6; }
-.composer-row { display: flex; align-items: flex-end; gap: 8px; }
-.composer-box .composer-plus { flex: none; }
-.composer-box .composer-plus.on { background: var(--hover); color: var(--text); }
-/* The text box: a Markdown editor without a toolbar, up to 200px tall, then it scrolls */
-.md-editor.composer-editor { flex: 1; min-width: 0; border: 0; background: transparent; }
+.composer-box.disabled { cursor: default; }
+.composer-box.disabled > .files, .composer-box.disabled > .composer-editor, .composer-box.disabled .composer-hint { opacity: .6; }
+/* The text box: a Markdown editor without a toolbar, two lines high when empty, up to 200px as it grows, then it scrolls */
+.md-editor.composer-editor { min-width: 0; border: 0; border-radius: 0; background: transparent; }
 .md-editor.composer-editor:focus-within { box-shadow: none; }
-.composer-editor .md-surface { min-height: 26px; padding: 3px 0; }
+.composer-editor .md-surface { min-height: 0; padding: 0; }
 .composer-editor .cm-editor { max-height: 200px; font-size: var(--fs-chat, var(--fs)); }
 .composer-editor .cm-scroller { overflow-y: auto; }
-.composer-editor .cm-content { line-height: 1.5; }
+.composer-editor .cm-content { min-height: 3em; line-height: 1.5; }
+/* The row under the text: its buttons and Runs on 28px high */
+.composer-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.composer-foot .btn.sm { height: 28px; }
+.composer-foot .btn.sm.icon-only { width: 28px; }
+.composer-foot .btn.composer-plus { border-color: var(--line-2); }
+.composer-foot .btn.composer-plus.on { background: var(--hover); color: var(--text); }
 .composer-box .stop-btn { border-color: var(--live); color: var(--live); background: transparent; }
 .chat-banner.warn { border-color: var(--warning); color: var(--warning); }
 /* Files dropped on the Chat page go to the message */
@@ -445,11 +451,19 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .item-picker .opt > .icon { flex: none; color: var(--text-3); }
 .item-picker .opt .ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-picker .opt .faint { flex: 0 1 auto; max-width: 45%; }
-.composer-hint { display: flex; gap: 14px; margin-top: 6px; font-size: var(--fs-xs); color: var(--text-3); }
-.composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
-.composer-foot .composer-hint { margin-top: 0; }
-.runs-on { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--text-3); }
-.runs-on .select { height: 24px; padding: 0 26px 0 8px; font-size: var(--fs-xs); width: auto; max-width: 260px; background-position: right 6px center; }
+/* The tips fill the row's free width on one line: a tip that doesn't fit wraps onto a second line, which is cut off */
+.composer-hint { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; flex: 1; min-width: 0; height: 20px; overflow: hidden; font-size: var(--fs-xs); color: var(--text-3); }
+.composer-hint > span { display: inline-flex; align-items: center; gap: 4px; height: 20px; white-space: nowrap; }
+/* Runs on: the picked CLI's name and a chevron, a box only on hover. As wide as that name (the hidden copy in
+   .runs-on-size, with the select's padding and border), at most 240px. */
+.runs-on { display: inline-flex; align-items: center; gap: 2px; flex: none; min-width: 0; font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.runs-on-pick { position: relative; display: block; min-width: 0; max-width: 240px; }
+.runs-on-size { display: block; height: 28px; padding: 0 27px 0 9px; overflow: hidden; font-size: var(--fs-sm); font-weight: 500; visibility: hidden; }
+.runs-on .select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0 26px 0 8px; border-color: transparent; background-color: transparent;
+  background-position: right 6px center; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; }
+.runs-on .select:hover { border-color: transparent; background-color: var(--hover); color: var(--text); }
+.runs-on .select:focus { border-color: var(--accent); box-shadow: none; }
+.runs-on .select:disabled { background-color: transparent; color: var(--text-3); opacity: 1; }
 .chat-queue { display: flex; flex-direction: column; gap: 8px; margin: 0 0 22px; }
 .chat-msg.user.queued .bubble { border-style: dashed; color: var(--text-2); }
 .chat-msg.user.queued .bubble.editing { width: min(calc(560px * var(--chat-scale, 1)), 85%); padding: 6px; }

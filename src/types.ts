@@ -460,8 +460,10 @@ export type CliTools = {
   insecureCerts: boolean;
   /** The CLI's other tools switched on, by name. */
   builtin: string[];
+  /** Slash commands and skills (Claude Code's SlashCommand and Skill, one switch): its task runs keep your slash commands. */
+  slashCommands: boolean;
 };
-/** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | switch | always | elsewhere | off. */
+/** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | slash | switch | always | elsewhere | off. */
 export type CatalogTool = { id: string; label: string; group: string; description: string; risk: string; how: string; note: string; reported: boolean };
 /** What the hidden browser needs, found or not; `missing` says what to install. */
 export type BrowserNeeds = { node?: string | null; nodeVersion?: string | null; npx?: string | null; browser?: string | null; browserName?: string | null; missing: string[] };
@@ -472,7 +474,8 @@ export type ToolsView = {
   web: { search?: string | null; fetch?: string | null; domains?: string | null };
   browser: { disabled?: string | null; needs: BrowserNeeds; version: string; lastRun?: { status: string; at: number } | null;
     tools: McpToolView[]; summary: string; risk: string };
-  builtin: { tools: CatalogTool[]; source: string; canAsk: boolean };
+  /** `slash`: why the CLI can't have Slash commands and skills; null = it can. */
+  builtin: { tools: CatalogTool[]; source: string; canAsk: boolean; slash?: string | null };
   saved?: CliTools | null;
 };
 /** The built-in browser in Settings → MCP servers: only its version and browser program change. */

@@ -77,7 +77,8 @@ new version of each.
 
 Plain matching over the notes (memory stays small), so it is right after every save, rename and move: every word and
 `"quoted phrase"` must be in the path or the text (case ignored); `path:Standards` (or `path:"Team Lead"`) keeps the
-notes whose path starts with it; `tag:rust` keeps the notes with that tag (the `tags` property or a `#tag` in the text).
+notes whose path starts with it, and with a `/` at the end only that folder's (`path:"Agents/QA/"` leaves out
+`Agents/QA 2/`); `tag:rust` keeps the notes with that tag (the `tags` property or a `#tag` in the text).
 Title matches come first.
 
 ### Safety

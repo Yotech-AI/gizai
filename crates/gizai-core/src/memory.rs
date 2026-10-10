@@ -990,7 +990,11 @@ fn parse_query(q: &str) -> Query {
         let v = value.trim().to_lowercase();
         if !v.is_empty() {
             match key {
-                1 => out.paths.push(v.trim_matches('/').to_string()),
+                // A `/` at the end keeps to that folder: `path:Agents/QA/` is not also `Agents/QA 2/`.
+                1 => {
+                    let p = v.trim_matches('/');
+                    out.paths.push(if v.ends_with('/') && !p.is_empty() { format!("{p}/") } else { p.to_string() });
+                }
                 2 => out.tags.push(v.trim_start_matches('#').to_string()),
                 _ => out.words.push(v),
             }
@@ -1001,7 +1005,8 @@ fn parse_query(q: &str) -> Query {
 }
 
 /// Searches the notes `who` may read: every word and "quoted phrase" (case ignored) in the path or the text, `path:` a
-/// folder or path the note's path starts with (`path:"Team Lead"`), `tag:` a tag (its `tags` property or a `#tag`).
+/// folder or path the note's path starts with (`path:"Team Lead"`; with a `/` at the end only that folder's notes:
+/// `path:"Agents/QA/"`), `tag:` a tag (its `tags` property or a `#tag`).
 /// Plain matching over the notes, which stays right on every save, rename and move (memory stays small). Best first:
 /// title matches, then how often the words occur, then the newest.
 pub fn search(db: &Db, who: &Who, query: &str, limit: usize) -> Result<Vec<Hit>> {

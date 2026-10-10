@@ -334,6 +334,9 @@ function Marked({ text, words }: { text: string; words: string[] }) {
   return <>{highlight(text, words).map((p, i) => (p.hit ? <mark key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>))}</>;
 }
 
+/** How many search results the list shows. */
+const HITS = 50;
+
 function SearchResults({ scope, query, selected, onOpen }: { scope: MemoryScope; query: string; selected: string | null; onOpen: (n: MemoryNote) => void }) {
   const [hits, setHits] = useState<MemoryHit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -341,18 +344,21 @@ function SearchResults({ scope, query, selected, onOpen }: { scope: MemoryScope;
   useEffect(() => {
     let alive = true;
     const t = window.setTimeout(() => {
-      memorySearch(q, 50).then((h) => { if (alive) { setHits(h); setError(null); } }).catch((e) => { if (alive) { setHits([]); setError(String(e)); } });
+      memorySearch(q, HITS * 4).then((h) => { if (alive) { setHits(h); setError(null); } }).catch((e) => { if (alive) { setHits([]); setError(String(e)); } });
     }, 150);
     return () => { alive = false; window.clearTimeout(t); };
   }, [q]);
   const words = searchWords(query);
+  // Only the page's own notes, as in its tree: an agent's page its folder, the shared notes no agent's folder.
+  const mine = (hits ?? []).filter((h) => inScope(h.note, scope));
+  const shown = mine.slice(0, HITS);
   return (
     <div className="mem-results" role="list" aria-label="Search results">
       {error ? <p className="faint mem-pad">{error}</p>
         : hits === null ? <p className="faint mem-pad">Searching…</p>
-        : hits.length === 0 ? <p className="faint mem-pad">No note matches. Every word must be in a note's path or text; path:Folder and tag:name narrow it down.</p>
-        : <div className="faint mem-pad">{hits.length === 50 ? "The first 50 notes" : `${hits.length} ${hits.length === 1 ? "note" : "notes"}`}</div>}
-      {(hits ?? []).map((h) => (
+        : mine.length === 0 ? <p className="faint mem-pad">No note matches. Every word must be in a note's path or text; path:Folder and tag:name narrow it down.</p>
+        : <div className="faint mem-pad">{mine.length > HITS ? `The first ${HITS} notes` : `${mine.length} ${mine.length === 1 ? "note" : "notes"}`}</div>}
+      {shown.map((h) => (
         <button key={h.note.id} role="listitem" className={`mem-hit${selected === h.note.id ? " on" : ""}`} onClick={() => onOpen(h.note)}>
           <span className="mem-hit-title"><FileText className="icon sm" /><span className="ellipsis"><Marked text={titleOf(h.note.path)} words={words} /></span></span>
           <span className="faint ellipsis">{folderOf(h.note.path)}</span>

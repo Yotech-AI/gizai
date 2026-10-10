@@ -404,6 +404,8 @@ async fn a_run_stopped_by_a_limit_says_which_one() {
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE.to_string()).unwrap();
     gizai_core::settings::set(&st.db, "max_run_tool_calls", &1u32).unwrap();
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    // the stopped run leaves the card in In progress: Manual, so the queue doesn't start it again before the check below
+    in_progress_manual(&st);
     gizai_lib::runs::run_once(&st, &task, None, Some(FAKE.into())).await.unwrap();
     let run = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
     assert_eq!(run.status, "timed_out");
@@ -435,7 +437,7 @@ async fn the_queue_starts_as_many_cards_as_the_agent_takes() {
 }
 
 /// Makes In progress Manual. A run stopped at a limit leaves its card there, assigned to its agent: in an Auto column the
-/// queue would start the card again on its own as the run ends, and the test Continues it by hand.
+/// queue would start the card again on its own as the run ends, before the test reads that run or Continues it by hand.
 fn in_progress_manual(st: &gizai_lib::AppState) {
     let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
     let state = gizai_core::team::get(&st.db, &team_id).unwrap().states.into_iter().find(|s| s.category == "in_progress").unwrap().id;

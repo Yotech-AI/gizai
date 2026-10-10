@@ -79,6 +79,17 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// Team Lead may merge (GA-86) is the user's switch, set in the app: create_project and update_project never set it.
+fn guard_lead_may_merge(a: &Args) -> Result<(), String> {
+    for k in ["lead_may_merge", "team_lead_may_merge", "leadMayMerge", "may_merge"] {
+        if a.0.get(k).is_some_and(|v| !v.is_null()) {
+            return Err("Team Lead may merge can't be switched from chat: only the user switches it, in the app (the project page → Edit). \
+                        Nothing changed.".into());
+        }
+    }
+    Ok(())
+}
+
 /// A command for an agent's allowed commands: `Bash(…)` with something in it.
 fn is_command(t: &str) -> bool {
     t.trim().strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')).is_some_and(|inner| !inner.trim().is_empty())
@@ -184,6 +195,7 @@ pub(crate) fn save_contact(cx: &Cx, a: &Args) -> Result<Value, String> {
 // ---- projects ----
 
 pub(crate) fn create_project(cx: &Cx, a: &Args) -> Result<Value, String> {
+    guard_lead_may_merge(a)?;
     let name = a.req("name")?;
     let repo_path = a.opt("repo_path").map(|r| checked_repo(&r)).transpose()?;
     let key = match a.opt("key") {
@@ -202,6 +214,7 @@ pub(crate) fn create_project(cx: &Cx, a: &Args) -> Result<Value, String> {
 }
 
 pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
+    guard_lead_may_merge(a)?;
     let cur = resolve::project(cx, &a.req("project")?)?;
     let repo_path = match a.text("repo_path") {
         Some(r) if r.is_empty() => None,

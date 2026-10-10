@@ -19,6 +19,9 @@ fn board_() -> B {
     let be = agent("Backend Agent", "backend", "on_assign");
     let qa = agent("QA Agent", "qa", "on_assign");
     let lead = agent("Team Lead", "lead", "manual");
+    // These tests look at held cards as the board check finds them: an agent's question goes to the Inbox at once, not
+    // to the Team Lead first (GA-70; questions_test checks that step and the board check with it).
+    gizai_core::questions::set_enabled(&db, false).unwrap();
     B { db, you: s.you_id, project, be, qa, lead, team: s.team_id }
 }
 

@@ -163,7 +163,8 @@ pub fn inbox(db: &Db, you_id: &str) -> Result<Vec<Item>, String> {
     let mut items = vec![];
     for t in tasks::needs_you(db, you_id).map_err(|e| e.to_string())? {
         let route = format!("#/task/{}", t.id);
-        if let Some(hold) = &t.hold {
+        // A card whose question is with the Team Lead (GA-70) doesn't need you yet: it notifies if the Team Lead asks you.
+        if let Some(hold) = t.hold.as_ref().filter(|_| !t.with_lead) {
             let why = t.hold_reason.as_deref().map(str::trim).filter(|r| !r.is_empty())
                 .map(|r| short(r, REASON_CHARS)).unwrap_or_else(|| hold_name(hold).into());
             items.push(Item {

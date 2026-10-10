@@ -137,8 +137,11 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
 
   // A long hold reason (usually the agent's whole summary, which the comments show) shows its end, about two lines; hover shows all.
   const reasonEnd = task.holdReason ? textEnd(task.holdReason, 160) : null;
-  const holdLine = `This card is on hold${task.holdReason ? ` (${(reasonEnd ?? task.holdReason).replace(/\.$/, "")})` : ""}. ${asks.length
-    ? "Run what the agent asks for below, then press Done, continue." : "Clear the hold to run an agent."}`;
+  // GA-70: a question that is with the Team Lead isn't yours yet.
+  const holdLine = task.withLead
+    ? `${run?.agentName ?? "The agent"} asked a question, and the Team Lead is looking at it: it answers and the agent carries on, or it asks you in the Inbox.`
+    : `This card is on hold${task.holdReason ? ` (${(reasonEnd ?? task.holdReason).replace(/\.$/, "")})` : ""}. ${asks.length
+      ? "Run what the agent asks for below, then press Done, continue." : "Clear the hold to run an agent."}`;
   const holdTitle = reasonEnd ? task.holdReason ?? undefined : undefined;
   const icon = !run ? null : run.status === "succeeded" && run.outcome !== "no_result" ? <Check className="icon" style={{ color: "var(--success)" }} />
     : run.status === "cancelled" ? <X className="icon" style={{ color: "var(--text-3)" }} /> : <CircleAlert className="icon" style={{ color: "var(--danger)" }} />;
@@ -177,7 +180,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
       {agents.length > 0 && (
         <div className="run-actions">
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`
-            : task.hold ? "On hold" : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
+            : task.hold ? (task.withLead ? "With the Team Lead" : "On hold") : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
           <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!!pending.busy}>
             <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
             {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}

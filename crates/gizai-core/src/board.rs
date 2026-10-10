@@ -2,7 +2,8 @@
 //! comment after a "needs a decision" hold), other held cards, cards in an Auto column no agent will start (with why)
 //! and cards in In progress whose run stopped part-way. Only To do, In progress and Testing count (cards in a Manual
 //! column wait for Run by design), and paused, done and archived projects are left out. The Team Lead's scheduled check and
-//! the `check_board` tool both use it, so they see the same thing.
+//! the `check_board` tool both use it, so they see the same thing. A card whose question is with the Team Lead (GA-70,
+//! `questions`) is left out, and so is one whose question it escalated to the user, until they answer on the card.
 //!
 //! What each check saw is kept on its run (`runs.findings_json`): a finding is new when the Team Lead hasn't seen it
 //! yet, or its card changed since (a comment, a run, a move, the hold), not counting the Team Lead's own changes.
@@ -125,6 +126,8 @@ struct Card {
     hold_at: i64,
     created_at: i64,
     run_for_me: Vec<String>,
+    /// On hold for a decision: what the Team Lead did with its question (GA-70), as `questions` keeps it.
+    lead: Option<String>,
 }
 
 fn usd(micros: i64) -> String {
@@ -172,18 +175,25 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
         let mut st = c.prepare(
             "SELECT t.id, t.identifier, t.title, s.name, s.category, t.hold, t.hold_reason, COALESCE(t.hold_at, t.updated_at), t.created_at,
                     CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
-                      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
+                      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+                    CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') FROM runs r
+                      WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
+                      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
              FROM tasks t JOIN workflow_states s ON s.id = t.state_id LEFT JOIN projects p ON p.id = t.project_id
              WHERE t.deleted_at IS NULL AND s.category IN ('ready','in_progress','testing')
                AND (p.id IS NULL OR (p.deleted_at IS NULL AND p.status NOT IN ('archived','done','paused')))
              ORDER BY s.sort_key, t.sort_key, t.created_at")?;
         let cards = st.query_map([], |r| Ok(Card {
             id: r.get(0)?, identifier: r.get(1)?, title: r.get(2)?, column: r.get(3)?, category: r.get(4)?, hold: r.get(5)?,
-            hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?),
+            hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?), lead: r.get(10)?,
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut out = vec![];
         for card in cards {
+            // GA-70: a question that is with the Team Lead is its own run's to handle, not a check's.
+            if matches!(card.lead.as_deref(), Some("asking" | "answering")) {
+                continue;
+            }
             let active: i64 = c.query_row("SELECT count(*) FROM runs WHERE task_id=?1 AND status IN ('queued','running','waiting_approval')",
                                           [&card.id], |r| r.get(0))?;
             if active > 0 {
@@ -215,6 +225,9 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                         answer: Some(body),
                         ..base("answered", "answered", at, last_agent, "A person answered after the card was put on hold".into())
                     },
+                    // GA-70: the Team Lead already looked at this question and asked the user (the Inbox), or its limits
+                    // sent it to them (no loops): it waits for them.
+                    None if matches!(card.lead.as_deref(), Some("escalated" | "limit")) => continue,
                     None => {
                         let why = card.hold_reason.clone().filter(|r| !r.trim().is_empty()).unwrap_or_else(|| "no reason given".into());
                         base("held", hold, card.hold_at, last_agent, format!("On hold ({hold}): {why}"))

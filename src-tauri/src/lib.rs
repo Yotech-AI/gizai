@@ -1,3 +1,4 @@
+pub mod ask_lead;
 pub mod bitbucket;
 pub mod board;
 pub mod chat;
@@ -233,6 +234,10 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
         }
     }
     let _ = gizai_core::runs::recover_interrupted(&db);
+    // Questions that waited for the Team Lead (GA-70): its run on them is gone, so they go to you.
+    if let Err(e) = gizai_core::questions::recover(&db) {
+        eprintln!("gizai: sending the questions that waited for the Team Lead to the Inbox failed: {e}");
+    }
     // Messages queued in a chat wait for Send now: the answer they waited for is gone.
     let _ = gizai_core::chat::hold_all_queues(&db);
     chat::remove_stray_configs(&dir);
@@ -547,6 +552,8 @@ pub fn run() {
             commands::list_teams, commands::get_team, commands::check_repo,
             commands::list_docs, commands::get_doc, commands::create_doc, commands::save_doc, commands::rename_doc,
             commands::doc_versions, commands::doc_version_body, commands::agent_notes, commands::memory_enabled, commands::set_memory_enabled,
+            commands::memory_notes, commands::memory_create, commands::memory_move, commands::memory_search, commands::memory_recent,
+            commands::ask_lead_enabled, commands::set_ask_lead_enabled,
             commands::add_files, commands::list_files, commands::remove_file, commands::open_file,
             commands::add_team, commands::add_agent, commands::update_agent, commands::set_agent_status, commands::check_agent_folders,
             commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,

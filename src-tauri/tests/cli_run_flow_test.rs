@@ -33,8 +33,9 @@ fn put_agent_on(st: &gizai_lib::AppState, cli: &str, extra: AgentInput) -> Strin
     agent.actor_id
 }
 
-/// Makes In progress Manual. A run stopped at a limit leaves its card there, assigned to its agent: in an Auto column the
-/// queue would start the card again on its own as the run ends, and these tests Continue it by hand.
+/// Makes In progress Manual. A run stopped at a limit, or one that ended without a result, leaves its card there,
+/// assigned to its agent: in an Auto column the queue would start the card again on its own as the run ends, and these
+/// tests Continue it by hand.
 fn in_progress_manual(st: &gizai_lib::AppState) {
     let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
     let state = gizai_core::team::get(&st.db, &team_id).unwrap().states.into_iter().find(|s| s.category == "in_progress").unwrap().id;
@@ -213,6 +214,7 @@ async fn another_cli_gets_its_arguments_and_its_plain_text_end_moves_the_card() 
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
     let other = add_cli(&st, "OpenCode", "other", FAKE_CLI, &["FAKE_KIND=other"], "run -m {model} {prompt}");
     put_agent_on(&st, &other, AgentInput { permission_mode: "acceptEdits".into(), ..Default::default() });
+    in_progress_manual(&st);
 
     let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     assert_eq!((s.status.as_str(), s.outcome.as_deref()), ("succeeded", Some("ready_for_testing")), "{:?}", s.error);

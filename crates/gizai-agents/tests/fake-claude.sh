@@ -65,7 +65,10 @@ if [ "$prompt" = "crash" ]; then
 fi
 if [ "$prompt" = "hang" ] || [ "$prompt" = "stubborn" ]; then
   if [ "$prompt" = "hang" ]; then trap 'exit 130' INT; else trap '' INT; fi
-  head -n1 "$here/fixtures/run-ok.jsonl"
+  # The first line with builtins, not `head -n1`: a test stops the run as soon as it reads that line, and bash 3.2
+  # (macOS) drops a SIGINT that comes while it waits for a command that then exits normally, so it would miss its trap.
+  IFS= read -r first < "$here/fixtures/run-ok.jsonl"
+  printf '%s\n' "$first"
   sleep 600 &
   wait $!
   exit 0

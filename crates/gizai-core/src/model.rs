@@ -191,6 +191,10 @@ pub struct Task {
     /// (`Run::run_for_me`); Done, continue resumes that run. Empty otherwise.
     #[serde(default)]
     pub run_for_me: Vec<String>,
+    /// GA-70: the card is on hold for a decision and its question is with the Team Lead, which answers it or asks you; it
+    /// isn't in the Inbox meanwhile (`questions`).
+    #[serde(default)]
+    pub with_lead: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -393,6 +397,13 @@ pub struct Run {
     /// Memory (GA-19): the notes its prompt was given, with their size and how much it showed; empty without memory.
     #[serde(default)]
     pub memory: Vec<crate::memory::Given>,
+    /// GA-70: it ended asking for a decision and the Team Lead took the question: what it did with it (looking at it,
+    /// answered, escalated to you) and what that cost. None when the question went to you directly.
+    #[serde(default)]
+    pub lead: Option<crate::questions::LeadAnswer>,
+    /// GA-70: a Team Lead's run on a question (trigger `question`, no card of its own): the card the question is on.
+    #[serde(default)]
+    pub question_task_id: Option<String>,
 }
 
 /// A tool call a headless run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI

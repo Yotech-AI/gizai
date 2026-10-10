@@ -6,10 +6,13 @@ use crate::db::Db;
 use crate::{Result, ids};
 
 pub fn get<T: DeserializeOwned>(db: &Db, key: &str) -> Result<Option<T>> {
-    db.read(|c| {
-        let raw: Option<String> = c.query_row("SELECT value_json FROM settings WHERE key=?1 AND org_id=''", [key], |r| r.get(0)).optional()?;
-        Ok(match raw { Some(j) => serde_json::from_str(&j).ok(), None => None })
-    })
+    db.read(|c| get_in(c, key))
+}
+
+/// `get` on a connection that is open already (inside a write).
+pub(crate) fn get_in<T: DeserializeOwned>(c: &rusqlite::Connection, key: &str) -> Result<Option<T>> {
+    let raw: Option<String> = c.query_row("SELECT value_json FROM settings WHERE key=?1 AND org_id=''", [key], |r| r.get(0)).optional()?;
+    Ok(match raw { Some(j) => serde_json::from_str(&j).ok(), None => None })
 }
 
 pub fn set<T: Serialize>(db: &Db, key: &str, value: &T) -> Result<()> {

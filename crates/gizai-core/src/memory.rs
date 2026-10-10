@@ -265,6 +265,51 @@ pub fn list(db: &Db, who: &Who) -> Result<Vec<Note>> {
     db.read(|c| Ok(all_in(c, false)?.into_iter().filter(|n| can_read(who, n)).collect()))
 }
 
+/// Every note `who` may read, with their text, by path: the Memory page (GA-68) works on all of them at once (its tree,
+/// links, backlinks, tags and previews), which memory's small size allows.
+pub fn list_with_text(db: &Db, who: &Who) -> Result<Vec<Note>> {
+    db.read(|c| Ok(all_in(c, true)?.into_iter().filter(|n| can_read(who, n)).collect()))
+}
+
+/// A note's last saved version, for the Memory page's Recently changed: who wrote it (a person or an agent, with the run
+/// and its card when a run's result wrote it) and when.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    /// The note, without its text.
+    pub note: Note,
+    pub version: i64,
+    pub at: i64,
+    pub author_id: Option<String>,
+    pub author_name: Option<String>,
+    /// `person` or `agent`.
+    pub author_kind: Option<String>,
+    pub run_id: Option<String>,
+    /// The run's card: its id and identifier (`GA-19`).
+    pub task_id: Option<String>,
+    pub task_identifier: Option<String>,
+}
+
+/// The notes `who` may read by their last saved version, newest first, at most `limit`.
+pub fn recent(db: &Db, who: &Who, limit: usize) -> Result<Vec<Change>> {
+    db.read(|c| {
+        let mut st = c.prepare(
+            "SELECT v.version, v.created_at, v.author_actor_id, a.name, a.kind, v.run_id, t.id, t.identifier
+             FROM doc_versions v LEFT JOIN actors a ON a.id = v.author_actor_id LEFT JOIN runs r ON r.id = v.run_id
+             LEFT JOIN tasks t ON t.id = r.task_id WHERE v.doc_id = ?1 ORDER BY v.version DESC LIMIT 1")?;
+        let mut out = vec![];
+        for n in all_in(c, false)?.into_iter().filter(|n| can_read(who, n)) {
+            let last = st.query_row([&n.id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))
+                .optional()?;
+            let Some((version, at, author_id, author_name, author_kind, run_id, task_id, task_identifier)) = last else { continue };
+            out.push(Change { note: n, version, at, author_id, author_name, author_kind, run_id, task_id, task_identifier });
+        }
+        out.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| a.note.path.to_lowercase().cmp(&b.note.path.to_lowercase())));
+        out.truncate(limit.max(1));
+        Ok(out)
+    })
+}
+
 /// A folder and its notes (`tree`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -945,7 +990,11 @@ fn parse_query(q: &str) -> Query {
         let v = value.trim().to_lowercase();
         if !v.is_empty() {
             match key {
-                1 => out.paths.push(v.trim_matches('/').to_string()),
+                // A `/` at the end keeps to that folder: `path:Agents/QA/` is not also `Agents/QA 2/`.
+                1 => {
+                    let p = v.trim_matches('/');
+                    out.paths.push(if v.ends_with('/') && !p.is_empty() { format!("{p}/") } else { p.to_string() });
+                }
                 2 => out.tags.push(v.trim_start_matches('#').to_string()),
                 _ => out.words.push(v),
             }
@@ -956,7 +1005,8 @@ fn parse_query(q: &str) -> Query {
 }
 
 /// Searches the notes `who` may read: every word and "quoted phrase" (case ignored) in the path or the text, `path:` a
-/// folder or path the note's path starts with (`path:"Team Lead"`), `tag:` a tag (its `tags` property or a `#tag`).
+/// folder or path the note's path starts with (`path:"Team Lead"`; with a `/` at the end only that folder's notes:
+/// `path:"Agents/QA/"`), `tag:` a tag (its `tags` property or a `#tag`).
 /// Plain matching over the notes, which stays right on every save, rename and move (memory stays small). Best first:
 /// title matches, then how often the words occur, then the newest.
 pub fn search(db: &Db, who: &Who, query: &str, limit: usize) -> Result<Vec<Hit>> {

@@ -220,6 +220,7 @@ where
     let thread = grant.scope.get("chat").and_then(|v| v.as_str()).map(str::to_string);
     let check = grant.scope.get("check").and_then(|v| v.as_str()).map(str::to_string);
     let run = grant.scope.get("run").and_then(|v| v.as_str()).map(str::to_string);
-    let tools = GizaiTools { st, actor: grant.actor_id, thread, check, run };
+    let question = grant.scope.get("question").and_then(|v| v.as_str()).map(str::to_string);
+    let tools = GizaiTools { st, actor: grant.actor_id, thread, check, run, question };
     let _ = gizai_mcp::serve(reader, w, &tools).await;
 }

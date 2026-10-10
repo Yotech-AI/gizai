@@ -12,7 +12,10 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
     CASE WHEN t.deleted_at IS NOT NULL THEN (SELECT x.name FROM changes ch JOIN actors x ON x.id = ch.actor_id
       WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END, t.hold_at,
     CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
-      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
+      WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+    CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') IN ('asking','answering') FROM runs r
+      WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
+      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -30,6 +33,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         fail_count: r.get(18)?, sort_key: r.get(19)?, branch: r.get(20)?, created_at: r.get(21)?, updated_at: r.get(22)?,
         pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0, archived_at: r.get(26)?, archived_by: r.get(27)?,
         run_for_me: crate::runs::commands_of(r.get(29)?),
+        with_lead: r.get::<_, Option<i64>>(30)?.unwrap_or(0) != 0,
     })
 }
 
@@ -91,12 +95,14 @@ pub fn archived(db: &Db, project_id: Option<&str>) -> Result<Vec<Task>> {
     })
 }
 
-/// The Inbox: open cards on hold (an agent or a gate needs a person) and cards waiting for `you` in Review or Deploy
-/// (merged, not deployed yet). Same rule as the UI's `needsYou`.
+/// The Inbox: open cards on hold (an agent or a gate needs a person), except a card whose question is with the Team Lead
+/// (GA-70: it answers or asks you first), and cards waiting for `you` in Review or Deploy (merged, not deployed yet).
+/// Same rule as the UI's `needsYou`.
 pub fn needs_you(db: &Db, you_id: &str) -> Result<Vec<Task>> {
     Ok(list(db, &TaskFilter { open_only: true, ..Default::default() })?
         .into_iter()
-        .filter(|t| t.hold.is_some() || (matches!(t.state_category.as_str(), "review" | "deploy") && t.assignee_id.as_deref() == Some(you_id)))
+        .filter(|t| (t.hold.is_some() && !t.with_lead)
+            || (matches!(t.state_category.as_str(), "review" | "deploy") && t.assignee_id.as_deref() == Some(you_id)))
         .collect())
 }
 

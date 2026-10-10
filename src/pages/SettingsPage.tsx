@@ -6,6 +6,7 @@ import { go, SETTINGS_TABS, type SettingsTab } from "../router";
 import { Field, FormSection } from "../components/Form";
 import { Tabs, type TabDef } from "../components/Tabs";
 import { AppearanceSettings } from "../components/AppearanceSettings";
+import { AskLeadSetting } from "../components/AskLeadSetting";
 import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
@@ -108,6 +109,7 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
             <Field label="Pause all agents" wide hint={s.agentsPaused ? "Paused: no automatic starts from Auto columns. Run still works by hand." : "The agents on Auto columns take their cards by themselves."}>
               <label className="check"><input type="checkbox" checked={s.agentsPaused} onChange={(e) => { const next = { ...s, agentsPaused: e.target.checked }; setS(next); save(next); }} />Pause all agents</label></Field>
             <MemorySetting say={say} />
+            <AskLeadSetting say={say} />
           </FormSection>
         </div>
         <div {...panel("mcp")}>

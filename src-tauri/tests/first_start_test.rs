@@ -4,6 +4,8 @@
 //! process, so this file has a single test.
 // Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
 #![cfg(unix)]
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,6 +78,7 @@ fn a_new_install_gets_five_agents_on_claude_code_or_on_codex_when_only_codex_is_
     // Started again, now with Claude Code installed too: nothing changes.
     drop(st);
     set_path(&bin_with(&tmp.path().join("both"), &["claude", "codex"]));
+    data_lock::released_blocking(&tmp.path().join("codex-data"));
     let st = open("codex-data");
     assert_eq!(clis::list(&st.db).unwrap().len(), 2);
     assert_eq!(agents(&st), on(&cx.id, "workspace-write", clis::CLAUDE_CODE));

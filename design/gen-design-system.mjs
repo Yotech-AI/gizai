@@ -503,16 +503,19 @@ C.ToolCard = {
 };
 
 C.ChatComposer = {
-  group: "Chat", height: 150,
+  group: "Chat", height: 190,
   readme: `Where you write to the Team Lead, pinned under the conversation.
 
-- A \`raised\` box with \`radius-l\`; it grows with the text up to 200px; focus shows the \`accent\` ring.
-- Enter sends, Shift+Enter adds a line (shown under the box as \`kbd\` hints). The send button is a small \`primary\` icon button, disabled while empty.
-- While the Team Lead answers, Send becomes **Stop**: outlined in \`live\`, because it stops work in progress.
+- One \`raised\` box with \`radius-xl\`: the text on top, two lines high when empty, growing with the text up to 200px; focus shows the \`accent\` ring. A click in the box around the text puts the cursor in it.
+- Under the text, in the same box, one row of 28px controls: **+** on the left (an outlined icon button; its menu, Add files and Link an item, opens upward), then the \`kbd\` tips in \`text-3\` (Enter sends, Shift+Enter adds a line, @ links an item; a tip that doesn't fit the row is left out, the last first), then on the right **Runs on** (the coding CLI the answers run on: the picked one's name and a chevron, a box only on hover) and the send button, a small \`primary\` icon button, disabled while empty.
+- While the Team Lead answers, **Stop** shows before Send: outlined in \`live\`, because it stops work in progress. Enter then queues the message.
 - A banner above the box explains why it can't send (the Team Lead is paused, Claude Code is missing) and offers the fix.`,
   preview: `<div style="padding:16px 24px;background:var(--bg)"><div class="chat-banner"><span>Team Lead is paused, so it can't answer.</span><button class="btn sm">Resume</button></div>
-<div class="composer-box"><textarea rows="1" aria-label="Message">Plan the Kade portal as tasks</textarea><button class="btn primary sm icon-only" aria-label="Send">${ic("arrow-up")}</button></div>
-<div class="composer-hint"><span><span class="kbd">Enter</span> sends</span><span><span class="kbd">Shift</span> <span class="kbd">Enter</span> new line</span></div></div>`,
+<div class="composer-box"><div class="md-editor composer-editor"><div class="md-surface"><div class="cm-editor"><div class="cm-scroller"><div class="cm-content" aria-label="Message">Plan the Kade portal as tasks</div></div></div></div></div>
+<div class="composer-foot"><button class="btn ghost sm icon-only composer-plus" aria-label="Add files or link an item">${ic("plus")}</button>
+<div class="composer-hint"><span><span class="kbd">Enter</span> sends</span><span><span class="kbd">Shift</span> <span class="kbd">Enter</span> new line</span><span><span class="kbd">@</span> links a task, project, client or agent</span></div>
+<label class="runs-on"><span>Runs on</span><span class="runs-on-pick"><span class="runs-on-size" aria-hidden="true">Claude Code</span><select class="select" aria-label="Runs on"><option>Claude Code</option></select></span></label>
+<button class="btn primary sm icon-only" aria-label="Send">${ic("arrow-up")}</button></div></div></div>`,
 };
 
 C.ChatSetup = {

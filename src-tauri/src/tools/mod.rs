@@ -23,20 +23,37 @@ pub struct GizaiTools {
     pub check: Option<String>,
     /// The run the token was minted for: the chat answer (or board check) whose Claude Code makes the calls.
     pub run: Option<String>,
+    /// GA-70: the question (the run that asked) a Team Lead's run on a question was minted for: only the tools that
+    /// read work there (`IN_A_QUESTION`).
+    pub question: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
     fn list(&self) -> Vec<ToolDef> {
-        catalog()
+        // A run on a question only reads: it isn't offered the rest.
+        catalog().into_iter().filter(|t| self.question.is_none() || t.read_only).collect()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
         self.call_with_meta(name, args, &Value::Null).await
     }
     async fn call_with_meta(&self, name: &str, args: Value, meta: &Value) -> Result<Value, String> {
+        if self.question.is_some() && !reads_only(name) {
+            return Err(IN_A_QUESTION.replace("{tool}", name));
+        }
         // The answer's stream shows the tool use each call comes from, with the id Claude Code gives the call.
         let from = Stream { run: self.run.as_deref().unwrap_or_default(), tool_use: meta.get("claudecode/toolUseId").and_then(Value::as_str) };
         call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), Some(from), name, args).await
     }
+}
+
+/// Why a Team Lead's run on a question (GA-70) can't use a tool that changes something: Gizai does what its result line
+/// says (answers on the card and continues the agent, or asks the user).
+const IN_A_QUESTION: &str = "{tool} can't be used while you look at an agent's question: you only look things up (memory, the card, \
+    docs, your copies of the code). End with your GIZAI_RESULT line: Gizai answers on the card and continues the agent, or asks the user.";
+
+/// A tool that only reads (`ToolDef::read_only`): the gets, lists and reads, check_board and the memory reads.
+fn reads_only(name: &str) -> bool {
+    catalog().iter().any(|t| t.name == name && t.read_only)
 }
 
 /// The chat answer a call over MCP comes from: its run, and the tool use the client named for the call, if it did.
@@ -66,10 +83,11 @@ pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, ar
 const NOT_IN_A_CHECK: [&str; 6] = ["attach_file", "create_agent", "update_agent", "set_agent_status", "add_column", "set_column"];
 
 /// What a chat answer may no longer do once it used a tool from outside Gizai (an MCP server of its own, the web, the
-/// browser): the user confirms it in a new message (`chat::used_outside`). Merging a pull request too (GA-86); a board
-/// check may merge.
-pub const NOT_AFTER_OUTSIDE: [&str; 10] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
-    "set_column", "attach_file", "update_checkout", "merge_pull_request"];
+/// browser): the user confirms it in a new message (`chat::used_outside`). Memory's writes too: a note goes into every
+/// answer, board check and run after it. A board check uses no tool from outside Gizai (`chat::check_once`). Merging a
+/// pull request too (GA-86); a board check may merge.
+pub const NOT_AFTER_OUTSIDE: [&str; 13] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
+    "set_column", "attach_file", "update_checkout", "memory_write", "memory_append", "memory_move", "merge_pull_request"];
 
 /// How long a call of a tool in `NOT_AFTER_OUTSIDE` in a chat answer waits for the answer's stream to show it
 /// (`chat::wait_shown`). Not shown by then, it is refused, and the model can call it again.

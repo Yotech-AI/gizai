@@ -138,10 +138,13 @@ pub fn all_agents(db: &Db) -> Result<Vec<(String, Member)>> {
 
 /// The agent that answers on the Chat page, if one has Chat turned on.
 pub fn chat_agent(db: &Db) -> Result<Option<Member>> {
-    db.read(|c| {
-        Ok(c.query_row(&format!("{MEMBER_SELECT} WHERE a.kind='agent' AND g.chat_enabled=1 AND m.deleted_at IS NULL AND a.deleted_at IS NULL
-                                 ORDER BY g.updated_at DESC LIMIT 1"), [], member_row).optional()?)
-    })
+    db.read(chat_agent_in)
+}
+
+/// `chat_agent` on a connection that is open already (inside a write).
+pub(crate) fn chat_agent_in(c: &rusqlite::Connection) -> Result<Option<Member>> {
+    Ok(c.query_row(&format!("{MEMBER_SELECT} WHERE a.kind='agent' AND g.chat_enabled=1 AND m.deleted_at IS NULL AND a.deleted_at IS NULL
+                             ORDER BY g.updated_at DESC LIMIT 1"), [], member_row).optional()?)
 }
 
 /// One agent's settings.

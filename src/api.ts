@@ -53,6 +53,9 @@ export const agentNotes = (agentId: string) => invoke<T.MemoryNote | null>("agen
 /** Memory for every agent (Settings → Runs). */
 export const memoryEnabled = () => invoke<boolean>("memory_enabled");
 export const setMemoryEnabled = (on: boolean) => invoke<void>("set_memory_enabled", { on });
+/** Agents ask the Team Lead before you (Settings → Runs, GA-70). */
+export const askLeadEnabled = () => invoke<boolean>("ask_lead_enabled");
+export const setAskLeadEnabled = (on: boolean) => invoke<void>("set_ask_lead_enabled", { on });
 
 export const addFiles = (ownerType: T.FileOwner, ownerId: string, paths: string[]) => invoke<T.AddFilesResult>("add_files", { ownerType, ownerId, paths });
 export const listFiles = (ownerType: T.FileOwner, ownerId: string) => invoke<T.FileRow[]>("list_files", { ownerType, ownerId });

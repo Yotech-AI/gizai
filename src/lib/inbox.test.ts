@@ -70,3 +70,27 @@ describe("asksToRun (Run this for me, GA-31)", () => {
     expect(inboxCount([{ ...t({ hold: "needs_decision" }), runForMe: cmds }, t({ hold: "needs_decision" })], [], "me")).toBe(2);
   });
 });
+
+describe("needsYou with the Team Lead (GA-70)", () => {
+  const card = (o: Partial<{ hold: string | null; stateCategory: string; assigneeId: string | null; withLead: boolean }>) => ({ ...t({}), ...o });
+  it("leaves out a held card whose question is with the Team Lead, and counts it again once the Team Lead asks you", () => {
+    expect(needsYou(card({ hold: "needs_decision", withLead: true }), "me")).toBe(false);
+    expect(needsYou(card({ hold: "needs_decision", withLead: false }), "me")).toBe(true);
+    expect(needsYou(card({ hold: "needs_decision" }), "me")).toBe(true);
+  });
+  it("still counts a Review card for you, and the Inbox count follows", () => {
+    expect(needsYou(card({ hold: "needs_decision", withLead: true, stateCategory: "review", assigneeId: "me" }), "me")).toBe(true);
+    expect(inboxCount([card({ hold: "needs_decision", withLead: true }), card({ hold: "needs_decision" }), card({ hold: "blocked" })], [], "me")).toBe(2);
+  });
+});
+
+// The same rule in gizai-core: `tasks::needs_you` leaves out what `needsYou` leaves out.
+import rustTasks from "../../crates/gizai-core/src/tasks.rs?raw";
+
+describe("needsYou and tasks::needs_you (GA-70)", () => {
+  it("both leave out a card with the Team Lead", () => {
+    const fn = rustTasks.slice(rustTasks.indexOf("pub fn needs_you"), rustTasks.indexOf("pub fn needs_you") + 600);
+    expect(fn).toContain("t.hold.is_some() && !t.with_lead");
+    expect(fn).toMatch(/"review" \| "deploy"\) && t\.assignee_id\.as_deref\(\) == Some\(you_id\)/);
+  });
+});

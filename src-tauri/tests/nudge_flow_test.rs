@@ -2,6 +2,8 @@
 //! the nudge message; when that run also ends without one, the card is held stalled and no third run starts. No nudge
 //! after Stop, a limit, a failed run or Gizai quitting, nor when a start isn't allowed now. Runs use the fake Claude Code
 //! (FAKE_NO_RESULT makes it end its message waiting for CI, FAKE_GATE holds it until a file exists), never the real one.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -119,8 +121,9 @@ async fn a_run_without_its_result_is_continued_once_in_its_session_then_the_card
     assert_eq!(runs.len(), 2);
     let (first, nudged) = (&runs[0], &runs[1]);
     assert_eq!((first.trigger.as_str(), first.outcome.as_deref(), first.nudged), ("manual", Some("no_result"), false));
+    // GA-31: the nudge has its own trigger in the Runs list (a Continue is `nudge`)
     assert_eq!((nudged.trigger.as_str(), nudged.status.as_str(), nudged.outcome.as_deref(), nudged.nudged),
-               ("nudge", "succeeded", Some("no_result"), true), "{:?}", nudged.error);
+               ("result_nudge", "succeeded", Some("no_result"), true), "{:?}", nudged.error);
     // the same session, worktree, branch and agent, resumed
     let session = first.session_id.clone().unwrap();
     assert_eq!(nudged.session_id.as_deref(), Some(session.as_str()));
@@ -167,7 +170,7 @@ async fn a_nudged_run_that_ends_with_its_result_moves_the_card_on() {
     gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let runs = wait_for_runs(&st, &task, 2).await;
     assert_eq!(runs.iter().map(|r| (r.trigger.as_str(), r.outcome.as_deref().unwrap_or(""), r.nudged)).collect::<Vec<_>>(),
-               [("manual", "no_result", false), ("nudge", "ready_for_testing", true)]);
+               [("manual", "no_result", false), ("result_nudge", "ready_for_testing", true)]);
     let t = gizai_core::tasks::get(&st.db, &task).unwrap();
     assert_eq!((t.state_name.as_str(), t.hold.as_deref()), ("Testing", None));
     tokio::time::sleep(Duration::from_millis(1000)).await;

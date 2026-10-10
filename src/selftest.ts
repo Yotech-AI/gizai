@@ -1,6 +1,10 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
-import { archiveTask, getTask, listChatThreads, listLabels, listTasks } from "./api";
+import { EditorView } from "@codemirror/view";
+import { emit } from "@tauri-apps/api/event";
+import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, setAgentStatus } from "./api";
+import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
+import { resetAppearance } from "./lib/appearance";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -42,7 +46,8 @@ export async function dragProbe(from = "To do", to = "In progress") {
   return { moved: stateName === to && onScreen, identifier, from, to, stored_in: stateName, on_screen_in_target: onScreen };
 }
 
-/** Opens the task's description editor, types like a keyboard would, saves with Ctrl+Enter, reads the task back. */
+/** Opens the task's description editor, links two items with the @ picker (GA-41), types like a keyboard would, saves with
+ * Ctrl+Enter, reads the task back. `saved` also needs the picker's checks and the saved links shown as chips that open. */
 export async function editorProbe(taskId: string, getDescription: (id: string) => Promise<string>, holdMs = 0) {
   const box = await waitFor(() => document.querySelector(".md-click") as HTMLElement | null);
   if (!box) return { saved: false, error: "no description block" };
@@ -51,10 +56,12 @@ export async function editorProbe(taskId: string, getDescription: (id: string) =
   if (!content) return { saved: false, error: "editor did not open" };
   await sleep(200);
   const dimmed = document.querySelectorAll(".md-edit-box .cm-md-mark").length;
+  const picker = await taskPickerProbe(content);
+  if (!picker.ok) return { saved: false, error: "the @ picker in the description editor", picker };
   const typed = " Typed by the self-test: café ✓";
   document.execCommand("insertText", false, typed);
   await sleep(holdMs);
-  content.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, ctrlKey: true, bubbles: true, cancelable: true }));
+  content.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, ctrlKey: !isMac(), metaKey: isMac(), bubbles: true, cancelable: true }));
   let stored = "";
   for (let i = 0; i < 20; i++) {
     await sleep(100);
@@ -62,7 +69,83 @@ export async function editorProbe(taskId: string, getDescription: (id: string) =
     if (stored.endsWith(typed)) break;
   }
   const closed = !document.querySelector(".md-edit-box");
-  return { saved: stored.endsWith(typed), editor_closed: closed, dimmed_marks: dimmed, task: taskId };
+  const links = /\]\(gizai:task\/[A-Z][A-Z0-9]*-\d+\)/.test(stored) && /\]\(gizai:project\/[A-Z0-9]+\)/.test(stored);
+  const shown = await shownChipsProbe();
+  return { saved: stored.endsWith(typed) && links && shown.ok, editor_closed: closed, dimmed_marks: dimmed, task: taskId, links_saved: links, picker, shown };
+}
+
+const docOf = (content: Element) => EditorView.findFromDOM(content as HTMLElement)?.state.doc.toString() ?? "";
+const pickerRows = () => [...document.querySelectorAll(".item-picker .opt")].map((e) => (e.textContent ?? "").trim());
+const pickerReady = (test: (rows: string[]) => boolean) => waitFor(() => { const r = pickerRows(); return r.length > 0 && test(r) ? r : null; }, 4000);
+const KINDS = ["Task@task.", "Project@project.", "Client@client.", "Agent@agent.", "Person@person.", "Doc@doc."];
+const onlyTasks = (rows: string[]) => rows.every((r) => /^[A-Z][A-Z0-9]*-\d+ - /.test(r));
+const press = (el: HTMLElement, key: string, keyCode: number, more: KeyboardEventInit = {}) =>
+  el.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, keyCode, bubbles: true, cancelable: true, ...more }));
+const write = (text: string) => document.execCommand("insertText", false, text);
+
+/** GA-41 in the task page's description editor: @ lists the kinds, @task. only tasks; ↓ moves the selection; Escape closes
+ * only the picker; Enter picks (a link, no new line, still editing); a click on a row picks too and leaves the edit box open
+ * and focused; links show as chips; `@zzqq`, which finds nothing, stays a mention. */
+async function taskPickerProbe(content: HTMLElement) {
+  const view = EditorView.findFromDOM(content);
+  if (!view) return { ok: false, error: "no CodeMirror view" };
+  content.focus();
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  write(" @");
+  const kinds = await pickerReady((r) => r.length === 6);
+  const listsKinds = JSON.stringify(kinds) === JSON.stringify(KINDS);
+  write("task.");
+  const tasks = await pickerReady(onlyTasks);
+  press(content, "ArrowDown", 40);
+  await sleep(150);
+  const opts = document.querySelectorAll(".item-picker .opt");
+  const moved = opts.length > 1 ? opts[1].classList.contains("active") && !opts[0].classList.contains("active") : opts.length === 1;
+  press(content, "Escape", 27);
+  await sleep(200);
+  const escClosesPicker = !document.querySelector(".item-picker");
+  const escKeepsEdit = !!document.querySelector(".md-edit-box") && docOf(content).endsWith(" @task.");
+
+  write(" @task.");
+  await pickerReady(onlyTasks);
+  const lines = docOf(content).split("\n").length;
+  press(content, "Enter", 13);
+  await sleep(200);
+  const afterEnter = docOf(content);
+  const enterLinks = /\[[A-Z][A-Z0-9]*-\d+ - [^\]]+\]\(gizai:task\/[A-Z][A-Z0-9]*-\d+\) $/.test(afterEnter);
+  const noNewLine = afterEnter.split("\n").length === lines;
+  const stillEditing = !!document.querySelector(".md-edit-box") && !document.querySelector(".item-picker");
+
+  write("@project.");
+  const projects = await pickerReady((r) => r.every((x) => / - /.test(x)));
+  const row = document.querySelector(".item-picker .opt") as HTMLElement | null;
+  row?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  row?.click();
+  await sleep(250);
+  const clickLinks = /\]\(gizai:project\/[A-Z0-9]+\) $/.test(docOf(content));
+  const keptOpen = !!document.querySelector(".md-edit-box") && document.activeElement === content;
+  const chips = [...document.querySelectorAll(".md-edit-box .cm-item-chip")].map((e) => e.textContent ?? "");
+
+  write("@zzqq");
+  await sleep(400);
+  const mention = !document.querySelector(".item-picker") && [...document.querySelectorAll(".md-edit-box .cm-chip-mention")].some((e) => e.textContent === "@zzqq");
+  const ok = listsKinds && !!tasks && moved && escClosesPicker && escKeepsEdit && enterLinks && noNewLine && stillEditing && !!projects && clickLinks && keptOpen
+    && chips.length === 2 && mention;
+  return { ok, kinds, tasks: tasks?.slice(0, 3), arrow_moves: moved, escape_closes_picker: escClosesPicker, escape_keeps_edit: escKeepsEdit,
+    enter_links: enterLinks, enter_adds_no_line: noNewLine, still_editing: stillEditing, projects: projects?.slice(0, 2), click_links: clickLinks,
+    click_keeps_edit_focused: keptOpen, chips, at_name_stays_mention: mention };
+}
+
+/** The saved description shows its links as chips with the items' names; a click on the project's opens its page. */
+async function shownChipsProbe() {
+  const chips = await waitFor(() => { const c = [...document.querySelectorAll(".md-click a.item-chip, .prose a.item-chip")] as HTMLElement[]; return c.length >= 2 ? c : null; }, 3000);
+  if (!chips) return { ok: false, error: "no chips in the saved description" };
+  const kinds = chips.map((c) => [...c.classList].find((k) => k.startsWith("kind-")));
+  const project = chips.find((c) => c.classList.contains("kind-project"));
+  project?.click();
+  const opened = await waitFor(() => (window.location.hash.startsWith("#/project/") ? window.location.hash : null), 3000);
+  const page = await waitFor(() => textOf(document.querySelector(".entity-head h1")) || null, 3000);
+  const ok = kinds.includes("kind-task") && !!opened && !!page && page === textOf(project);
+  return { ok, kinds, chip_texts: chips.map((c) => textOf(c)), opened, page };
 }
 
 /** Doc page: type and save with Ctrl+S; then type again while "an agent" saves underneath, expect the
@@ -74,7 +157,7 @@ export async function docProbe(
   const content = await waitFor(() => document.querySelector(".doc-editor .cm-content") as HTMLElement | null);
   if (!content) return { ok: false, error: "doc editor not found" };
   const v0 = (await api.getDoc(docId)).currentVersion;
-  const ctrlS = () => content.dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", keyCode: 83, ctrlKey: true, bubbles: true, cancelable: true }));
+  const ctrlS = () => content.dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", keyCode: 83, ctrlKey: !isMac(), metaKey: isMac(), bubbles: true, cancelable: true }));
   const until = async (f: (d: { bodyMd: string; currentVersion: number }) => boolean) => {
     for (let i = 0; i < 30; i++) { await sleep(100); const d = await api.getDoc(docId); if (f(d)) return d; }
     return api.getDoc(docId);
@@ -489,11 +572,12 @@ export async function chatProbe(listTitles: () => Promise<string[]>) {
   buttonByText(dialog, "Add agent")?.click();
   const agentPage = !!(await waitFor(() => (document.querySelector(".entity-head h1")?.textContent ?? "") === "Team Lead" || null, 4000));
   window.location.hash = "#/chat";
-  const box = await waitFor(() => document.querySelector(".composer-box textarea") as HTMLTextAreaElement | null, 4000);
+  // GA-41: the text box is a Markdown editor without a toolbar.
+  const box = await waitFor(composer, 4000);
   if (!box) return { ok: false, error: "no composer", name, chatOn, onTeam, agentPage };
-  typeInto(box, "create task Chat probe task in KADE");
+  typeIn(box, "create task Chat probe task in KADE");
   await sleep(50);
-  box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
+  enter(box);
   const card = await waitFor(() => document.querySelector('.tool-card a[href^="#/task/"]') as HTMLAnchorElement | null, 15000);
   const reply = !!(await waitFor(() => [...document.querySelectorAll(".chat-msg.agent")].some((e) => (e.textContent ?? "").includes("Done:")) || null, 15000));
   const made = (await listTitles()).includes("Chat probe task");
@@ -501,13 +585,142 @@ export async function chatProbe(listTitles: () => Promise<string[]>) {
   const listed = !!document.querySelector(".chat-threads .th.on");
   const first = onTeam && name === "Team Lead" && chatOn && agentPage && !!card && reply && made && thread && listed;
   const runsOn = await runsOnAndQueueProbe();
-  const ok = first && runsOn.ok;
+  const linksAndFiles = await chatPickerAndFilesProbe();
+  const ok = first && runsOn.ok && linksAndFiles.ok;
   return { ok, on_team: onTeam, name, chat_on: chatOn, agent_page: agentPage, tool_card: card?.textContent, reply, task_made: made, thread_url: thread,
-    thread_listed: listed, runs_on: runsOn };
+    thread_listed: listed, runs_on: runsOn, links_and_files: linksAndFiles };
 }
 
 const enter = (el: HTMLElement) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
-const composer = () => document.querySelector(".composer-box textarea") as HTMLTextAreaElement | null;
+const composer = () => document.querySelector(".composer-box .cm-content") as HTMLElement | null;
+/** Types into a CodeMirror editor the way a keyboard would: focused, at the cursor. */
+function typeIn(el: HTMLElement, text: string) {
+  el.focus();
+  document.execCommand("insertText", false, text);
+}
+const sentCount = () => document.querySelectorAll(".chat-msg.user:not(.queued)").length;
+
+/** GA-41 in a chat that is not answering: + opens a menu upward with Add files and Link an item; Link an item types @ and
+ * opens the picker above the text box with the kinds; @task. lists tasks; Enter links one without sending; Shift+Enter adds
+ * a line; Enter sends, and the sent message shows the link as a chip. Then files: Tauri's drag-and-drop events (sent
+ * through Tauri's event system, as the native drop sends them; a real OS drop can't be made headless) show the drop state
+ * and add the file as a removable chip, refusing a folder with why; sending sends the file, the message shows it and the
+ * Team Lead's prompt names it; after reopening the chat the chips and the file are still there. */
+async function chatPickerAndFilesProbe() {
+  const idle = await waitFor(() => { const c = composer(); return c && !document.querySelector(".composer-box .stop-btn") ? c : null; }, 15000);
+  const plus = document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null;
+  if (!idle || !plus) return { ok: false, error: "no idle composer or no + button" };
+  const threadId = window.location.hash.slice("#/chat/".length);
+  plus.click();
+  const menu = await waitFor(() => document.querySelector('.composer-box .pop.up[role="menu"]') as HTMLElement | null, 2000);
+  const items = menu ? textsOf("button", menu) : [];
+  const menuUp = !!menu && menu.getBoundingClientRect().bottom <= plus.getBoundingClientRect().top + 1;
+  if (menu) buttonByText(menu, "Link an item")?.click();
+  const kinds = await pickerReady((r) => r.length === 6);
+  const menuClosed = !document.querySelector('.composer-box .pop[role="menu"]');
+  const content = composer()!;
+  const typedAt = docOf(content) === "@";
+  const pk = document.querySelector(".item-picker")?.getBoundingClientRect();
+  const pickerUp = !!pk && pk.bottom <= content.getBoundingClientRect().bottom && pk.top < content.getBoundingClientRect().top;
+  typeIn(content, "task.");
+  const tasks = await pickerReady(onlyTasks);
+  const before = sentCount();
+  enter(content);
+  await sleep(300);
+  const linked = docOf(content);
+  const enterLinks = /^\[[A-Z][A-Z0-9]*-\d+ - [^\]]+\]\(gizai:task\/[A-Z][A-Z0-9]*-\d+\) $/.test(linked) && sentCount() === before;
+  const chipInBox = !!content.querySelector(".cm-item-chip");
+  press(content, "Enter", 13, { shiftKey: true });
+  typeIn(content, "please look");
+  await sleep(100);
+  const twoLines = docOf(content).split("\n").length === 2 && sentCount() === before;
+  enter(content);
+  const sentChip = await waitFor(() => [...document.querySelectorAll(".chat-msg.user:not(.queued) .bubble a.item-chip.kind-task")].pop() as HTMLElement | null, 4000);
+  const cleared = !!(await waitFor(() => (docOf(composer()!) === "" ? true : null), 3000));
+  await waitFor(() => (!document.querySelector(".composer-box .stop-btn") && !document.querySelector(".chat-working") ? true : null), 15000);
+
+  // Files, dropped the way Tauri reports a native drop: physical pixels over the Chat page.
+  const data = (await appInfo()).data_dir;
+  const file = `${data}/gizai.db`;
+  const main = document.querySelector(".chat-main")!.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const position = { x: Math.round((main.left + main.width / 2) * dpr), y: Math.round((main.top + main.height / 3) * dpr) };
+  let emitError: string | null = null;
+  try {
+    await emit("tauri://drag-enter", { paths: [file, data], position });
+    await emit("tauri://drag-over", { position });
+  } catch (e) { emitError = String(e); }
+  if (emitError) return { ok: false, error: `couldn't send Tauri's drag events: ${emitError}` };
+  const dropState = textOf(await waitFor(() => document.querySelector(".chat-main.dropping .chat-drop"), 2000));
+  await emit("tauri://drag-drop", { paths: [file, data], position });
+  const chips = await waitFor(() => { const n = textsOf(".composer-box .files.compact li b"); return n.length ? n : null; }, 4000);
+  const dropGone = !document.querySelector(".chat-drop");
+  const refused = textOf(await waitFor(() => document.querySelector(".chat-composer .chat-banner.warn"), 2000));
+  (document.querySelector('.composer-box button[aria-label="Remove gizai.db"]') as HTMLButtonElement | null)?.click();
+  const removed = !!(await waitFor(() => (!document.querySelector(".composer-box .files.compact") ? true : null), 2000));
+  await emit("tauri://drag-enter", { paths: [file], position });
+  await emit("tauri://drag-drop", { paths: [file], position });
+  const again = await waitFor(() => { const n = textsOf(".composer-box .files.compact li b"); return n.length ? n : null; }, 4000);
+  typeIn(composer()!, "here is a file");
+  enter(composer()!);
+  const sentFile = await waitFor(() => [...document.querySelectorAll(".chat-msg.user:not(.queued)")].pop()?.querySelector(".msg-files b") ?? null, 5000);
+  const chipsCleared = !!(await waitFor(() => (!document.querySelector(".composer-box .files.compact") ? true : null), 3000));
+  await waitFor(() => (!document.querySelector(".composer-box .stop-btn") && !document.querySelector(".chat-working") ? true : null), 15000);
+  const saved = (await chatMessages(threadId)).filter((m) => m.role === "user").pop();
+
+  // The text box grows with its lines up to 200 px, then scrolls; emptied again by hand.
+  const box = composer()!;
+  const cm = () => document.querySelector(".composer-editor .cm-editor") as HTMLElement;
+  const oneLine = cm().getBoundingClientRect().height;
+  typeIn(box, "line");
+  for (let i = 0; i < 14; i++) { press(box, "Enter", 13, { shiftKey: true }); typeIn(box, "line"); }
+  await sleep(200);
+  const tall = cm().getBoundingClientRect().height;
+  const scroller = document.querySelector(".composer-editor .cm-scroller") as HTMLElement;
+  const grows = oneLine < 60 && tall > 150 && tall <= 201 && scroller.scrollHeight > scroller.clientHeight + 20 && sentCount() === before + 2;
+  const view = EditorView.findFromDOM(box)!;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+
+  // While the Team Lead is paused: the text box, + and drops are off.
+  const leadId = (await listChatThreads()).find((t) => t.id === threadId)?.agentId ?? "";
+  await setAgentStatus(leadId, "paused");
+  const off = !!(await waitFor(() => document.querySelector(".composer-box.disabled"), 4000));
+  const plusOff = !!(document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null)?.disabled;
+  (document.querySelector(".composer-box .composer-plus") as HTMLElement | null)?.click();
+  await sleep(150);
+  const noMenu = !document.querySelector('.composer-box .pop[role="menu"]');
+  await emit("tauri://drag-enter", { paths: [file], position });
+  await emit("tauri://drag-over", { position });
+  await sleep(300);
+  const noDropState = !document.querySelector(".chat-drop");
+  await emit("tauri://drag-drop", { paths: [file], position });
+  await sleep(500);
+  const noDrop = !document.querySelector(".composer-box .files.compact");
+  await setAgentStatus(leadId, "active");
+  const on = !!(await waitFor(() => (document.querySelector(".composer-box") && !document.querySelector(".composer-box.disabled") ? true : null), 4000));
+  const pausedOk = off && plusOff && noMenu && noDropState && noDrop && on;
+
+  // Reopened: the link and the file are still shown.
+  window.location.hash = "#/chat";
+  await waitFor(() => (!document.querySelector(".chat-msg.user") ? true : null), 3000);
+  window.location.hash = `#/chat/${threadId}`;
+  const reopenedChip = await waitFor(() => document.querySelector(".chat-msg.user .bubble a.item-chip.kind-task") as HTMLElement | null, 5000);
+  const reopenedFile = textOf(await waitFor(() => document.querySelector(".chat-msg.user .msg-files b"), 5000));
+  // A click on the chip opens the task.
+  reopenedChip?.click();
+  const opened = await waitFor(() => (window.location.hash.startsWith("#/task/") ? window.location.hash : null), 3000);
+
+  const ok = JSON.stringify(items) === JSON.stringify(["Add files", "Link an item"]) && menuUp && menuClosed && JSON.stringify(kinds) === JSON.stringify(KINDS)
+    && typedAt && pickerUp && !!tasks && enterLinks && chipInBox && twoLines && !!sentChip && cleared
+    && dropState === "Drop to add to this message" && JSON.stringify(chips) === '["gizai.db"]' && dropGone && refused.includes("is a folder, not a file") && removed
+    && JSON.stringify(again) === '["gizai.db"]' && textOf(sentFile) === "gizai.db" && chipsCleared && saved?.files?.[0]?.name === "gizai.db"
+    && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk;
+  return { ok, grows: { ok: grows, one_line: oneLine, tall }, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
+    no_drop: noDrop, on_again: on }, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
+    enter_links_without_sending: enterLinks, chip_in_box: chipInBox, shift_enter_new_line: twoLines, sent_chip: sentChip?.textContent, cleared,
+    drop_state: dropState, chips, drop_state_gone: dropGone, refused, removed, dropped_again: again, sent_file: textOf(sentFile), chips_cleared: chipsCleared,
+    saved_files: saved?.files?.map((f) => f.name), reopened_chip: reopenedChip?.textContent, reopened_file: reopenedFile, chip_opens: opened };
+}
 const picker = () => document.querySelector('.composer-foot select[aria-label="Runs on"]') as HTMLSelectElement | null;
 const userSaid = (text: string) => [...document.querySelectorAll(".chat-msg.user:not(.queued)")].some((e) => (e.textContent ?? "").includes(text));
 
@@ -534,13 +747,13 @@ async function runsOnAndQueueProbe() {
 
   const box = composer();
   if (!box) return { ok: false, error: "no composer" };
-  typeInto(box, "FAKE_CHAT_SLOW what is next?");
+  typeIn(box, "FAKE_CHAT_SLOW what is next?");
   await sleep(50);
   enter(box);
   const answering = !!(await waitFor(() => document.querySelector(".composer-box .stop-btn"), 4000));
   const locked = !!picker()?.disabled;
   const box2 = composer();
-  if (box2) { typeInto(box2, "and one more thing"); await sleep(50); enter(box2); }
+  if (box2) { typeIn(box2, "and one more thing"); await sleep(50); enter(box2); }
   const queued = !!(await waitFor(() => [...document.querySelectorAll(".chat-queue .chat-msg.queued")].find((e) =>
     (e.textContent ?? "").includes("and one more thing") && (e.textContent ?? "").includes("Queued: goes when this answer is done")) || null, 3000));
   const notYet = !userSaid("and one more thing");
@@ -559,8 +772,10 @@ const cellsOf = (tr: Element) => [...tr.querySelectorAll("td")].map((td) => text
 
 /** GA-33, against prep_usage's runs (today: $0.57 of the Backend Agent on KADE and GFW, a Codex run on KADE with tokens but
  * no cost, a Team Lead chat turn of $0.03; 20 days ago: $1.00 on KADE). Company lists Usage above Team and it is the page
- * shown; the three tabs, the period switch and the labels; today's numbers on each tab, which agree with each other; 30
- * days takes in the older run; then the Projects list's AI usage column, sorted by a click on its header. */
+ * shown. GA-62: it opens on Subscription, the first tab, with a block per coding CLI entry and the limits prep_usage kept
+ * (Claude Code, Claude Code 2, Codex, and Gemini, which can't be read) and the agents on each, no period switch and no
+ * table cut off. Then Total: the period switch and the labels; today's numbers on each tab, which agree with each other;
+ * 30 days takes in the older run; then the Projects list's AI usage column, sorted by a click on its header. */
 export async function usageProbe() {
   const company = [...document.querySelectorAll(".side .nav-section")].find((s) => textOf(s.querySelector(".nav-label")) === "Company");
   const companyItems = company ? textsOf("a.nav-item", company) : [];
@@ -569,22 +784,12 @@ export async function usageProbe() {
 
   const tabs = textsOf(".tabs button.tab");
   const selectedTab = () => textOf(q('.tabs button.tab[aria-selected="true"]'));
-  const chips = textsOf('[aria-label="Period"] .chip');
   const pressedChip = () => textOf(q('[aria-label="Period"] .chip[aria-pressed="true"]'));
   const shownDays = () => textOf(q(".topbar .crumbs .faint"));
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const sinceOf: Record<string, number> = { Today: today, "7 days": today - 6 * DAY, "30 days": today - 29 * DAY, "This month": Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) };
   const daysOf = (label: string) => periodDays(sinceOf[label], today + DAY);
-  const first = { tab: selectedTab(), period: pressedChip(), days: shownDays(), want_days: daysOf("This month"), bars: q(".usage-bars")?.children.length,
-    want_bars: now.getUTCDate() };
-  const labels = textsOf(".usage-tab .stat-card h4");
-  const subs = textsOf(".usage-tab .stat-card .sub");
-  const foot = textOf(q(".usage-foot"));
-  const labelled = labels.includes("API cost") && labels.includes("Input tokens (incl. cache)") && labels.includes("Output tokens")
-    && subs.includes("An estimate at API prices, not a bill") && foot.includes("API cost: what these tokens would cost at API prices")
-    && foot.includes("Input tokens include cache reads and writes");
-
   const period = async (label: string) => {
     buttonByText(q('[aria-label="Period"]') ?? document, label)?.click();
     return !!(await waitFor(() => (pressedChip() === label && shownDays() === daysOf(label) ? true : null), 4000));
@@ -597,6 +802,52 @@ export async function usageProbe() {
   const rows = (label: string) => [...(table(label)?.querySelectorAll("tbody tr") ?? [])].map(cellsOf);
   const total = (label: string) => [...(table(label)?.querySelectorAll("tfoot td") ?? [])].map((td) => textOf(td));
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+  // GA-62: the page opens on Subscription, the first tab, with a block per coding CLI entry (prep_usage's four) and no period
+  // switch. Each block shows its own limits, or why it has none; no table is cut off at the block's edge.
+  const blocks = (await waitFor(() => {
+    const all = [...document.querySelectorAll(".limits .limits-block")];
+    return all.length >= 4 ? all : null;
+  }, 4000)) ?? [];
+  const blockOf = (name: string) => blocks.find((b) => b.getAttribute("aria-label") === name);
+  const limitRows = (name: string) => [...(blockOf(name)?.querySelectorAll("tbody tr") ?? [])].map(cellsOf);
+  const subscription = {
+    tab: selectedTab(), chips: document.querySelectorAll('[aria-label="Period"]').length, days: shownDays(),
+    blocks: blocks.map((b) => b.getAttribute("aria-label")),
+    claude: limitRows("Claude Code"), claude2: limitRows("Claude Code 2"), codex: limitRows("Codex"),
+    gemini: textOf(blockOf("Gemini")), gemini_tables: blockOf("Gemini")?.querySelectorAll("table").length,
+    agents: blocks.map((b) => textsOf(".limits-agent", b)),
+    chats: textsOf(".limits-note", blockOf("Claude Code 2") ?? document),
+    states: blocks.map((b) => [...b.querySelectorAll("tbody tr")].map((tr) => tr.className)),
+    clipped: blocks.filter((b) => b.scrollWidth > b.clientWidth + 1).map((b) => b.getAttribute("aria-label")),
+    foot: textOf(q(".usage-foot")),
+  };
+  const asOf = (r: string[] | undefined) => !!r && r[3]?.startsWith("as of ") === true;
+  const subscriptionOk = subscription.tab === "Subscription" && subscription.chips === 0 && subscription.days === ""
+    && same(subscription.blocks, ["Claude Code", "Claude Code 2", "Codex", "Gemini"])
+    && same(subscription.claude.map((r) => r.slice(0, 2)), [["Session limit", "42%"], ["Weekly limit", "85%"], ["Fable limit", "Not reported yet"]])
+    && asOf(subscription.claude[0]) && asOf(subscription.claude[1]) && subscription.claude[0]?.[2] !== "" && subscription.claude[2]?.[3] === ""
+    && same(subscription.claude2.map((r) => r.slice(0, 3)), [["Session limit", "Limit reached", "3pm (Europe/Amsterdam)"], ["Weekly limit", "35%", subscription.claude2[1]?.[2]], ["Fable limit", "Not reported yet", ""]])
+    && asOf(subscription.claude2[0]) && asOf(subscription.claude2[1])
+    && same(subscription.codex.map((r) => r.slice(0, 2)), [["5-hour limit", "24%"], ["Weekly limit", "41%"]]) && asOf(subscription.codex[0])
+    && subscription.gemini.includes("Gizai can't read Gemini's limits yet.") && subscription.gemini_tables === 0
+    && same(subscription.agents, [["Backend Agent (paused)"], ["Team Lead (paused)"], ["Codex Agent (paused)"], []])
+    && subscription.chats.includes("The Team Lead's chat runs here.")
+    && same(subscription.states, [["limit-ok", "limit-near", "limit-unread"], ["limit-reached", "limit-ok", "limit-unread"], ["limit-ok", "limit-ok"], []])
+    && subscription.clipped.length === 0 && subscription.foot.includes("it never asks Anthropic or OpenAI");
+
+  // Then the Total tab, with the period switch.
+  const toTotal = await tab("Total");
+  await sleep(200);
+  const chips = textsOf('[aria-label="Period"] .chip');
+  const first = { tab: selectedTab(), period: pressedChip(), days: shownDays(), want_days: daysOf("This month"), bars: q(".usage-bars")?.children.length,
+    want_bars: now.getUTCDate() };
+  const labels = textsOf(".usage-tab .stat-card h4");
+  const subs = textsOf(".usage-tab .stat-card .sub");
+  const foot = textOf(q(".usage-foot"));
+  const labelled = labels.includes("API cost") && labels.includes("Input tokens (incl. cache)") && labels.includes("Output tokens")
+    && subs.includes("An estimate at API prices, not a bill") && foot.includes("API cost: what these tokens would cost at API prices")
+    && foot.includes("Input tokens include cache reads and writes");
 
   // Today, on each tab: [name, runs, input tokens, output tokens, API cost, share].
   const toToday = await period("Today");
@@ -656,10 +907,11 @@ export async function usageProbe() {
   const sortOk = sort1.ok && sort2.ok && sort1.arrow !== sort2.arrow;
 
   const companyOk = companyItems.indexOf("Usage") >= 0 && companyItems.indexOf("Usage") + 1 === companyItems.indexOf("Team") && usageOn;
-  const firstOk = same(tabs, ["Total", "Agents", "Projects"]) && same(chips, ["Today", "7 days", "30 days", "This month"]) && first.tab === "Total"
-    && first.period === "This month" && first.days === first.want_days && first.bars === first.want_bars;
-  const ok = companyOk && firstOk && labelled && totalOk && agentsOk && projectsOk && periodsOk && thirtyOk && columnOk && sortOk;
-  return { ok, company: companyItems, usage_on: usageOn, tabs, chips, first, labelled, metrics, unknown_line: unknownLine, total_ok: totalOk,
+  const firstOk = same(tabs, ["Subscription", "Total", "Agents", "Projects"]) && same(chips, ["Today", "7 days", "30 days", "This month"])
+    && toTotal && first.tab === "Total" && first.period === "This month" && first.days === first.want_days && first.bars === first.want_bars;
+  const ok = companyOk && subscriptionOk && firstOk && labelled && totalOk && agentsOk && projectsOk && periodsOk && thirtyOk && columnOk && sortOk;
+  return { ok, company: companyItems, usage_on: usageOn, tabs, subscription, subscription_ok: subscriptionOk, chips, first, labelled, metrics,
+    unknown_line: unknownLine, total_ok: totalOk,
     agents, agents_total: agentsTotal, projects, projects_total: projectsTotal, periods: { today: toToday, d7: to7, d30: to30, month: toMonth },
     projects_30: projects30, total_30: total30, column, column_ok: columnOk, sort: [sort1, sort2] };
 }
@@ -744,4 +996,301 @@ export async function chatArchiveProbe() {
     button_ok: buttonOk, opened, all: all.length, all_ok: allOk, row_ok: rowOk, crumbs, focused, focused_el: focusedEl, highlighted,
     chat_nav_on: chatNavOn, recent_stays: recentStays, search_on_top: searchOnTop, found, hit_ok: hitOk, percent_ok: percentOk, no_match: none,
     opened_chat: openedChat, chat_crumbs: chatCrumbs, not_in_recent: notInRecent };
+}
+
+// ---------- GA-42: Settings → Appearance ----------
+type Box = { fs: number | null; h: number | null; w: number | null; family: string };
+const box = (el: Element | null | undefined): Box => {
+  if (!el) return { fs: null, h: null, w: null, family: "" };
+  const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+  return { fs: parseFloat(cs.fontSize), h: Math.round(r.height * 10) / 10, w: Math.round(r.width * 10) / 10,
+    family: (cs.fontFamily.split(",")[0] ?? "").replace(/["']/g, "").trim() };
+};
+const near = (a: number | null | undefined, b: number, by = 0.6) => a != null && Math.abs(a - b) <= by;
+const goTo = async (hash: string, ready: string, ms = 6000) => { location.hash = hash; const ok = !!(await waitFor(() => q(ready), ms)); await sleep(250); return ok; };
+/** The task list or the board. The page keeps its List/Board switch in localStorage, which the next start (and the board
+ * probe) shares: the probe sets it for a moment and puts it back (restoreView). */
+const VIEW_PREF = "gizai-tasks-view";
+let view0: string | null | undefined;
+const showTasks = (view: "list" | "board") => {
+  if (view0 === undefined) view0 = localStorage.getItem(VIEW_PREF);
+  localStorage.setItem(VIEW_PREF, JSON.stringify(view));
+  return view === "list" ? goTo("#/tasks", ".task-row") : goTo("#/board", ".col:not(.rail) .card");
+};
+const restoreView = () => {
+  if (view0 === undefined) return;
+  if (view0 === null) localStorage.removeItem(VIEW_PREF); else localStorage.setItem(VIEW_PREF, view0);
+};
+const appearancePanel = () => q('.settings-panel[aria-label="Appearance"]');
+const pick = async (group: string, label: string) => {
+  const b = [...(appearancePanel()?.querySelectorAll(`[aria-label="${group}"] button`) ?? [])].find((x) => textOf(x) === label) as HTMLElement | undefined;
+  b?.click();
+  await sleep(150);
+  return !!b;
+};
+const pressedIn = (group: string) => textsOf(`[aria-label="${group}"] button[aria-pressed="true"]`, appearancePanel() ?? document);
+const SIZE_KEYS = ["gizai-font", "gizai-size-chat", "gizai-size-ui", "gizai-size-docs", "gizai-theme", "gizai-density"];
+const kept = () => Object.fromEntries(SIZE_KEYS.map((k) => [k, localStorage.getItem(k)]).filter(([, v]) => v !== null));
+const htmlVars = () => {
+  const s = document.documentElement.style;
+  return Object.fromEntries([...Array(s.length).keys()].map((i) => s.item(i)).filter((n) => n.startsWith("--")).map((n) => [n, s.getPropertyValue(n).trim()]));
+};
+/** Elements wider than their box (they would scroll sideways or be cut off at the side); the page itself first. */
+function sideways(sels: string[]): string[] {
+  const out: string[] = [];
+  if (document.documentElement.scrollWidth > window.innerWidth + 1) out.push(`page ${document.documentElement.scrollWidth}>${window.innerWidth}`);
+  for (const sel of sels) for (const el of document.querySelectorAll(sel)) {
+    if (el.scrollWidth > el.clientWidth + 1) out.push(`${sel} "${textOf(el).slice(0, 24)}" ${el.scrollWidth}>${el.clientWidth}`);
+  }
+  return out;
+}
+/** Rows and controls whose text is taller than they are (cut off at the top or bottom). */
+function cutOff(sels: string[]): string[] {
+  return sels.flatMap((sel) => [...document.querySelectorAll(sel)].filter((el) => el.scrollHeight > el.clientHeight + 1)
+    .map((el) => `${sel} "${textOf(el).slice(0, 24)}" ${el.scrollHeight}>${el.clientHeight}`));
+}
+const ROWS = [".side .nav-item", ".topbar", ".btn", ".tab", ".task-row", ".group-head", ".panel-row", ".label-pill", ".badge", ".input", ".select"];
+/** The small things on the task list and in the sidebar: IDs, label pills, dates, avatars, group labels, badges, hints, icons. */
+const smallThings = () => ({
+  id: box(q(".task-row .id")).fs, pill: box(q(".label-pill")).fs, pill_h: box(q(".label-pill")).h, date: box(q(".task-row .date")).fs,
+  avatar: box(q(".task-row .avatar")).w, nav_label: box(q(".side .nav-label")).fs, badge: box(q(".badge")).fs, kbd: box(q(".kbd")).fs,
+  icon: box(q(".side .nav-item svg")).w, row_icon: box(q(".task-row svg")).w,
+});
+const FAMILIES: Record<string, [string, string]> = {
+  atkinson: ["Atkinson Hyperlegible Next", "Atkinson Hyperlegible Mono"], "jetbrains-mono": ["JetBrains Mono", "JetBrains Mono"],
+  inter: ["Inter", "JetBrains Mono"], geist: ["Geist", "Geist Mono"], hack: ["Hack", "Hack"],
+};
+/** The text font and the code font the app uses now (a code element is added for a moment). */
+function appFonts(): [string, string] {
+  const code = document.createElement("span");
+  code.className = "mono";
+  code.textContent = "KADE-1";
+  q(".main")?.appendChild(code);
+  const fams: [string, string] = [box(q(".side .nav-item")).family, box(code).family];
+  code.remove();
+  return fams;
+}
+
+/** GA-42, against prep_chats' data (the demo plus a paused Team Lead and 36 chats). Phase "set": Settings → Appearance opens
+ * on its own tab with Font, the three text sizes, Theme, Density and Reset to defaults; at the defaults nothing is on <html> and
+ * the sizes are the design system's; each font choice shows in its own font and every font loads from the app (bundled).
+ * Then the largest sizes (chat 20, interface 16.5, tasks and docs 20), picked with clicks: they show at once and are kept;
+ * reading text grows fully, titles half, small things at most 1px; rows grow so nothing is cut off; the chat column, the
+ * sidebar and board columns get wider; in a 1280 px window nothing scrolls sideways on the task list, board, task page and
+ * chat, in dark and in light. Then Compact, and each font everywhere at once. It leaves Geist, light, compact and the
+ * largest sizes kept. Phase "kept" (the next start): they are all still there, and Reset to defaults brings everything back. */
+export async function appearanceProbe(phase: "set" | "kept") {
+  if (!(await waitFor(() => appearancePanel(), 6000))) return { ok: false, error: "Settings → Appearance did not open", page: textOf(q(".main")).slice(0, 300) };
+  await sleep(300);
+  if (phase === "kept") return appearanceKeptProbe();
+
+  // The tab, its controls, and the default look.
+  const tabs = { labels: textsOf('.tabs[role="tablist"] button[role="tab"]'), selected: textOf(q('.tabs button[aria-selected="true"]')),
+    shown: [...document.querySelectorAll(".settings-panel")].filter((p) => p.getClientRects().length > 0).map((p) => p.getAttribute("aria-label")),
+    address: location.hash };
+  const panel = appearancePanel()!;
+  const controls = { sections: textsOf(".form-section > header h3", panel), groups: [...panel.querySelectorAll('[role="group"], [role="radiogroup"]')].map((g) => g.getAttribute("aria-label")),
+    fonts: textsOf(".font-choice .fc-name", panel), reset_disabled: (q<HTMLButtonElement>("button.link", panel))?.disabled ?? null,
+    reset_text: textOf(q("button.link", panel)) };
+  const defaults = { html_vars: htmlVars(), font_attr: document.documentElement.dataset.font ?? null, theme: document.documentElement.dataset.theme ?? null,
+    density: document.documentElement.dataset.density ?? null, kept: kept(),
+    nav: box(q(".side .nav-item")), side: box(q(".side")).w, topbar: box(q(".topbar")).h, save: box(q(".topbar .btn.primary")).h, tab: box(q(".tabs .tab")).fs,
+    bubble: box(q(".chat-sample .bubble")).fs, agent: box(q(".chat-sample .prose")).fs, docs: box(q(".docs-sample .prose")).fs, docs_h3: box(q(".docs-sample h3")).fs,
+    pressed: { chat: pressedIn("Chat size"), ui: pressedIn("Interface size"), docs: pressedIn("Tasks and docs size"), theme: pressedIn("Theme"), density: pressedIn("Density") } };
+  const tabOk = JSON.stringify(tabs.labels) === JSON.stringify(["General", "Appearance", "Notifications", "Agents and runs", "MCP servers", "GitHub and Bitbucket"])
+    && tabs.selected === "Appearance" && JSON.stringify(tabs.shown) === '["Appearance"]';
+  const controlsOk = JSON.stringify(controls.groups) === JSON.stringify(["Font", "Chat size", "Interface size", "Tasks and docs size", "Theme", "Density"])
+    && JSON.stringify(controls.fonts) === JSON.stringify(["Atkinson Hyperlegible", "JetBrains Mono", "Inter", "Geist", "Hack"])
+    && controls.reset_disabled === true && controls.reset_text === "Reset to defaults";
+  const defaultsOk = Object.keys(defaults.html_vars).length === 0 && defaults.font_attr === null && defaults.theme === "dark" && defaults.density === null
+    && Object.keys(defaults.kept).length === 0 && defaults.nav.fs === 13.5 && defaults.nav.h === 32 && defaults.side === 248 && defaults.topbar === 52
+    && defaults.save === 30 && defaults.tab === 13.5 && defaults.bubble === 13.5 && defaults.agent === 15 && defaults.docs === 15 && defaults.docs_h3 === 15.5
+    && JSON.stringify(defaults.pressed) === JSON.stringify({ chat: ["15"], ui: ["13.5"], docs: ["15"], theme: ["Dark"], density: ["Comfortable"] })
+    && defaults.nav.family === "Atkinson Hyperlegible Next";
+
+  // Tabs work like the Usage page's, in the address; an edit not saved yet survives a switch to another tab and back.
+  const tabTo = async (label: string) => {
+    [...document.querySelectorAll('.tabs button[role="tab"]')].find((b) => textOf(b) === label)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return !!(await waitFor(() => (textOf(q('.tabs button[aria-selected="true"]')) === label ? true : null), 3000));
+  };
+  const shownPanels = () => [...document.querySelectorAll(".settings-panel")].filter((p) => p.getClientRects().length > 0).map((p) => p.getAttribute("aria-label"));
+  await tabTo("Agents and runs");
+  const onAgents = { address: location.hash, shown: shownPanels() };
+  const runsAtOnce = q<HTMLInputElement>("#s-max");
+  const before = runsAtOnce?.value ?? "";
+  const edited = before === "9" ? "8" : "9";
+  if (runsAtOnce) typeInto(runsAtOnce, edited);
+  await sleep(150);
+  await tabTo("General");
+  const onGeneral = { address: location.hash, shown: shownPanels(), quit_first: textOf(q('.settings-panel[aria-label="General"] .form-section > header h3')),
+    value: q<HTMLInputElement>("#s-max")?.value };
+  await tabTo("Agents and runs");
+  const back = q<HTMLInputElement>("#s-max")?.value;
+  if (runsAtOnce) typeInto(runsAtOnce, before); // nothing was saved; put the field back as it was
+  await tabTo("Appearance");
+  const switching = { on_agents: onAgents, on_general: onGeneral, back, edited, address: location.hash };
+  const switchingOk = onAgents.address === "#/settings/agents" && JSON.stringify(onAgents.shown) === '["Agents and runs"]' && !!runsAtOnce
+    && onGeneral.address === "#/settings/general" && JSON.stringify(onGeneral.shown) === '["General"]' && onGeneral.quit_first === "Quit"
+    && onGeneral.value === edited && back === edited && switching.address === "#/settings/appearance" && !!appearancePanel()?.getClientRects().length;
+
+  // Each font choice in its own font, and every font loads from the app.
+  const choices = [...panel.querySelectorAll(".font-choice")].map((c) => [c.getAttribute("data-font") ?? "", box(c.querySelector(".fc-name")).family, box(c.querySelector(".fc-sample .mono")).family]);
+  const loads: Record<string, number> = {};
+  for (const fam of new Set(Object.values(FAMILIES).flat())) {
+    try { loads[fam] = (await document.fonts.load(`16px "${fam}"`, "Export KADE-41")).filter((f) => f.status === "loaded").length; } catch { loads[fam] = -1; }
+  }
+  const choicesOk = choices.length === 5 && choices.every(([k = "", sans, mono]) => FAMILIES[k]?.[0] === sans && FAMILIES[k]?.[1] === mono)
+    && Object.values(loads).every((n) => n > 0);
+
+  // The small things and rows at the defaults, on the task list; the board's columns.
+  await showTasks("list");
+  const small0 = smallThings();
+  const row0 = { row: box(q(".task-row")).h, title: box(q(".task-row .title")).fs };
+  await showTasks("board");
+  const col0 = box(q(".col:not(.rail)")).w;
+
+  // The largest sizes, picked with clicks on Settings → Appearance: at once, and kept.
+  await goTo("#/settings/appearance", '.settings-panel[aria-label="Appearance"]');
+  const clicked = [await pick("Chat size", "20"), await pick("Interface size", "16.5"), await pick("Tasks and docs size", "20")];
+  await sleep(200);
+  const big = { html_vars: htmlVars(), kept: kept(), reset_disabled: (q<HTMLButtonElement>("button.link", appearancePanel() ?? document))?.disabled ?? null,
+    nav: box(q(".side .nav-item")), side: box(q(".side")).w, topbar: box(q(".topbar")).h, save: box(q(".topbar .btn.primary")).h, tab: box(q(".tabs .tab")).fs,
+    bubble: box(q(".chat-sample .bubble")).fs, agent: box(q(".chat-sample .prose")).fs, docs: box(q(".docs-sample .prose")).fs, docs_h3: box(q(".docs-sample h3")).fs,
+    section: box(q(".settings-panel:not([hidden]) .form-section > header h3")).fs, settings_cut: cutOff(ROWS), settings_wide: sideways([".side", ".main", ".content"]) };
+  const bigOk = clicked.every(Boolean) && big.html_vars["--chat-grow"] === "5px" && big.html_vars["--ui-grow"] === "3px" && big.html_vars["--docs-grow"] === "5px"
+    && JSON.stringify(big.kept) === JSON.stringify({ "gizai-size-chat": "20", "gizai-size-ui": "16.5", "gizai-size-docs": "20" }) && big.reset_disabled === false
+    && big.nav.fs === 16.5 && big.nav.h === 37 && big.side === 266 && big.topbar === 57 && big.save === 35 && big.tab === 16.5
+    && big.bubble === 18.5 && big.agent === 20 && big.docs === 20 && big.docs_h3 === 18 && near(big.section, 16.5, 0.01)
+    && big.settings_cut.length === 0 && big.settings_wide.length === 0;
+
+  // Dark, then light: the task list, the board, a task page with its editor and the New task drawer, a doc, a chat.
+  const tasks = await listTasks();
+  // a task with a description and acceptance criteria (and comments, if the demo has one)
+  let task = tasks.find((t) => t.identifier === "KADE-1") ?? tasks[0];
+  for (const t of tasks.slice(0, 20)) { const full = await getTask(t.id); if (full.descriptionMd.trim() && full.acceptanceMd?.trim()) { task = t; break; } }
+  let docId = "";
+  for (const p of await listProjects()) { const d = (await listDocs(p.id)).find((x) => x.title === "Requirements"); if (d) { docId = d.id; break; } }
+  const chat = (await listChatThreads()).find((t) => t.title === "Chat 35");
+  const pages = async () => {
+    const out: Record<string, unknown> = {};
+    await showTasks("list");
+    out.tasks = { small: smallThings(), row: box(q(".task-row")).h, title: box(q(".task-row .title")).fs, cut: cutOff(ROWS), wide: sideways([".side", ".side .nav-item", ".main", ".content", ".task-list", ".task-row"]) };
+    await showTasks("board");
+    out.board = { col: box(q(".col:not(.rail)")).w, card: box(q(".col .card")).fs, cut: cutOff([...ROWS, ".col-head"]), wide: sideways([".side", ".main", ".col", ".col .card", ".col-head"]) };
+    if (task) {
+      await goTo(`#/task/${task.id}`, ".md-click");
+      const blocks = [...document.querySelectorAll(".md-click")];
+      out.task = { identifier: task.identifier, description: box(blocks[0]?.querySelector(".prose")).fs, acceptance: box(blocks[1]?.querySelector(".prose")).fs, title: box(q(".title-input")).fs,
+        comment: box(q(".comment .prose")).fs, id: box(q(".topbar .id, .task-head .id, .id")).fs, cut: cutOff(ROWS), wide: sideways([".side", ".main", ".content", ".split", ".split > *", ".topbar"]) };
+    }
+    if (docId) {
+      await goTo(`#/doc/${docId}`, ".cm-editor, .prose");
+      out.doc = { text: box(q(".main .cm-editor") ?? q(".main .prose")).fs, wide: sideways([".main", ".content", ".split", ".split > *"]) };
+    }
+    if (chat) {
+      await goTo(`#/chat/${chat.id}`, ".chat-msg.agent .prose");
+      const col = q(".chat-scroll .chat-col") ?? q(".chat-col");
+      out.chat = { user: box(q(".chat-msg.user .bubble")).fs, agent: box(q(".chat-msg.agent .prose")).fs, composer: box(q(".composer-editor .cm-editor")).fs,
+        col_max: col ? parseFloat(getComputedStyle(col).maxWidth) : null, col_w: box(col).w, meta: box(q(".chat-meta, .chat-head")).fs,
+        threads: box(q(".chat-threads")).w, cut: cutOff([...ROWS, ".chat-threads-list a.th"]), wide: sideways([".side", ".main", ".chat-threads", ".chat-scroll", ".chat-col", ".composer-box", ".chat-msg"]) };
+    }
+    return out;
+  };
+  const dark = await pages();
+  // The editors: the description's and the acceptance criteria's on the task page (opened, then Escape: nothing saved), and
+  // the New task drawer's.
+  let editors: Record<string, unknown> = {};
+  if (task) {
+    await goTo(`#/task/${task.id}`, ".md-click");
+    const edit = async (i: number) => {
+      (document.querySelectorAll(".md-click")[i] as HTMLElement | undefined)?.click();
+      const cm = await waitFor(() => q<HTMLElement>(".md-edit-box .cm-content"), 4000);
+      const fs = box(q(".md-edit-box .cm-editor")).fs;
+      if (cm) { cm.focus(); press(cm, "Escape", 27); }
+      const closed = !!(await waitFor(() => (q(".md-edit-box") ? null : true), 3000));
+      await sleep(200);
+      return { fs, closed };
+    };
+    const description = await edit(0);
+    const acceptance = await edit(1);
+    location.hash = "#/inbox";
+    await waitFor(() => q(".topbar"), 4000);
+    await sleep(300);
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "n", code: "KeyN", bubbles: true, cancelable: true }));
+    const drawer = await waitFor(() => q('[role="dialog"] .cm-editor'), 4000);
+    const inDrawer = box(drawer).fs;
+    const drawerTitle = box(q('[role="dialog"] h2, [role="dialog"] .t-drawer-title')).fs;
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+    const drawerClosed = !!(await waitFor(() => (q('[role="dialog"]') ? null : true), 3000));
+    editors = { description: description.fs, description_closed: description.closed, acceptance: acceptance.fs, acceptance_closed: acceptance.closed,
+      drawer: inDrawer, drawer_title: drawerTitle, drawer_closed: drawerClosed };
+  }
+  await goTo("#/settings/appearance", '.settings-panel[aria-label="Appearance"]');
+  await pick("Theme", "Light");
+  const light = { theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.body).backgroundColor, kept: localStorage.getItem("gizai-theme") };
+  const lightPages = await pages();
+
+  const growsOk = (p: Record<string, any>) => {
+    const s = p.tasks?.small ?? {};
+    const smallOk = Object.entries(small0).every(([k, v]) => v == null || (s[k] != null && s[k] - v >= -0.01 && s[k] - v <= 1.01));
+    return smallOk && near(p.tasks?.title, (row0.title ?? 14) + 3, 0.01) && (p.tasks?.row ?? 0) >= (row0.row ?? 40) + 5
+      && near(p.board?.col, (col0 ?? 286) + 24, 0.5)
+      && (!task || (p.task?.description === 20 && (p.task?.acceptance == null || p.task?.acceptance === 20) && p.task?.title === 24.5 && (p.task?.comment == null || p.task?.comment === 18.5)))
+      && (!docId || p.doc?.text === 20)
+      && (!chat || (p.chat?.user === 18.5 && p.chat?.agent === 20 && (p.chat?.composer == null || p.chat?.composer === 18.5) && near(p.chat?.col_max, 760 * 1.333, 0.5)))
+      && ["tasks", "board", "task", "doc", "chat"].every((k) => !p[k] || ((p[k].cut ?? []).length === 0 && (p[k].wide ?? []).length === 0));
+  };
+  const editorsOk = !task || (editors.description === 20 && editors.description_closed === true && editors.acceptance === 20 && editors.acceptance_closed === true
+    && editors.drawer === 20 && editors.drawer_closed === true);
+  const lightOk = light.theme === "light" && light.bg === "rgb(255, 255, 255)" && light.kept === "light";
+
+  // Compact, then each font everywhere at once; Geist stays for the next start.
+  await goTo("#/settings/appearance", '.settings-panel[aria-label="Appearance"]');
+  await pick("Density", "Compact");
+  const compact = { density: document.documentElement.dataset.density, nav_h: box(q(".side .nav-item")).h, box: htmlVars()["--ui-box"], kept: localStorage.getItem("gizai-density") };
+  const compactOk = compact.density === "compact" && compact.nav_h === 33 && compact.box === "1px" && compact.kept === "compact";
+  const fonts: Record<string, unknown> = {};
+  for (const key of ["jetbrains-mono", "inter", "hack", "atkinson", "geist"]) {
+    q<HTMLInputElement>(`.font-choice[data-font="${key}"] input`, appearancePanel() ?? document)?.click();
+    await sleep(200);
+    fonts[key] = { attr: document.documentElement.dataset.font ?? null, fams: appFonts(), kept: localStorage.getItem("gizai-font"),
+      checked: q(".font-choice.on", appearancePanel() ?? document)?.getAttribute("data-font") };
+  }
+  const fontsOk = Object.entries(fonts).every(([key, f]: [string, any]) => JSON.stringify(f.fams) === JSON.stringify(FAMILIES[key]) && f.checked === key
+    && (key === "atkinson" ? f.attr === null && f.kept === null : f.attr === key && f.kept === key));
+  restoreView();
+  await sleep(1500); // WebKit writes localStorage to disk a moment later
+
+  const ok = tabOk && switchingOk && controlsOk && defaultsOk && choicesOk && bigOk && growsOk(dark) && growsOk(lightPages) && editorsOk && lightOk && compactOk && fontsOk;
+  return { ok, phase, tab_ok: tabOk, switching_ok: switchingOk, controls_ok: controlsOk, defaults_ok: defaultsOk, choices_ok: choicesOk, big_ok: bigOk, dark_ok: growsOk(dark),
+    light_pages_ok: growsOk(lightPages), editors_ok: editorsOk, light_ok: lightOk, compact_ok: compactOk, fonts_ok: fontsOk,
+    tabs, switching, controls, defaults, choices, loads, small0, row0, col0, big, dark, light, light_pages: lightPages, editors, compact, fonts,
+    found: { task: task?.identifier ?? null, doc: !!docId, chat: !!chat } };
+}
+
+/** The next start: what the "set" phase left is still there, then Reset to defaults brings everything back. */
+async function appearanceKeptProbe() {
+  const html = document.documentElement;
+  const start = { font: html.dataset.font ?? null, theme: html.dataset.theme ?? null, density: html.dataset.density ?? null, vars: htmlVars(), kept: kept(),
+    pressed: { chat: pressedIn("Chat size"), ui: pressedIn("Interface size"), docs: pressedIn("Tasks and docs size"), theme: pressedIn("Theme"), density: pressedIn("Density") },
+    checked: q(".font-choice.on", appearancePanel() ?? document)?.getAttribute("data-font") ?? null, fams: appFonts(), nav: box(q(".side .nav-item")) };
+  const startOk = start.font === "geist" && start.theme === "light" && start.density === "compact" && start.vars["--chat-grow"] === "5px"
+    && start.vars["--ui-grow"] === "3px" && start.vars["--docs-grow"] === "5px" && start.vars["--ui-box"] === "1px"
+    && JSON.stringify(start.pressed) === JSON.stringify({ chat: ["20"], ui: ["16.5"], docs: ["20"], theme: ["Light"], density: ["Compact"] })
+    && start.checked === "geist" && JSON.stringify(start.fams) === JSON.stringify(FAMILIES.geist) && start.nav.fs === 16.5 && start.nav.h === 33;
+  const reset = q<HTMLButtonElement>("button.link", appearancePanel() ?? document);
+  const resetEnabled = !!reset && !reset.disabled;
+  reset?.click();
+  await sleep(300);
+  const after = { font: html.dataset.font ?? null, theme: html.dataset.theme ?? null, density: html.dataset.density ?? null, vars: htmlVars(), kept: kept(),
+    pressed: { chat: pressedIn("Chat size"), ui: pressedIn("Interface size"), docs: pressedIn("Tasks and docs size"), theme: pressedIn("Theme"), density: pressedIn("Density") },
+    reset_disabled: reset?.disabled ?? null, fams: appFonts(), nav: box(q(".side .nav-item")), bg: getComputedStyle(document.body).backgroundColor };
+  const afterOk = after.font === null && after.theme === "dark" && after.density === null && Object.keys(after.vars).length === 0 && Object.keys(after.kept).length === 0
+    && JSON.stringify(after.pressed) === JSON.stringify({ chat: ["15"], ui: ["13.5"], docs: ["15"], theme: ["Dark"], density: ["Comfortable"] })
+    && after.reset_disabled === true && JSON.stringify(after.fams) === JSON.stringify(FAMILIES.atkinson) && after.nav.fs === 13.5 && after.nav.h === 32
+    && after.bg !== "rgb(255, 255, 255)";
+  // whatever happened, leave the defaults for the next test's start
+  if (Object.keys(kept()).length) resetAppearance();
+  await sleep(1500);
+  return { ok: startOk && resetEnabled && afterOk, phase: "kept", start_ok: startOk, reset_enabled: resetEnabled, after_ok: afterOk, start, after };
 }

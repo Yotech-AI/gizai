@@ -1,20 +1,29 @@
 // The Usage page (GA-33): what the agents use, tokens and API cost, in total with a bar per day, per agent and per project.
-// The three tabs share the period switch; gizai-core sums the runs and chat turns (usage.rs), so the tabs add up to the
-// same total.
-import { useState, type ReactNode } from "react";
-import { ChartColumn, FolderKanban, MessagesSquare, Users, type LucideIcon } from "lucide-react";
-import { usageSummary } from "../api";
+// Those three tabs share the period switch; gizai-core sums the runs and chat turns (usage.rs), so the tabs add up to the
+// same total. The Subscription tab (GA-62), first, shows each coding CLI's subscription limits as its runs and chat turns
+// last reported them (limits.rs), with the agents on it.
+import { useEffect, useState, type ReactNode } from "react";
+import { ChartColumn, FolderKanban, Gauge, MessagesSquare, Users } from "lucide-react";
+import { subscriptionLimits, usageSummary } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
+import { KIND_LABEL } from "../lib/clis";
+import {
+  LIMITS_NOTE, anyRead, asOfLabel, cantRead, chatsLine, fullWhen, limitState, resetLabel, sourceNote, unreadLabel, usedLabel, usedWidth, whenLabel,
+  windowLabel,
+} from "../lib/limits";
 import {
   COST_NOTE, DEFAULT_PERIOD, INPUT_LABEL, PERIODS, barHeights, dayLabel, formatTokenCount, formatUsageCost, fullCount, knownCost, periodDays,
   periodPhrase, runsLabel, shareBasis, shareOf, unknownCostLine, unknownCostNote,
 } from "../lib/usage";
-import type { Usage, UsageDay, UsagePeriod, UsageTotals } from "../types";
+import type { CliLimits, SubscriptionLimit, Usage, UsageDay, UsagePeriod, UsageTotals } from "../types";
 import { roleIcon } from "../components/Avatar";
+import { Tabs, type TabDef } from "../components/Tabs";
 
-type Tab = "total" | "agents" | "projects";
-const TABS: [Tab, LucideIcon, string][] = [["total", ChartColumn, "Total"], ["agents", Users, "Agents"], ["projects", FolderKanban, "Projects"]];
+type Tab = "subscription" | "total" | "agents" | "projects";
+const TABS: TabDef<Tab>[] = [
+  ["subscription", Gauge, "Subscription"], ["total", ChartColumn, "Total"], ["agents", Users, "Agents"], ["projects", FolderKanban, "Projects"],
+];
 
 /** The API cost of runs, with why part of it is unknown on hover. */
 function Cost({ t }: { t: UsageTotals }) {
@@ -152,28 +161,109 @@ function ProjectsTab({ u }: { u: Usage }) {
   return <UsageTable rows={rows} total={u.total} nameHeader="Project" label="Usage per project" />;
 }
 
+/** One limit: how much is used, with a bar, when it resets and when the number was read; or why there is no number. */
+function LimitRow({ c, l, now }: { c: CliLimits; l: SubscriptionLimit; now: number }) {
+  const r = l.reading;
+  const state = limitState(l, now);
+  const span = windowLabel(l.windowMinutes);
+  let used: ReactNode;
+  if (!r) {
+    const u = unreadLabel(c, l);
+    used = <span className="muted" title={u.title}>{u.text}</span>;
+  } else if (state === "reset" && r.resetsAt != null) {
+    used = <span className="muted" title={`Its window reset ${fullWhen(r.resetsAt)}, and no run on ${c.name} has reported a newer number`}>
+      Reset at {whenLabel(r.resetsAt, now)} · no newer number</span>;
+  } else if (r.usedPercent != null) {
+    used = <span className="limit-used"><span className="track"><i style={{ width: `${usedWidth(r)}%` }} /></span>{usedLabel(l, now)}</span>;
+  } else {
+    used = <span className="limit-used">{usedLabel(l, now)}</span>;
+  }
+  return (
+    <tr className={`limit-${state}`}>
+      <td title={span ? `A window of ${span}` : undefined}>{l.name}</td>
+      <td>{used}</td>
+      <td>{r && state !== "reset" && <span title={r.resetsAt != null ? fullWhen(r.resetsAt) : undefined}>{resetLabel(r, now) || "Not said"}</span>}</td>
+      <td className="faint">{r && <span title={fullWhen(r.observedAt)}>{asOfLabel(r, now)}</span>}</td>
+    </tr>
+  );
+}
+
+/** One coding CLI (Settings → Coding CLIs): its limits, or why Gizai can't read them, and what runs on it. */
+function LimitsBlock({ c, now }: { c: CliLimits; now: number }) {
+  const chats = chatsLine(c);
+  const kind = KIND_LABEL[c.kind] ?? c.kind;
+  return (
+    <section className="panel limits-block" aria-label={c.name}>
+      <header className="limits-head">
+        <h3>{c.name}</h3>
+        {kind !== c.name && <span className="faint">{kind}</span>}
+        {c.accountDir && <span className="mono faint limits-dir" title="The folder this account is kept in">{c.accountDir}</span>}
+      </header>
+      {c.readable ? (
+        <>
+          <table className="grid limits-table" aria-label={`${c.name} limits`}>
+            <thead><tr><th>Limit</th><th>Used</th><th>Resets</th><th>Updated</th></tr></thead>
+            <tbody>{c.limits.map((l) => <LimitRow key={l.key} c={c} l={l} now={now} />)}</tbody>
+          </table>
+          <p className="limits-note faint">{anyRead(c) ? sourceNote(c) : `No run on ${c.name} has reported its limits yet. ${sourceNote(c)}`}</p>
+        </>
+      ) : <p className="limits-note muted">{cantRead(c)}</p>}
+      <div className="limits-agents">
+        {c.agents.length === 0 ? <span className="faint">No agent runs on {c.name}.</span> : <>
+          <span className="faint">Agents on it:</span>
+          {c.agents.map((a) => {
+            const Role = roleIcon(a.roleKey);
+            return (
+              <a key={a.agentId} className="limits-agent" href={href({ page: "agent", id: a.agentId })}>
+                <Role className="icon" />{a.name}{a.status === "paused" && <span className="faint"> (paused)</span>}
+              </a>
+            );
+          })}
+        </>}
+      </div>
+      {chats && <p className="limits-note faint">{chats}</p>}
+    </section>
+  );
+}
+
+function SubscriptionTab() {
+  const { data, error } = useData(() => subscriptionLimits(), []);
+  // A window can reset while the page is open: look at the clock again every minute.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  if (error) return <div className="error-banner">{error}</div>;
+  if (!data) return null;
+  const now = Date.now();
+  return <div className="limits">{data.map((c) => <LimitsBlock key={c.cliId} c={c} now={now} />)}</div>;
+}
+
 export function UsagePage() {
   const [period, setPeriod] = useState<UsagePeriod>(DEFAULT_PERIOD);
-  const [tab, setTab] = useState<Tab>("total");
+  const [tab, setTab] = useState<Tab>("subscription");
   const { data: u, error } = useData(() => usageSummary(period), [period]);
+  // The Subscription tab shows the limits as they are now: the period switch is for the other tabs.
+  const limits = tab === "subscription";
   return (
     <>
-      <div className="topbar"><div className="crumbs"><b>Usage</b>{u && <span className="faint">{periodDays(u.since, u.until)}</span>}</div></div>
+      <div className="topbar"><div className="crumbs"><b>Usage</b>{!limits && u && <span className="faint">{periodDays(u.since, u.until)}</span>}</div></div>
       <div className="toolbar">
-        <div className="chips" role="group" aria-label="Period">{PERIODS.map((p) => (
-          <button key={p.key} className={`chip${period === p.key ? " on" : ""}`} aria-pressed={period === p.key} onClick={() => setPeriod(p.key)}>{p.label}</button>))}</div>
-        <span className="spacer" />
-        <span className="faint usage-utc" title="Days and months start at midnight UTC, like the agents' monthly budgets">UTC days</span>
+        {limits ? <span className="faint">The newest numbers each coding CLI reported in your agents' runs and chat turns</span> : <>
+          <div className="chips" role="group" aria-label="Period">{PERIODS.map((p) => (
+            <button key={p.key} className={`chip${period === p.key ? " on" : ""}`} aria-pressed={period === p.key} onClick={() => setPeriod(p.key)}>{p.label}</button>))}</div>
+          <span className="spacer" />
+          <span className="faint usage-utc" title="Days and months start at midnight UTC, like the agents' monthly budgets">UTC days</span>
+        </>}
       </div>
-      {error && <div className="error-banner">{error}</div>}
+      {!limits && error && <div className="error-banner">{error}</div>}
       <div className="content">
         <div className="page usage-page">
-          <div className="tabs" role="tablist">
-            {TABS.map(([k, I, l]) => (
-              <button key={k} className="tab" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}><I className="icon" />{l}</button>
-            ))}
-          </div>
-          {u && u.total.runs === 0 ? (
+          <Tabs tabs={TABS} open={tab} onOpen={setTab} />
+          {limits ? (
+            <div role="tabpanel" className="usage-tab"><SubscriptionTab /></div>
+          ) : u && u.total.runs === 0 ? (
             <div className="empty"><b>No runs {periodPhrase(period)}.</b>
               <span>The agents' runs and the Team Lead's chat turns show here with their tokens and API cost.</span></div>
           ) : u && (
@@ -183,7 +273,8 @@ export function UsagePage() {
               {tab === "projects" && <ProjectsTab u={u} />}
             </div>
           )}
-          <p className="usage-foot faint">{COST_NOTE} Input tokens include cache reads and writes. A run without a cost (Codex, Gemini and other CLIs report none) counts its tokens, and its cost shows as unknown.</p>
+          <p className="usage-foot faint">{limits ? LIMITS_NOTE
+            : `${COST_NOTE} Input tokens include cache reads and writes. A run without a cost (Codex, Gemini and other CLIs report none) counts its tokens, and its cost shows as unknown.`}</p>
         </div>
       </div>
     </>

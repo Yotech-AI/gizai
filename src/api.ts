@@ -104,6 +104,13 @@ export const mcpSignIn = (id: string) => invoke<T.McpServerView>("mcp_sign_in", 
 export const mcpSignOut = (id: string) => invoke<T.McpServerView>("mcp_sign_out", { id });
 export const agentMcp = (agentId: string) => invoke<T.AgentMcpView>("agent_mcp", { agentId });
 export const saveAgentMcp = (agentId: string, tools: T.AgentTools) => invoke<T.AgentMcpView>("save_agent_mcp", { agentId, tools });
+export const agentCliTools = (agentId: string | null, cliId: string) => invoke<T.ToolsView>("agent_cli_tools", { agentId, cliId });
+export const saveAgentCliTools = (agentId: string, tools: T.CliTools) => invoke<T.CliTools>("save_agent_cli_tools", { agentId, tools });
+/** Ask Claude Code again: its tools, from a start without a login (nothing spent, nothing written in ~/.claude). */
+export const askCliTools = (cliId: string) => invoke<string[]>("ask_cli_tools", { cliId });
+export const browserEntry = () => invoke<T.BrowserView>("browser_entry");
+export const saveBrowserEntry = (entry: T.BrowserEntry) => invoke<T.BrowserView>("save_browser_entry", { entry });
+export const listBrowserTools = () => invoke<T.BrowserView>("list_browser_tools");
 
 /** Settings → Coding CLIs. */
 export const listClis = () => invoke<T.CliStatus[]>("list_clis");
@@ -115,6 +122,8 @@ export const agentRuns = (id: string, limit = 20) => invoke<T.Run[]>("agent_runs
 export const agentNextTask = (id: string) => invoke<string | null>("agent_next_task", { id });
 /** The Usage page: tokens and API cost of all runs and chat turns in the period, in total, per day, per agent and per project. */
 export const usageSummary = (period: T.UsagePeriod) => invoke<T.Usage>("usage_summary", { period });
+/** The Usage page's Subscription tab: per coding CLI, the newest reading of each of its limits and the agents on it. */
+export const subscriptionLimits = () => invoke<T.CliLimits[]>("subscription_limits");
 export const roleTemplate = (role: string) => invoke<string>("role_template", { role });
 /** The allowed commands an agent with this role starts with. */
 export const roleTools = (role: string) => invoke<string[]>("role_tools", { role });
@@ -124,7 +133,10 @@ export const getSettings = () => invoke<T.Settings>("get_settings");
 export const saveSettings = (settings: T.Settings) => invoke<void>("save_settings", { settings });
 export const startRun = (taskId: string, agentId: string | null) => invoke<string>("start_run", { taskId, agentId });
 export const stopRun = (runId: string) => invoke<void>("stop_run", { runId });
-export const continueRun = (runId: string) => invoke<string>("continue_run", { runId });
+/** Continue with your note for the agent, if you wrote one: it goes into the continued run's prompt and on the card as your comment. */
+export const continueRun = (runId: string, note?: string | null) => invoke<string>("continue_run", { runId, note: note?.trim() || null });
+/** Run this for me: Done, continue. You ran the commands the card's latest run asked for; that run continues. Returns the new run's id. */
+export const continueAfterRunForMe = (taskId: string) => invoke<string>("continue_after_run_for_me", { taskId });
 export const listRuns = (taskId: string) => invoke<T.Run[]>("list_runs", { taskId });
 /** The commits a finished run made, oldest first. */
 export const runCommits = (runId: string) => invoke<T.Commit[]>("run_commits", { runId });
@@ -192,8 +204,14 @@ export const getChatThread = (threadId: string) => invoke<T.ChatThread>("get_cha
 export const searchChatThreads = (query: string) => invoke<T.ChatHit[]>("search_chat_threads", { query });
 export const chatMessages = (threadId: string) => invoke<T.ChatMessage[]>("chat_messages", { threadId });
 /** Sends a message (a new thread when threadId is null) and starts the answer; resolves with the thread id. */
-/** Sends a message (queued while the Team Lead answers in the chat); a new chat runs on `cli` when one was picked. */
-export const sendChat = (threadId: string | null, text: string, cli?: string | null) => invoke<string>("send_chat", { threadId, text, cli: cli ?? null });
+/** Sends a message (queued while the Team Lead answers in the chat); a new chat runs on `cli` when one was picked. `files`:
+ *  paths of files added to the message, which go with it (the text may be empty then); one that can't be read fails the send. */
+export const sendChat = (threadId: string | null, text: string, cli?: string | null, files: string[] = []) =>
+  invoke<string>("send_chat", { threadId, text, cli: cli ?? null, files });
+/** Which picked or dropped paths can be added to a chat message, and a plain sentence for each that can't (a folder, over 1 GB). */
+export const checkFiles = (paths: string[]) => invoke<T.FileCheck>("check_files", { paths });
+/** The id of the page a gizai: link opens: a task by identifier (GA-12), a project by key (GA); others name their id already. */
+export const itemId = (kind: string, key: string) => invoke<string>("item_id", { kind, key });
 export const chatQueue = (threadId: string) => invoke<T.QueuedMessage[]>("chat_queue", { threadId });
 export const editQueuedChat = (id: string, text: string) => invoke<T.QueuedMessage>("edit_queued_chat", { id, text });
 export const removeQueuedChat = (id: string) => invoke<void>("remove_queued_chat", { id });

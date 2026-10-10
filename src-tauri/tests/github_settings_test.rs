@@ -1,6 +1,8 @@
 //! Settings → GitHub and Open pull request over SSH or HTTPS, end to end without GitHub: a fake ssh as your own
 //! GIT_SSH_COMMAND (it logs its arguments and serves "GitHub" from local bare repositories), a fake gh, and a local
 //! server that refuses every HTTPS login. Every test in this file runs with that fake ssh.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};

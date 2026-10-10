@@ -5,6 +5,9 @@ import type { Cli, CliKind, CliStatus } from "../types";
 
 /** The program each kind usually has, filled in when you pick the kind of a new CLI. */
 const PROGRAM: Record<CliKind, string> = { claude_code: "claude", codex: "codex", gemini: "gemini", other: "" };
+/** The Program field's example: a name, or a path as this system writes one (npm's codex.cmd on Windows). */
+const programHint = () => (typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent || "")
+  ? "codex or C:\\…\\npm\\codex.cmd" : "codex or /usr/local/bin/codex");
 const KEEP_NOTE = " Gizai keeps these lines as plain text: point to a folder, don't paste a key.";
 const ENV_HINT: Record<CliKind, string> = {
   claude_code: "For a second account: CLAUDE_CONFIG_DIR=~/.claude-2 (the folder that account logged in with)." + KEEP_NOTE,
@@ -73,7 +76,7 @@ export function CliSettings() {
             const k = e.target.value as CliKind;
             setEdit((x) => x && { ...x, kind: k, command: !x.command || x.command === PROGRAM[x.kind] ? PROGRAM[k] : x.command });
           }}>{KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}</select></label>
-          <label>Program<input className="input mono" value={edit.command} onChange={(e) => set("command", e.target.value)} placeholder="codex or /usr/local/bin/codex" /></label>
+          <label>Program<input className="input mono" value={edit.command} onChange={(e) => set("command", e.target.value)} placeholder={programHint()} /></label>
           <label className="wide">Environment<textarea className="textarea mono" rows={2} value={edit.env} onChange={(e) => set("env", e.target.value)} placeholder="NAME=value" />
             <span className="hint">{ENV_HINT[edit.kind]}</span></label>
           {edit.kind === "other" && (

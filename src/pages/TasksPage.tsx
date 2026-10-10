@@ -1,12 +1,14 @@
 // Tasks (and the Inbox): Paperclip-style list grouped by column, or the board. The Inbox is always the list. View options are remembered on this device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, Plus, Trash2, X } from "lucide-react";
-import { dismissChat, getTeam, listChatThreads, listProjects, listTasks, listUsers, moveTask, restoreTask, archiveTask } from "../api";
+import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, LoaderCircle, Plus, StepForward, Trash2, X } from "lucide-react";
+import { continueAfterRunForMe, dismissChat, getTeam, listChatThreads, listProjects, listTasks, listUsers, moveTask, restoreTask, archiveTask } from "../api";
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
-import { chatLabel, needsYou, waitingChats } from "../lib/inbox";
+import { PENDING_MS } from "../lib/usePending";
+import { asksToRun, chatLabel, needsYou, waitingChats } from "../lib/inbox";
 import { relTime } from "../lib/format";
+import { modKey } from "../lib/keys";
 import type { ChatThread } from "../types";
 import { filterCount, filterTasks, groupTasks, sortTasks, type Filter, type GroupBy, type SortBy } from "../lib/taskView";
 import type { Task } from "../types";
@@ -14,6 +16,7 @@ import { Board } from "../components/Board";
 import { TaskList } from "../components/TaskList";
 import { Popover } from "../components/Popover";
 import { ArchivedCards } from "../components/ArchivedCards";
+import { RunForMe } from "../components/RunForMe";
 
 /** A message at the bottom right; with `undo`, an Undo button (after archiving a card). */
 type Toast = { text: string; undo?: () => void };
@@ -41,6 +44,38 @@ function LeadChats({ chats, onDismiss }: { chats: ChatThread[]; onDismiss: (id: 
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+/** One card of Run this for me: what its agent asks you to run, and Done, continue, which continues its run. Once that
+ *  starts, the hold is gone and the card leaves the Inbox. */
+function RunForMeCard({ task, agent }: { task: Task; agent?: string | null }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Busy until the card leaves the Inbox (its hold is cleared as the run starts); a missed reload never leaves it spinning.
+  const done = () => {
+    setBusy(true);
+    setErr(null);
+    continueAfterRunForMe(task.id).then(() => setTimeout(() => setBusy(false), PENDING_MS), (e) => { setBusy(false); setErr(String(e)); });
+  };
+  return (
+    <div className="panel-row run-for-me-card">
+      <a className="ellipsis" href={href({ page: "task", id: task.id })}><span className="id">{task.identifier}</span> {task.title}</a>
+      <RunForMe commands={task.runForMe ?? []} agent={agent}
+        action={<button className="btn sm primary" disabled={busy} aria-busy={busy || undefined} onClick={done}>
+          {busy ? <><LoaderCircle className="icon spin" />Continuing…</> : <><StepForward className="icon" />Done, continue</>}</button>} />
+      {err && <div role="alert" style={{ color: "var(--danger)" }}>{err}</div>}
+    </div>
+  );
+}
+
+/** The top of the Inbox, after the Team Lead's chats: cards on hold whose agent asks you to run commands it may not run. */
+function RunForMeCards({ tasks, agentOf }: { tasks: Task[]; agentOf: (t: Task) => string | null }) {
+  return (
+    <section className="lead-chats" aria-label="Run this for me">
+      <div className="section-head"><h3>Run this for me</h3><span className="faint">{tasks.length}</span></div>
+      <div className="panel">{tasks.map((t) => <RunForMeCard key={t.id} task={t} agent={agentOf(t)} />)}</div>
     </section>
   );
 }
@@ -89,8 +124,10 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const states = useMemo(() => [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1)), [team]);
   const live = useLiveRuns();
   const working = useMemo(() => new Map(live.map((r) => [r.taskId, team?.members.find((m) => m.actorId === r.agentId)?.name ?? "An agent"])), [live, team]);
+  // Run this for me: in the Inbox these cards show on top with their commands, not in the list as well.
+  const asks = useMemo(() => (inbox ? sortTasks(tasks.filter(asksToRun), "updated") : []), [tasks, inbox]);
   const shown = useMemo(() => {
-    const base = inbox ? tasks.filter((t) => needsYou(t, inboxFor!)) : tasks;
+    const base = inbox ? tasks.filter((t) => needsYou(t, inboxFor!) && !asksToRun(t)) : tasks;
     return sortTasks(filterTasks(base, filter), sort);
   }, [tasks, filter, sort, inbox, inboxFor]);
   const groups = useMemo(() => groupTasks(shown, group, states), [shown, group, states]);
@@ -127,7 +164,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       <div className="topbar">
         <div className="crumbs">
           {project && <><a href={`#/project/${project.id}`}>{project.name}</a><span className="sep">/</span></>}
-          <b>{inbox ? "Inbox" : "Tasks"}</b><span className="faint">{fetched ? shown.length + chats.length : ""}</span>
+          <b>{inbox ? "Inbox" : "Tasks"}</b><span className="faint">{fetched ? shown.length + chats.length + asks.length : ""}</span>
         </div>
       </div>
       <div className="toolbar">
@@ -135,8 +172,8 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <input className="input search-input" type="search" aria-label="Search tasks" placeholder="Search ID or title" value={filter.text ?? ""} onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
         <span className="spacer" />
         {!inbox && <div className="seg" role="group" aria-label="View">
-          <button aria-pressed={view === "board"} aria-label="Board" title="Board (Ctrl+B)" onClick={() => setView("board")}><Columns3 className="icon" /></button>
-          <button aria-pressed={view === "list"} aria-label="List" title="List (Ctrl+B)" onClick={() => setView("list")}><List className="icon" /></button>
+          <button aria-pressed={view === "board"} aria-label="Board" title={`Board (${modKey()}+B)`} onClick={() => setView("board")}><Columns3 className="icon" /></button>
+          <button aria-pressed={view === "list"} aria-label="List" title={`List (${modKey()}+B)`} onClick={() => setView("list")}><List className="icon" /></button>
         </div>}
         <Popover label="Filters" align="right" button={() => <button className={`btn ghost${nFilters ? " on" : ""}`}><ListFilter className="icon" />{nFilters ? `Filters: ${nFilters}` : "Filters"}</button>}>
           {() => (<>
@@ -170,8 +207,9 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       ) : !team || !fetched ? null : view === "list" ? (
         <div className="content">
           {chats.length > 0 && <div className="page-pad lead-chats-pad"><LeadChats chats={chats} onDismiss={dismiss} /></div>}
+          {asks.length > 0 && <div className="page-pad lead-chats-pad"><RunForMeCards tasks={asks} agentOf={(t) => (t.assigneeKind === "agent" ? t.assigneeName ?? null : null)} /></div>}
           <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
-            empty={inbox ? (chats.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, and the Team Lead's questions show up here.</span></div>)
+            empty={inbox ? (chats.length + asks.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, and the Team Lead's questions show up here.</span></div>)
               : <div className="empty"><b>No tasks here.</b><span>{nFilters ? "Nothing matches these filters." : "Press N to add one."}</span></div>} />
         </div>
       ) : (

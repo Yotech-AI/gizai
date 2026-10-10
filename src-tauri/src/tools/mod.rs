@@ -19,6 +19,8 @@ pub struct GizaiTools {
     pub thread: Option<String>,
     /// The board check run the token was minted for.
     pub check: Option<String>,
+    /// The run the token was minted for: the chat answer (or board check) whose Claude Code makes the calls.
+    pub run: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
@@ -26,8 +28,19 @@ impl gizai_mcp::Tools for GizaiTools {
         catalog()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
-        call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), name, args).await
+        self.call_with_meta(name, args, &Value::Null).await
     }
+    async fn call_with_meta(&self, name: &str, args: Value, meta: &Value) -> Result<Value, String> {
+        // The answer's stream shows the tool use each call comes from, with the id Claude Code gives the call.
+        let from = Stream { run: self.run.as_deref().unwrap_or_default(), tool_use: meta.get("claudecode/toolUseId").and_then(Value::as_str) };
+        call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), Some(from), name, args).await
+    }
+}
+
+/// The chat answer a call over MCP comes from: its run, and the tool use the client named for the call, if it did.
+struct Stream<'a> {
+    run: &'a str,
+    tool_use: Option<&'a str>,
 }
 
 /// Runs one tool as `actor`, outside any chat thread. Errors are plain sentences for the model to act on.
@@ -35,14 +48,15 @@ pub async fn call(st: &AppState, actor: &str, name: &str, args: Value) -> Result
     call_in(st, actor, None, name, args).await
 }
 
-/// Runs one tool as `actor` for a chat thread (what the user said there widens `attach_file`).
+/// Runs one tool as `actor` for a chat thread (what the user said there widens `attach_file`). Called directly, not by
+/// an answer's Claude Code, so no stream shows it: only a thread already marked refuses the tools that act.
 pub async fn call_in(st: &AppState, actor: &str, thread: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
-    call_scoped(st, actor, thread, None, name, args).await
+    call_scoped(st, actor, thread, None, None, name, args).await
 }
 
 /// Runs one tool as `actor` in the board check `run_id`: nobody named a file, and the check's rules hold.
 pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, args: Value) -> Result<Value, String> {
-    call_scoped(st, actor, None, Some(run_id), name, args).await
+    call_scoped(st, actor, None, Some(run_id), None, name, args).await
 }
 
 /// What a board check may not do, whatever it is asked: attach a file nobody named, change an agent's settings or set up
@@ -54,7 +68,12 @@ const NOT_IN_A_CHECK: [&str; 6] = ["attach_file", "create_agent", "update_agent"
 pub const NOT_AFTER_OUTSIDE: [&str; 9] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
     "set_column", "attach_file", "update_checkout"];
 
-async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
+/// How long a call of a tool in `NOT_AFTER_OUTSIDE` in a chat answer waits for the answer's stream to show it
+/// (`chat::wait_shown`). Not shown by then, it is refused, and the model can call it again.
+pub const SHOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, from: Option<Stream<'_>>, name: &str, args: Value)
+    -> Result<Value, String> {
     let a = Args(match args {
         Value::Object(m) => m,
         Value::Null => Map::new(),
@@ -67,9 +86,12 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         });
     }
     if let Some(t) = thread.filter(|_| NOT_AFTER_OUTSIDE.contains(&name)) {
-        // A call in the same message as an outside tool can come in before the answer's stream shows that tool: wait a moment.
-        if crate::chat::used_outside(st, t).is_none() && tokio::runtime::Handle::try_current().is_ok() {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        // A call can come in before Gizai has read the answer's stream up to it, so before an outside tool in the same
+        // message is marked: it waits until the stream shows the call itself. Not shown in time, it is refused.
+        if let Some(s) = from.filter(|_| crate::chat::used_outside(st, t).is_none())
+            && crate::chat::wait_shown(st, s.run, s.tool_use, name, &a.0, SHOWN_WAIT).await != crate::chat::Shown::Yes {
+            return Err(format!("{name} is refused this time: Gizai couldn't see this call in your answer in time, so it can't tell \
+                whether a tool from outside Gizai came before it. Nothing changed: call it again."));
         }
         if let Some(tool) = crate::chat::used_outside(st, t) {
             return Err(format!("{name} is refused for the rest of this answer: it used {tool}, a tool from outside Gizai, and what that \
@@ -253,7 +275,7 @@ const AGENT_FIELDS: [(&str, &str, &str); 10] = [
     ("instructions_md", "string", "Instructions sent with every run (Markdown). Omit on create to use the role's template; it must end by asking for the GIZAI_RESULT line"),
     ("cards_at_once", "integer", "How many cards it works on at the same time, each in its own git worktree (1–10, default 1)"),
     ("permission_mode", "string", "Permission mode for task runs, in its CLI's terms. Claude Code: acceptEdits (the usual), dontAsk, auto, plan or manual. Codex: workspace-write (the usual) or read-only. Gemini: auto_edit (the usual), plan or default"),
-    ("allowed_tools", "string[]", "Commands it may run without asking, like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
+    ("allowed_tools", "string[]", "Commands it may run without asking, each as Bash(…), like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
     ("monthly_budget_usd", "number", "Monthly spending cap in dollars; empty = no cap"),
     ("title", "string", "Job title shown on the team page"),
 ];
@@ -272,8 +294,8 @@ pub fn catalog() -> Vec<ToolDef> {
              &[("title", "string", "A short title, like \"GA-12: pick the export format\""), ("kind", "enum:question|approval", "question, or approval for something you want to do"),
                ("tasks", "string[]", "The identifiers of the cards it is about, like GA-12"), ("body_md", "string", "Your first message (Markdown): what you found, what you recommend and what you need")],
              &["title", "kind", "tasks", "body_md"]),
-        tool("continue_agent_run", "Continues the agent's latest run on a task, like the Continue button: it resumes the run's session in its worktree, for a run that stopped part-way (a limit, a failure, stopped) or one that asked for a decision that has been answered on the card since (the agent hears the comments written since). A hold on the card is cleared.",
-             &[TASK], &["task"]),
+        tool("continue_agent_run", "Continues the agent's latest run on a task, like the Continue button: it resumes the run's session in its worktree, for a run that stopped part-way (a limit, a failure, stopped) or one that asked for a decision that has been answered on the card since (the agent hears the comments written since). A note goes to the agent with it and is saved on the card as your comment; on a run that asked for a decision it counts as an answer. A hold on the card is cleared.",
+             &[TASK, ("note", "string", "Optional: what the agent should know as it continues, like \"use the existing CSV writer\"")], &["task"]),
         tool("list_clients", "All clients with city, main contact and counts of projects and open tasks.", &[("status", "enum:lead|active|inactive", "Only clients with this status")], &[]),
         tool("get_client", "One client with every field, its contacts, projects and files.", &[CLIENT], &["client"]),
         tool("list_projects", "Projects with key, client, status, linked repository and task counts.", &[("client", "string", "Only this client's projects"), ("status", "enum:planned|active|paused|done|archived", "Only projects with this status")], &[]),
@@ -326,7 +348,7 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions and allowed commands unless instructions_md or allowed_tools is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
-        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change) and its MCP servers and their tools are set only by the user, in the agent form.",
+        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change), its MCP servers and their tools, web search, fetching pages, the browser and its CLI's built-in tools are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
         tool("set_agent_status", "Pauses an agent (no new cards; its running cards finish) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
         tool("add_column", "Adds a column to the board, right after another one, and optionally sets it up. Backlog, review, done and cancelled columns take no agents; an Auto column needs a next column.",

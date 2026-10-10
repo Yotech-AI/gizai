@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-39: what a task run and the Team Lead's chat get of an agent's MCP servers, end to end with fake Claude Codes
 // (crates/gizai-agents/tests/fake-claude-mcp-run.sh and fake-claude-mcp-chat.py keep their argv and a copy of the MCP
 // config while the run lives), never the real one; secrets live in the in-memory keychain of `test_state`.
@@ -418,7 +420,10 @@ async fn an_agent_on_codex_or_gemini_shows_why_mcp_is_off_and_its_run_goes_witho
         let cli = add_cli(&st, name, kind, FAKE_CLI, &[format!("FAKE_KIND={kind}")]);
         put_agent_on(&st, &cli);
         let v = app_mcp::agent_view(&st, &agent).unwrap();
-        assert_eq!(v.disabled.as_deref(), Some("MCP servers work on Claude Code for now: Codex and Gemini come with GA-55."), "{name}");
+        // GA-55: each CLI says why it can't have MCP servers or the browser (the same words as the agent form's).
+        assert_eq!(v.disabled.as_deref(), core_mcp::mcp_not_on(kind), "{name}");
+        let why = v.disabled.clone().unwrap_or_default();
+        assert!(why.contains(name) && why.contains("the browser") && !why.contains("GA-55"), "{name}: {why}");
         let err = app_mcp::save_agent(&st, &agent, AgentTools { mcp: vec![AgentServer { server_id: otus.clone(), on: true, tools_off: vec![] }] }).unwrap_err();
         assert!(err.contains("Claude Code") && err.contains(name), "{name}: {err}");
 

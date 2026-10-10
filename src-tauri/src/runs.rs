@@ -235,9 +235,19 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `p` is a program this system runs (`gizai_agents::os::executable`): a file with an execute bit on Linux and
+/// macOS, an `.exe`, `.cmd`… file on Windows.
 pub(crate) fn executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+    gizai_agents::os::executable(p)
+}
+
+/// The program at the path `p` (a saved Claude Code or gh), when this system runs it. On Windows a path without its
+/// extension is tried with PATHEXT's (`…\claude` → `…\claude.exe`).
+pub(crate) fn program_at(p: &str) -> Option<PathBuf> {
+    if cfg!(windows) {
+        return gizai_agents::os::find_in(p, &std::env::var_os("PATH").unwrap_or_default());
+    }
+    executable(Path::new(p)).then(|| PathBuf::from(p))
 }
 
 /// Finds `claude` the way a login shell would, then in the usual install places. Saves what it finds.
@@ -249,8 +259,28 @@ pub fn detect_claude(st: &AppState) -> Option<String> {
     found
 }
 
-/// `detect_claude` without saving: where `claude` is installed, if it is.
+/// `detect_claude` without saving: where `claude` is installed, if it is. Linux: the way a login shell finds it, then
+/// the usual install places. macOS: on PATH (Gizai took your login shell's at start, `shell_path`), then the usual
+/// places. Windows: on PATH (`claude.exe`, or npm's `claude.cmd`), then where the native installer and npm put it.
 pub fn find_claude() -> Option<String> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    if cfg!(windows) {
+        let home = gizai_core::clis::home();
+        let appdata = std::env::var_os("APPDATA").map(PathBuf::from).filter(|a| a.is_absolute());
+        let usual = [(!home.is_empty()).then(|| Path::new(&home).join(".local").join("bin").join("claude.exe")),
+                     appdata.map(|a| a.join("npm").join("claude.cmd"))];
+        return gizai_agents::os::find_in("claude", &path)
+            .or_else(|| usual.into_iter().flatten().find(|p| executable(p)))
+            .map(|p| p.display().to_string());
+    }
+    if cfg!(target_os = "macos") {
+        let home = gizai_core::clis::home();
+        return gizai_agents::os::find_in("claude", &path).map(|p| p.display().to_string()).or_else(|| {
+            [".local/bin/claude", ".claude/local/claude"].iter().map(|rel| format!("{home}/{rel}"))
+                .chain(["/opt/homebrew/bin/claude".to_string(), "/usr/local/bin/claude".to_string()])
+                .find(|p| executable(Path::new(p)))
+        });
+    }
     let from_shell = std::process::Command::new("bash").args(["-lc", "command -v claude"]).output().ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -274,10 +304,7 @@ pub(crate) fn claude_bin(st: &AppState, bin_override: Option<String>) -> Result<
             None => detect_claude(st),
         },
     };
-    match bin {
-        Some(b) if executable(Path::new(&b)) => Ok(PathBuf::from(b)),
-        _ => Err("Claude Code not found: set its path in Settings".into()),
-    }
+    bin.as_deref().and_then(program_at).ok_or_else(|| "Claude Code not found: set its path in Settings".into())
 }
 
 /// How long Claude Code's model list is kept before it is asked again.
@@ -328,7 +355,8 @@ pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     }
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
     let events = match std::fs::read_to_string(&run.log_path) {
-        Ok(text) => agent_cli::parse_log(&text),
+        // The limits Claude Code reported are for the Usage page, not the Run panel.
+        Ok(text) => agent_cli::parse_log(&text).into_iter().filter(|e| !matches!(e, RunEvent::Limits { .. })).collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound
             && run.ended_at.unwrap_or(run.created_at) < ids::now_ms() - housekeeping::KEEP_LOGS_MS => {
             vec![RunEvent::Note { text: format!("Gizai keeps run logs for {} days, so this run's output is gone. Its summary, cost and commits stay.",
@@ -440,6 +468,35 @@ struct Resume {
     answer: Option<String>,
     /// Gizai's own nudge (`nudge_for`): the run ended without a result, and the agent hears `prompt::nudge_prompt`.
     nudge: bool,
+    /// Continue with a message (GA-31): the note of whoever continued it, told to the agent next to `reason` (or the
+    /// answer) and saved on the card as their comment once the run is recorded.
+    note: Option<ContinueNote>,
+}
+
+/// A note for a continued run (GA-31): from you (the text box next to Continue, or Done, continue) or from the Team Lead
+/// (`continue_agent_run`'s `note`).
+struct ContinueNote {
+    /// Who wrote it: the comment's author.
+    by: String,
+    /// Their name, as the prompt says it.
+    by_name: String,
+    text: String,
+}
+
+impl ContinueNote {
+    /// The note of `by`, None when it is empty.
+    fn of(st: &AppState, by: &str, text: Option<String>) -> Option<ContinueNote> {
+        let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())?;
+        Some(ContinueNote { by: by.to_string(), by_name: actor_name(st, by), text })
+    }
+}
+
+/// An actor's name (a person or an agent), for a prompt.
+fn actor_name(st: &AppState, actor_id: &str) -> String {
+    team::agent(&st.db, actor_id).map(|m| m.name).ok()
+        .or_else(|| gizai_core::users::list(&st.db).ok()?.into_iter().find(|p| p.id == actor_id).map(|p| p.name))
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "The user".into())
 }
 
 /// Continue: resumes a stopped run's session in its worktree, as a new run of the same agent on the same CLI. Only the
@@ -447,16 +504,54 @@ struct Resume {
 /// the work (clearing also resets its failure count).
 pub async fn continue_run(st: &AppState, run_id: &str, bin_override: Option<String>)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
-    continue_inner(st, run_id, bin_override, false).await
+    continue_inner(st, run_id, bin_override, false, None).await
+}
+
+/// Continue with a message (GA-31): `continue_run` with your note for the agent (the text box next to Continue), like
+/// "use the existing CSV writer". The note goes into the continued run's prompt, next to why the run stopped, and is saved
+/// on the card as your comment. None or an empty note: a plain Continue.
+pub async fn continue_with_note(st: &AppState, run_id: &str, note: Option<String>, bin_override: Option<String>)
+    -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    let note = ContinueNote::of(st, &st.you_id, note);
+    continue_inner(st, run_id, bin_override, false, note).await
 }
 
 /// The Team Lead's Continue after an answer (`continue_agent_run`): also a run that ended asking for a decision
 /// (`needs_decision`) resumes, told what was written on the card since it ended.
 pub async fn continue_answered(st: &AppState, run_id: &str) -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
-    continue_inner(st, run_id, None, true).await
+    continue_inner(st, run_id, None, true, None).await
 }
 
-async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String>, answered: bool)
+/// `continue_answered` with the Team Lead's note (`continue_agent_run`'s `note`), from `lead`: saved on the card as its
+/// comment and told to the agent like a person's note. On a run that asked for a decision, the note counts as an answer
+/// written on the card.
+pub async fn continue_answered_with_note(st: &AppState, run_id: &str, lead: &str, note: Option<String>)
+    -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    let note = ContinueNote::of(st, lead, note);
+    continue_inner(st, run_id, None, true, note).await
+}
+
+/// "Run this for me", Done, continue (GA-31): you ran the commands the card's latest run asked you to run (`run_for_me`
+/// on its `needs_decision` result). That run continues, like the Team Lead's Continue after an answer, with your note that
+/// the commands were run (saved on the card as your comment), so the agent checks that they worked and carries on. A
+/// hold on the card is cleared.
+pub async fn continue_after_run_for_me(st: &AppState, task_id: &str) -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
+    let last = core_runs::list_for_task(&st.db, task_id).map_err(|e| e.to_string())?.into_iter().next()
+        .ok_or("this card has no run to continue")?;
+    if last.outcome.as_deref() != Some("needs_decision") || last.run_for_me.is_empty() {
+        return Err("its last run didn't ask you to run anything: Continue or Run starts the agent".into());
+    }
+    let note = ContinueNote::of(st, &st.you_id, Some(ran_for_me_note(&last.run_for_me)));
+    continue_inner(st, &last.id, None, true, note).await
+}
+
+/// Done, continue's note: the commands, and that they were run.
+pub fn ran_for_me_note(commands: &[String]) -> String {
+    let (what, worked) = if commands.len() == 1 { ("the command", "it worked") } else { ("the commands", "they worked") };
+    format!("Done: I ran {what} you asked me to run.\n\n```sh\n{}\n```\n\nCheck that {worked}, then carry on.", commands.join("\n"))
+}
+
+async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String>, answered: bool, note: Option<ContinueNote>)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
     let run = core_runs::get(&st.db, run_id).map_err(|e| e.to_string())?;
     let task_id = run.task_id.clone().ok_or("only a card's run can continue")?;
@@ -476,7 +571,8 @@ async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String
             .filter(|c| c.created_at > since && c.run_id.as_deref() != Some(run_id))
             .map(|c| format!("{}: {}", c.author_name, c.body_md.trim()))
             .collect();
-        if lines.is_empty() {
+        // A note is an answer too: it is saved on the card with the run (`start_inner`).
+        if lines.is_empty() && note.is_none() {
             return Err("nobody has answered on the card since this run asked for a decision".into());
         }
         Some(lines[lines.len().saturating_sub(5)..].join("\n\n"))
@@ -492,7 +588,8 @@ async fn continue_inner(st: &AppState, run_id: &str, bin_override: Option<String
         return Err("its worktree is gone; Run starts the card fresh".into());
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
-    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual", Some(Resume { session, cli, reason, answer, nudge: false })).await
+    let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual",
+                              Some(Resume { session, cli, reason, answer, nudge: false, note })).await
         .map_err(StartError::message)?;
     resume_pull(st, &run.agent_id);
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
@@ -605,10 +702,15 @@ async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &
     }
 }
 
-/// The PATH for the commands that prepare a worktree: Gizai's own, then the folders your login shell adds (started
-/// from the app launcher, Gizai often lacks ~/.local/bin, mise or nvm).
+/// The PATH for the commands that prepare a worktree (and the coding CLIs Settings finds and runs start): on Linux
+/// Gizai's own, then the folders your login shell adds (started from the app launcher, Gizai often lacks ~/.local/bin,
+/// mise or nvm). On macOS and Windows Gizai's own: macOS took your login shell's at start (`shell_path`), and a Windows
+/// app gets the full PATH.
 pub(crate) fn command_path() -> std::ffi::OsString {
     let own = std::env::var_os("PATH").unwrap_or_default();
+    if cfg!(any(windows, target_os = "macos")) {
+        return own;
+    }
     let login = std::process::Command::new("bash").args(["-lc", "printf '\\n%s' \"$PATH\""]).stdin(std::process::Stdio::null()).output().ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().last().map(str::to_string))
@@ -677,7 +779,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     }
     // A card the queue or Gizai's nudge starts waits when another of the agent's cards failed meanwhile: asked before its
     // worktree is made and again before its process spawns.
-    let queued = matches!(trigger, "assigned" | "nudge");
+    let queued = matches!(trigger, "assigned" | core_runs::RESULT_NUDGE);
     let wait_if_paused = || match pull_paused(st, &agent_id) {
         Some(why) if queued => Err(StartError::Wait(format!("{} stopped taking cards: {why}", agent.name))),
         _ => Ok(()),
@@ -706,6 +808,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         None => log_dir.join(format!("{session}.jsonl")),
     };
     let wt_path = wt.path.to_string_lossy().to_string();
+    // A Continue (a person's, the Team Lead's, Done, continue) is recorded as `nudge`. Gizai's own nudge is too, marked
+    // nudged (`create_nudge`), and reads as `result_nudge`.
     let db_trigger = if resume.is_some() { "nudge" } else { trigger };
     let log = log_path.to_string_lossy();
     let run_id = if resume.as_ref().is_some_and(|r| r.nudge) {
@@ -713,6 +817,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     } else {
         core_runs::create_with_trigger(&st.db, &agent_id, task_id, &role, db_trigger, &session, &wt_path, &wt_path, &wt.branch, &log)
     }.map_err(|e| StartError::Other(e.to_string()))?;
+    // The note of whoever continued it goes on the card as their comment, now that the run is recorded: a start that
+    // didn't get this far leaves no comment behind.
+    if let Some(n) = resume.as_ref().and_then(|r| r.note.as_ref()) {
+        match comments::add(&st.db, &n.by, task_id, &n.text, None) {
+            Ok(_) => (st.notify)(Note::RowsChanged("comments")),
+            Err(e) => eprintln!("gizai: saving the note for run {run_id} as a comment failed: {e}"),
+        }
+    }
 
     if let Ok(sha) = worktree::rev_parse(&wt.path, "HEAD") {
         let _ = core_runs::set_base_sha(&st.db, &run_id, &sha);
@@ -745,6 +857,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     };
     let allowed_tools: Vec<String> =
         if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() };
+    // Web search, fetching pages and the CLI's other tools come only from their switches (agent form → Tools), never from the
+    // allowed commands, whoever put them there: with a switch off, the tool is absent.
+    let (allowed_tools, by_switch): (Vec<String>, Vec<String>) =
+        allowed_tools.into_iter().partition(|t| !gizai_agents::tool_catalog::only_by_switch(t));
+    if !by_switch.is_empty() {
+        notes.push(format!("Left out of {}'s allowed commands: {}. Web search, fetching pages and the CLI's other tools come only from \
+                            their switches (agent form → Tools).", agent.name, by_switch.join(", ")));
+    }
     let permission_mode = agent.permission_mode.clone().unwrap_or_default();
     // "How this run works" ends every task prompt, new and continued.
     let rules = prompt::RunRules {
@@ -777,16 +897,26 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             notes.push(format!("{} runs on {}: MCP servers work on Claude Code for now, so this run goes without them.", agent.name, cli.name));
         }
     }
+    // The agent's Web switches and the CLI's built-in tools it has on (agent form → Tools), as far as its CLI takes them.
+    let (web, web_notes) = web_for_run(&agent, spec.kind, &cli.name);
+    notes.extend(web_notes);
+    if spec.kind == Kind::ClaudeCode {
+        allowed_tools.extend(agent.cli_tools.builtin.iter().filter(|t| gizai_agents::tool_catalog::switchable(spec.kind, t)).cloned());
+    }
+    // Content from outside (an MCP server's answers, web pages, search results, the browser) is data: the prompt says so. A
+    // CLI that searches the web in every run (Gemini) gets it in every run.
+    let untrusted = mcp_config.is_some() || web.search || web.fetch || gizai_agents::tool_catalog::web_in_every_run(spec.kind);
+    let note = resume.as_ref().and_then(|r| r.note.as_ref()).map(|n| prompt::Note { from: n.by_name.clone(), text: n.text.clone() });
     let base_prompt = prompt::with_rules(&match &resume {
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
-        Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt(a, Some(limits)),
-        Some(r) => prompt::continue_prompt(&r.reason, Some(limits)),
+        Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt_with(a, note.as_ref(), Some(limits)),
+        Some(r) => prompt::continue_prompt_with(&r.reason, note.as_ref(), Some(limits)),
         None => prompt::build_from(&ctx, &instructions, fetched_from(&project)),
     }, &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
-        prompt: if mcp_config.is_some() { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
-        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused,
+        prompt: if untrusted { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
+        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
@@ -845,8 +975,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let rid = run_id.clone();
     let tid = task_id.to_string();
     let cli_name = cli.name.clone();
+    let kind = spec.kind;
     let dir = wt.path.clone();
     let (run_agent, run_config) = (agent_id.clone(), mcp_config.clone());
+    let (seen_log, seen_cli) = (log_path.clone(), cli.id.clone());
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
@@ -854,6 +986,12 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         let mut tools = 0usize;
         let mut refused: Vec<Refusal> = vec![];
         while let Some(ev) = handle.events.recv().await {
+            // What Claude Code heard of the account's limits: kept for this run's CLI (the Usage page's Subscription tab),
+            // not shown in the Run panel.
+            if let RunEvent::Limits { info } = &ev {
+                crate::limits::from_claude(&st2, &rid, info);
+                continue;
+            }
             match &ev {
                 RunEvent::ToolUse { .. } => tools += 1,
                 RunEvent::Refused { tool, input, reason } => refused.push(Refusal { tool: tool.clone(), input: input.clone(), reason: reason.clone() }),
@@ -888,17 +1026,50 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         if let Some(p) = &run_config {
             let _ = std::fs::remove_file(p);
         }
+        // The tools Claude Code's init line named: the agent's "seen in the last run" (agent form → Tools → Built-in tools).
+        if kind == Kind::ClaudeCode {
+            crate::mcp_servers::record_seen_tools(&st2, &run_agent, &seen_cli, &seen_log);
+        }
         if let Err(e) = worktree::empty_temp(&dir) {
             eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");
         }
+        // The account's limits as the run left them: Codex's from its session log, or the limit a Claude Code run that
+        // failed says it hit (its result, else its stderr). Never from a successful run's text: an agent may quote one.
+        let failed_text = match &result {
+            _ if kind != Kind::ClaudeCode => None,
+            Some(RunEvent::Result { is_error: true, text, .. }) => Some(text.clone()),
+            Some(_) => None,
+            None => Some(stderr_tail(&rid, &st2)),
+        };
+        crate::limits::after_run(&st2, &rid, kind, failed_text.as_deref()).await;
         finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued, refused }, &cli_name).await
     });
     Ok((run_id, done))
 }
 
+/// The Web switches a run of `agent` on a CLI of `kind` gets, and a note for each it can't take (agent form → Tools → Web).
+pub(crate) fn web_for_run(agent: &team::Member, kind: Kind, cli_name: &str) -> (agent_cli::WebTools, Vec<String>) {
+    let t = &agent.cli_tools;
+    let (search, fetch, domains) = gizai_agents::tool_catalog::web_support(kind);
+    let mut notes = vec![];
+    // Gemini searches the web by its own policy whatever the switch says (the form shows that): no note for it.
+    let search_on = t.web_search && search.is_none();
+    if t.web_search && kind != Kind::Gemini && let Some(why) = search {
+        notes.push(format!("{} runs on {cli_name}, so this run goes without web search: {why}", agent.name));
+    }
+    // A domain list a CLI can't keep to leaves fetching out, rather than letting it fetch any page.
+    let why_not_fetch = fetch.or(if t.fetch_domains.is_empty() { None } else { domains });
+    let fetch_on = t.web_fetch && why_not_fetch.is_none();
+    if t.web_fetch && let Some(why) = why_not_fetch {
+        notes.push(format!("{} runs on {cli_name}, so this run goes without fetching pages: {why}", agent.name));
+    }
+    let web = agent_cli::WebTools { search: search_on, fetch: fetch_on, fetch_domains: if fetch_on { t.fetch_domains.clone() } else { vec![] } };
+    (web, notes)
+}
+
 /// The repository's shared git folder for a worktree (where its commits go), as an absolute path.
 fn git_common_dir(wt: &Path) -> Option<String> {
-    let out = std::process::Command::new("git").args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).current_dir(wt)
+    let out = gizai_agents::os::command("git").args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).current_dir(wt)
         .stdin(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
     let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!dir.is_empty()).then_some(dir)
@@ -986,7 +1157,10 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
             ((cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, *input_tokens, *output_tokens, text.clone(), !is_error),
         _ => (0, 0, 0, String::new(), false),
     };
-    let verdict: Option<Outcome> = outcome::parse(&text).map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
+    let parsed = outcome::parse(&text);
+    // "Run this for me" (GA-31): the commands a `needs_decision` asks you to run, kept with its verdict below.
+    let run_for_me: Vec<String> = parsed.as_ref().filter(|o| o.outcome == "needs_decision").map(|o| o.run_for_me.clone()).unwrap_or_default();
+    let verdict: Option<Outcome> = parsed.map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
     let finished = ok && exit == "exit:0";
     // While Gizai quits, a run that didn't finish was stopped by the quit, also when its agent ended first: logging
     // out sends SIGTERM to the agents as well as to Gizai. It doesn't count as a failure.
@@ -1026,12 +1200,15 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
     let mut moved = false;
     let mut nudge = None;
+    // Only a run that finished has a verdict for the gates, and only then do its commands to run count.
+    let (gated, asks) = if status == "succeeded" { (verdict.as_ref(), run_for_me.as_slice()) } else { (None, &[][..]) };
     if let Some(reason) = &unpushed {
         // The push failed: the card stays where it is, on hold with the reason, whatever the run's answer (its summary is
-        // still posted), so it shows in the Inbox. Nothing retries: the next run's end pushes again.
+        // still posted), so it shows in the Inbox. Nothing retries: the next run's end pushes again. Commands it asks you
+        // to run are kept with its verdict, so the held card still shows them.
         if cancelled {
             hold_card(st, &agent, task_id, reason);
-        } else if let Err(e) = workflow::hold_unpushed(&st.db, run_id, if status == "succeeded" { verdict.as_ref() } else { None }, reason) {
+        } else if let Err(e) = workflow::hold_unpushed_with(&st.db, run_id, gated, asks, reason) {
             eprintln!("gizai: holding the card of run {run_id} failed: {e}");
         }
         if status == "failed" && !quit {
@@ -1051,7 +1228,7 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
             let _ = workflow::put_back(&st.db, &agent, task_id, from);
         }
     } else if !cancelled {
-        match workflow::apply_outcome(&st.db, run_id, if status == "succeeded" { verdict.as_ref() } else { None }) {
+        match workflow::apply_outcome_with(&st.db, run_id, gated, asks) {
             Ok(g) => moved = g.moved_to.is_some(),
             Err(e) => eprintln!("gizai: applying the outcome of run {run_id} failed: {e}"),
         }
@@ -1190,7 +1367,7 @@ fn nudge_for(st: &AppState, run_id: &str, task_id: &str) -> Option<Resume> {
         return None;
     }
     let session = run.session_id.filter(|s| !s.is_empty())?;
-    Some(Resume { session, cli, reason: "it ended without a result".into(), answer: None, nudge: true })
+    Some(Resume { session, cli, reason: "it ended without a result".into(), answer: None, nudge: true, note: None })
 }
 
 /// Starts Gizai's nudge (`nudge_for`) only when a start is allowed now: Gizai isn't quitting, agents aren't paused in
@@ -1209,8 +1386,9 @@ fn start_nudge<'a>(st: &'a AppState, task_id: &'a str, agent_id: &'a str, resume
         if busy >= agent.max_runs.max(1) {
             return;
         }
-        // The start checks the rest: active, budget, Runs at once (a wait, so nothing changes).
-        if start_background(st, task_id, agent_id, "nudge", Some(resume)).await.is_some() {
+        // The start checks the rest: active, budget, Runs at once (a wait, so nothing changes). Its own trigger
+        // (`result_nudge`), so the Runs list tells it from a Continue.
+        if start_background(st, task_id, agent_id, core_runs::RESULT_NUDGE, Some(resume)).await.is_some() {
             eprintln!("gizai: a run on card {task_id} ended without a result: continued it once");
         }
     })

@@ -3,6 +3,7 @@
 // answered" (`answered`), also at the end of a real (fake Claude Code) chat answer. Every test hands Gizai a desktop
 // that only records what it would show, so no test shows a real notification.
 use std::collections::HashSet;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,13 +14,17 @@ use gizai_core::chat::{self, NewMessage};
 use gizai_core::{projects, tasks, team};
 use gizai_lib::chat::TurnSummary;
 use gizai_lib::notifications::{self, Desktop, Item, Kind, Notice, Switches};
-use gizai_lib::{AppState, mcp, runs};
+use gizai_lib::{AppState, runs};
+#[cfg(unix)]
+use gizai_lib::mcp;
 
 struct T {
     st: AppState,
     shown: Arc<Mutex<Vec<Notice>>>,
     away: Arc<AtomicBool>,
     project: String,
+    // keeps the data folder while the test runs
+    #[cfg_attr(not(unix), allow(dead_code))]
     dir: tempfile::TempDir,
 }
 
@@ -361,6 +366,7 @@ fn the_team_lead_answered_notifies_only_while_the_window_is_out_of_sight() {
 }
 
 /// The shim binary: target/debug/gizai-mcp (built by `cargo test --workspace`; built here when missing).
+#[cfg(unix)]
 fn shim() -> PathBuf {
     static BUILT: std::sync::Once = std::sync::Once::new();
     let path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/debug/gizai-mcp"));
@@ -373,6 +379,8 @@ fn shim() -> PathBuf {
     path
 }
 
+// Linux and macOS only: the fake Claude Code is a Python script.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_real_chat_answer_ends_with_the_team_lead_answered_when_the_window_is_away_and_with_nothing_when_it_is_focused() {
     let mut t = setup();

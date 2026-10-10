@@ -98,18 +98,21 @@ function findAll(node: ReactNode, pred: (p: Record<string, unknown>) => boolean,
 beforeEach(() => { calls.length = 0; liveRuns = []; liveChats = []; });
 
 describe("the top of Settings", () => {
-  it("starts with Quit Gizai completely, then Notifications, then the other sections", () => {
-    const t = text(render());
-    const quit = t.indexOf("Quit Gizai completely");
-    const notifications = t.indexOf("Notifications");
-    const updates = t.indexOf("Updates");
-    const runs = t.indexOf("Runs at once");
-    expect(quit).toBeGreaterThan(-1);
-    expect(t.indexOf("Quit")).toBeLessThan(notifications);
-    expect(quit).toBeLessThan(notifications);
-    expect(notifications).toBeLessThan(updates);
-    expect(updates).toBeLessThan(runs);
+  // GA-42 put Settings in tabs: General opens first, with Quit Gizai completely at its top, then Updates; Notifications
+  // and Runs have tabs of their own, after it.
+  it("starts with Quit Gizai completely, at the top of General, the tab that opens first; Notifications and Runs come after it", () => {
     const html = render();
+    const general = html.indexOf('aria-label="General">');
+    const notifications = html.indexOf('aria-label="Notifications">');
+    const agents = html.indexOf('aria-label="Agents and runs">');
+    expect(html).toMatch(/<div role="tabpanel" class="form settings-panel" aria-label="General">/);
+    expect(general).toBeGreaterThan(-1);
+    const t = text(html.slice(general));
+    expect(t.indexOf("Quit Gizai completely")).toBeGreaterThan(-1);
+    expect(t.indexOf("Quit Gizai completely")).toBeLessThan(t.indexOf("Updates"));
+    expect(general).toBeLessThan(notifications);
+    expect(notifications).toBeLessThan(agents);
+    expect(html.indexOf("Runs at once")).toBeGreaterThan(agents);
     expect(html.indexOf('<section class="form-section"><header><h3>Quit</h3>')).toBe(html.indexOf('<section class="form-section">'));
     expect(html).toMatch(/<button class="btn danger">.*<span>Quit Gizai completely<\/span><\/button>/);
   });

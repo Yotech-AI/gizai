@@ -29,7 +29,8 @@ for a in "$@"; do
 done
 if [ -n "$config" ]; then
   printf '%s' "$config" > "$out/mcp.path"
-  stat -c %a "$config" > "$out/mcp.mode"
+  # GNU stat on Linux, BSD stat on macOS
+  stat -c %a "$config" > "$out/mcp.mode" 2>/dev/null || stat -f %Lp "$config" > "$out/mcp.mode"
   cp "$config" "$out/mcp.json"
 fi
 echo "fake claude (mcp) started" >&2

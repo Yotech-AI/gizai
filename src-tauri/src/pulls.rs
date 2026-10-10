@@ -159,18 +159,27 @@ pub(crate) fn push_over_for(st: &AppState, provider: &str) -> Result<PushOver, S
     }
 }
 
-/// Finds `gh` the way a login shell would, then in the usual install places. Saves what it finds.
+/// Finds `gh` and saves what it finds: on Linux and macOS the way a login shell would, then in the usual install places;
+/// on Windows on PATH (`gh.exe`), then where its installer puts it.
 pub fn detect_gh(st: &AppState) -> Option<String> {
-    let from_shell = std::process::Command::new("bash").args(["-lc", "command -v gh"]).output().ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|p| !p.is_empty() && crate::runs::executable(Path::new(p)));
-    let home = std::env::var("HOME").unwrap_or_default();
-    let found = from_shell.or_else(|| {
-        [".local/bin/gh", ".local/share/mise/shims/gh", "bin/gh"].iter().map(|rel| format!("{home}/{rel}"))
-            .chain(["/usr/local/bin/gh", "/usr/bin/gh", "/home/linuxbrew/.linuxbrew/bin/gh", "/snap/bin/gh"].map(String::from))
-            .find(|p| crate::runs::executable(Path::new(p)))
-    });
+    let found = if cfg!(windows) {
+        let program_files = std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        gizai_agents::os::find_in("gh", &std::env::var_os("PATH").unwrap_or_default())
+            .or_else(|| Some(program_files.join("GitHub CLI").join("gh.exe")).filter(|p| crate::runs::executable(p)))
+            .map(|p| p.display().to_string())
+    } else {
+        let from_shell = std::process::Command::new("bash").args(["-lc", "command -v gh"]).output().ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty() && crate::runs::executable(Path::new(p)));
+        let home = gizai_core::clis::home();
+        from_shell.or_else(|| {
+            [".local/bin/gh", ".local/share/mise/shims/gh", "bin/gh"].iter().map(|rel| format!("{home}/{rel}"))
+                .chain(["/usr/local/bin/gh", "/usr/bin/gh", "/home/linuxbrew/.linuxbrew/bin/gh", "/snap/bin/gh"].map(String::from))
+                .chain(cfg!(target_os = "macos").then(|| "/opt/homebrew/bin/gh".to_string()))
+                .find(|p| crate::runs::executable(Path::new(p)))
+        })
+    };
     if let Some(p) = &found {
         let _ = settings::set(&st.db, "gh_bin", p);
     }
@@ -185,8 +194,7 @@ pub(crate) fn gh_bin(st: &AppState) -> Result<PathBuf, String> {
         None => detect_gh(st),
     };
     match bin {
-        Some(b) if crate::runs::executable(Path::new(&b)) => Ok(PathBuf::from(b)),
-        Some(b) => Err(format!("The GitHub CLI isn't at {b} any more: fix its path in Settings")),
+        Some(b) => crate::runs::program_at(&b).ok_or_else(|| format!("The GitHub CLI isn't at {b} any more: fix its path in Settings")),
         None => Err("The GitHub CLI (gh) isn't installed: install it from cli.github.com and log in with gh auth login, or set its path in Settings".into()),
     }
 }

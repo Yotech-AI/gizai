@@ -269,3 +269,86 @@ fn every_task_prompt_on_every_cli_says_gizai_pushes_the_branch_after_the_run() {
         }
     }
 }
+
+// GA-31: Continue with a message (a note next to why the run stopped, or next to the answer), and "Run this for me" in
+// How this run works.
+use gizai_agents::prompt::{answered_prompt_with, continue_prompt_with, Note, RUN_FOR_ME};
+
+fn note(from: &str, text: &str) -> Note {
+    Note { from: from.into(), text: text.into() }
+}
+
+#[test]
+fn a_continue_with_a_note_quotes_it_after_why_the_run_stopped_and_before_the_instructions() {
+    let limits = Some(RunLimits { minutes: 90, tool_calls: 200 });
+    let n = note("Jeffrey", "  Use the existing CSV writer.\nKeep the column order.\n ");
+    let p = continue_prompt_with("stopped at the limit of 200 tool calls per run.", Some(&n), limits);
+    let (why, by, first, second, go) = (p.find("Your last run on this task was stopped: stopped at the limit of 200 tool calls per run.").unwrap(),
+        p.find("Jeffrey wrote a note for this run:\n\n").unwrap(), p.find("> Use the existing CSV writer.\n> Keep the column order.").unwrap(),
+        p.find("> Keep the column order.").unwrap(), p.find("Continue where you left off.").unwrap());
+    assert!(why < by && by < first && first < second && second < go, "{p}");
+    assert!(p.contains("## Limits of this run") && p.find("## Limits of this run").unwrap() > go, "{p}");
+    assert_eq!(p.matches("wrote a note").count(), 1);
+    // no note, an empty one or only spaces: the plain Continue, word for word
+    let plain = continue_prompt("stopped at the limit of 200 tool calls per run", limits);
+    for empty in [None, Some(note("Jeffrey", "")), Some(note("Jeffrey", " \n  "))] {
+        assert_eq!(continue_prompt_with("stopped at the limit of 200 tool calls per run", empty.as_ref(), limits), plain);
+    }
+    assert!(!plain.contains("wrote a note"));
+    // a note without a name still reads
+    let p = continue_prompt_with("it ended without a result", Some(&note(" ", "Try again")), None);
+    assert!(p.contains("Someone wrote a note for this run:\n\n> Try again\n\n"), "{p}");
+}
+
+#[test]
+fn an_answered_continue_quotes_the_answer_then_the_note_and_a_note_alone_is_the_answer() {
+    let n = note("Team Lead", "Use JSON: the client's importer reads it.");
+    let p = answered_prompt_with("Jeffrey: CSV or JSON? JSON.", Some(&n), None);
+    let (asked, answer, by, text, go) = (p.find("Your last run on this task ended asking for a decision.").unwrap(),
+        p.find("It was answered on the card since:\n\n> Jeffrey: CSV or JSON? JSON.").unwrap(), p.find("Team Lead wrote a note for this run:").unwrap(),
+        p.find("> Use JSON: the client's importer reads it.").unwrap(), p.find("Continue where you left off, with this answer.").unwrap());
+    assert!(asked < answer && answer < by && by < text && text < go, "{p}");
+    // Done, continue: the note is the whole answer
+    let ran = note("Jeffrey", "Done: I ran the command you asked me to run.\n\n```sh\nsudo pacman -S libayatana-appindicator\n```\n\nCheck that it worked, then carry on.");
+    let p = answered_prompt_with("", Some(&ran), Some(RunLimits { minutes: 90, tool_calls: 200 }));
+    assert!(!p.contains("It was answered on the card since"), "{p}");
+    // (a blank line in the note is quoted as "> ")
+    assert!(p.contains("Jeffrey wrote a note for this run:\n\n> Done: I ran the command you asked me to run.\n> \n> ```sh\n\
+> sudo pacman -S libayatana-appindicator\n> ```\n> \n> Check that it worked, then carry on.\n\nContinue where you left off"), "{p}");
+    assert!(p.contains("## Limits of this run"), "{p}");
+    // without a note: as before
+    assert_eq!(answered_prompt_with("Use semicolons.", None, None), answered_prompt("Use semicolons.", None));
+    assert!(answered_prompt("Use semicolons.", None).contains("It was answered on the card since:\n\n> Use semicolons.\n\n"));
+}
+
+#[test]
+fn every_task_prompt_on_every_cli_says_how_to_ask_the_user_to_run_a_command() {
+    for want in ["a command you may not run", "sudo", "an install", "not a push of this branch", "finish what you can", "`needs_decision`",
+                 "exactly as it is to be typed", "`run_for_me`", "The user runs them and continues this run", "check that they worked"] {
+        assert!(RUN_FOR_ME.contains(want), "{want} missing in {RUN_FOR_ME}");
+    }
+    // its example is a working result line
+    let example = RUN_FOR_ME.split('`').find(|s| s.starts_with("\"run_for_me\"")).unwrap();
+    let line = format!("GIZAI_RESULT: {{\"outcome\":\"needs_decision\",\"summary\":\"s\",\"issues\":[],{example}}}");
+    assert_eq!(gizai_agents::outcome::parse(&line).unwrap().run_for_me, ["sudo pacman -S libayatana-appindicator"]);
+    let limits = Some(RunLimits { minutes: 90, tool_calls: 200 });
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        for mode in ["", "acceptEdits", "auto", "default", "bypassPermissions", "yolo"] {
+            for r in [rules(kind, mode), default_list(kind, mode)] {
+                for (which, p) in [("new", build(&TaskContext { limits, ..ctx() }, "You are the Backend Agent.")),
+                                   ("continued", continue_prompt_with("it ended without a result", Some(&note("Jeffrey", "Use the CSV writer")), limits)),
+                                   ("answered", answered_prompt("Use semicolons.", limits)), ("nudged", nudge_prompt(limits))] {
+                    let full = with_rules(&p, &r);
+                    let sec = &full[full.find("## How this run works").unwrap()..];
+                    // a bullet of its own, once, with the push line kept, and the section stays about 12 lines
+                    assert!(sec.contains(&format!("\n- {RUN_FOR_ME}\n")), "{kind:?} {mode:?} {which}: {sec}");
+                    assert_eq!(full.matches("run_for_me").count(), 2, "{kind:?} {mode:?} {which}: once, with its example: {full}");
+                    assert_eq!(sec.matches(PUSHED_BY_GIZAI).count(), 1, "{kind:?} {mode:?} {which}");
+                    assert!(bullets(sec) <= 12, "{kind:?} {mode:?} {which}: at most about 12 lines ({}): {sec}", bullets(sec));
+                }
+            }
+        }
+    }
+    // it names neither "commands" (another CLI's section names none) nor sleep (named only when the agent may run it)
+    assert!(!RUN_FOR_ME.contains("commands") && !RUN_FOR_ME.contains("sleep"), "{RUN_FOR_ME}");
+}

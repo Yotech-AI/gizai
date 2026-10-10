@@ -4,6 +4,8 @@
 //! Bitbucket (from GitHub for a GitHub project, from "the project's repository" for another git URL). "Bitbucket" and
 //! "GitHub" are local bare repositories behind a fake ssh as your own GIT_SSH_COMMAND; the clones allow no https, so
 //! nothing reaches bitbucket.org or github.com. Runs use the fake Claude Code (FAKE_TEMP=1 makes it print its prompt).
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

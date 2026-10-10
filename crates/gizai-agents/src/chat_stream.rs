@@ -15,6 +15,9 @@ pub enum ChatEvent {
     ToolUse { id: String, name: String, input: Value },
     ToolResult { tool_use_id: String, is_error: bool, text: String },
     Result { is_error: bool, subtype: String, text: String, cost_usd: Option<f64>, input_tokens: i64, output_tokens: i64, num_turns: i64 },
+    /// `rate_limit_event`: what Claude Code last heard of the account's subscription limits (`rate_limit_info`, as it wrote
+    /// it), kept for the turn's coding CLI (`gizai_core::limits`).
+    Limits { info: Value },
     Other { raw_type: String },
 }
 
@@ -86,6 +89,7 @@ pub fn parse_line(line: &str) -> Vec<ChatEvent> {
                 subtype,
             }]
         }
+        "rate_limit_event" if v.get("rate_limit_info").is_some_and(Value::is_object) => vec![ChatEvent::Limits { info: v["rate_limit_info"].clone() }],
         other => vec![ChatEvent::Other { raw_type: other.into() }],
     }
 }
@@ -117,11 +121,14 @@ fn resets_in(s: &str) -> Option<String> {
     (!when.is_empty()).then(|| when.to_string())
 }
 
-/// A limit's name in plain words, from how Claude Code names it ("session limit", "5-hour limit", "Opus weekly limit").
+/// A limit's name in plain words, from how Claude Code names it ("session limit", "5-hour limit", "Opus weekly limit",
+/// "Fable limit").
 fn limit_name(name: &str) -> String {
     let n = name.to_lowercase();
     if n.contains("session") || n.contains("5-hour") || n.contains("five-hour") {
         "session limit".into()
+    } else if n.contains("fable") {
+        "Fable limit".into()
     } else if n.contains("opus") {
         "Opus limit".into()
     } else if n.contains("sonnet") {
@@ -135,18 +142,20 @@ fn limit_name(name: &str) -> String {
 
 /// Claude Code's text for a subscription that hit its usage limit, which a failed answer reports as its result: what
 /// 2.1.289 writes ("You've hit your session limit · resets 3pm (Europe/Amsterdam)", likewise the weekly, Opus and Sonnet
-/// limits, " · progress saved" after it) and what older versions wrote ("Claude AI usage limit reached|1751230800",
-/// "5-hour limit reached ∙ resets 3pm", "Weekly limit reached ∙ resets Oct 9, 5pm"). None for any other text, also for
-/// spend limits, budgets and fast mode: those aren't solved by another account.
+/// limits, " · progress saved" after it; "You've reached your Fable limit." for the Fable model's own weekly limit) and
+/// what older versions wrote ("Claude AI usage limit reached|1751230800", "5-hour limit reached ∙ resets 3pm", "Weekly
+/// limit reached ∙ resets Oct 9, 5pm"). None for any other text, also for spend limits, budgets and fast mode: those
+/// aren't solved by another account.
 pub fn usage_limit(text: &str) -> Option<UsageLimit> {
     let text = text.trim();
     // ASCII only, so its byte positions are the text's.
     let lower = text.to_ascii_lowercase();
-    // 2.x: "You've hit your <name> · resets <when>".
-    for lead in ["you've hit your ", "you’ve hit your ", "you have hit your "] {
+    // 2.x: "You've hit your <name> · resets <when>", "You've reached your <name>. …".
+    for lead in ["you've hit your ", "you’ve hit your ", "you have hit your ", "you've reached your ", "you’ve reached your "] {
         if let Some(i) = lower.find(lead) {
             let rest = &text[i + lead.len()..];
-            let name = first_part(rest).trim().trim_end_matches('.');
+            let part = first_part(rest);
+            let name = part.split(". ").next().unwrap_or(part).trim().trim_end_matches('.');
             let n = name.to_lowercase();
             let usage = n.ends_with("limit") && !["fast", "spend", "credit", "budget", "monthly"].iter().any(|w| n.contains(w));
             if usage {

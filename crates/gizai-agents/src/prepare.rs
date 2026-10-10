@@ -3,10 +3,12 @@
 //! prompt (stdin is closed) and are ended, with everything they started, after a time limit.
 use std::ffi::OsStr;
 use std::io::Read;
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::os::{self, End};
 
 /// How long one install or setup command may take.
 pub const COMMAND_LIMIT: Duration = Duration::from_secs(20 * 60);
@@ -107,7 +109,9 @@ pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: O
     let mut out = Prepared::default();
     for entry in &p.copy {
         let rel = entry.trim().trim_start_matches("./").trim_end_matches('/');
-        let unsafe_path = rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|c| c == ".." || c == ".git");
+        let unsafe_path = rel.is_empty() || rel.starts_with('/') || rel.split('/').any(|c| c == ".." || c == ".git")
+            // Windows: a drive or a root, and `\` between folders too
+            || (cfg!(windows) && (rel.contains(':') || rel.starts_with('\\') || rel.split('\\').any(|c| c == ".." || c == ".git")));
         let (from, to) = (main.join(rel), wt.join(rel));
         if unsafe_path || std::fs::symlink_metadata(&from).is_err() || std::fs::symlink_metadata(&to).is_ok() {
             out.skipped.push(entry.clone());
@@ -137,10 +141,21 @@ pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: O
         }
     }
     if let Some(cmd) = p.setup.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-        run(cmd, "bash", &["-c", cmd], wt, path, COMMAND_LIMIT)?;
+        run(cmd, bash(cmd, path)?, &["-c", cmd], wt, path, COMMAND_LIMIT)?;
         out.setup = true;
     }
     Ok(out)
+}
+
+/// The bash that runs the setup command `shown`: `bash` on Linux and macOS, Git Bash on Windows (`os::git_bash`, looked
+/// for on `path`, else Gizai's own PATH). Windows without Git for Windows has none.
+fn bash(shown: &str, path: Option<&OsStr>) -> Result<PathBuf, PrepareFailed> {
+    let own = std::env::var_os("PATH").unwrap_or_default();
+    os::git_bash(path.unwrap_or(&own)).ok_or_else(|| PrepareFailed {
+        command: shown.to_string(),
+        why: "couldn't start: it runs in Git Bash, and Git for Windows isn't installed".into(),
+        output: String::new(),
+    })
 }
 
 /// Installs the dependency folder `folder` ("vendor" or "node_modules") in the checkout `dir` the way `prepare` does
@@ -185,7 +200,7 @@ fn install_command(wt: &Path, dep: &Dep) -> (String, &'static str, &'static [&'s
 /// Whether `dep`'s lock file (or, without one, its manifest) differs between commit `since` and the worktree's HEAD.
 fn lock_changed(wt: &Path, since: &str, dep: &Dep) -> bool {
     let blob = |rev: &str, file: &str| -> Option<String> {
-        let out = Command::new("git").arg("-C").arg(wt).args(["rev-parse", "--verify", "--quiet", &format!("{rev}:{file}")]).output().ok()?;
+        let out = os::command("git").arg("-C").arg(wt).args(["rev-parse", "--verify", "--quiet", &format!("{rev}:{file}")]).output().ok()?;
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
     let mut files: Vec<&str> = dep.locks.iter().copied().filter(|f| blob(since, f).is_some() || blob("HEAD", f).is_some()).collect();
@@ -200,31 +215,62 @@ fn copy(from: &Path, to: &Path, path: Option<&OsStr>) -> Result<(), String> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let args = [OsStr::new("-a"), OsStr::new("--reflink=auto"), OsStr::new("--"), from.as_os_str(), to.as_os_str()];
-    run("cp", "cp", &args, to.parent().unwrap_or(to), path, COPY_LIMIT).map(|_| ()).map_err(|f| {
+    let (cp, options) = cp_program(path)?;
+    let mut args: Vec<&OsStr> = options.iter().map(OsStr::new).collect();
+    args.extend([OsStr::new("--"), from.as_os_str(), to.as_os_str()]);
+    run("cp", cp, &args, to.parent().unwrap_or(to), path, COPY_LIMIT).map(|_| ()).map_err(|f| {
         let detail = f.output.lines().last().unwrap_or_default().trim().to_string();
         if detail.is_empty() { f.why } else { detail }
     })
 }
 
+/// The cp `copy` runs, with its options: on Linux GNU cp with `--reflink=auto`; on macOS its own cp, which has no
+/// `--reflink` (a plain copy); on Windows, which has no cp, the GNU cp that comes with Git for Windows, next to its Git
+/// Bash (`<Git>\usr\bin\cp.exe`).
+fn cp_program(path: Option<&OsStr>) -> Result<(PathBuf, &'static [&'static str]), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = path;
+        Ok((PathBuf::from("cp"), &["-a"]))
+    }
+    #[cfg(windows)]
+    {
+        let own = std::env::var_os("PATH").unwrap_or_default();
+        let missing = || "copying needs the cp of Git for Windows, which isn't installed".to_string();
+        // <Git>\bin\bash.exe has it in <Git>\usr\bin; a CLAUDE_CODE_GIT_BASH_PATH may name <Git>\usr\bin\bash.exe itself
+        let bash = os::git_bash(path.unwrap_or(&own)).ok_or_else(missing)?;
+        let dir = bash.parent().ok_or_else(missing)?;
+        let cp = [dir.join("cp.exe"), dir.parent().map(|git| git.join("usr").join("bin").join("cp.exe")).unwrap_or_default()]
+            .into_iter().find(|c| c.is_file()).ok_or_else(missing)?;
+        Ok((cp, &["-a", "--reflink=auto"]))
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = path;
+        Ok((PathBuf::from("cp"), &["-a", "--reflink=auto"]))
+    }
+}
+
 /// Runs `program args` in `dir` without prompts and returns the end of its output. After `limit` it is ended, with
-/// everything it started (its own process group).
-fn run<S: AsRef<OsStr>>(shown: &str, program: &str, args: &[S], dir: &Path, path: Option<&OsStr>, limit: Duration) -> Result<String, PrepareFailed> {
-    use std::os::unix::process::CommandExt;
+/// everything it started (its own process group, a Job Object on Windows: `os::Tree`).
+fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir: &Path, path: Option<&OsStr>, limit: Duration)
+    -> Result<String, PrepareFailed> {
+    let program = program.as_ref();
     let fail = |why: String, output: String| PrepareFailed { command: shown.to_string(), why, output };
-    let mut cmd = Command::new(program);
-    cmd.args(args).current_dir(dir).process_group(0)
+    let mut cmd = os::command(program);
+    cmd.args(args).current_dir(dir)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .env("COMPOSER_NO_INTERACTION", "1").env("npm_config_yes", "true").env("npm_config_update_notifier", "false")
         .env("npm_config_fund", "false").env("npm_config_audit", "false").env("GIT_TERMINAL_PROMPT", "0").env("NO_COLOR", "1");
     if let Some(p) = path {
         cmd.env("PATH", p);
     }
-    let mut child = cmd.spawn().map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => fail(format!("couldn't start: {program} isn't installed (or not on Gizai's PATH)"), String::new()),
+    let (mut child, tree) = os::spawn_tree(&mut cmd, false).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            fail(format!("couldn't start: {} isn't installed (or not on Gizai's PATH)", program.to_string_lossy()), String::new())
+        }
         _ => fail(format!("couldn't start: {e}"), String::new()),
     })?;
-    let pgid = child.id() as i32;
     let output = Arc::new(Mutex::new(Vec::<u8>::new()));
     let pipes: Vec<Box<dyn Read + Send>> = [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
@@ -253,14 +299,14 @@ fn run<S: AsRef<OsStr>>(shown: &str, program: &str, args: &[S], dir: &Path, path
             Ok(Some(s)) => break Some(s),
             Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(100)),
             _ => {
-                unsafe { libc::kill(-pgid, libc::SIGKILL); }
+                tree.end(End::Kill);
                 let _ = child.wait();
                 break None;
             }
         }
     };
     // what it left running in the background would hold its output open
-    unsafe { libc::kill(-pgid, libc::SIGKILL); }
+    tree.end(End::Kill);
     for r in readers {
         let _ = r.join();
     }

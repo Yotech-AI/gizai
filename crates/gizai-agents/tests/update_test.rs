@@ -1,6 +1,8 @@
 //! Gizai's own updates, the core: versions, GitHub's latest-release answer, the release check (curl against a file and
 //! a local HTTP server, never GitHub), getting a release's source from a local repository, and running its install.sh
 //! (a stub) to build and install it, with Stop. Nothing here touches a real install.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -119,7 +121,7 @@ fn the_check_asks_githubs_latest_release_api() {
 
 #[test]
 fn the_check_reads_a_fake_release_from_a_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let file = tmp.path().join("latest.json");
     std::fs::write(&file, github_answer("v9.9.9", "")).unwrap();
     let r = up::latest_release(&format!("file://{}", file.display()), "gizai/test", Duration::from_secs(10)).unwrap().unwrap();
@@ -207,7 +209,7 @@ fn only_a_gizai_in_prefix_lib_gizai_has_an_install_to_update() {
 
 #[test]
 fn the_installed_version_is_what_gizai_version_says() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let prefix = tmp.path().join("prefix");
     assert_eq!(up::installed_version(&prefix), None, "nothing installed");
     write_script(&prefix.join("lib/gizai/gizai"), "#!/bin/sh\n[ \"$1\" = --version ] && echo 'gizai 9.9.9'\n");
@@ -220,7 +222,7 @@ fn the_installed_version_is_what_gizai_version_says() {
 
 #[test]
 fn a_sources_version_is_its_workspace_package_version() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     assert_eq!(up::source_version(tmp.path()), None, "no Cargo.toml");
     std::fs::write(tmp.path().join("Cargo.toml"), r#"[workspace]
 members = ["crates/*"]
@@ -272,7 +274,7 @@ fn release_repo(tmp: &Path) -> PathBuf {
 
 #[test]
 fn the_source_is_that_tag_alone_and_the_next_one_keeps_the_build() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = release_repo(tmp.path());
     let dir = tmp.path().join("data/update/source");
     let log = Log::create(&tmp.path().join("data/update/update.log")).unwrap();
@@ -300,7 +302,7 @@ fn the_source_is_that_tag_alone_and_the_next_one_keeps_the_build() {
 
 #[test]
 fn a_tag_that_isnt_there_says_the_release_may_be_gone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = release_repo(tmp.path());
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
     let e = up::get_source(&repo.display().to_string(), "v9.9.9", &tmp.path().join("source"), &log, &Stop::default()).unwrap_err();
@@ -314,7 +316,7 @@ fn a_tag_that_isnt_there_says_the_release_may_be_gone() {
 
 #[test]
 fn git_never_works_in_a_checkout_around_the_data_folder() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = release_repo(tmp.path());
     // the data folder sits inside someone's checkout, and the source folder's own .git was cut short
     let outer = tmp.path().join("outer");
@@ -350,7 +352,7 @@ fn stub_source(tmp: &Path, script: &str) -> (PathBuf, PathBuf) {
 
 const STUB: &str = r#"set -e
 echo "args=$*" > "$MARKS/args"
-echo "nice=$(nice)" >> "$MARKS/args"
+echo "nice=$(nice 2>/dev/null || ps -o nice= -p $$ | tr -d ' ')" >> "$MARKS/args"
 echo "pwd=$(pwd)" >> "$MARKS/args"
 echo "target=$CARGO_TARGET_DIR" >> "$MARKS/args"
 echo "prefix=${GIZAI_PREFIX:-}" >> "$MARKS/args"
@@ -362,13 +364,13 @@ echo "building or installing"
 
 #[test]
 fn the_build_runs_the_releases_install_sh_build_only_at_low_priority() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (dir, marks) = stub_source(tmp.path(), STUB);
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
     up::build(&dir, None, &log, &Stop::default()).unwrap();
     let args = std::fs::read_to_string(marks.join("args")).unwrap();
     assert!(args.contains("args=--build-only\n"), "{args}");
-    let own_nice: i32 = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap().trim().parse().unwrap();
+    let own_nice: i32 = own_nice();
     let nice: i32 = args.lines().find_map(|l| l.strip_prefix("nice=")).unwrap().parse().unwrap();
     assert_eq!(nice, (own_nice + 10).min(19), "nice 10 above Gizai: {args}");
     assert!(args.contains(&format!("pwd={}\n", dir.display())), "runs in the source: {args}");
@@ -380,7 +382,7 @@ fn the_build_runs_the_releases_install_sh_build_only_at_low_priority() {
 
 #[test]
 fn the_install_goes_into_the_prefix_with_its_desktop_entry_under_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (dir, marks) = stub_source(tmp.path(), STUB);
     let prefix = tmp.path().join("home/.local");
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
@@ -389,13 +391,13 @@ fn the_install_goes_into_the_prefix_with_its_desktop_entry_under_it() {
     assert!(args.contains("args=--skip-build\n"), "{args}");
     assert!(args.contains(&format!("prefix={}\n", prefix.display())), "{args}");
     assert!(args.contains(&format!("xdg={}\n", prefix.join("share").display())), "the desktop entry and icons go under the prefix: {args}");
-    let own_nice: i32 = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap().trim().parse().unwrap();
+    let own_nice: i32 = own_nice();
     assert!(args.contains(&format!("nice={own_nice}\n")), "the install runs at Gizai's own priority: {args}");
 }
 
 #[test]
 fn a_failed_build_says_so_with_the_end_of_its_output() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (dir, _) = stub_source(tmp.path(), "echo 'Compiling gizai v9.9.9'\necho 'error: linker `cc` not found' >&2\nexit 3\n");
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
     let e = up::build(&dir, None, &log, &Stop::default()).unwrap_err();
@@ -410,7 +412,7 @@ fn a_failed_build_says_so_with_the_end_of_its_output() {
 
 #[test]
 fn the_build_gets_the_path_it_is_given() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (dir, marks) = stub_source(tmp.path(), r#"echo "path=$PATH" > "$MARKS/path""#);
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
     let path = format!("{}:/usr/bin:/bin", tmp.path().join("bin").display());
@@ -418,6 +420,7 @@ fn the_build_gets_the_path_it_is_given() {
     assert_eq!(std::fs::read_to_string(marks.join("path")).unwrap().trim(), format!("path={path}"));
 }
 
+#[cfg(target_os = "linux")]
 fn gone(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Err(_) => true,
@@ -425,9 +428,16 @@ fn gone(pid: u32) -> bool {
     }
 }
 
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(not(target_os = "linux"))]
+fn gone(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().chars().next()).is_none_or(|st| st == 'Z')
+}
+
 #[test]
 fn stop_ends_the_build_with_everything_it_started() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     // the build starts a child of its own (a compiler, say) and waits for it
     let (dir, marks) = stub_source(tmp.path(), "sleep 120 &\necho $! > \"$MARKS/child\"\nwait\n");
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
@@ -461,7 +471,7 @@ fn stop_ends_the_build_with_everything_it_started() {
 
 #[test]
 fn after_stop_no_other_command_starts() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (dir, marks) = stub_source(tmp.path(), STUB);
     let log = Log::create(&tmp.path().join("update.log")).unwrap();
     let stop = Stop::default();
@@ -470,4 +480,24 @@ fn after_stop_no_other_command_starts() {
     assert!(!marks.join("args").exists(), "the installer never ran");
     let repo = release_repo(tmp.path());
     assert_eq!(up::get_source(&repo.display().to_string(), "v1.0.0", &tmp.path().join("src2"), &log, &stop).unwrap_err().what, "Stopped");
+}
+
+/// This process's niceness: what `nice` prints on Linux; macOS's BSD nice prints nothing without a command, so ps there.
+fn own_nice() -> i32 {
+    let nice = String::from_utf8(Command::new("nice").output().unwrap().stdout).unwrap();
+    let nice = if nice.trim().is_empty() {
+        String::from_utf8(Command::new("ps").args(["-o", "nice=", "-p", &std::process::id().to_string()]).output().unwrap().stdout).unwrap()
+    } else {
+        nice
+    };
+    nice.trim().parse().unwrap()
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
 }

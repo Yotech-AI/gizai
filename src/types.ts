@@ -43,6 +43,8 @@ export type Task = {
   createdAt: number; updatedAt: number;
   /** Archived from Done: when, and who archived it. Null for a card on the board. */
   archivedAt?: number | null; archivedBy?: string | null;
+  /** Run this for me: while the card is on hold, the commands its latest run asks you to run; Done, continue resumes that run. */
+  runForMe?: string[];
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -82,6 +84,8 @@ export type Member = {
   folders?: AgentFolder[];
   /** Its MCP servers switched on or off, with the tools switched off of each (agent form → Tools). */
   tools?: AgentTools;
+  /** Its CLI's own tools switched on: web search, fetching pages, built-in tools (agent form → Tools). */
+  cliTools?: CliTools;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -173,6 +177,10 @@ export type Run = {
   headSha?: string | null;
   /** The tool calls its CLI refused (Refused in this run): Claude Code reports them, other CLIs don't. */
   refused?: Refusal[];
+  /** Gizai's own nudge after a run ended without its result line (trigger result_nudge; before GA-31 it was a nudge too). */
+  nudged?: boolean;
+  /** Run this for me: the commands its needs_decision result asks you to run for it. */
+  runForMe?: string[];
 };
 /** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
 export type Refusal = { tool: string; input: string; reason?: string };
@@ -282,6 +290,22 @@ export type ProjectUsage = { projectId: string; number: string; key: string; nam
 export type Usage = { since: number; until: number; total: UsageTotals; days: UsageDay[]; agents: AgentUsage[]; projects: ProjectUsage[];
   chat: UsageTotals; noProject: UsageTotals };
 
+// ---- the Usage page's Subscription tab (gizai-core limits.rs) ----
+/** One reading of a subscription limit, as the coding CLI reported it in a run or chat turn. `usedPercent`: 0 to 100 (more past the
+ *  cap), null when the CLI only said the limit was reached; `status`: allowed, allowed_warning (near it) or rejected (reached);
+ *  `resetsAt`, `observedAt`: Unix ms; `resetsText`: the reset as the CLI wrote it, when it gave no time stamp. */
+export type LimitReading = { key: string; usedPercent?: number | null; status?: string | null; resetsAt?: number | null; resetsText?: string | null;
+  windowMinutes?: number | null; observedAt: number; runId?: string | null };
+/** A limit of a coding CLI: Claude Code's session (five_hour), weekly (seven_day) and Fable (seven_day_overage_included) limits, or a
+ *  Codex window (primary, secondary); `reading` null until a run on that CLI reports it. */
+export type SubscriptionLimit = { key: string; name: string; windowMinutes?: number | null; reading?: LimitReading | null };
+export type LimitAgent = { agentId: string; name: string; roleKey: string; status: string; isLead: boolean };
+/** One coding CLI's block (Settings → Coding CLIs): `readable` for Claude Code and Codex; `accountDir` holds the account (Claude
+ *  Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME with its session logs); `leadChat`: the Team Lead's chat runs on it; `chats`: chats
+ *  whose own Runs on it is. */
+export type CliLimits = { cliId: string; name: string; kind: CliKind; readable: boolean; accountDir?: string | null; limits: SubscriptionLimit[];
+  agents: LimitAgent[]; leadChat: boolean; chats: number };
+
 // ---- chat with the Team Lead ----
 export type ChatThread = { id: string; agentId: string; title: string; sessionId?: string | null; createdAt: number; updatedAt: number;
   costUsdMicros: number; inputTokens: number; outputTokens: number;
@@ -301,7 +325,11 @@ export type ChatMessage = { id: string; threadId: string; role: string; authorId
   bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number;
   /** A note's details: {kind: "switch", cli, cliName} where the chat moved to another CLI, {kind: "limit", cli, cliName, limit, resets?, messageIds}
    *  where an answer hit a usage limit. */
-  meta?: ChatNoteMeta | null };
+  meta?: ChatNoteMeta | null;
+  /** The files you added to the message. */
+  files?: FileRow[] };
+/** Paths picked or dropped for a chat message: those that can be added, and why each other one can't. */
+export type FileCheck = { ok: string[]; failed: string[] };
 /** A chat the Archive found, with the newest of its messages (yours or the Team Lead's) whose text matches; none when only
  *  its title matches, or for an empty search. */
 export type ChatHit = { thread: ChatThread; message?: ChatMessage | null };
@@ -309,7 +337,9 @@ export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cl
 /** `seq`: the last change to the text being written that `draft` holds. */
 export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
 /** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */
-export type QueuedMessage = { id: string; threadId: string; bodyMd: string; createdAt: number; updatedAt: number; held: boolean };
+export type QueuedMessage = { id: string; threadId: string; bodyMd: string; createdAt: number; updatedAt: number; held: boolean;
+  /** The files added to it; they go with it. */
+  files?: FileRow[] };
 /** A coding CLI in Runs on under the chat's text box; `problem`: why it can't run the chat. */
 export type ChatCli = { id: string; name: string; kind: CliKind; problem?: string | null };
 export type ChatEvent =
@@ -369,3 +399,30 @@ export type AgentServerView = {
   tools: McpToolView[]; summary: string; risk: string;
 };
 export type AgentMcpView = { disabled?: string | null; warning?: string | null; servers: AgentServerView[] };
+/** The CLI's own tools an agent has on (agent form → Tools; saved apart from the rest). Everything is off until switched on. */
+export type CliTools = {
+  webSearch: boolean; webFetch: boolean;
+  /** Only these domains for fetching; none = any page. */
+  fetchDomains: string[];
+  /** The browser accepts self-signed certificates (local .test sites). */
+  insecureCerts: boolean;
+  /** The CLI's other tools switched on, by name. */
+  builtin: string[];
+};
+/** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | switch | always | elsewhere | off. */
+export type CatalogTool = { id: string; label: string; group: string; description: string; risk: string; how: string; note: string; reported: boolean };
+/** What the hidden browser needs, found or not; `missing` says what to install. */
+export type BrowserNeeds = { node?: string | null; nodeVersion?: string | null; npx?: string | null; browser?: string | null; browserName?: string | null; missing: string[] };
+/** The agent form's Web, Browser and Built-in tools for the CLI picked in the form. */
+export type ToolsView = {
+  kind: CliKind;
+  /** Why the CLI can't take each Web switch; null = it can. */
+  web: { search?: string | null; fetch?: string | null; domains?: string | null };
+  browser: { disabled?: string | null; needs: BrowserNeeds; version: string; lastRun?: { status: string; at: number } | null;
+    tools: McpToolView[]; summary: string; risk: string };
+  builtin: { tools: CatalogTool[]; source: string; canAsk: boolean };
+  saved?: CliTools | null;
+};
+/** The built-in browser in Settings → MCP servers: only its version and browser program change. */
+export type BrowserEntry = { version: string; program: string };
+export type BrowserView = BrowserEntry & { id: string; command: string; needs: BrowserNeeds; problem?: string | null; listed?: McpListed | null; usedBy: string[] };

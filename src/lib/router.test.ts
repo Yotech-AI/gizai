@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { href, parseHash } from "../router";
+import { href, parseHash, SETTINGS_TABS } from "../router";
 
 describe("router", () => {
   it("round-trips routes", () => {
@@ -55,5 +55,30 @@ describe("chat archive (GA-46)", () => {
   it("takes no id, and chat/<id> is still one chat", () => {
     expect(parseHash("#/chats/abc")).toEqual({ page: "chats" });
     expect(parseHash("#/chat/archive")).toEqual({ page: "chat", id: "archive" });
+  });
+});
+
+describe("Settings tabs (GA-42)", () => {
+  it("opens a tab from #/settings/<tab>, for each of the six tabs", () => {
+    for (const tab of ["general", "appearance", "notifications", "agents", "mcp", "github"])
+      expect(parseHash(`#/settings/${tab}`)).toEqual({ page: "settings", id: tab });
+  });
+  it("lists the tabs in the order Settings shows them", () => {
+    expect(SETTINGS_TABS).toEqual(["general", "appearance", "notifications", "agents", "mcp", "github"]);
+  });
+  it("opens General (no tab) for #/settings, and for a tab it doesn't know", () => {
+    expect(parseHash("#/settings")).toEqual({ page: "settings" });
+    expect(parseHash("#/settings/")).toEqual({ page: "settings" });
+    expect(parseHash("#/settings/nope")).toEqual({ page: "settings" });
+    expect(parseHash("#/settings/Appearance")).toEqual({ page: "settings" });
+  });
+  it("round-trips a tab through href, the link a page or notice uses", () => {
+    expect(href({ page: "settings", id: "appearance" })).toBe("#/settings/appearance");
+    expect(parseHash(href({ page: "settings", id: "github" }))).toEqual({ page: "settings", id: "github" });
+    expect(parseHash(href({ page: "settings" }))).toEqual({ page: "settings" });
+  });
+  it("leaves the other pages with an id as they were", () => {
+    expect(parseHash("#/task/abc")).toEqual({ page: "task", id: "abc" });
+    expect(parseHash("#/usage/total")).toEqual({ page: "usage" });
   });
 });

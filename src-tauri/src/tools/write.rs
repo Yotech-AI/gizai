@@ -45,16 +45,31 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
     if let Some(m @ ("bypassPermissions" | "danger-full-access" | "yolo")) = a.opt("permission_mode").as_deref() {
         return Err(format!("{m} can't be set from chat: it lets an agent run anything. Set it yourself in the agent form if you really want it."));
     }
-    for t in a.list("allowed_tools").unwrap_or_default() {
+    let allowed = a.list("allowed_tools").unwrap_or_default();
+    for t in &allowed {
         let t = t.trim().to_lowercase().replace(' ', "");
         if t == "bash" || t == "bash(*)" || t == "bash(:*)" || t == "bash(*:*)" {
             return Err("an agent can't be allowed to run any command from chat; name the commands, like Bash(npm test:*) or Bash(git commit:*)".into());
         }
     }
+    // Only commands: web search, fetching pages and the CLI's other tools are the user's switches (agent form → Tools), and a
+    // rule for another tool, like Read(//…), could reach past the worktree.
+    if let Some(t) = allowed.iter().find(|t| !is_command(t)) {
+        return Err(format!("allowed_tools takes only commands, like Bash(npm test:*); {t} isn't one. Web search, fetching pages, the browser, \
+                            MCP servers and the CLI's other tools can't be switched on from chat: only the user does that, in the agent form → \
+                            Tools. Nothing changed."));
+    }
     // MCP servers and their tools: only the user switches them, in the agent form → Tools.
     for k in ["mcp_servers", "mcp", "tools", "mcp_tools"] {
         if a.0.get(k).is_some_and(|v| !v.is_null()) {
             return Err("an agent's MCP servers and their tools can't be switched from chat: only the user does that, in the agent form → Tools".into());
+        }
+    }
+    // Web search, fetching pages, the browser and the CLI's built-in tools: the same, only the user (agent form → Tools).
+    for k in ["web_search", "web_fetch", "fetch_domains", "web", "browser", "insecure_certs", "builtin_tools", "builtin", "cli_tools"] {
+        if a.0.get(k).is_some_and(|v| !v.is_null()) {
+            return Err("an agent's web search, fetching pages, browser and built-in tools can't be switched from chat: only the user does that, \
+                        in the agent form → Tools. Nothing changed.".into());
         }
     }
     // The folders an agent may read or change: only the user sets them, in the agent form.
@@ -64,12 +79,17 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// A command for an agent's allowed commands: `Bash(…)` with something in it.
+fn is_command(t: &str) -> bool {
+    t.trim().strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')).is_some_and(|inner| !inner.trim().is_empty())
+}
+
 /// A repository path from chat must be a git repository (it has a .git folder or file), and never `/`, your
 /// home folder or a folder above it: agents work there and the Team Lead may read it.
 fn checked_repo(raw: &str) -> Result<String, String> {
     let bad = || format!("{raw} is not a git repository: give the folder that holds the project's .git");
     let p = std::path::Path::new(raw).canonicalize().map_err(|_| bad())?;
-    let home = std::env::var("HOME").ok().and_then(|h| std::path::Path::new(&h).canonicalize().ok());
+    let home = std::path::Path::new(&gizai_core::clis::home()).canonicalize().ok();
     if p.parent().is_none() || home.as_ref().is_some_and(|h| h.starts_with(&p)) || !p.join(".git").exists() {
         return Err(bad());
     }
@@ -466,14 +486,20 @@ pub(crate) async fn start_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
 }
 
 /// Continue on the card's latest run, like the Continue button (`runs::continue_run`); a run that ended asking for a
-/// decision continues too, with what was written on the card since (`runs::continue_answered`).
+/// decision continues too, with what was written on the card since (`runs::continue_answered`). A `note` goes to the
+/// agent with it and on the card as the Team Lead's comment (`runs::continue_answered_with_note`, GA-31).
 pub(crate) async fn continue_run(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let last = gizai_core::runs::list_for_task(cx.db(), &t.id).map_err(err)?.into_iter().next()
         .ok_or_else(|| format!("{} has no run to continue: start_agent_run starts one", t.identifier))?;
     check_free_slot(cx, Some(&last.agent_id))?;
-    let (run_id, _done) = crate::runs::continue_answered(cx.st, &last.id).await?;
+    let note = a.opt("note").filter(|n| !n.trim().is_empty());
+    let noted = note.is_some();
+    let (run_id, _done) = crate::runs::continue_answered_with_note(cx.st, &last.id, cx.actor, note).await?;
     cx.changed("tasks");
+    if noted {
+        cx.changed("comments");
+    }
     let run = gizai_core::runs::get(cx.db(), &run_id).map_err(err)?;
     Ok(json!({"ok": true, "done": "continued", "run": {"id": run.id, "agent": run.agent_name, "branch": run.branch},
               "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
@@ -543,8 +569,9 @@ pub(crate) fn write_doc(cx: &Cx, a: &Args) -> Result<Value, String> {
 
 pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let raw = a.req("path")?;
-    let path = match raw.strip_prefix("~/") {
-        Some(rest) => std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+    // `~/…`, and on Windows `~\…` too
+    let path = match raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\").filter(|_| cfg!(windows))) {
+        Some(rest) => std::path::PathBuf::from(gizai_core::clis::home()).join(rest),
         None => std::path::PathBuf::from(&raw),
     };
     if !path.is_absolute() {
@@ -571,9 +598,10 @@ pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
     Ok(json!({"ok": true, "file": {"id": f.id, "name": f.name, "size_bytes": f.size_bytes}, "link": l}))
 }
 
-/// Spec §8: the Team Lead attaches only a file the user named in this chat, or one inside its copies of the projects'
-/// code (`code`), never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked
-/// files, so a repository's .env isn't among them.
+/// Spec §8: the Team Lead attaches only a file the user named in this chat, one the user added to a message in this chat
+/// (its copy in the Team Lead's folder, `chat::lead_file_path`), or one inside its copies of the projects' code (`code`),
+/// never something it found elsewhere on the disk (keys, credentials). The copies hold only tracked files, so a
+/// repository's .env isn't among them.
 fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), String> {
     let real = path.canonicalize().map_err(|_| format!("can't read {raw}"))?;
     let in_copy = crate::code::dirs(cx.st).iter()
@@ -588,10 +616,15 @@ fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), 
             .filter_map(|m| m.body_md.as_deref())
             .any(|b| b.contains(raw) || b.contains(&*real.to_string_lossy()) || b.contains(&*path.to_string_lossy()))
     });
-    if named {
+    let added = cx.thread.is_some_and(|t| {
+        gizai_core::chat::thread_files(cx.db(), t).unwrap_or_default().iter()
+            .filter_map(|f| crate::chat::lead_file_path(cx.st, f).canonicalize().ok())
+            .any(|p| p == real)
+    });
+    if named || added {
         Ok(())
     } else {
-        Err(format!("I can only attach a file you named in this chat or one inside my copies of the projects' code; {raw} is neither. Ask the user to give the path."))
+        Err(format!("I can only attach a file you named in this chat, one you added to a message here, or one inside my copies of the projects' code; {raw} is none of these. Ask the user to give the path."))
     }
 }
 

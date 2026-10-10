@@ -157,13 +157,24 @@ pub fn efforts(kind: &str) -> &'static [&'static str] {
     }
 }
 
-/// `~` and `~/…` at the start, and `$HOME` or `${HOME}` anywhere, as `home`.
+/// Your home folder, as `~` and `$HOME` in the CLIs' settings mean it: $HOME on Linux and macOS (empty when it isn't
+/// set), your profile folder (%USERPROFILE%) on Windows.
+pub fn home() -> String {
+    if cfg!(windows) {
+        return std::env::home_dir().map(|h| h.display().to_string()).unwrap_or_default();
+    }
+    std::env::var("HOME").unwrap_or_default()
+}
+
+/// `~` and `~/…` at the start (on Windows `~\…` too), and `$HOME` or `${HOME}` anywhere, as `home`.
 pub fn expand_home(s: &str, home: &str) -> String {
     let s = s.replace("${HOME}", home).replace("$HOME", home);
     if s == "~" {
         home.to_string()
     } else if let Some(rest) = s.strip_prefix("~/") {
         format!("{home}/{rest}")
+    } else if let Some(rest) = s.strip_prefix("~\\").filter(|_| cfg!(windows)) {
+        format!("{home}\\{rest}")
     } else {
         s
     }

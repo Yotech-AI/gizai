@@ -1,7 +1,7 @@
 // GA-57: files picked in the New task drawer are kept as paths until Create task; the list shows each one's name and folder,
 // and a file picked twice is listed once.
 import { describe, expect, it } from "vitest";
-import { addPaths, fileFolder, fileName } from "./files";
+import { addPaths, fileExt, fileFolder, fileName } from "./files";
 
 describe("fileName and fileFolder", () => {
   it("split a path into the file's name and the folder it is in", () => {
@@ -32,5 +32,17 @@ describe("addPaths", () => {
     const list = ["/a/one.png"];
     addPaths(list, ["/b/two.pdf"]);
     expect(list).toEqual(["/a/one.png"]);
+  });
+});
+
+// GA-41: the type badge on a file chip (the chat's files and the New task drawer's).
+describe("fileExt", () => {
+  it("is the extension, at most 4 letters, upper case", () => {
+    expect(fileExt("invoice 2026.pdf")).toBe("PDF");
+    expect(fileExt("notes.markdown")).toBe("MARK");
+    expect(fileExt("archive.tar.gz")).toBe("GZ");
+  });
+  it("is FILE without an extension", () => {
+    expect(fileExt("Makefile")).toBe("FILE");
   });
 });

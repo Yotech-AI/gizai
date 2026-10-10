@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Gizai installer for Linux. Builds Gizai from source and installs it for you alone (no sudo):
-#   ~/.local/lib/gizai/     gizai, gizai-mcp (the helper chat uses) and gizai-launch
+# Gizai installer for Linux and macOS. Builds Gizai from source and installs it for you alone (no sudo):
+#   ~/.local/lib/gizai/     gizai, gizai-mcp (the helper chat uses) and gizai-launch; on macOS also Gizai.app
 #   ~/.local/bin/gizai      the command
-#   a desktop entry and an icon, so Gizai shows up in your app launcher
-# Your data lives in ~/.local/share/gizai and is never touched by install or uninstall (unless --purge).
+#   Linux: a desktop entry and an icon, so Gizai shows up in your app launcher
+#   macOS: a link to Gizai.app in ~/Applications, so Gizai starts from Finder and the Dock
+# Your data lives in ~/.local/share/gizai (macOS: ~/Library/Application Support/Gizai) and is never touched by install
+# or uninstall (unless --purge). On Windows, use install.ps1 (see the README).
 #
 # Usage:
 #   ./install.sh                 from a checkout: check, build and install
@@ -14,7 +16,8 @@
 #   ./install.sh --skip-build    install the binaries already built in target/release
 #   ./install.sh --uninstall     remove Gizai (add --purge to delete your data too)
 # Environment: GIZAI_REPO (the git URL to clone), GIZAI_BRANCH (default production: the released code; main is
-# development), GIZAI_PREFIX (default ~/.local).
+# development), GIZAI_PREFIX (default ~/.local), GIZAI_DATA_DIR (macOS: the data folder, if not the usual one).
+# It runs with macOS's own bash 3.2 and BSD tools too: no newer bash features or GNU-only options.
 set -euo pipefail
 
 DEFAULT_REPO="https://github.com/Yotech-AI/gizai.git"
@@ -27,6 +30,12 @@ APPS="$SHARE/applications"
 ICONS="$SHARE/icons/hicolor"
 DATA="$SHARE/gizai"
 SRC_CLONE="$SHARE/gizai-src"
+OS="$(uname -s)"
+if [ "$OS" = Darwin ]; then
+  # macOS keeps an app's data in ~/Library/Application Support, and apps in ~/Applications.
+  DATA="${GIZAI_DATA_DIR:-$HOME/Library/Application Support/Gizai}"
+  APP_LINK="$HOME/Applications/Gizai.app"
+fi
 
 CHECK=0 BUILD_ONLY=0 SKIP_BUILD=0 UNINSTALL=0 PURGE=0
 for arg in "$@"; do
@@ -36,7 +45,7 @@ for arg in "$@"; do
     --skip-build) SKIP_BUILD=1 ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -49,9 +58,27 @@ say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-if [ "$(uname -s)" != "Linux" ]; then
-  say "Gizai installs on Linux for now. macOS and Windows builds come later."
-  exit 1
+case "$OS" in
+  Linux|Darwin) ;;
+  MINGW*|MSYS*|CYGWIN*) say "On Windows, install Gizai with install.ps1 in PowerShell (see the README)."; exit 1 ;;
+  *) say "Gizai installs on Linux and macOS with this script, and on Windows with install.ps1."; exit 1 ;;
+esac
+
+# ---------- uninstall (macOS) ----------
+if [ "$UNINSTALL" = 1 ] && [ "$OS" = Darwin ]; then
+  step "Removing Gizai"
+  rm -f "$BIN/gizai"
+  # the link in ~/Applications only when it is this install's
+  if [ -L "$APP_LINK" ] && [ "$(readlink "$APP_LINK")" = "$LIB/Gizai.app" ]; then rm -f "$APP_LINK"; fi
+  rm -rf "$LIB"
+  say "Removed the app and the command."
+  if [ "$PURGE" = 1 ]; then
+    rm -rf "$DATA" "$SRC_CLONE"
+    say "Deleted your data ($DATA) and the source copy ($SRC_CLONE)."
+  else
+    say "Your data stays in $DATA (run with --uninstall --purge to delete it)."
+  fi
+  exit 0
 fi
 
 # ---------- uninstall ----------
@@ -76,20 +103,29 @@ fi
 # ---------- check ----------
 step "Checking what Gizai needs"
 missing_cmds=() missing_libs=() notes=()
-for c in git pkg-config cc; do have "$c" || missing_cmds+=("$c"); done
+node_from="your package manager, mise or nvm"
+if [ "$OS" = Darwin ]; then
+  # git and a C compiler come with Apple's Command Line Tools (until then, git and cc only offer to install them).
+  xcode-select -p >/dev/null 2>&1 || notes+=("Apple's Command Line Tools (git and a C compiler) are missing: xcode-select --install")
+  node_from="Homebrew (brew install node), mise, nvm or the installer from nodejs.org"
+else
+  for c in git pkg-config cc; do have "$c" || missing_cmds+=("$c"); done
+fi
 if [ "$SKIP_BUILD" = 0 ]; then
   have cargo || notes+=("Rust is missing: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   (then open a new terminal)")
   if have node; then
     major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-    [ "$major" -ge 20 ] || notes+=("Node.js 20 or newer is needed (found $(node -v)); install it with your package manager, mise or nvm")
+    [ "$major" -ge 20 ] || notes+=("Node.js 20 or newer is needed (found $(node -v)); install it with $node_from")
   else
-    notes+=("Node.js 20 or newer is missing; install it with your package manager, mise or nvm")
+    notes+=("Node.js 20 or newer is missing; install it with $node_from")
   fi
   have npm || notes+=("npm is missing (it comes with Node.js)")
 fi
-for lib in webkit2gtk-4.1 gtk+-3.0 librsvg-2.0 openssl; do
-  have pkg-config && pkg-config --exists "$lib" 2>/dev/null || missing_libs+=("$lib")
-done
+if [ "$OS" = Linux ]; then
+  for lib in webkit2gtk-4.1 gtk+-3.0 librsvg-2.0 openssl; do
+    have pkg-config && pkg-config --exists "$lib" 2>/dev/null || missing_libs+=("$lib")
+  done
+fi
 
 distro=""
 if [ -r /etc/os-release ]; then
@@ -110,11 +146,12 @@ deps_command() {
 ok=1
 if [ "${#missing_cmds[@]}" -gt 0 ] || [ "${#missing_libs[@]}" -gt 0 ]; then
   ok=0
-  say "Missing system packages: ${missing_cmds[*]} ${missing_libs[*]}"
+  # ${a[*]-} and ${a[@]+...}: bash before 4.4 (macOS has 3.2) calls an empty array unbound under set -u
+  say "Missing system packages: ${missing_cmds[*]-} ${missing_libs[*]-}"
   say "Install them with:"
   say "  $(deps_command)"
 fi
-for n in "${notes[@]}"; do ok=0; say "$n"; done
+for n in ${notes[@]+"${notes[@]}"}; do ok=0; say "$n"; done
 if have claude; then
   say "Claude Code: found ($(command -v claude)). Make sure you are logged in: run 'claude' once."
 else
@@ -123,6 +160,9 @@ fi
 # The tray icon loads libayatana-appindicator (or the older libappindicator) when Gizai starts; Gizai works without it.
 if have ldconfig && ! ldconfig -p 2>/dev/null | grep -qE 'lib(ayatana-)?appindicator3\.so\.1'; then
   say "Tray icon: libayatana-appindicator is missing, so Gizai will have no tray icon (Arch and Omarchy: sudo pacman -S libayatana-appindicator; Debian and Ubuntu: sudo apt install libayatana-appindicator3-1)."
+fi
+if [ "$OS" = Darwin ] && [ "$(uname -m)" != arm64 ]; then
+  say "Note: Gizai is made for Macs with Apple silicon, and this shell runs as $(uname -m) (an Intel Mac, or Rosetta). The build may work, but isn't tested."
 fi
 [ "$ok" = 1 ] && say "Everything Gizai needs to build is here."
 if [ "$CHECK" = 1 ]; then exit $((1 - ok)); fi
@@ -158,7 +198,12 @@ if [ "$SKIP_BUILD" = 0 ]; then
     cd "$SRC"
     export TAURI_TELEMETRY_DISABLED=1 npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
     npm ci
-    npm run tauri build -- --no-bundle
+    if [ "$OS" = Darwin ]; then
+      # macOS: Gizai.app too (target/release/bundle/macos), so Gizai starts from the Dock and Finder. Nothing is signed.
+      npm run tauri build -- --bundles app
+    else
+      npm run tauri build -- --no-bundle
+    fi
     cargo build --release -p gizai-mcp
   )
 fi
@@ -168,6 +213,11 @@ for b in gizai gizai-mcp; do
     exit 1
   fi
 done
+APP_BUILT="$SRC/target/release/bundle/macos/Gizai.app"
+if [ "$OS" = Darwin ] && [ ! -x "$APP_BUILT/Contents/MacOS/gizai" ]; then
+  say "$APP_BUILT is missing: build first (run without --skip-build)."
+  exit 1
+fi
 if [ "$BUILD_ONLY" = 1 ]; then
   step "Built: $("$SRC/target/release/gizai" --version 2>/dev/null || echo gizai), in $SRC/target/release"
   say "Nothing was installed. Install it with: $SRC/install.sh --skip-build"
@@ -185,6 +235,67 @@ if [ -f "$DATA/gizai.db" ]; then
     say "So nothing was installed. Move that file aside (or fix it), then run this again."
     exit 1
   fi
+fi
+
+# ---------- install (macOS) ----------
+# Gizai.app holds both programs (Gizai looks for gizai-mcp next to itself). lib/gizai/gizai and gizai-mcp link into it,
+# and gizai-launch, behind the gizai command, starts the app's own program, so macOS shows it as Gizai.
+if [ "$OS" = Darwin ]; then
+  step "Installing"
+  mkdir -p "$LIB" "$BIN"
+  # The new Gizai.app is put together under a temporary name of this installer's own first, then replaces the old one
+  # with renames: a copy that fails (a full disk) leaves the installed Gizai as it was.
+  new_app="$LIB/.Gizai.app.new.$$" old_app="$LIB/.Gizai.app.old.$$" new_launch="$LIB/.gizai-launch.new.$$"
+  trap 'rm -rf "$new_app" "$new_launch"' EXIT
+  if ! ditto "$APP_BUILT" "$new_app" || ! install -m 755 "$SRC/target/release/gizai-mcp" "$new_app/Contents/MacOS/gizai-mcp"; then
+    say "Could not copy Gizai into $LIB, so nothing was installed."
+    exit 1
+  fi
+  # Sign the app ad hoc again, so its signature covers gizai-mcp too (Apple silicon runs only signed programs, and a file
+  # added after the build leaves a stale seal). An ad hoc signature names no one: Gizai stays unsigned in that sense.
+  codesign --force --deep --sign - "$new_app" >/dev/null 2>&1 || true
+  cat > "$new_launch" <<LAUNCH
+#!/bin/sh
+# Starts Gizai: the program inside Gizai.app, so macOS shows it as the app. Not a link to it: macOS tells a program the
+# path of the link it was started from, and Gizai looks for gizai-mcp next to that. Gizai reads your login shell's PATH
+# itself, so its agents find claude, git, npm and cargo also when it starts from the Dock.
+exec "$LIB/Gizai.app/Contents/MacOS/gizai" "\$@"
+LAUNCH
+  chmod 755 "$new_launch"
+  if [ -e "$LIB/Gizai.app" ]; then mv "$LIB/Gizai.app" "$old_app"; fi
+  if ! mv "$new_app" "$LIB/Gizai.app"; then
+    if [ -e "$old_app" ]; then mv "$old_app" "$LIB/Gizai.app"; fi
+    say "Could not put the new Gizai.app into $LIB, so nothing was installed."
+    exit 1
+  fi
+  rm -rf "$old_app"
+  mv -f "$new_launch" "$LIB/gizai-launch"
+  ln -sfn Gizai.app/Contents/MacOS/gizai "$LIB/gizai"
+  ln -sfn Gizai.app/Contents/MacOS/gizai-mcp "$LIB/gizai-mcp"
+  ln -sfn "$LIB/gizai-launch" "$BIN/gizai"
+  # LaunchServices learns the new app now, so its notifications come from Gizai (not Finder) from the first start.
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$LIB/Gizai.app" >/dev/null 2>&1 || true
+  # ~/Applications/Gizai.app for the usual install only: an install into another prefix (a test's) leaves yours alone.
+  if [ "$PREFIX" = "$HOME/.local" ]; then
+    if [ -L "$APP_LINK" ] || [ ! -e "$APP_LINK" ]; then
+      mkdir -p "$HOME/Applications"
+      ln -sfn "$LIB/Gizai.app" "$APP_LINK"
+    else
+      say "Note: $APP_LINK is there already and isn't a link, so it was left as it is. Gizai.app is in $LIB."
+    fi
+  fi
+
+  version="$("$LIB/gizai" --version 2>/dev/null || echo "gizai")"
+  step "Done: $version"
+  if [ -L "$APP_LINK" ] && [ "$(readlink "$APP_LINK")" = "$LIB/Gizai.app" ]; then
+    say "Start Gizai from Applications in your home folder (Finder: Go > Home), and keep it in the Dock. Or run: gizai"
+  else
+    say "Start Gizai by opening $LIB/Gizai.app, or run: gizai"
+  fi
+  case ":$PATH:" in *":$BIN:"*) ;; *) say "Note: $BIN is not on your PATH; add it to use the gizai command." ;; esac
+  say "Your data: $DATA"
+  say "Update: Gizai offers new releases above Company in its sidebar (or run this installer again). Remove: run it with --uninstall."
+  exit 0
 fi
 
 # ---------- install ----------

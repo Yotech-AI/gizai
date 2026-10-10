@@ -102,14 +102,40 @@ Commit your work on this branch as you go. If the task won't fit, stop before th
 your GIZAI_RESULT line, saying in the summary what is done and what is left.\n", l.tool_calls, l.minutes)
 }
 
+/// A note for a continued run (GA-31): what a person wrote next to Continue, or the Team Lead's `note` on
+/// `continue_agent_run`, like "use the existing CSV writer". Gizai also saves it on the card as a comment.
+#[derive(Debug, Clone)]
+pub struct Note {
+    /// Who wrote it, by name.
+    pub from: String,
+    pub text: String,
+}
+
+/// The note as the prompt quotes it, then a blank line; empty without one.
+fn note_part(note: Option<&Note>) -> String {
+    match note.map(|n| (n.from.trim(), n.text.trim())).filter(|(_, t)| !t.is_empty()) {
+        Some((from, text)) => format!("{} wrote a note for this run:\n\n{}\n\n", if from.is_empty() { "Someone" } else { from }, quote(text)),
+        None => String::new(),
+    }
+}
+
+fn quote(text: &str) -> String {
+    text.trim().lines().map(|l| format!("> {l}")).collect::<Vec<_>>().join("\n")
+}
+
 /// The message that resumes a session Gizai (or a person) stopped: the task and instructions are already in it.
 /// Continue after an answer: the last run ended asking for a decision, and `answer` is what was written on the card since
 /// (its comments, oldest first).
 pub fn answered_prompt(answer: &str, limits: Option<RunLimits>) -> String {
-    let quoted: Vec<String> = answer.trim().lines().map(|l| format!("> {l}")).collect();
-    let mut p = format!("Your last run on this task ended asking for a decision. It was answered on the card since:\n\n{}\n\n\
-Continue where you left off, with this answer. First check `git status` and `git diff`. Then finish the task, commit, and end with your \
-GIZAI_RESULT line.", quoted.join("\n"));
+    answered_prompt_with(answer, None, limits)
+}
+
+/// `answered_prompt` with the note of the person or Team Lead who continued it, if any (`Note`). The note may be the
+/// whole answer (`answer` empty): "Done, continue" on commands the agent asked the user to run is one.
+pub fn answered_prompt_with(answer: &str, note: Option<&Note>, limits: Option<RunLimits>) -> String {
+    let since = if answer.trim().is_empty() { String::new() } else { format!("It was answered on the card since:\n\n{}\n\n", quote(answer)) };
+    let mut p = format!("Your last run on this task ended asking for a decision. {since}{}Continue where you left off, with this answer. First \
+check `git status` and `git diff`. Then finish the task, commit, and end with your GIZAI_RESULT line.", note_part(note));
     if let Some(l) = limits {
         p.push_str(&limits_section(l));
     }
@@ -117,9 +143,15 @@ GIZAI_RESULT line.", quoted.join("\n"));
 }
 
 pub fn continue_prompt(reason: &str, limits: Option<RunLimits>) -> String {
-    let mut p = format!("Your last run on this task was stopped: {}.\n\nContinue where you left off. First check `git status` and \
+    continue_prompt_with(reason, None, limits)
+}
+
+/// `continue_prompt` with the note of the person or Team Lead who pressed Continue, if any (`Note`), right after why the
+/// last run stopped.
+pub fn continue_prompt_with(reason: &str, note: Option<&Note>, limits: Option<RunLimits>) -> String {
+    let mut p = format!("Your last run on this task was stopped: {}.\n\n{}Continue where you left off. First check `git status` and \
 `git diff`: edits that were cut off may not have been saved. Then finish the task, commit, and end with your GIZAI_RESULT line.",
-        reason.trim().trim_end_matches('.'));
+        reason.trim().trim_end_matches('.'), note_part(note));
     if let Some(l) = limits {
         p.push_str(&limits_section(l));
     }
@@ -138,8 +170,9 @@ something, check it in the foreground now and finish the task. End with your GIZ
 }
 
 /// How a headless task run works, told at the end of every task prompt, new and continued (`with_rules`): nobody can
-/// approve anything, the commands the agent may run, its CLI's shell rules, the run's temp folder, how to wait, and that
-/// Gizai pushes the branch when the run ends (`PUSHED_BY_GIZAI`).
+/// approve anything, the commands the agent may run, its CLI's shell rules, the run's temp folder, how to wait, that
+/// Gizai pushes the branch when the run ends (`PUSHED_BY_GIZAI`), and how to ask the user to run a command it may not
+/// run (`RUN_FOR_ME`).
 /// Only what holds for its CLI and permission mode goes in. Claude Code's shell rules were checked against Claude Code
 /// 2.1.289 in acceptEdits mode with Gizai's task-run flags (GA-48): `$(…)`, backticks, variables, a heredoc with an
 /// unquoted delimiter, and reading or writing outside the working folders (an allowed `ls /tmp`, a redirect to `/tmp`,
@@ -301,6 +334,7 @@ refused. Pipes, `2>&1`, `&&` and `;` between allowed commands are fine, and so i
     lines.push(PUSHED_BY_GIZAI.into());
     lines.push("When something is refused, don't try other spellings of it: go on without it, and name the exact command in your summary \
 under what you could not check.".into());
+    lines.push(RUN_FOR_ME.into());
     let mut s = String::from("\n## How this run works\n\n");
     for l in lines {
         s.push_str(&format!("- {l}\n"));
@@ -313,6 +347,15 @@ under what you could not check.".into());
 pub const PUSHED_BY_GIZAI: &str = "When the run ends, Gizai itself pushes this branch's commits (not uncommitted changes) to the project's \
 remote, when it has one. So a refused `git push` of this branch is no reason for `needs_decision`: mention it in your summary and end \
 with the outcome your work deserves.";
+
+/// "Run this for me" (GA-31): how an agent asks the user to run what it may not run itself, through `run_for_me` on a
+/// `needs_decision` result line (`outcome::Outcome`). The card waits in the Inbox with each command and a copy button,
+/// and the user's Done, continue resumes this session. Told to every CLI in every mode, so it never says "commands"
+/// (another CLI's section names none) or "sleep" (named only for an agent that may run it).
+pub const RUN_FOR_ME: &str = "If the task can't be finished without a command you may not run (sudo, an install, one that is refused; \
+not a push of this branch), don't look for a way around it: finish what you can, then end with `needs_decision` and put each such \
+command, exactly as it is to be typed, in `run_for_me` on your result line, like `\"run_for_me\":[\"sudo pacman -S libayatana-appindicator\"]`. \
+The user runs them and continues this run, so you can check that they worked.";
 
 /// The waiting rule (see `rules_section`): ending the message ends the run, how to wait in the foreground, and what to do
 /// when it won't be done in time. `sleep` is named only when the agent may run it.

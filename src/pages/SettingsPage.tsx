@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
+import { Bell, Bot, GitPullRequest, Palette, Plug, SlidersHorizontal } from "lucide-react";
 import { detectClaude, getSettings, getTeam, listTeams, saveSettings } from "../api";
 import type { NotificationSwitches, Settings } from "../types";
+import { go, SETTINGS_TABS, type SettingsTab } from "../router";
 import { Field, FormSection } from "../components/Form";
+import { Tabs, type TabDef } from "../components/Tabs";
+import { AppearanceSettings } from "../components/AppearanceSettings";
 import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
 import { GithubSettings } from "../components/GithubSettings";
@@ -19,7 +23,16 @@ const NOTIFY: [keyof NotificationSwitches, string][] = [
   ["leadAnswered", "The Team Lead answers in a chat while the Gizai window is hidden or in the background"],
 ];
 
-export function SettingsPage() {
+/** Settings' tabs (GA-42), in the address as #/settings/<tab>; General opens first. */
+const TABS: TabDef<SettingsTab>[] = [
+  ["general", SlidersHorizontal, "General"], ["appearance", Palette, "Appearance"], ["notifications", Bell, "Notifications"],
+  ["agents", Bot, "Agents and runs"], ["mcp", Plug, "MCP servers"], ["github", GitPullRequest, "GitHub and Bitbucket"],
+];
+
+/** Every tab stays mounted and only the open one shows, so a change not saved yet is still there after switching tabs;
+ *  Save settings saves the fields that need it on any tab. */
+export function SettingsPage({ tab }: { tab?: string } = {}) {
+  const open: SettingsTab = SETTINGS_TABS.find((t) => t === tab) ?? "general";
   const [s, setS] = useState<Settings | null>(null);
   const [budget, setBudget] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -44,14 +57,29 @@ export function SettingsPage() {
     if (usd !== null && !(usd > 0)) { setMsg({ ok: false, text: "The spending limit must be a positive amount, or empty for no limit." }); return; }
     try { await saveSettings({ ...next, maxRunUsd: usd }); setMsg({ ok: true, text: "Settings saved." }); setSavedAt(Date.now()); } catch (e) { setMsg({ ok: false, text: String(e) }); }
   };
+  const panel = (t: SettingsTab) => ({ role: "tabpanel", className: "form settings-panel", hidden: open !== t, "aria-label": TABS.find(([k]) => k === t)?.[2] });
   return (
     <>
       <div className="topbar"><div className="crumbs"><b>Settings</b></div>
         <div className="actions"><button className="btn primary" onClick={() => save()}>Save settings</button></div></div>
-      <div className="content"><div className="page" style={{ maxWidth: 1100 }}>
+      <div className="content"><div className="page settings-page" style={{ maxWidth: 1100 }}>
+        <Tabs tabs={TABS} open={open} onOpen={(t) => go({ page: "settings", id: t })} label="Settings" />
         {msg && <div className={msg.ok ? "ok-banner" : "error-banner"} role="status" style={{ margin: 0 }}>{msg.text}</div>}
-        <div className="form">
+        <div {...panel("general")}>
           <QuitSettings />
+          <UpdateSettings />
+          <FormSection title="Data" text="Everything Gizai stores lives in this folder on this computer.">
+            <Field label="Data folder" wide><span className="mono">{s.dataDir}</span></Field>
+            <Field label="Worktrees" wide><span className="mono">{s.dataDir}/worktrees</span></Field>
+            <Field label="Run logs" wide><span className="mono">{s.dataDir}/runs</span></Field>
+            <Field label="Worktrees of finished cards" wide hint="Done and Cancelled cards keep their worktree, so a new card of the same project can take it over with a warm build. Remove the ones you no longer need.">
+              <OldWorktrees /></Field>
+          </FormSection>
+        </div>
+        <div {...panel("appearance")}>
+          <AppearanceSettings />
+        </div>
+        <div {...panel("notifications")}>
           <FormSection title="Notifications" text="A desktop notification when something needs you, also while the Gizai window is hidden. Click one to open its card or chat.">
             <Field label="Notify me when" wide hint="Saved as soon as you switch one.">
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
@@ -62,18 +90,14 @@ export function SettingsPage() {
               </div>
             </Field>
           </FormSection>
-          <UpdateSettings />
+        </div>
+        <div {...panel("agents")}>
           <FormSection title="Coding CLIs" text="Agents run one of these programs headless in their worktree, with its own login. Claude Code is the default; add Codex, Gemini, any other coding CLI, or a second account of one. Each agent picks its CLI under Runs on.">
             <Field label="Claude Code" htmlFor="s-bin" wide hint="Its program (claude -p). Detect looks in your login shell and the usual install folders.">
               <div className="input-group"><input id="s-bin" className="input mono" value={s.claudeBin ?? ""} onChange={(e) => setS({ ...s, claudeBin: e.target.value })} placeholder="/home/you/.local/bin/claude" />
                 <button className="btn" onClick={detect} disabled={detecting}>{detecting ? "Looking…" : "Detect"}</button></div></Field>
             <Field label="More CLIs" wide hint="Saved as soon as you add, change or remove one."><CliSettings /></Field>
           </FormSection>
-          <FormSection title="MCP servers" text="Outside services your agents can use, like Otus OS: one list for all agents, switched on per agent in its form → Tools. Values of environment and header lines and sign-ins stay in your keychain.">
-            <Field label="Servers" wide hint="Saved as soon as you add, change or remove one. Only you add, import, sign in to and switch on servers: the Team Lead can't."><McpSettings /></Field>
-          </FormSection>
-          <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
-          <BitbucketSettings say={say} />
           <FormSection title="Runs" text="Each run is a process of the agent's coding CLI in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
             <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"
               warn={runsAtOnceWarning(s.maxConcurrentRuns, agents)}><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
@@ -83,13 +107,15 @@ export function SettingsPage() {
             <Field label="Pause all agents" wide hint={s.agentsPaused ? "Paused: no automatic starts from Auto columns. Run still works by hand." : "The agents on Auto columns take their cards by themselves."}>
               <label className="check"><input type="checkbox" checked={s.agentsPaused} onChange={(e) => { const next = { ...s, agentsPaused: e.target.checked }; setS(next); save(next); }} />Pause all agents</label></Field>
           </FormSection>
-          <FormSection title="Data" text="Everything Gizai stores lives in this folder on this computer.">
-            <Field label="Data folder" wide><span className="mono">{s.dataDir}</span></Field>
-            <Field label="Worktrees" wide><span className="mono">{s.dataDir}/worktrees</span></Field>
-            <Field label="Run logs" wide><span className="mono">{s.dataDir}/runs</span></Field>
-            <Field label="Worktrees of finished cards" wide hint="Done and Cancelled cards keep their worktree, so a new card of the same project can take it over with a warm build. Remove the ones you no longer need.">
-              <OldWorktrees /></Field>
+        </div>
+        <div {...panel("mcp")}>
+          <FormSection title="MCP servers" text="Outside services your agents can use, like Otus OS: one list for all agents, switched on per agent in its form → Tools. Values of environment and header lines and sign-ins stay in your keychain.">
+            <Field label="Servers" wide hint="Saved as soon as you add, change or remove one. Only you add, import, sign in to and switch on servers: the Team Lead can't."><McpSettings /></Field>
           </FormSection>
+        </div>
+        <div {...panel("github")}>
+          <GithubSettings s={s} setS={setS} save={save} say={say} savedAt={savedAt} />
+          <BitbucketSettings say={say} />
         </div>
       </div></div>
     </>

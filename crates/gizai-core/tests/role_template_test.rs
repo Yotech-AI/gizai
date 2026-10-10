@@ -134,3 +134,27 @@ fn every_working_role_hears_that_gizai_pushes_its_branch_after_the_run_and_keeps
         assert!(role_tools(role).iter().any(|t| t == "Bash(git push:*)"), "{role}: {:?}", role_tools(role));
     }
 }
+
+#[test]
+fn every_working_role_hears_how_to_ask_the_user_to_run_a_command_next_to_the_push_line() {
+    // GA-31, Run this for me: the commands go in run_for_me on a needs_decision result line, and Done, continue resumes the run.
+    for role in ["backend", "frontend", "design", "docs", "qa", "devops"] {
+        let t = role_template(role);
+        for want in ["Run this for me: ", "sudo", "needs_decision", "\"run_for_me\":[\"sudo pacman -S libayatana-appindicator\"]",
+                     "The user runs them and presses Done, continue, which continues this run: check that they worked"] {
+            assert!(t.contains(want), "{role}: {want} missing in {t}");
+        }
+        assert_eq!(t.matches("run_for_me").count(), 1, "{role}: one example");
+        // its example, added to the result line the template asks for, is a valid result line
+        let start = t.find("\"run_for_me\":[").unwrap();
+        let example = &t[start..start + t[start..].find(']').unwrap() + 1];
+        let line: serde_json::Value = serde_json::from_str(&RESULT_LINE["GIZAI_RESULT: ".len()..]
+            .replace("\"issues\":[]", &format!("\"issues\":[],{example}"))).unwrap_or_else(|e| panic!("{role}: {e}: {example}"));
+        assert_eq!(line["run_for_me"], serde_json::json!(["sudo pacman -S libayatana-appindicator"]), "{role}");
+        // the push line is kept, before it
+        let push = ["Gizai pushes", "Gizai also pushes"].iter().filter_map(|w| t.find(w)).min().unwrap_or_else(|| panic!("{role}: no push line: {t}"));
+        assert!(push < t.find("Run this for me").unwrap(), "{role}: {t}");
+    }
+    // the Team Lead runs no card, so it isn't told
+    assert!(!role_template("lead").contains("run_for_me"));
+}

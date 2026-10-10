@@ -395,10 +395,18 @@ pub async fn start_run(st: State<'_, AppState>, task_id: String, agent_id: Optio
     let (id, _done) = runs::start(&st, &task_id, agent_id, None, "manual").await?;
     Ok(id)
 }
-/// Continue a stopped run: resume its session (see runs::continue_run).
+/// Continue a stopped run: resume its session (see runs::continue_run), with your note for the agent when you wrote one
+/// (saved on the card as your comment, see runs::continue_with_note).
 #[tauri::command]
-pub async fn continue_run(st: State<'_, AppState>, run_id: String) -> R<String> {
-    let (id, _done) = runs::continue_run(&st, &run_id, None).await?;
+pub async fn continue_run(st: State<'_, AppState>, run_id: String, note: Option<String>) -> R<String> {
+    let (id, _done) = runs::continue_with_note(&st, &run_id, note, None).await?;
+    Ok(id)
+}
+/// "Run this for me": Done, continue. You ran the commands the card's latest run asked you to run; that run continues
+/// with a note that says so (see runs::continue_after_run_for_me). Returns the new run's id.
+#[tauri::command]
+pub async fn continue_after_run_for_me(st: State<'_, AppState>, task_id: String) -> R<String> {
+    let (id, _done) = runs::continue_after_run_for_me(&st, &task_id).await?;
     Ok(id)
 }
 #[tauri::command]
@@ -469,6 +477,12 @@ pub fn usage_summary(st: State<AppState>, period: String) -> R<gizai_core::usage
     gizai_core::usage::for_period(&st.db, &period, gizai_core::ids::now_ms()).map_err(e)
 }
 
+/// The Usage page's Subscription tab: per coding CLI, the newest reading of each of its limits and the agents on it.
+#[tauri::command]
+pub fn subscription_limits(st: State<AppState>) -> R<Vec<gizai_core::limits::CliLimits>> {
+    crate::limits::subscription(&st)
+}
+
 // ---- chat with the Team Lead ----
 use crate::chat;
 
@@ -489,11 +503,47 @@ pub fn search_chat_threads(st: State<AppState>, query: String) -> R<Vec<gizai_co
 #[tauri::command]
 pub fn chat_messages(st: State<AppState>, thread_id: String) -> R<Vec<gizai_core::chat::ChatMessage>> { gizai_core::chat::messages(&st.db, &thread_id).map_err(e) }
 /// Sends a message (in a new thread when `thread_id` is None, which runs on `cli` when one was picked under the text box)
-/// and starts the Team Lead's answer; while it is answering in the thread, the message is queued. Returns the thread id.
+/// with the `files` added to it (paths; the text may be empty then) and starts the Team Lead's answer; while it is
+/// answering in the thread, the message is queued with its files. Returns the thread id.
 #[tauri::command]
-pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String, cli: Option<String>) -> R<String> {
-    let (id, _done) = chat::send_on(&st, thread_id, text, cli, None).await?;
+pub async fn send_chat(st: State<'_, AppState>, thread_id: Option<String>, text: String, cli: Option<String>, files: Option<Vec<String>>) -> R<String> {
+    let (id, _done) = chat::send_with_files(&st, thread_id, text, cli, files.unwrap_or_default(), None).await?;
     Ok(id)
+}
+/// Files picked or dropped for a chat message: the paths that can be added, and one plain sentence for each that can't
+/// (a folder, larger than 1 GB, or it can't be read).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileCheck {
+    pub ok: Vec<String>,
+    pub failed: Vec<String>,
+}
+#[tauri::command]
+pub async fn check_files(paths: Vec<String>) -> R<FileCheck> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = FileCheck { ok: vec![], failed: vec![] };
+        for p in paths {
+            match files::check_path(std::path::Path::new(&p)) {
+                Ok(_) => out.ok.push(p),
+                Err(err) => out.failed.push(err.to_string()),
+            }
+        }
+        out
+    }).await.map_err(|err| err.to_string())
+}
+/// The id of the item a gizai: link names, for its page: a task by id or identifier (GA-12), a project by id or key (GA);
+/// other kinds name their id already. Fails when it is gone.
+#[tauri::command]
+pub fn item_id(st: State<AppState>, kind: String, key: String) -> R<String> {
+    match kind.as_str() {
+        "task" => tasks::get(&st.db, &key).map(|t| t.id).or_else(|_| tasks::id_of(&st.db, &key)).map_err(e),
+        "project" => match projects::get(&st.db, &key) {
+            Ok(p) => Ok(p.id),
+            Err(_) => projects::list(&st.db).map_err(e)?.into_iter().find(|p| p.key.eq_ignore_ascii_case(&key)).map(|p| p.id)
+                .ok_or_else(|| format!("No project with the key {key}")),
+        },
+        _ => Ok(key),
+    }
 }
 /// The chat's queued messages: they wait while the Team Lead answers.
 #[tauri::command]
@@ -706,4 +756,53 @@ pub async fn save_agent_mcp(app: AppHandle, st: State<'_, AppState>, agent_id: S
     let out = blocking(move || crate::mcp_servers::save_agent(&st, &agent_id, tools)).await?;
     changed(&app, "team");
     Ok(out)
+}
+
+/// The agent form's Web, Browser and Built-in tools for the CLI picked in the form (an agent not added yet has no id).
+#[tauri::command]
+pub async fn agent_cli_tools(st: State<'_, AppState>, agent_id: Option<String>, cli_id: String) -> R<crate::mcp_servers::ToolsView> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::tools_view(&st, agent_id.as_deref(), &cli_id)).await
+}
+
+/// Saves the agent's Web and Built-in tool switches. Only you: no Team Lead tool calls this.
+#[tauri::command]
+pub async fn save_agent_cli_tools(app: AppHandle, st: State<'_, AppState>, agent_id: String, tools: gizai_core::mcp_servers::CliTools)
+    -> R<gizai_core::mcp_servers::CliTools> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save_cli_tools(&st, &agent_id, tools)).await?;
+    changed(&app, "team");
+    Ok(out)
+}
+
+/// Ask Claude Code again: its tools, from a start without a login (nothing spent, nothing written in ~/.claude).
+#[tauri::command]
+pub async fn ask_cli_tools(st: State<'_, AppState>, cli_id: String) -> R<Vec<String>> {
+    let st = st.inner().clone();
+    crate::mcp_servers::ask_cli_tools(&st, &cli_id).await
+}
+
+/// Settings → MCP servers: the built-in browser (Chrome DevTools MCP).
+#[tauri::command]
+pub async fn browser_entry(st: State<'_, AppState>) -> R<crate::mcp_servers::BrowserView> {
+    let st = st.inner().clone();
+    blocking(move || crate::mcp_servers::browser_view(&st)).await
+}
+
+/// Saves the browser's version and program (the only parts that change).
+#[tauri::command]
+pub async fn save_browser_entry(app: AppHandle, st: State<'_, AppState>, entry: gizai_core::mcp_servers::BrowserEntry) -> R<crate::mcp_servers::BrowserView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::save_browser(&st, entry)).await?;
+    changed(&app, "settings");
+    Ok(out)
+}
+
+/// List tools for the browser: starts its server (no browser yet), lists its tools and stops it.
+#[tauri::command]
+pub async fn list_browser_tools(app: AppHandle, st: State<'_, AppState>) -> R<crate::mcp_servers::BrowserView> {
+    let st = st.inner().clone();
+    let out = blocking(move || crate::mcp_servers::list_browser_tools(&st)).await;
+    changed(&app, "settings");
+    out
 }

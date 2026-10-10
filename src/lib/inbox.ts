@@ -1,4 +1,4 @@
-type Card = { hold?: string | null; stateCategory: string; assigneeId?: string | null };
+type Card = { hold?: string | null; stateCategory: string; assigneeId?: string | null; runForMe?: string[] };
 type Chat = { kind?: string | null; waiting?: boolean; updatedAt: number };
 
 /** The chats the Team Lead started that still wait for you, newest first: they head the Inbox. */
@@ -23,4 +23,10 @@ export function chatLabel(t: Chat): string | null {
 export function needsYou(t: Card, youId: string): boolean {
   if (t.stateCategory === "done" || t.stateCategory === "cancelled") return false;
   return !!t.hold || ((t.stateCategory === "review" || t.stateCategory === "deploy") && t.assigneeId === youId);
+}
+
+/** Run this for me: an open card on hold whose agent asks you to run commands it may not run. The Inbox shows these on
+ *  top, each with its commands and Done, continue, instead of in the list. */
+export function asksToRun(t: Card): boolean {
+  return needsYou(t, "") && !!t.hold && (t.runForMe?.length ?? 0) > 0;
 }

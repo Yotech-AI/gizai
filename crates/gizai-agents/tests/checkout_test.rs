@@ -1,5 +1,7 @@
 //! GA-44 part 2: how a project's linked folder (your own checkout) stands against main, and its update to main once
 //! you said yes in chat. "GitHub" is a local bare repository; composer and npm are fakes, never the real ones.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use gizai_agents::checkout::{self, DepBehind};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

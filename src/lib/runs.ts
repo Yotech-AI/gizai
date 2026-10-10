@@ -79,6 +79,18 @@ export function lastAgentText(events: SeqEvent[]): string | null {
   return null;
 }
 
+const TRIGGER_TEXT: Record<string, string> = {
+  manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat", board_check: "Board check", nudge: "Continue", result_nudge: "Nudge",
+};
+
+/** What started a run, in a word: a Continue (yours, the Team Lead's or Done, continue) is "Continue", and Gizai's own
+ *  nudge after a run ended without its result line is "Nudge" (trigger result_nudge; an older nudge was recorded as a
+ *  Continue, and is told apart by `nudged`). */
+export function triggerName(r: Pick<Run, "trigger" | "nudged">): string {
+  if (r.nudged) return TRIGGER_TEXT.result_nudge;
+  return TRIGGER_TEXT[r.trigger] ?? r.trigger;
+}
+
 /** A run that stopped part-way after doing some work: Continue resumes its session in its worktree. */
 export function canContinue(r: Run): boolean {
   const stopped = ["timed_out", "failed", "cancelled"].includes(r.status) || (r.status === "succeeded" && r.outcome === "no_result");

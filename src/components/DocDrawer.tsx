@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createDoc, saveDoc } from "../api";
+import { modKey } from "../lib/keys";
 import { go } from "../router";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
@@ -20,7 +21,7 @@ export function DocDrawer({ projectId, onClose }: { projectId: string; onClose: 
   };
   return (
     <Drawer title="New doc" subtitle="Requirements, meeting notes, decisions. Every save keeps a version; agents can read them." onClose={onClose}
-      dirty={!!(title || body)} error={err} hint="Ctrl+Enter creates"
+      dirty={!!(title || body)} error={err} hint={`${modKey()}+Enter creates`}
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!title.trim()} onClick={create}>Create doc</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); create(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); create(); } }}>
         <FormSection title="Doc">

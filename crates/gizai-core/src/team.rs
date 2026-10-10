@@ -51,6 +51,8 @@ pub struct Member {
     pub folders: Vec<crate::folders::Folder>,
     /// Its MCP servers and their tools, switched on or off (agent form → Tools; `mcp_servers`).
     pub tools: crate::mcp_servers::AgentTools,
+    /// Its CLI's own tools switched on: web search and fetch, built-in tools (agent form → Tools; `mcp_servers::CliTools`).
+    pub cli_tools: crate::mcp_servers::CliTools,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +113,7 @@ const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g
 fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
     let tools: Option<String> = r.get(12)?;
     let folders: Option<String> = r.get(24)?;
+    let extra: Option<String> = r.get(25)?;
     Ok(Member { actor_id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, role_key: r.get(3)?, title: r.get(4)?,
                 adapter: r.get(5)?, instructions_md: r.get(6)?, handle: r.get(7)?, status: r.get(8)?,
                 is_lead: r.get::<_, i64>(9)? != 0, model: r.get(10)?, permission_mode: r.get(11)?,
@@ -119,7 +122,7 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
                 chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)?,
                 board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)?,
                 folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default(),
-                tools: crate::mcp_servers::parse_tools(r.get::<_, Option<String>>(25)?.as_deref()) })
+                tools: crate::mcp_servers::parse_tools(extra.as_deref()), cli_tools: crate::mcp_servers::parse_cli_tools(extra.as_deref()) })
 }
 
 /// Every agent of every team, with its team id (for the heartbeat scheduler).

@@ -15,7 +15,7 @@ fn repo(tmp: &std::path::Path) -> std::path::PathBuf {
 
 #[test]
 fn creates_then_reuses_a_worktree_and_rejects_non_repos() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("wt");
     let a = worktree::ensure(&repo, &base, "KADE-41", "Export invoices as CSV!", "main").unwrap();
@@ -30,7 +30,7 @@ fn creates_then_reuses_a_worktree_and_rejects_non_repos() {
 
 #[test]
 fn reuses_an_existing_branch_after_the_worktree_was_removed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("wt");
     let a = worktree::ensure(&repo, &base, "GFW-7", "Mollie webhook", "main").unwrap();
@@ -49,7 +49,7 @@ fn slugs_are_short_ascii_and_tidy() {
 
 #[test]
 fn a_bad_default_branch_is_a_git_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let r = worktree::ensure(&repo, &tmp.path().join("wt"), "X-2", "t", "develop");
     assert!(matches!(r, Err(gizai_agents::AgentError::Git(_))), "{r:?}");
@@ -77,7 +77,7 @@ fn push_new_commit(src: &std::path::Path, bare: &std::path::Path, msg: &str) {
 
 #[test]
 fn a_new_card_starts_from_main_fetched_from_github_not_the_stale_local_main() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (src, bare, local) = github_and_stale_clone(tmp.path());
     assert_ne!(rev(&local, "main"), rev(&bare, "main"), "the local main is behind");
     assert_eq!(worktree::remotes(&local).unwrap(), vec![("acme-labs".to_string(), bare.to_string_lossy().to_string())]);
@@ -96,7 +96,7 @@ fn a_new_card_starts_from_main_fetched_from_github_not_the_stale_local_main() {
 
 #[test]
 fn without_a_matching_remote_the_link_is_fetched_into_a_hidden_ref() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (_src, bare, _local) = github_and_stale_clone(tmp.path());
     let plain = repo(&tmp.path().join("p").tap_mkdir());
     let start = worktree::fetch_start(&plain, None, bare.to_str().unwrap(), "main", MINUTE).unwrap();
@@ -108,7 +108,7 @@ fn without_a_matching_remote_the_link_is_fetched_into_a_hidden_ref() {
 
 #[test]
 fn an_unreachable_repository_is_a_clear_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let local = repo(tmp.path());
     let e = worktree::fetch_start(&local, None, "/nonexistent/github.git", "main", MINUTE).unwrap_err().to_string();
     assert!(e.contains("Couldn't fetch main from /nonexistent/github.git"), "{e}");
@@ -131,7 +131,7 @@ fn has_branch(repo: &std::path::Path, branch: &str) -> bool {
 
 #[test]
 fn pushing_a_cards_branch_puts_its_commits_on_github_and_never_forces() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (_src, bare, local) = github_and_stale_clone(tmp.path());
     let wt = worktree::ensure(&local, &tmp.path().join("wt"), "SH-1", "Export", "main").unwrap();
     commit_file(&wt.path, "export.csv", "a,b\n");
@@ -153,7 +153,7 @@ fn pushing_a_cards_branch_puts_its_commits_on_github_and_never_forces() {
 
 #[test]
 fn a_clean_card_worktree_is_removed_and_its_branch_deleted_when_asked() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("worktrees");
     let a = worktree::ensure(&repo, &base.join("SH"), "SH-1", "Export", "main").unwrap();
@@ -176,7 +176,7 @@ fn a_clean_card_worktree_is_removed_and_its_branch_deleted_when_asked() {
 
 #[test]
 fn a_card_worktree_with_uncommitted_work_is_kept_with_its_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("worktrees");
     let a = worktree::ensure(&repo, &base, "SH-1", "Export", "main").unwrap();
@@ -187,12 +187,13 @@ fn a_card_worktree_with_uncommitted_work_is_kept_with_its_branch() {
     assert_eq!(r.kept, Some((a.path.clone(), "it has uncommitted changes".to_string())), "{r:?}");
     assert!(r.removed.is_none() && !r.branch_deleted);
     assert!(a.path.join("notes.txt").exists() && has_branch(&repo, &a.branch), "nothing lost");
-    assert_eq!(r.phrases(&a.branch), [format!("kept its worktree {} (it has uncommitted changes)", a.path.display())]);
+    // the path as git gives it (with / on Windows)
+    assert_eq!(r.phrases(&a.branch), [format!("kept its worktree {} (it has uncommitted changes)", git_path(&a.path))]);
 }
 
 #[test]
 fn only_gizais_own_worktrees_are_removed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("worktrees");
     std::fs::create_dir_all(&base).unwrap();
@@ -213,7 +214,7 @@ fn only_gizais_own_worktrees_are_removed() {
 
 #[test]
 fn a_card_worktree_whose_folder_is_gone_only_leaves_gits_list() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("worktrees");
     let a = worktree::ensure(&repo, &base.join("SH"), "SH-1", "Export", "main").unwrap();
@@ -251,7 +252,7 @@ fn finished_card_worktree(tmp: &std::path::Path) -> (std::path::PathBuf, std::pa
 
 #[test]
 fn a_new_card_takes_over_a_finished_cards_worktree_on_its_own_clean_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (repo, base, a) = finished_card_worktree(tmp.path());
     let old_head = rev(&a.path, "HEAD");
     let keep = [".env".to_string(), "target/".into(), "node_modules/".into()];
@@ -263,7 +264,7 @@ fn a_new_card_takes_over_a_finished_cards_worktree_on_its_own_clean_branch() {
     assert_eq!(b.reused, Some(worktree::Reused { from: a.path.clone(), head: old_head }));
     assert!(!a.path.exists(), "the finished card's folder moved");
     let list = worktree_list(&repo);
-    assert!(list.contains(&format!("worktree {}", b.path.display())) && !list.contains(&format!("worktree {}\n", a.path.display())), "{list}");
+    assert!(list.contains(&format!("worktree {}", git_path(&b.path))) && !list.contains(&format!("worktree {}\n", git_path(&a.path))), "{list}");
     // its own branch, from main: nothing of the finished card is left
     assert_eq!(rev(&b.path, "HEAD"), rev(&repo, "main"));
     assert_eq!(String::from_utf8(Command::new("git").args(["branch", "--show-current"]).current_dir(&b.path).output().unwrap().stdout).unwrap().trim(), b.branch);
@@ -280,7 +281,7 @@ fn a_new_card_takes_over_a_finished_cards_worktree_on_its_own_clean_branch() {
 
 #[test]
 fn a_card_that_already_has_a_branch_takes_over_on_that_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (repo, base, a) = finished_card_worktree(tmp.path());
     git(&repo, &["branch", "gizai/kade-2-next-card", "main"]);
     commit_file(&repo, "main-only.txt", "x\n");
@@ -291,7 +292,7 @@ fn a_card_that_already_has_a_branch_takes_over_on_that_branch() {
 
 #[test]
 fn a_worktree_with_uncommitted_work_is_never_taken_over() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (repo, base, a) = finished_card_worktree(tmp.path());
     std::fs::write(a.path.join("draft.md"), "unsaved\n").unwrap();
     let r = worktree::reuse(&repo, &a.path, &base, "KADE-2", "Next card", "main", &[]);
@@ -305,17 +306,17 @@ fn a_worktree_with_uncommitted_work_is_never_taken_over() {
 
 #[test]
 fn a_failed_switch_puts_the_worktree_back() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let (repo, base, a) = finished_card_worktree(tmp.path());
     let r = worktree::reuse(&repo, &a.path, &base, "KADE-2", "Next card", "no-such-branch", &[]);
     assert!(r.is_err(), "{r:?}");
     assert!(a.path.join("old-card.txt").is_file() && !base.join("KADE-2").exists());
-    assert!(worktree_list(&repo).contains(&format!("worktree {}", a.path.display())));
+    assert!(worktree_list(&repo).contains(&format!("worktree {}", git_path(&a.path))));
 }
 
 #[test]
 fn the_still_to_prepare_note_lives_out_of_git_status_sight() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let a = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-1", "Card", "main").unwrap();
     assert_eq!(worktree::unprepared(&a.path), None);
@@ -337,7 +338,7 @@ fn commit(dir: &std::path::Path, subject: &str) {
 
 #[test]
 fn the_commits_between_two_ids_are_listed_oldest_first_with_their_subjects() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let wt = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-14", "Record where a run ended", "main").unwrap();
     let base = rev(&wt.path, "HEAD");
@@ -354,7 +355,7 @@ fn the_commits_between_two_ids_are_listed_oldest_first_with_their_subjects() {
 
 #[test]
 fn merging_main_in_counts_as_one_commit_not_all_of_mains() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let wt = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-15", "Merge main", "main").unwrap();
     let base = rev(&wt.path, "HEAD");
@@ -368,7 +369,7 @@ fn merging_main_in_counts_as_one_commit_not_all_of_mains() {
 
 #[test]
 fn only_commit_ids_are_read_never_options_or_names() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let head = rev(&repo, "HEAD");
     for bad in ["", "HEAD", "main", "--all", "-p", "abc def", "../x"] {
@@ -390,7 +391,7 @@ fn exclude_of(repo: &std::path::Path) -> String {
 
 #[test]
 fn the_temp_folder_is_made_empty_and_ignored_by_every_checkout_without_touching_gitignore() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     std::fs::write(repo.join(".gitignore"), "target/\n").unwrap();
     git(&repo, &["add", ".gitignore"]);
@@ -426,7 +427,7 @@ fn the_temp_folder_is_made_empty_and_ignored_by_every_checkout_without_touching_
 
 #[test]
 fn the_exclude_line_goes_on_a_line_of_its_own_and_only_once() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let common = tmp.path().join("git");
     // no info folder yet
     worktree::exclude_temp(&common).unwrap();
@@ -442,9 +443,11 @@ fn the_exclude_line_goes_on_a_line_of_its_own_and_only_once() {
     assert_eq!(std::fs::read_to_string(common.join("info/exclude")).unwrap(), "  /.gizai-tmp/  \n");
 }
 
+// Linux and macOS only: Unix symlinks (a symlink on Windows needs Developer Mode or an administrator).
+#[cfg(unix)]
 #[test]
 fn emptying_the_temp_folder_removes_links_and_never_follows_them() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let wt = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-3", "Three", "main").unwrap().path;
     // nothing to empty yet
@@ -477,7 +480,7 @@ fn emptying_the_temp_folder_removes_links_and_never_follows_them() {
 
 #[test]
 fn the_temp_folder_goes_with_the_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let base = tmp.path().join("wt");
     let w = worktree::ensure(&repo, &base, "KADE-4", "Four", "main").unwrap();
@@ -495,4 +498,18 @@ fn the_temp_environment_is_tmpdir_tmp_and_temp() {
     let env = worktree::temp_env(std::path::Path::new("/w/KADE-5/.gizai-tmp"));
     assert_eq!(env, [("TMPDIR", "/w/KADE-5/.gizai-tmp"), ("TMP", "/w/KADE-5/.gizai-tmp"), ("TEMP", "/w/KADE-5/.gizai-tmp")]
         .map(|(k, v)| (k.to_string(), v.to_string())));
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
+}
+
+/// A path as `git worktree list` prints it: with / between folders, also on Windows.
+fn git_path(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "/")
 }

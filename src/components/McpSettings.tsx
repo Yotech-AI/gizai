@@ -4,6 +4,7 @@ import { importMcpServers, listMcpServers, listMcpTools, mcpSignIn, mcpSignOut, 
 import { linesOf, nameProblem, parseArgs, renameLine, RISK_BADGE, secretLines, serverWhere, signInLabel, toolsSummary, TRANSPORT_LABEL, type LineDraft } from "../lib/mcp";
 import { relTime } from "../lib/format";
 import type { McpScan, McpServerInput, McpServerView } from "../types";
+import { BrowserEntryRow } from "./BrowserEntry";
 import { McpToolList } from "./McpTools";
 
 type Draft = { id: string; name: string; transport: string; command: string; args: string; env: LineDraft[]; url: string; headers: LineDraft[];
@@ -166,6 +167,7 @@ export function McpSettings() {
   const anyBusy = Object.keys(busy).length > 0;
   return (
     <div className="cli-list mcp-list">
+      <BrowserEntryRow />
       {list.length === 0 ? <span className="faint">No MCP servers yet.</span> : (
         <ul>
           {list.map((s) => {

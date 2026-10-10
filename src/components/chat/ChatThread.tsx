@@ -1,14 +1,20 @@
 // The conversation in one thread (or a new, empty one), the live answer, the messages queued meanwhile, and the
-// composer with Runs on (the coding CLI the chat's answers run on).
+// composer with Runs on (the coding CLI the chat's answers run on). The composer is a Markdown editor without a toolbar:
+// @ links a Gizai item, and + (or a drop on the Chat page) adds files to the message.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowUp, Pencil, Square, X } from "lucide-react";
-import { answerChatOn, chatClis, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
+import { ArrowUp, AtSign, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
+import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
 import { chatRunsOn, groupMessages, SUGGESTIONS, toolName } from "../../lib/chat";
+import { addPaths } from "../../lib/files";
 import { usePending, type Pending } from "../../lib/usePending";
+import { useDropZone } from "../../lib/useDropZone";
 import type { ChatCli, ChatMessage, ChatThread as Thread, Member, QueuedMessage } from "../../types";
 import { MarkdownView } from "../MarkdownView";
-import { MessageGroup } from "./ChatMessage";
+import { MarkdownEditor, type EditorHandle } from "../MarkdownEditor";
+import { PendingFileList, pickFiles } from "../FileDrop";
+import { Popover } from "../Popover";
+import { MessageGroup, UserBubble } from "./ChatMessage";
 import { Avatar } from "../Avatar";
 import { BusyButton } from "../BusyButton";
 import { useChat } from "./useChat";
@@ -16,33 +22,41 @@ import { useChat } from "./useChat";
 /** Stop, Send now and Answer on <CLI>: each spins from its click until the chat shows what it did. */
 type ChatButtons = Pending<"stop" | "send" | `answer:${string}`>;
 
-function Composer({ value, setValue, onSend, onStop, working, disabled, busy, pending }: {
-  value: string; setValue: (v: string) => void; onSend: () => void; onStop: () => void; working: boolean; disabled: boolean; busy: boolean;
-  pending: ChatButtons;
+function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor }: {
+  value: string; setValue: (v: string) => void; files: string[]; onAddFiles: (paths: string[]) => void; onRemoveFile: (path: string) => void;
+  onSend: (text?: string) => void; onStop: () => void; working: boolean; disabled: boolean; busy: boolean; pending: ChatButtons;
+  editor: React.MutableRefObject<EditorHandle | null>;
 }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const t = ref.current;
-    if (!t) return;
-    t.style.height = "auto";
-    t.style.height = `${Math.min(t.scrollHeight, 200)}px`;
-  }, [value]);
-  useEffect(() => { if (!disabled) ref.current?.focus(); }, [disabled]);
+  useEffect(() => { if (!disabled) editor.current?.focus(); }, [disabled, editor]);
+  const ready = !!value.trim() || files.length > 0;
   return (
-    <div className="composer-box">
-      <textarea ref={ref} rows={1} value={value} disabled={disabled} aria-label="Message the Team Lead"
-        placeholder={working ? "Queue a message for when this answer is done…" : "Message the Team Lead…"}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          // While the Team Lead answers, Enter queues the message: it goes when the answer is done.
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); }
-        }} />
-      {working && <BusyButton className="btn sm stop-btn" pending={pending} name="stop" busyLabel="Stopping…" icon={<Square className="icon sm" />} onClick={onStop}
-        title="Stop the answer">Stop</BusyButton>}
-      {(!working || value.trim()) && (
-        <button className="btn primary sm icon-only" onClick={onSend} disabled={disabled || busy || !value.trim()} aria-label={working ? "Queue" : "Send"}
-          title={working ? "Queue: it goes when this answer is done (Enter)" : "Send (Enter)"}><ArrowUp className="icon" /></button>
-      )}
+    <div className={`composer-box${disabled ? " disabled" : ""}`}>
+      <PendingFileList paths={files} onRemove={onRemoveFile} disabled={disabled} compact />
+      <div className="composer-row">
+        <Popover up label="Add to this message" disabled={disabled} button={(open) => (
+          <button type="button" className={`btn ghost sm icon-only composer-plus${open ? " on" : ""}`} disabled={disabled}
+            aria-label="Add files or link an item" title="Add files or link an item"><Plus className="icon" /></button>
+        )}>
+          {(close) => (
+            <>
+              <button type="button" role="menuitem" className="opt" onClick={() => { close(); pickFiles().then(onAddFiles).catch(() => {}); }}>
+                <Paperclip className="icon sm" />Add files</button>
+              <button type="button" role="menuitem" className="opt" onClick={() => { close(); editor.current?.startLink(); }}>
+                <AtSign className="icon sm" />Link an item</button>
+            </>
+          )}
+        </Popover>
+        {/* While the Team Lead answers, Enter queues the message: it goes when the answer is done. */}
+        <MarkdownEditor className="composer-editor" toolbar={false} value={value} onChange={setValue} onEnter={(md) => onSend(md)} disabled={disabled}
+          pickerUp handle={editor} ariaLabel="Message the Team Lead"
+          placeholder={working ? "Queue a message for when this answer is done…" : "Message the Team Lead…"} />
+        {working && <BusyButton className="btn sm stop-btn" pending={pending} name="stop" busyLabel="Stopping…" icon={<Square className="icon sm" />} onClick={onStop}
+          title="Stop the answer">Stop</BusyButton>}
+        {(!working || ready) && (
+          <button className="btn primary sm icon-only" onClick={() => onSend()} disabled={disabled || busy || !ready} aria-label={working ? "Queue" : "Send"}
+            title={working ? "Queue: it goes when this answer is done (Enter)" : "Send (Enter)"}><ArrowUp className="icon" /></button>
+        )}
+      </div>
     </div>
   );
 }
@@ -64,18 +78,20 @@ function RunsOn({ value, clis, disabled, onChange }: { value: string; clis: Chat
 /** A message queued while the Team Lead answers: it goes when the answer is done, or waits for Send now. */
 function Queued({ q, waiting, onError }: { q: QueuedMessage; waiting: boolean; onError: (e: string) => void }) {
   const [edit, setEdit] = useState<string | null>(null);
+  // With files, the text may be empty.
+  const empty = (text: string) => !text.trim() && !q.files?.length;
   const save = () => {
-    if (edit === null || !edit.trim()) return;
+    if (edit === null || empty(edit)) return;
     editQueuedChat(q.id, edit).then(() => setEdit(null)).catch((e) => onError(String(e)));
   };
   return (
     <div className="chat-msg user queued">
-      {edit === null ? <div className="bubble">{q.bodyMd}</div> : (
+      {edit === null ? <UserBubble text={q.bodyMd} files={q.files} /> : (
         <div className="bubble editing">
           <textarea className="input" aria-label="Edit the queued message" value={edit} autoFocus rows={Math.min(8, edit.split("\n").length + 1)}
             onChange={(e) => setEdit(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); save(); } if (e.key === "Escape") setEdit(null); }} />
-          <div className="q-edit"><button className="btn sm" onClick={() => setEdit(null)}>Cancel</button><button className="btn sm primary" onClick={save} disabled={!edit.trim()}>Save</button></div>
+          <div className="q-edit"><button className="btn sm" onClick={() => setEdit(null)}>Cancel</button><button className="btn sm primary" onClick={save} disabled={empty(edit)}>Save</button></div>
         </div>
       )}
       <div className="q-meta">
@@ -90,6 +106,11 @@ function Queued({ q, waiting, onError }: { q: QueuedMessage; waiting: boolean; o
 export function ChatThread({ threadId, thread, agent }: { threadId: string | null; thread?: Thread; agent: Member }) {
   const { messages, draft, tool, working, queue, error, setWorking } = useChat(threadId);
   const [value, setValue] = useState("");
+  // Files added to the message (+ → Add files, or dropped on the Chat page): their paths, until it is sent.
+  const [files, setFiles] = useState<string[]>([]);
+  const [fileNote, setFileNote] = useState<string | null>(null);
+  const editor = useRef<EditorHandle | null>(null);
+  const zone = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [clis, setClis] = useState<ChatCli[] | null>(null);
@@ -120,14 +141,32 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
     setChatCli(threadId, id).catch((e) => setSendError(String(e)));
   };
 
-  const send = async () => {
-    const text = value.trim();
-    if (!text || busy) return;
+  // A folder or a file over 1 GB is refused with why; the other files of the same pick or drop are added.
+  const addFiles = async (paths: string[]) => {
+    if (paths.length === 0) return;
+    try {
+      const r = await checkFiles(paths);
+      if (r.ok.length) setFiles((f) => addPaths(f, r.ok));
+      setFileNote(r.failed.length ? `Not added: ${r.failed.join("; ")}` : null);
+    } catch (e) {
+      setFileNote(String(e));
+    }
+  };
+  // Files dropped anywhere on the Chat page go to the message (a drawer's Files box, open over it, takes them first).
+  const dropping = useDropZone(zone, (paths) => { addFiles(paths); }, { on: !paused });
+
+  // `typed`: the text as Enter saw it.
+  const send = async (typed?: string) => {
+    const text = (typed ?? value).trim();
+    if ((!text && files.length === 0) || busy) return;
     setBusy(true);
     setSendError(null);
     try {
-      const id = await sendChat(threadId, text, threadId ? null : newCli);
+      const id = await sendChat(threadId, text, threadId ? null : newCli, files);
       setValue("");
+      editor.current?.clear();
+      setFiles([]);
+      setFileNote(null);
       if (!working) setWorking(true);
       pinned.current = true;
       if (id !== threadId) go({ page: "chat", id });
@@ -175,7 +214,8 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
   ) : null;
 
   return (
-    <section className="chat-main">
+    <section className={`chat-main${dropping ? " dropping" : ""}`} ref={zone}>
+      {dropping && <div className="chat-drop" role="status"><span>Drop to add to this message</span></div>}
       <div className="chat-scroll" ref={scroller} onScroll={(e) => { const s = e.currentTarget; pinned.current = s.scrollHeight - s.scrollTop - s.clientHeight < 80; }}>
         <div className="chat-col">
           {error && <div className="error-banner" role="alert">{error}</div>}
@@ -204,10 +244,16 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
               <button className="btn sm" onClick={() => setAgentStatus(agent.actorId, "active").catch((e) => setSendError(String(e)))}>Resume</button></div>
           )}
           {sendError && <div className="chat-banner bad" role="alert">{sendError}</div>}
-          <Composer value={value} setValue={setValue} onSend={send} onStop={() => { if (threadId) pending.act("stop", () => stopChat(threadId), fail); }}
-            working={working} disabled={paused} busy={busy} pending={pending} />
+          {fileNote && (
+            <div className="chat-banner warn" role="alert"><span>{fileNote}</span>
+              <button className="btn ghost sm icon-only" aria-label="Close" title="Close" onClick={() => setFileNote(null)}><X className="icon sm" /></button></div>
+          )}
+          <Composer value={value} setValue={setValue} files={files} onAddFiles={addFiles} onRemoveFile={(p) => setFiles((f) => f.filter((x) => x !== p))}
+            onSend={send} onStop={() => { if (threadId) pending.act("stop", () => stopChat(threadId), fail); }}
+            working={working} disabled={paused} busy={busy} pending={pending} editor={editor} />
           <div className="composer-foot">
-            <div className="composer-hint"><span><span className="kbd">Enter</span> {working ? "queues" : "sends"}</span><span><span className="kbd">Shift</span> <span className="kbd">Enter</span> new line</span></div>
+            <div className="composer-hint"><span><span className="kbd">Enter</span> {working ? "queues" : "sends"}</span><span><span className="kbd">Shift</span> <span className="kbd">Enter</span> new line</span>
+              <span><span className="kbd">@</span> links a task, project, client or agent</span></div>
             <RunsOn value={runsOn} clis={clis} disabled={working} onChange={pickCli} />
           </div>
         </div>

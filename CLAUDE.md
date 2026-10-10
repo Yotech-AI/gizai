@@ -27,7 +27,7 @@ Background, only when the card needs it:
 - **Never run against Brave or its profile.**
 - **No `git push`, no remotes, no GitHub posts.**
 - **Never write in `~/.claude`.** Never run `src-tauri/examples/chat_probe.rs`: it spends money and writes a session there.
-- **No sudo and no global installs.** If a system package is needed, finish what you can and ask for the exact command in your result.
+- **No sudo and no global installs.** If a system package is needed, finish what you can and ask for the exact command in `run_for_me` on a `needs_decision` result line (Run this for me): Jeffrey runs it and presses Done, continue, which resumes your run.
 
 ## Working rules
 
@@ -44,6 +44,10 @@ Background, only when the card needs it:
 
   The tests use fake Claude Code scripts (`crates/gizai-agents/tests/fake-claude*.{sh,py}`), never the real one.
 - **Release build:** always use `npm run tauri build -- --no-bundle`. A plain `cargo build --release -p gizai` can produce a binary that loads the dev URL.
+- **Linux, macOS and Windows:** Gizai builds and runs on all three, and CI (`.github/workflows/ci.yml`) builds and tests each pull request on each. `docs/PLATFORMS.md` lists what differs.
+  - Put code for one system behind `cfg(unix)`, `cfg(windows)` or `cfg(target_os = …)`, and leave Linux's behaviour as it is.
+  - Start programs with `gizai_agents::os::command` (on Windows it finds `.cmd` shims and opens no console window). Start an agent's or a build's whole process tree with `os::spawn_tree`, and end it with `Tree::end`, never with `libc::kill`.
+  - Tests that need a Unix shell, signals or Unix permissions go behind `#[cfg(unix)]`.
 - **Git:** `main` is development (cards start from it); `production` is the released code, protected, changed only by a pull request from `main`. A release is a `vX.Y.Z` tag on `production`, which installed Gizais offer as an update (`docs/RELEASING.md` says how and when). Work on your card's branch. Commit as you go: Gizai stops a run at its limits. Write commit messages in plain English that say what changed for the person using Gizai.
 - **Writing:** UI text and docs are plain and short, in sentence case, and say what happens.
 - **Design rules:**

@@ -8,7 +8,10 @@
 //! - At run time a missing folder, or one refused by then (say through a link), is skipped with a note (`for_run`).
 //! - The Team Lead only reads its folders in chat. "Read and change" lets it update one with `update_checkout` after
 //!   you said yes in the chat (`may_update`).
-use std::path::{Component, Path, PathBuf};
+//! - On Windows the same with its paths: `C:\` is the whole disk, `~\` your profile folder, either slash separates
+//!   folders, and names are compared in any case.
+use std::borrow::Cow;
+use std::path::{Component, MAIN_SEPARATOR, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,12 +42,35 @@ pub const MAX: usize = 20;
 
 /// Folders in your home folder that hold keys, tokens or logins. Never given to an agent, nor anything inside them or a
 /// folder above them. A first folder whose name starts with `.claude` counts too (`~/.claude-2`, a second account).
+#[cfg(not(any(windows, target_os = "macos")))]
 pub const KEY_FOLDERS: [&str; 15] = [".ssh", ".gnupg", ".config", ".aws", ".azure", ".kube", ".docker", ".password-store", ".pki",
                                      ".local/share/keyrings", ".mozilla", ".claude", ".codex", ".gemini", ".terraform.d"];
+/// macOS: Linux's, and the keychains.
+#[cfg(target_os = "macos")]
+pub const KEY_FOLDERS: [&str; 16] = [".ssh", ".gnupg", ".config", ".aws", ".azure", ".kube", ".docker", ".password-store", ".pki",
+                                     ".local/share/keyrings", ".mozilla", ".claude", ".codex", ".gemini", ".terraform.d",
+                                     "Library/Keychains"];
+/// Windows, in your profile folder: the same tools' folders, AppData\Roaming (Gizai's data, and gh's and git's logins),
+/// Windows' own credentials and Edge (AppData\Local\Microsoft), and Chrome's profile (AppData\Local\Google).
+#[cfg(windows)]
+pub const KEY_FOLDERS: [&str; 13] = [".ssh", ".gnupg", ".config", ".aws", ".azure", ".kube", ".docker", ".claude", ".codex", ".gemini",
+                                     r"AppData\Roaming", r"AppData\Local\Microsoft", r"AppData\Local\Google"];
 
 /// Characters a folder's path can't have: Claude Code reads them in a rule as a pattern or a separator, and Gemini
-/// splits its folders at a comma.
+/// splits its folders at a comma. On Windows a backslash separates folders, so it is fine there.
+#[cfg(not(windows))]
 const ODD: [char; 8] = ['(', ')', '[', ']', '*', '?', '\\', ','];
+#[cfg(windows)]
+const ODD: [char; 7] = ['(', ')', '[', ']', '*', '?', ','];
+/// The odd characters as the refusal names them.
+#[cfg(not(windows))]
+const ODD_SAID: &str = "( ) [ ] * ? , or \\";
+#[cfg(windows)]
+const ODD_SAID: &str = "( ) [ ] * ? or ,";
+/// What separates the folders of a path you type: `/`, and on Windows `\` too.
+const SEPARATORS: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+/// What the refusal of a path that isn't a full one gives as examples.
+const FULL_PATH: &str = if cfg!(windows) { r"give the full path, like ~\Herd\shared or D:\data" } else { "give the full path, like ~/Herd/shared or /srv/data" };
 
 /// What a folder is checked against.
 #[derive(Debug, Clone, Default)]
@@ -58,16 +84,24 @@ pub struct Places {
 }
 
 impl Places {
-    /// Your home folder ($HOME), Gizai's data folders (the database's folder, and `$XDG_DATA_HOME/gizai` or
-    /// `~/.local/share/gizai`, where the installed Gizai keeps its data) and the projects' main checkouts.
+    /// Your home folder ($HOME; on Windows your profile folder, %USERPROFILE%), Gizai's data folders (the database's
+    /// folder, and where the installed Gizai keeps its data: `$XDG_DATA_HOME/gizai` or `~/.local/share/gizai`, on macOS
+    /// also `~/Library/Application Support/Gizai`, on Windows `%APPDATA%\Gizai`) and the projects' main checkouts.
     pub fn of(db: &Db) -> Places {
-        let home = std::env::var_os("HOME").map(PathBuf::from).filter(|h| h.is_absolute()).unwrap_or_default();
+        let home = if cfg!(windows) { std::env::home_dir() } else { std::env::var_os("HOME").map(PathBuf::from) };
+        let home = home.filter(|h| h.is_absolute()).unwrap_or_default();
         let mut data: Vec<PathBuf> = db.dir().map(Path::to_path_buf).into_iter().collect();
         if let Some(x) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|x| x.is_absolute()) {
             data.push(x.join("gizai"));
         }
-        if !home.as_os_str().is_empty() {
+        if !cfg!(windows) && !home.as_os_str().is_empty() {
             data.push(home.join(".local/share/gizai"));
+        }
+        if cfg!(target_os = "macos") && !home.as_os_str().is_empty() {
+            data.push(home.join("Library/Application Support/Gizai"));
+        }
+        if cfg!(windows) {
+            data.extend(std::env::var_os("APPDATA").map(PathBuf::from).filter(|a| a.is_absolute()).map(|a| a.join("Gizai")));
         }
         let checkouts = crate::projects::list(db).unwrap_or_default().into_iter()
             .filter_map(|p| Some((p.name, PathBuf::from(p.repo_path.filter(|r| !r.trim().is_empty())?))))
@@ -75,10 +109,10 @@ impl Places {
         Places { home, data, checkouts }
     }
 
-    /// `~/…` for a path in your home folder, else the path.
+    /// `~/…` (on Windows `~\…`) for a path in your home folder, else the path.
     pub fn show(&self, p: &Path) -> String {
         match p.strip_prefix(&self.home) {
-            Ok(rest) if !self.home.as_os_str().is_empty() => format!("~/{}", rest.display()),
+            Ok(rest) if !self.home.as_os_str().is_empty() => format!("~{MAIN_SEPARATOR}{}", rest.display()),
             _ => p.display().to_string(),
         }
     }
@@ -94,55 +128,91 @@ pub struct FolderCheck {
     pub warning: Option<String>,
 }
 
-/// `~/x` → `<home>/x`, with `.` and `..` worked out by name and no slash at the end. None: not an absolute path.
+/// `~/x` → `<home>/x`, with `.` and `..` worked out by name and no slash at the end. None: not an absolute path. On
+/// Windows `~\x` too, either slash separates folders and the drive is written one way: `c:/x` and `\\?\C:\x` (as
+/// `canonicalize` gives it) are both `C:\x`.
 pub fn normalize(raw: &str, home: &Path) -> Option<PathBuf> {
     let raw = raw.trim();
     let p = match raw.strip_prefix('~') {
         Some("") => home.to_path_buf(),
-        Some(rest) if rest.starts_with('/') && !home.as_os_str().is_empty() => home.join(rest.trim_start_matches('/')),
+        Some(rest) if rest.starts_with(SEPARATORS) && !home.as_os_str().is_empty() => home.join(rest.trim_start_matches(SEPARATORS)),
         _ => PathBuf::from(raw),
     };
     if !p.is_absolute() {
         return None;
     }
-    let mut out = PathBuf::from("/");
+    let mut out = if cfg!(windows) { PathBuf::new() } else { PathBuf::from("/") };
     for c in p.components() {
         match c {
             Component::ParentDir => { out.pop(); }
             Component::Normal(n) => out.push(n),
+            // Windows only: the drive or share, then the root folder on it.
+            Component::Prefix(pre) => out.push(plain_prefix(pre)),
+            Component::RootDir if cfg!(windows) => out.push(std::path::MAIN_SEPARATOR_STR),
             _ => {}
         }
     }
     Some(out)
 }
 
+/// Windows: a path's drive or share, written one way: `C:` for `c:` and `\\?\C:`, `\\server\share` for
+/// `\\?\UNC\server\share`; another kind (`\\.\pipe`…) as it is.
+fn plain_prefix(pre: std::path::PrefixComponent<'_>) -> std::ffi::OsString {
+    use std::path::Prefix;
+    match pre.kind() {
+        Prefix::Disk(d) | Prefix::VerbatimDisk(d) => format!("{}:", d.to_ascii_uppercase() as char).into(),
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) =>
+            format!(r"\\{}\{}", server.to_string_lossy(), share.to_string_lossy()).into(),
+        _ => pre.as_os_str().to_os_string(),
+    }
+}
+
+/// A path as `refusal` compares it: on Windows in lower case, since a name there is the same in any case.
+fn fold(p: &Path) -> Cow<'_, Path> {
+    if cfg!(windows) {
+        return Cow::Owned(PathBuf::from(p.as_os_str().to_string_lossy().to_lowercase()));
+    }
+    Cow::Borrowed(p)
+}
+
+/// The folder as it is on disk (links followed), or None when it isn't there. On Windows written as `normalize` writes
+/// it, without the `\\?\` that `canonicalize` puts before it, as the coding CLIs take it.
+fn on_disk(p: &Path) -> Option<PathBuf> {
+    let real = p.canonicalize().ok()?;
+    if cfg!(windows) {
+        return normalize(&real.to_string_lossy(), Path::new(""));
+    }
+    Some(real)
+}
+
 /// Why the folder `p` (absolute, normalized) can't be an agent's, or None.
 pub fn refusal(p: &Path, places: &Places) -> Option<String> {
-    let home = &places.home;
+    let (said, p, home) = (p, &*fold(p), &*fold(&places.home));
     let has_home = !home.as_os_str().is_empty();
     if p.parent().is_none() {
-        return Some("that's the whole disk (/): pick the folder the agent needs".into());
+        return Some(format!("that's the whole disk ({}): pick the folder the agent needs", said.display()));
     }
     if has_home && p == home {
         return Some("that's your home folder: pick the folder the agent needs inside it".into());
     }
     if has_home && home.starts_with(p) {
-        return Some(format!("it holds your home folder ({}): pick the folder the agent needs", home.display()));
+        return Some(format!("it holds your home folder ({}): pick the folder the agent needs", places.home.display()));
     }
     for d in &places.data {
-        if p.starts_with(d) {
+        let folded = fold(d);
+        if p.starts_with(&folded) {
             return Some(format!("that's Gizai's data folder ({}), or inside it", places.show(d)));
         }
-        if d.starts_with(p) {
+        if folded.starts_with(p) {
             return Some(format!("it holds Gizai's data folder ({})", places.show(d)));
         }
     }
     let rest = p.strip_prefix(home).ok().filter(|_| has_home)?;
     let first = rest.components().next().and_then(|c| c.as_os_str().to_str()).unwrap_or_default();
-    let key = KEY_FOLDERS.iter().map(Path::new).find(|k| rest.starts_with(k) || k.starts_with(rest))
+    let key = KEY_FOLDERS.iter().map(Path::new).find(|k| rest.starts_with(fold(k)) || fold(k).starts_with(rest))
         .map(|k| k.display().to_string())
         .or_else(|| first.starts_with(".claude").then(|| first.to_string()))?;
-    Some(format!("it holds keys or logins (~/{key})"))
+    Some(format!("it holds keys or logins (~{MAIN_SEPARATOR}{key})"))
 }
 
 /// The folder `raw` normalized, or why it can't be an agent's: checked as typed, and as it is on disk when a link
@@ -152,13 +222,13 @@ fn refused(raw: &str, places: &Places) -> std::result::Result<PathBuf, String> {
         return Err("give the folder's path".into());
     }
     if raw.chars().any(char::is_control) || raw.contains(ODD) {
-        return Err("Gizai can't pass a path with ( ) [ ] * ? , or \\ to the coding CLIs: rename the folder or pick another".into());
+        return Err(format!("Gizai can't pass a path with {ODD_SAID} to the coding CLIs: rename the folder or pick another"));
     }
-    let p = normalize(raw, &places.home).ok_or_else(|| "give the full path, like ~/Herd/shared or /srv/data".to_string())?;
+    let p = normalize(raw, &places.home).ok_or_else(|| FULL_PATH.to_string())?;
     if let Some(why) = refusal(&p, places) {
         return Err(why);
     }
-    if let Ok(real) = p.canonicalize() {
+    if let Some(real) = on_disk(&p) {
         if real != p {
             if let Some(why) = refusal(&real, places) {
                 return Err(format!("it leads to {}: {why}", places.show(&real)));
@@ -170,7 +240,7 @@ fn refused(raw: &str, places: &Places) -> std::result::Result<PathBuf, String> {
 
 /// "Read and change" in a project's main checkout: a warning, since agents normally never touch it.
 fn checkout_warning(p: &Path, places: &Places) -> Option<String> {
-    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let real = |p: &Path| on_disk(p).unwrap_or_else(|| p.to_path_buf());
     let p = real(p);
     places.checkouts.iter().find_map(|(name, c)| {
         let c = real(c);
@@ -248,7 +318,7 @@ pub fn for_run(list: &[Folder], places: &Places) -> (Vec<Folder>, Vec<String>) {
             Err(why) => notes.push(format!("Skipped the folder {}: {why}.", f.path)),
             Ok(p) if !p.is_dir() => notes.push(format!("Skipped the folder {}: it's missing, so this run goes without it.", f.path)),
             Ok(p) => {
-                let real = p.canonicalize().unwrap_or(p).display().to_string();
+                let real = on_disk(&p).unwrap_or(p).display().to_string();
                 if !out.iter().any(|o: &Folder| o.path == real) {
                     out.push(Folder { path: real, access: f.access.clone() });
                 }
@@ -262,7 +332,7 @@ pub fn for_run(list: &[Folder], places: &Places) -> (Vec<Folder>, Vec<String>) {
 /// the chat. Not when the closest folder of its list that holds it is set to read; yes when that one is set to read and
 /// change, and when no folder of its list holds it.
 pub fn may_update(list: &[Folder], folder: &Path, places: &Places) -> std::result::Result<(), String> {
-    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let real = |p: &Path| on_disk(p).unwrap_or_else(|| p.to_path_buf());
     let target = real(folder);
     let closest = list.iter()
         .filter_map(|f| Some((real(&normalize(&f.path, &places.home)?), f)))

@@ -1,4 +1,5 @@
-import type { AgentFolder, AgentInput, AgentServer, Member, Wakeup } from "../types";
+import type { AgentFolder, AgentInput, AgentServer, CliTools, Member, Wakeup } from "../types";
+import { cliToolsFrom } from "./cliTools";
 
 export function wakeupLabel(wakeup: Wakeup | string | null | undefined, minutes: number | null | undefined): string {
   if (wakeup === "on_assign") return "When assigned";
@@ -61,7 +62,9 @@ export type AgentDraft = { name: string; role: string; model: string; instructio
   /** Folders besides its worktree, as typed (rows with an empty path are dropped on save). */
   folders: AgentFolder[];
   /** Its MCP servers switched on or off, with the tools switched off of each (Tools; saved apart from the rest). */
-  mcp: AgentServer[] };
+  mcp: AgentServer[];
+  /** Its CLI's own tools: web search, fetching pages, built-in tools (Tools; saved apart from the rest). */
+  cliTools: CliTools };
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
@@ -72,6 +75,7 @@ export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
     boardCheck: !!m?.boardCheckMinutes, boardMinutes: String(m?.boardCheckMinutes ?? 15),
     folders: (m?.folders ?? []).map((f) => ({ path: f.path, access: f.access })),
     mcp: (m?.tools?.mcp ?? []).map((s) => ({ serverId: s.serverId, on: s.on, toolsOff: [...s.toolsOff] })),
+    cliTools: cliToolsFrom(m?.cliTools),
   };
 }
 

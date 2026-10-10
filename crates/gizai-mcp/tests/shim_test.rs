@@ -1,3 +1,5 @@
+// Linux and macOS only: the shim's Unix socket. Windows has a named pipe instead.
+#![cfg(unix)]
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixListener;
 use std::process::{Command, Stdio};

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { addFiles, createTask, getTeam, listProjects, listUsers } from "../api";
 import { go } from "../router";
 import { addPaths, fileName } from "../lib/files";
+import { modKey } from "../lib/keys";
 import { useDropZone } from "../lib/useDropZone";
 import type { Person, Project, Team } from "../types";
 import { Drawer } from "./Drawer";
@@ -83,7 +84,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   return (
     <Drawer title="New task" subtitle="Its column decides which agents pick it up, and when." onClose={onClose} dirty={dirty}
       error={created ? `Task created. Not added: ${created.failed.join("; ")}` : err}
-      hint={noProjects || created ? undefined : "Ctrl+Enter creates"}
+      hint={noProjects || created ? undefined : `${modKey()}+Enter creates`}
       actions={noProjects ? <button className="btn ghost" onClick={onClose}>Close</button>
         : created ? <><button key="close" className="btn ghost" onClick={onClose}>Close</button>
           <button key="open" className="btn primary" autoFocus onClick={() => openTask(created.id)}>Open task</button></>
@@ -125,7 +126,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
           </FormSection>
           <FormSection title="Description" text="Context for whoever picks it up: people and agents read the same text.">
             <Field label="Description" wide><MarkdownEditor value={description} onChange={setDescription} ariaLabel="Description" minHeight={180}
-              placeholder="What and why. Mention a task like KADE-12 or a person like @sanne." /></Field>
+              placeholder="What and why. @ links a task, project, client or agent." /></Field>
           </FormSection>
           <FormSection title="Acceptance criteria" text="What must be true when it's done. The QA agent checks these one by one.">
             <Field label="Acceptance criteria" wide><MarkdownEditor value={acceptance} onChange={setAcceptance} ariaLabel="Acceptance criteria" minHeight={100}

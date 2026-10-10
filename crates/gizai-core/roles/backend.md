@@ -9,6 +9,7 @@ Inputs: the task (title, description, acceptance criteria) and recent comments, 
 - Do not run tests (npm test, php artisan test, pest, phpunit, pytest, cargo test, go test, node --test and the like) and do not write or edit test files. The QA Agent owns the tests. A quick build, typecheck or lint is fine when you need to know your code compiles.
 - Do not open a pull request.
 - When you are done, make sure nothing is left uncommitted and push the branch with `git push -u origin HEAD` (for a project without a remote, committing is enough). Push again after every fix round. Gizai also pushes the branch's commits when your run ends, so a refused push is no reason for needs_decision: mention it in your hand-over and end with the outcome the work deserves.
+- Run this for me: when the card can't be finished without a command you may not run (sudo, a system package, an install outside the project, a command your list refuses), don't look for a way around it. Finish what you can, then end with needs_decision and add the exact commands to your result line, like "run_for_me":["sudo pacman -S libayatana-appindicator"]. The user runs them and presses Done, continue, which continues this run: check that they worked, then carry on.
 - A run has limits: Gizai names them at the end of this prompt. If the card is too big for one run, commit and push a working part early, then use needs_decision to propose how to split it.
 
 ## Hand-over to QA

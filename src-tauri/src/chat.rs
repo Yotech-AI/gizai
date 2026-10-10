@@ -95,6 +95,95 @@ pub struct ChatManager {
     /// Threads whose answer under way used a tool from outside Gizai (an MCP server of its own, later the web or the
     /// browser): Gizai's tools that act refuse the rest of that answer (`tools::NOT_AFTER_OUTSIDE`).
     outside: Mutex<HashMap<String, String>>,
+    /// Per chat answer under way (its run): the uses of Gizai's own tools its stream has shown so far, which those tools
+    /// wait for (`wait_shown`). There from just before Claude Code starts until its stream has ended.
+    shown: Mutex<HashMap<String, Vec<ShownUse>>>,
+    /// Wakes the calls waiting in `wait_shown`.
+    shown_changed: tokio::sync::Notify,
+}
+
+/// A use of one of Gizai's tools that an answer's stream showed.
+struct ShownUse {
+    /// Its tool use id (`toolu_…`).
+    id: String,
+    /// The tool, without `mcp__gizai__`.
+    tool: String,
+    input: serde_json::Value,
+    /// A call without a tool use id was matched to it.
+    taken: bool,
+}
+
+/// While this lives, the answer `run_id`'s stream is read, and calls can wait to see their tool use in it (`wait_shown`).
+/// Dropped when the stream has ended: calls still waiting are refused at once.
+struct Showing<'a> {
+    st: &'a AppState,
+    run_id: String,
+}
+
+impl<'a> Showing<'a> {
+    fn open(st: &'a AppState, run_id: &str) -> Self {
+        st.chat.shown.lock().unwrap().insert(run_id.to_string(), vec![]);
+        Showing { st, run_id: run_id.to_string() }
+    }
+
+    /// The stream showed a use of Gizai's tool `tool`. Every tool before it in the answer is marked by now, as the stream
+    /// is read in order, so a call of it may go on.
+    fn saw(&self, id: &str, tool: &str, input: &serde_json::Value) {
+        if let Some(uses) = self.st.chat.shown.lock().unwrap().get_mut(&self.run_id) {
+            uses.push(ShownUse { id: id.to_string(), tool: tool.to_string(), input: input.clone(), taken: false });
+        }
+        self.st.chat.shown_changed.notify_waiters();
+    }
+}
+
+impl Drop for Showing<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut shown) = self.st.chat.shown.lock() {
+            shown.remove(&self.run_id);
+        }
+        self.st.chat.shown_changed.notify_waiters();
+    }
+}
+
+/// How a call's wait for its own tool use in the answer's stream ended (`wait_shown`).
+#[derive(Debug, PartialEq)]
+pub(crate) enum Shown {
+    /// The stream showed it.
+    Yes,
+    /// Not within the time given.
+    NotYet,
+    /// That answer's stream has ended (or there is none): it won't show.
+    Ended,
+}
+
+/// Waits, at most `limit`, until the stream of the chat answer `run_id` shows the use of Gizai's tool `tool` that a call
+/// comes from: the one with the id Claude Code gave the call (`tool_use`), else the first one with these arguments that
+/// no other call was matched to. Claude Code can start a call before Gizai has read its tool use in the stream; once
+/// Gizai has, every tool before it in the answer is marked (`mark_outside`), also one in the same message.
+pub(crate) async fn wait_shown(st: &AppState, run_id: &str, tool_use: Option<&str>, tool: &str, args: &serde_json::Map<String, serde_json::Value>,
+                               limit: Duration) -> Shown {
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        // Listening before looking, so a tool use shown in between still wakes this call.
+        let changed = st.chat.shown_changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        {
+            let mut shown = st.chat.shown.lock().unwrap();
+            let Some(uses) = shown.get_mut(run_id) else { return Shown::Ended };
+            let found = match tool_use {
+                Some(id) => uses.iter_mut().find(|u| u.id == id && u.tool == tool),
+                None => uses.iter_mut().find(|u| !u.taken && u.tool == tool && u.input.as_object().map_or(args.is_empty(), |i| i == args)),
+            };
+            if let Some(u) = found {
+                u.taken = true;
+                return Shown::Yes;
+            }
+        }
+        if tokio::time::timeout_at(deadline, changed).await.is_err() {
+            return Shown::NotYet;
+        }
+    }
 }
 
 /// The agent's own MCP servers in a turn's init line: their state in its last run, and a chat note for each that didn't connect.
@@ -1030,6 +1119,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         no_session_persistence: std::env::var("GIZAI_CHAT_NO_PERSIST").is_ok_and(|v| v == "1"),
         disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
+    let showing = Showing::open(st, &run_id);
     let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
         Ok(h) => h,
         Err(e) => {
@@ -1090,6 +1180,8 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
             ChatEvent::ToolUse { id, name, input } => {
                 if is_outside_tool(&name) {
                     mark_outside(st, &thread.id, &name);
+                } else if let Some(tool) = name.strip_prefix("mcp__gizai__") {
+                    showing.saw(&id, tool, &input);
                 }
                 set_live(st, &thread.id, |l| l.tool = Some(name.clone()));
                 emit(st, &thread.id, ChatUiEvent::Tool { name: name.clone() });
@@ -1114,6 +1206,8 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
             ChatEvent::Other { .. } => {}
         }
     }
+    // The stream has ended: nothing more will show, so a call still waiting for its tool use is refused.
+    drop(showing);
     // Text that was being written when the turn ended (stopped, crashed) is kept as it stands.
     if !draft.trim().is_empty() {
         save(st, NewMessage { body_md: Some(draft.trim().to_string()), ..base("agent") });

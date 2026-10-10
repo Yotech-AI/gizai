@@ -588,14 +588,17 @@ async fn continue_with(st: &AppState, run_id: &str, bin_override: Option<String>
     }
     let answer = if asked {
         let since = run.ended_at.unwrap_or(run.created_at);
-        let lines: Vec<String> = comments::list(&st.db, &task_id).unwrap_or_default().into_iter()
+        // The Team Lead's comment that asked you (GA-70) is told to the agent with the rest, but it is no answer.
+        let asking = run.lead.as_ref().and_then(|l| l.comment_id.clone());
+        let said: Vec<(bool, String)> = comments::list(&st.db, &task_id).unwrap_or_default().into_iter()
             .filter(|c| c.created_at > since && c.run_id.as_deref() != Some(run_id))
-            .map(|c| format!("{}: {}", c.author_name, c.body_md.trim()))
+            .map(|c| (asking.as_deref() != Some(c.id.as_str()), format!("{}: {}", c.author_name, c.body_md.trim())))
             .collect();
         // A note is an answer too: it is saved on the card with the run (`start_inner`).
-        if lines.is_empty() && note.is_none() {
+        if !said.iter().any(|(answer, _)| *answer) && note.is_none() {
             return Err("nobody has answered on the card since this run asked for a decision".into());
         }
+        let lines: Vec<String> = said.into_iter().map(|(_, l)| l).collect();
         Some(lines[lines.len().saturating_sub(5)..].join("\n\n"))
     } else {
         None

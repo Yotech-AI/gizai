@@ -27,7 +27,8 @@ const COMMENTS: usize = 8;
 /// How a question the Team Lead took ended (`take`).
 #[derive(Debug)]
 pub struct Settled {
-    /// answered, escalated or dropped (the card moved on before the Team Lead was done).
+    /// answered, escalated, dropped (the card moved on before the Team Lead was done) or skipped (the Team Lead can't
+    /// run here: the question went to you as before, without a comment).
     pub state: String,
     /// The Team Lead's run on the question, when it started.
     pub run_id: Option<String>,
@@ -176,6 +177,14 @@ async fn settle(st: &AppState, asked: &str, lead_id: &str) -> Settled {
             return escalated(None, why, format!("Needs {you}: I couldn't look at this question ({e}), so it is yours to decide."));
         }
     };
+    // It can't run here at all (no MCP helper, not on a Claude Code it finds): the question goes to you as before.
+    if let Err(why) = crate::chat::question_ready(st, &lead) {
+        eprintln!("gizai: the Team Lead can't look at the question of run {asked}, so it goes to the Inbox: {why}");
+        if let Err(e) = questions::skip(&st.db, asked, &why) {
+            eprintln!("gizai: sending the question of run {asked} to the Inbox failed: {e}");
+        }
+        return Settled { state: "skipped".into(), run_id: None, reason: Some(why), continued: None };
+    }
     let ran = crate::chat::question_once(st, &lead, asked, &prompt(st, &q)).await;
     let run_id = Some(ran.run_id.clone()).filter(|r| !r.is_empty());
     if ran.status != "succeeded" {

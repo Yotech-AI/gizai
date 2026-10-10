@@ -93,6 +93,7 @@ export function leadText(l: LeadAnswer): string {
     case "answered": return "Team Lead answered";
     case "escalated": return `Team Lead escalated to you${l.reason ? `: ${l.reason}` : ""}`;
     case "dropped": return "The Team Lead stopped: the card moved on first";
+    case "skipped": return `Went to you: the Team Lead can't look at questions here${l.reason ? ` (${l.reason})` : ""}`;
     default: return "Team Lead";
   }
 }

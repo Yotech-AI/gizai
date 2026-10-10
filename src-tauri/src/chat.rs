@@ -1501,6 +1501,20 @@ pub struct QuestionRun {
     pub text: String,
 }
 
+/// Whether the Team Lead can look at questions here (GA-70): it runs on a Claude Code CLI whose program is found, and the
+/// gizai-mcp helper is next to Gizai. Err says why not.
+pub fn question_ready(st: &AppState, agent: &Member) -> Result<(), String> {
+    let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
+    if cli.kind != "claude_code" {
+        return Err(format!("{} runs on {}: looking at a question needs a Claude Code CLI", agent.name, cli.name));
+    }
+    crate::clis::spec(st, &cli, None)?;
+    if !st.mcp_shim.as_ref().is_some_and(|p| p.is_file()) {
+        return Err("The gizai-mcp helper is missing next to Gizai: rebuild with scripts/run.sh".into());
+    }
+    Ok(())
+}
+
 /// The Team Lead's run on the question the run `asked_run_id` ended with (GA-70), with `prompt` (the question and its
 /// card) in a fresh session: like a board check (the gizai tools with a token of its own, here only the ones that read,
 /// `manual` permissions, Read, Glob and Grep in its copies of the code and its own folders, a chat turn's limits),

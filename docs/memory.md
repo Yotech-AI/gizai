@@ -158,12 +158,14 @@ When a task agent ends its run with `needs_decision`, the Team Lead looks at the
 5. **Escalated**, and also a failed or timed-out run, one without its result line, or an answer the agent can't be
    continued with: the Team Lead's comment "Needs <you>: why", the options and its advice, and the hold's reason becomes
    "Team Lead escalated to you: why", in the Inbox (it notifies as a new hold). A question still with the Team Lead when
-   Gizai stops goes to you at the next start.
+   Gizai stops goes to you at the next start. A later Continue doesn't count the Team Lead's comment as an answer. When the
+   Team Lead can't run here at all (no gizai-mcp helper, its CLI not found), the question goes to you as before, without
+   a comment, and the Runs tab says why.
 6. **Your answer.** When the agent starts again on a card whose question the Team Lead escalated, the comments people
    wrote since are kept in `Decisions/<project name>` as the Team Lead's, with the card, once per question.
 
 The question's record is kept under `lead` in the asking run's `outcome_json` (state `asking`, `answering`, `answered`,
-`escalated` or `dropped` when you took the card over first), and the Team Lead's run is stored with trigger `approval` and
+`escalated`, `dropped` when you took the card over first, or `skipped`), and the Team Lead's run is stored with trigger `approval` and
 read as `question`: no new columns. The Runs tab shows on the asking run who answered, the answer or the reason, and what
 the Team Lead's look cost; that cost counts toward the Team Lead's budget. The Team Lead's agent page lists its runs on
 questions with their cards.

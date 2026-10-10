@@ -197,9 +197,10 @@ export type Run = {
   questionTaskId?: string | null;
 };
 /** What the Team Lead did with a run's question (GA-70). state: asking (it looks at it now), answering (it answered and Gizai
- *  continues the agent), answered, escalated (it asked you: the Inbox) or dropped (the card moved on before it was done). */
+ *  continues the agent), answered, escalated (it asked you: the Inbox), dropped (the card moved on before it was done) or
+ *  skipped (it can't run here, reason says why: the question went to you as before). */
 export type LeadAnswer = {
-  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | string;
+  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | "skipped" | string;
   leadId?: string | null;
   /** The Team Lead's run on the question. */
   runId?: string | null;
@@ -213,6 +214,8 @@ export type LeadAnswer = {
   costUsdMicros: number;
   /** You answered after it escalated, and the Team Lead kept your answer in memory. */
   learned?: boolean;
+  /** Escalated: the Team Lead's comment that asks you. */
+  commentId?: string | null;
 };
 /** A memory note a run's prompt was given: its path, its length and how much of it the prompt showed (less when cut). */
 export type GivenNote = { path: string; chars: number; shown: number };

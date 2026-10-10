@@ -5,8 +5,8 @@
 //! its advice, and the card lands in the Inbox). Any error, a timeout or a run without an answer escalates too.
 //!
 //! What the Team Lead did is kept with the question: under `lead` in the asking run's `outcome_json` (state `asking`,
-//! `answering` while Gizai continues the agent, then `answered`, `escalated` or `dropped` when the card moved on without
-//! it). The Team Lead's own run is a run without a card, stored with trigger `approval` (the runs table's CHECK takes no
+//! `answering` while Gizai continues the agent, then `answered`, `escalated`, `dropped` when the card moved on without
+//! it, or `skipped` when the Team Lead can't run here at all, which goes to you as before). The Team Lead's own run is a run without a card, stored with trigger `approval` (the runs table's CHECK takes no
 //! new trigger without rebuilding the whole table) and read as `question`, its `outcome_json` naming the run that asked.
 //! So the runs table needs no new column.
 //!
@@ -46,7 +46,8 @@ pub fn set_enabled(db: &Db, on: bool) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 pub struct LeadAnswer {
     /// `asking` (the Team Lead looks at it now), `answering` (it answered, and Gizai continues the agent), `answered`,
-    /// `escalated` (it asked you: the Inbox) or `dropped` (the card moved on before it was done).
+    /// `escalated` (it asked you: the Inbox), `dropped` (the card moved on before it was done) or `skipped` (it can't run
+    /// here, `reason` says why: the question went to you as before).
     pub state: String,
     /// The Team Lead.
     pub lead_id: Option<String>,
@@ -62,6 +63,9 @@ pub struct LeadAnswer {
     pub cost_usd_micros: i64,
     /// You answered after it escalated, and Gizai saved your answer in memory.
     pub learned: bool,
+    /// Escalated: the Team Lead's comment that asks you ("Needs <you>: …"). It is no answer to the question
+    /// (`runs::continue_answered` doesn't count it as one).
+    pub comment_id: Option<String>,
 }
 
 /// `lead` in a run's `outcome_json`, as stored.
@@ -77,13 +81,14 @@ struct Stored {
     note: Option<String>,
     escalated_at: Option<i64>,
     learned: bool,
+    comment: Option<String>,
 }
 
 /// The question's record (`outcome_json.lead`, as JSON text) and the Team Lead's run's cost as `Run::lead`.
 pub(crate) fn lead_of(json: Option<String>, cost: Option<i64>) -> Option<LeadAnswer> {
     let s: Stored = serde_json::from_str(&json?).ok()?;
     Some(LeadAnswer { state: s.state, lead_id: s.lead, run_id: s.run, reason: s.reason, answer: s.answer, note: s.note,
-                      cost_usd_micros: cost.unwrap_or(0), learned: s.learned })
+                      cost_usd_micros: cost.unwrap_or(0), learned: s.learned, comment_id: s.comment })
 }
 
 fn stored_in(c: &Connection, run_id: &str) -> Result<Option<Stored>> {
@@ -139,7 +144,8 @@ pub(crate) fn hand_over_in(w: &Writer, run_id: &str, task_id: &str, agent_id: &s
         }
     }
     let tries: i64 = c.query_row(
-        "SELECT count(*) FROM runs WHERE task_id=?1 AND id<>?2 AND json_extract(outcome_json, '$.lead.lead') IS NOT NULL",
+        "SELECT count(*) FROM runs WHERE task_id=?1 AND id<>?2 AND json_extract(outcome_json, '$.lead.lead') IS NOT NULL
+           AND json_extract(outcome_json, '$.lead.state') <> 'skipped'",
         rusqlite::params![task_id, run_id], |r| r.get(0))?;
     if tries >= MAX_PER_CARD {
         return Ok(None);
@@ -303,6 +309,21 @@ pub fn answered(db: &Db, asked_run_id: &str) -> Result<()> {
     })
 }
 
+/// The Team Lead can't look at questions here (`why`: no MCP helper, its CLI isn't Claude Code or isn't found): the
+/// question goes to you as if the Team Lead hadn't taken it, without a comment; the card, on hold with the agent's
+/// question, is in the Inbox now. The question is `skipped`.
+pub fn skip(db: &Db, asked_run_id: &str, why: &str) -> Result<()> {
+    db.write(None, |w| {
+        let Some(mut s) = stored_in(w.conn(), asked_run_id)? else { return Ok(()) };
+        if s.state == "asking" {
+            s.state = "skipped".into();
+            s.reason = Some(cut(why, KEEP_CHARS));
+            save_stored(w, asked_run_id, &s)?;
+        }
+        Ok(())
+    })
+}
+
 /// The card moved on before the Team Lead was done (a person cleared the hold, or started a run): the question no longer
 /// waits for it.
 fn drop_in(w: &Writer, asked_run_id: &str) -> Result<()> {
@@ -328,7 +349,7 @@ pub fn escalate(db: &Db, asked_run_id: &str, lead_run_id: Option<&str>, reason: 
         };
         let reason = cut(reason, KEEP_CHARS);
         if let (Some(lead), false) = (s.lead.as_deref(), comment.trim().is_empty()) {
-            comments::add_in(w, lead, &task, comment.trim(), lead_run_id)?;
+            s.comment = Some(comments::add_in(w, lead, &task, comment.trim(), lead_run_id)?);
         }
         crate::workflow::set_hold(w, &task, "needs_decision", &format!("Team Lead escalated to you: {reason}"))?;
         s.state = "escalated".into();

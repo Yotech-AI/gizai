@@ -165,7 +165,7 @@ fn server_names_with_two_underscores_or_a_trailing_one_are_refused_and_their_too
 // ---- after an outside tool, in that answer ----
 
 #[tokio::test]
-async fn after_an_outside_tool_the_nine_acting_tools_are_refused_for_the_rest_of_the_answer_and_change_nothing() {
+async fn after_an_outside_tool_the_acting_tools_are_refused_for_the_rest_of_the_answer_and_change_nothing() {
     let t = setup();
     t.ok(None, "create_task", json!({"project": "KADE", "title": "Export"})).await;
     let f = t._dir.path().join("brief.txt");
@@ -176,7 +176,7 @@ async fn after_an_outside_tool_the_nine_acting_tools_are_refused_for_the_rest_of
     gizai_lib::chat::mark_outside(&t.st, &thread, "WebFetch");
     assert_eq!(app_chat::used_outside(&t.st, &thread).as_deref(), Some("mcp__otus__search"));
     let before = (t.agent_names(), t.columns(), team::agent(&t.st.db, &t.backend).unwrap());
-    let calls: [(&str, Value); 9] = [
+    let calls: [(&str, Value); 10] = [
         ("start_agent_run", json!({"task": "KADE-1", "agent": "Backend Agent"})),
         ("continue_agent_run", json!({"task": "KADE-1"})),
         ("create_agent", json!({"name": "Otus Agent", "role": "backend"})),
@@ -186,6 +186,8 @@ async fn after_an_outside_tool_the_nine_acting_tools_are_refused_for_the_rest_of
         ("set_column", json!({"column": "Testing", "auto": true, "new_name": "Steered"})),
         ("attach_file", json!({"path": f.display().to_string(), "task": "KADE-1"})),
         ("update_checkout", json!({"project": "KADE"})),
+        // GA-86: merging a pull request
+        ("merge_pull_request", json!({"task": "KADE-1"})),
     ];
     assert_eq!(calls.iter().map(|(n, _)| *n).collect::<Vec<_>>(), tools::NOT_AFTER_OUTSIDE, "every tool in the list is tried");
     for (name, args) in calls {

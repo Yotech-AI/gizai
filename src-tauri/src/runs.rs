@@ -888,8 +888,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let git_config = match tokio::task::spawn_blocking(move || crate::pulls::run_git_config(&st2, &p2, &dir)).await {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => {
-            notes.push(format!("Couldn't set up this run's own git push over HTTPS (Settings → GitHub): {e}. Its git push goes as \
-                                the repository's remote says, and Gizai still pushes the branch when the run ends."));
+            notes.push(format!("Couldn't set up this run's own git push over HTTPS with gh's login (Settings → GitHub): {e}. A git \
+                                push in this run goes as the repository's remote says."));
             vec![]
         }
         Err(e) => {

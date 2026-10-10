@@ -24,7 +24,7 @@ vi.mock("react", async (orig) => {
 });
 
 const { AgentCliToolsFields } = await import("./AgentCliTools");
-const { NO_CLI_TOOLS, fitCliTools, parseDomains, sameCliTools, switchBuiltin, switchBrowser, browserOn } = await import("../lib/cliTools");
+const { NO_CLI_TOOLS, cliToolsFrom, fitCliTools, parseDomains, sameCliTools, switchBuiltin, switchBrowser, browserOn } = await import("../lib/cliTools");
 const { npmWebWarning } = await import("../lib/mcp");
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<")
@@ -32,19 +32,24 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, 
 
 const tool = (id: string, label: string, group: string, risk: string, how: string, description: string, note = "", reported = false): CatalogTool =>
   ({ id, label, group, risk, how, description, note, reported });
+const SLASH_LINE = "Lets the agent run your slash commands and skills, like /design, including those from plugins; they can steer the run.";
+const CODEX_SLASH = "Gizai has no checked per-run switch for Codex's slash commands and skills: they stay off for Codex agents.";
+const GEMINI_SLASH = "Gizai has no checked per-run switch for Gemini's custom commands and skills (activate_skill), and never writes in ~/.gemini: they stay off for Gemini agents.";
 const claudeTools: CatalogTool[] = [
   tool("WebSearch", "Web search", "web", "medium", "web", "Searches the web. Results are untrusted text, and the search terms leave your computer.", "", true),
   tool("WebFetch", "Fetch web pages", "web", "high", "web", "Reads web pages, any or only the domains you list. Pages are untrusted, and an address can carry data out."),
   tool("Read", "Read files", "files", "low", "always", "Reads files in its worktree and its folders.", "Claude Code uses it without asking.", true),
   tool("Bash", "Run commands", "commands", "high", "elsewhere", "Runs shell commands.", "Only the commands under Permissions → Allowed commands."),
-  tool("Skill", "Skills", "other", "medium", "off", "Loads a skill from a plugin or your settings.", "Gizai keeps skills and slash commands off in agent runs (--disable-slash-commands)."),
+  tool("SlashCommand", "Slash commands and skills", "other", "medium", "slash", SLASH_LINE),
+  tool("Skill", "Slash commands and skills", "other", "medium", "slash", SLASH_LINE, "", true),
+  tool("AskUserQuestion", "Ask you a question", "planning", "low", "off", "Asks you to pick an answer.", "A headless run can't ask: the agent asks in its result line (needs_decision) instead."),
   tool("FancyNewTool", "FancyNewTool", "other", "unknown", "switch", "Claude Code reports it, and Gizai's catalog doesn't know it yet: check what it does before you switch it on.", "", true),
 ];
 const found = { node: "/usr/bin/node", nodeVersion: "v24.1.0", npx: "/usr/bin/npx", browser: "/usr/bin/chromium", browserName: "Chromium", missing: [] };
 const claude: ToolsView = {
   kind: "claude_code", web: { search: null, fetch: null, domains: null },
   browser: { disabled: null, needs: found, version: "1.10.1", lastRun: null, tools: [], summary: "", risk: "high" },
-  builtin: { tools: claudeTools, source: "Gizai's catalog, with the tools Claude Code reported in this agent's last run (2 min ago).", canAsk: true },
+  builtin: { tools: claudeTools, source: "Gizai's catalog, with the tools Claude Code reported in this agent's last run (2 min ago).", canAsk: true, slash: null },
   saved: { ...NO_CLI_TOOLS },
 };
 const codex: ToolsView = {
@@ -52,7 +57,15 @@ const codex: ToolsView = {
   browser: { ...claude.browser, disabled: "Codex takes MCP servers per run, but Gizai hasn't checked yet that a headless codex exec may call their tools: MCP servers and the browser stay off for Codex agents for now." },
   builtin: { tools: [tool("web_search", "Web search", "web", "medium", "web", "Searches the web (Codex's live search)."),
     tool("web_fetch", "Fetch web pages", "web", "high", "off", "Reads web pages.", "Codex has no tool of its own that fetches a page.")],
-    source: "From Gizai's catalog: Codex has no command that lists its tools without a model call.", canAsk: false },
+    source: "From Gizai's catalog: Codex has no command that lists its tools without a model call.", canAsk: false, slash: CODEX_SLASH },
+  saved: { ...NO_CLI_TOOLS },
+};
+const gemini: ToolsView = {
+  kind: "gemini", web: { search: "Gemini's own read-only policy allows its web search in every run.", fetch: null, domains: "Gemini can't limit fetching to some domains." },
+  browser: { ...claude.browser, disabled: "Gemini takes MCP servers only from its settings files." },
+  builtin: { tools: [tool("web_fetch", "Fetch web pages", "web", "high", "web", "Reads web pages."),
+    tool("activate_skill", "Skills", "other", "medium", "off", "Loads a skill from .gemini/skills.", "Not switched on by Gizai.")],
+    source: "From Gizai's catalog: Gemini has no command that lists its tools without a model call.", canAsk: false, slash: GEMINI_SLASH },
   saved: { ...NO_CLI_TOOLS },
 };
 
@@ -110,7 +123,8 @@ describe("the Tools section's Web, Browser and Built-in tools", () => {
     expect(t).toContain("Fetch web pages WebFetch High risk Reads web pages");
     expect(t).toContain("Test web pages in a hidden browser chrome-devtools 1.10.1 High risk Opens, reads and clicks web pages");
     expect(t).toContain("Read files Read Low risk Always on Reported Reads files in its worktree and its folders. Claude Code uses it without asking.");
-    expect(t).toContain("Skills Skill Medium risk Off");
+    expect(t).toContain("Slash commands and skills SlashCommand, Skill Medium risk Reported " + SLASH_LINE);
+    expect(t).toContain("Ask you a question AskUserQuestion Low risk Off");
     // a tool the catalog doesn't know: under Other tools the CLI reports, risk unknown, off
     expect(t).toContain("Other tools the CLI reports FancyNewTool FancyNewTool Risk unknown Reported Claude Code reports it");
     expect(t).not.toContain("Accept self-signed certificates");
@@ -155,7 +169,7 @@ describe("the Tools section's Web, Browser and Built-in tools", () => {
     expect(t.changed.map((c) => [c.webSearch, c.webFetch, c.builtin])).toEqual([[true, false, []], [false, true, []], [false, false, ["FancyNewTool"]]]);
     expect(t.mcp).toEqual([[{ serverId: "chrome-devtools", on: true, toolsOff: [] }]]);
     // tools that are always on, set elsewhere or off have no switch
-    for (const id of ["Read", "Bash", "Skill"]) expect(t.input(`Use ${id}`), id).toBeUndefined();
+    for (const id of ["Read", "Bash", "Skill", "SlashCommand", "AskUserQuestion"]) expect(t.input(`Use ${id}`), id).toBeUndefined();
     // with the browser on: the certificate switch, off
     const b = tree({ mcp: browserSwitch });
     expect(b.input("Accept self-signed certificates")!.checked).toBe(false);
@@ -185,14 +199,68 @@ describe("the Tools section's Web, Browser and Built-in tools", () => {
   });
 });
 
+// GA-93: Slash commands and skills, one switch for Claude Code's SlashCommand and Skill at the top of Built-in tools.
+describe("the Slash commands and skills switch", () => {
+  const LABEL = "Use slash commands and skills";
+
+  it("is off for an agent with nothing on, under Built-in tools, with its risk in one line", () => {
+    const html = render();
+    expect(box(html, LABEL)).not.toBe("");
+    expect(box(html, LABEL)).not.toContain("checked");
+    expect(box(html, LABEL)).not.toContain("disabled");
+    const t = text(html);
+    expect(t).toContain("Slash commands and skills SlashCommand, Skill Medium risk Reported " + SLASH_LINE);
+    // under Built-in tools, before the groups; neither tool is listed again on its own
+    expect(t.indexOf("Built-in tools")).toBeLessThan(t.indexOf("Slash commands and skills"));
+    expect(t.indexOf(SLASH_LINE)).toBeLessThan(t.indexOf("Read files Read"));
+    expect(t.split(SLASH_LINE).length - 1).toBe(1);
+    // a new agent's form: off too
+    expect(box(render({ view: { ...claude, saved: null } }), LABEL)).not.toContain("checked");
+  });
+
+  it("shows it on once switched on, and switching it changes only it", () => {
+    expect(box(render({ value: { ...NO_CLI_TOOLS, slashCommands: true } }), LABEL)).toContain("checked");
+    const t = tree({});
+    t.input(LABEL)!.onChange({ target: { checked: true } });
+    expect(t.changed).toEqual([{ ...NO_CLI_TOOLS, slashCommands: true }]);
+    const on = tree({ value: { ...NO_CLI_TOOLS, webSearch: true, slashCommands: true } });
+    expect(on.input(LABEL)!.checked).toBe(true);
+    on.input(LABEL)!.onChange({ target: { checked: false } });
+    expect(on.changed).toEqual([{ ...NO_CLI_TOOLS, webSearch: true, slashCommands: false }]);
+  });
+
+  it("is disabled with the reason on Codex and Gemini, even when it was on", () => {
+    for (const [view, why] of [[codex, CODEX_SLASH], [gemini, GEMINI_SLASH]] as [ToolsView, string][]) {
+      const html = render({ view, value: { ...NO_CLI_TOOLS, slashCommands: true } });
+      expect(box(html, LABEL), view.kind).toContain('disabled=""');
+      expect(box(html, LABEL), view.kind).not.toContain("checked");
+      expect(text(html), view.kind).toContain(`Slash commands and skills Medium risk ${why}`);
+      expect(text(html), view.kind).not.toContain(SLASH_LINE);
+    }
+  });
+
+  it("tells the Team Lead its chat never gets slash commands or skills", () => {
+    expect(text(render({ lead: true }))).toContain("and never slash commands or skills.");
+    expect(text(render())).not.toContain("never slash commands or skills");
+  });
+
+  it("is read off for an agent saved without it, and a change to it counts as a change to save", () => {
+    expect(cliToolsFrom({ webSearch: true, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [] } as unknown as CliTools).slashCommands).toBe(false);
+    expect(cliToolsFrom(null).slashCommands).toBe(false);
+    expect(cliToolsFrom({ ...NO_CLI_TOOLS, slashCommands: true }).slashCommands).toBe(true);
+    expect(sameCliTools({ ...NO_CLI_TOOLS, slashCommands: true }, NO_CLI_TOOLS)).toBe(false);
+    expect(sameCliTools(cliToolsFrom({ ...NO_CLI_TOOLS, slashCommands: true }), { ...NO_CLI_TOOLS, slashCommands: true })).toBe(true);
+  });
+});
+
 describe("the switches' helpers", () => {
   it("keep only what each CLI takes", () => {
-    const all: CliTools = { webSearch: true, webFetch: true, fetchDomains: ["docs.rs"], insecureCerts: true, builtin: ["FancyNewTool"] };
+    const all: CliTools = { webSearch: true, webFetch: true, fetchDomains: ["docs.rs"], insecureCerts: true, builtin: ["FancyNewTool"], slashCommands: true };
     expect(fitCliTools(all, "claude_code")).toEqual(all);
-    expect(fitCliTools(all, "codex")).toEqual({ ...all, webFetch: false, fetchDomains: [], builtin: [] });
-    expect(fitCliTools(all, "gemini")).toEqual({ ...all, webSearch: false, fetchDomains: [], builtin: [] });
+    expect(fitCliTools(all, "codex")).toEqual({ ...all, webFetch: false, fetchDomains: [], builtin: [], slashCommands: false });
+    expect(fitCliTools(all, "gemini")).toEqual({ ...all, webSearch: false, fetchDomains: [], builtin: [], slashCommands: false });
     expect(fitCliTools(all, "other")).toEqual(NO_CLI_TOOLS);
-    expect(NO_CLI_TOOLS).toEqual({ webSearch: false, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [] });
+    expect(NO_CLI_TOOLS).toEqual({ webSearch: false, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [], slashCommands: false });
   });
 
   it("read domains, compare and switch", () => {

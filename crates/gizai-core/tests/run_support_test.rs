@@ -179,7 +179,8 @@ fn a_schema_9_database_gets_the_refusals_table_and_its_runs_keep_their_shape() {
         Ok((c.query_row("PRAGMA user_version", [], |row| row.get(0))?, v))
     }).unwrap();
     assert_eq!(version, gizai_core::db::SCHEMA_VERSION);
-    assert_eq!(after, cols, "the runs table keeps its columns");
+    // GA-19's 0014 adds memory_json (the notes a run's prompt was given) at the end; 0010 changes nothing here.
+    assert_eq!(after, [cols.clone(), vec!["memory_json".to_string()]].concat(), "the runs table keeps its columns");
     assert!(!cols.iter().any(|c| c.contains("refus")));
     assert!(runs::get(&db, &r).unwrap().refused.is_empty(), "an older run has none");
     runs::set_refused(&db, &r, &[Refusal { tool: "Bash".into(), input: "ls /tmp".into(), reason: String::new() }]).unwrap();

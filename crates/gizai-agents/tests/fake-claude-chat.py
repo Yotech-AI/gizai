@@ -17,6 +17,8 @@ The prompt (stdin) decides what happens:
   FAKE_ATTACH_TO <task>           calls attach_file with the first file the prompt names ("- name: /path", the files added
                                   to a message) and that task, instead of get_overview
   FAKE_READ_FILES                 reads every file the prompt names that way; the last answer is "Read: <their text>"
+  FAKE_REMEMBER <text>            calls memory_append to add "- <text>" (the rest of that line) under Working agreements in
+                                  Team Lead/Notes (GA-19), instead of get_overview
 Each run appends {argv, prompt, account, cwd} to fake-calls.jsonl next to its MCP config, for the tests to read; `account`
 is its CLAUDE_CONFIG_DIR. Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
 to the MCP config, never in the account's folder), and --resume from another account exits 1 before init, like Claude
@@ -155,7 +157,10 @@ say("Sure, on it.")
 m = re.search(r"create task (.+?) in ([A-Za-z0-9]+)", prompt)
 added = re.findall(r"^- .+?: (/.+)$", prompt, re.M)
 attach = re.search(r"FAKE_ATTACH_TO ([A-Za-z0-9-]+)", prompt)
-if attach and added:
+fact = re.search(r"FAKE_REMEMBER (.+)$", prompt, re.M)
+if fact:
+    name, args = "memory_append", {"note": "Team Lead/Notes", "heading": "Working agreements", "text": "- " + fact.group(1).strip()}
+elif attach and added:
     name, args = "attach_file", {"path": added[0], "task": attach.group(1)}
 else:
     name, args = ("create_task", {"project": m.group(2), "title": m.group(1)}) if m else ("get_overview", {})

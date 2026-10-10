@@ -1,6 +1,7 @@
-//! The Team Lead's tools: Gizai's clients, projects, tasks, agents, docs, files and inbox, served over MCP.
+//! The Team Lead's tools: Gizai's clients, projects, tasks, agents, docs, memory, files and inbox, served over MCP.
 //! Each tool takes human references (KADE-12, "Kade portal", "Backend Agent"), calls gizai-core as the agent
 //! (so activity shows who did it) and tells open screens what changed, exactly like the UI's commands.
+mod memory;
 mod read;
 mod resolve;
 mod write;
@@ -136,6 +137,12 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         "stop_agent_run" => write::stop_run(&cx, &a),
         "create_doc" => write::create_doc(&cx, &a),
         "write_doc" => write::write_doc(&cx, &a),
+        "memory_list" => memory::list(&cx, &a),
+        "memory_search" => memory::search(&cx, &a),
+        "memory_read" => memory::read(&cx, &a),
+        "memory_write" => memory::write(&cx, &a),
+        "memory_append" => memory::append(&cx, &a),
+        "memory_move" => memory::move_note(&cx, &a),
         "attach_file" => write::attach_file(&cx, &a).await,
         "add_person" => write::add_person(&cx, &a),
         "update_checkout" => write::update_checkout(&cx, &a).await,
@@ -250,7 +257,8 @@ fn schema(props: &[(&str, &str, &str)], required: &[&str]) -> Value {
 }
 
 fn tool(name: &str, description: &str, props: &[(&str, &str, &str)], required: &[&str]) -> ToolDef {
-    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_") || name == "check_board";
+    let read_only = name.starts_with("get_") || name.starts_with("list_") || name.starts_with("read_") || name == "check_board"
+        || matches!(name, "memory_list" | "memory_search" | "memory_read");
     ToolDef { name: name.into(), description: description.into(), input_schema: schema(props, required), read_only }
 }
 
@@ -370,6 +378,21 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("create_doc", "Adds a doc to a project, optionally with its first text.", &[PROJECT, ("title", "string", "Doc title"), ("body_md", "string", "Text (Markdown)")], &["project", "title"]),
         tool("write_doc", "Saves new text for a doc as a new version (the whole text, not a diff).",
              &[("doc", "string", "The doc's title or id"), ("body_md", "string", "The complete new text (Markdown)"), ("project", "string", "Project key or name, when titles repeat")], &["doc", "body_md"]),
+        tool("memory_list", "The notes in Gizai's Memory, by path (folder and title), with version and size. Shared folders: Clients/, Projects/, Standards/, Workflows/, Deployments/, Dependencies/, Decisions/, Lessons/. Each agent has its own folder (Agents/<name>/), and you have Team Lead/.",
+             &[("folder", "string", "Only the notes in this folder, like Standards or Agents/Backend Agent")], &[]),
+        tool("memory_search", "Searches the memory notes: words and \"quoted phrases\" (case ignored), path:Folder to look in one folder (path:\"Team Lead\"), tag:name for a tag. Best matches first, each with the line that matched. Look here before you ask the user.",
+             &[("query", "string", "Words, \"a phrase\", path:Folder, tag:name"), ("limit", "integer", "At most this many notes (default 20)")], &["query"]),
+        tool("memory_read", "One memory note's whole text (Markdown with YAML properties), its version (memory_write needs it) and the notes that link to it.",
+             &[("note", "string", "The note's path (Standards/Rust style), its title or its id")], &["note"]),
+        tool("memory_write", "Saves a whole memory note as a new version, or makes it when the path is new; for a note that exists, give the version you read (changed since: nothing is saved). Keep what the repository and the board can't tell: decisions and reasons, preferences, gotchas. Link [[Folder/Note]], KADE-12, @handle. YAML properties on top: type, tags, client, project, applies_to (roles or all: who gets it in a run), source. A text with a key or token is refused.",
+             &[("path", "string", "Folder and title, like Decisions/Memory in the database"), ("body_md", "string", "The complete text (Markdown)"),
+               ("version", "integer", "The version you read; leave it out for a new note")], &["path", "body_md"]),
+        tool("memory_append", "Adds text to a memory note without rewriting it: at the end of the section under heading (a new section at the end when the note has none), else at the end of the note. Makes the note when the path is new.",
+             &[("note", "string", "The note's path, title or id, like Team Lead/Notes"), ("text", "string", "The text to add (Markdown), like a dated bullet"),
+               ("heading", "string", "The section to add it to, like Open threads")], &["note", "text"]),
+        tool("memory_move", "Moves a memory note to another path, or to a folder (end with /, the title stays), and rewrites the links that point to it; copy: true copies it instead. Use it to promote a useful note from an agent's folder into a shared folder.",
+             &[("note", "string", "The note's path, title or id"), ("to", "string", "The new path (Standards/Rust style) or folder (Standards/)"),
+               ("copy", "boolean", "Copy instead of move: the original stays")], &["note", "to"]),
         tool("attach_file", "Copies a local file (absolute path, or ~/…) into Gizai and attaches it to one task, project or client.",
              &[("path", "string", "Absolute path of the file"), ("task", "string", "Task identifier"), ("project", "string", "Project key or name"), ("client", "string", "Client name")], &["path"]),
         tool("add_person", "Adds a person (a colleague or reviewer) to Gizai.", &[("name", "string", "Full name"), ("email", "string", "Email")], &["name"]),

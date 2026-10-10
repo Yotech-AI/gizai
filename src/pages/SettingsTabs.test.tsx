@@ -214,10 +214,32 @@ describe("saving across tabs", () => {
   });
   it("Pause all agents still saves at once, on its own tab", async () => {
     const { t } = tree("agents");
-    const pause = findAll(t, (p) => p.type === "checkbox" && typeof p.onChange === "function").at(-1) as { onChange: (e: unknown) => void };
+    // found by its label: GA-19's Use memory switch comes after it in Runs
+    const pause = checkboxLabelled(t, "Pause all agents");
     pause.onChange({ target: { checked: true } });
     await settle();
     const saved = calls.filter(([k]) => k === "saveSettings").map(([, a]) => a[0] as Settings);
     expect(saved).toEqual([{ ...SETTINGS, agentsPaused: true, maxRunUsd: null }]);
   });
+  it("Use memory (GA-19) is in Runs on Agents and runs, after Pause all agents, and saves on its own, not with Save settings", async () => {
+    const html = render("agents");
+    const agents = panels(html).find((p) => p.label === "Agents and runs")?.html ?? "";
+    const runs = agents.slice(agents.indexOf("<h3>Runs</h3>"));
+    expect(text(runs)).toContain("Use memory");
+    expect(text(runs).indexOf("Pause all agents")).toBeLessThan(text(runs).indexOf("Use memory"));
+    // on no other tab
+    for (const p of panels(html).filter((p) => p.label !== "Agents and runs")) expect(text(p.html)).not.toContain("Use memory");
+    const { t } = tree("agents");
+    checkboxLabelled(t, "Use memory").onChange({ target: { checked: false } });
+    await settle();
+    expect(calls.filter(([k]) => k === "setMemoryEnabled").map(([, a]) => a)).toEqual([[false]]);
+    expect(calls.filter(([k]) => k === "saveSettings")).toEqual([]);
+  });
 });
+
+/** The checkbox inside the `label.check` whose text is `label`. */
+function checkboxLabelled(t: ReactNode, label: string) {
+  const labels = findAll(t, (p) => p.className === "check" && ([] as unknown[]).concat(p.children).includes(label));
+  expect(labels.length).toBe(1);
+  return findAll(labels[0].children as ReactNode, (p) => p.type === "checkbox")[0] as unknown as { onChange: (e: unknown) => void };
+}

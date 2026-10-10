@@ -53,6 +53,8 @@ pub struct Member {
     pub tools: crate::mcp_servers::AgentTools,
     /// Its CLI's own tools switched on: web search and fetch, built-in tools (agent form → Tools; `mcp_servers::CliTools`).
     pub cli_tools: crate::mcp_servers::CliTools,
+    /// Memory (GA-19): its runs get a Memory section and its `learned` lines are kept (agent form; on by default).
+    pub use_memory: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +109,7 @@ pub struct Team {
 const MEMBER_SELECT: &str = "SELECT a.id, a.name, a.kind, m.role_key, a.title, g.adapter, g.instructions_md, a.handle, a.status, m.is_lead,
         g.model, g.permission_mode, g.allowed_tools_json, g.wakeup, g.heartbeat_minutes, g.budget_usd_micros, g.last_heartbeat_at, m.team_id,
         COALESCE(g.chat_enabled, 0), g.effort, COALESCE(g.max_concurrent_runs, 1), g.board_check_minutes, g.board_checked_at, g.board_check_paused,
-        g.folders_json, g.mcp_extra_json
+        g.folders_json, g.mcp_extra_json, COALESCE(g.use_memory, 1)
      FROM team_members m JOIN actors a ON a.id = m.actor_id LEFT JOIN agent_configs g ON g.actor_id = a.id";
 
 fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
@@ -122,7 +124,8 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
                 chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)?,
                 board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)?,
                 folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default(),
-                tools: crate::mcp_servers::parse_tools(extra.as_deref()), cli_tools: crate::mcp_servers::parse_cli_tools(extra.as_deref()) })
+                tools: crate::mcp_servers::parse_tools(extra.as_deref()), cli_tools: crate::mcp_servers::parse_cli_tools(extra.as_deref()),
+                use_memory: r.get::<_, i64>(26)? != 0 })
 }
 
 /// Every agent of every team, with its team id (for the heartbeat scheduler).
@@ -381,6 +384,11 @@ fn insert_agent(w: &crate::db::Writer, actor: &str, team_id: &str, a: &CleanAgen
     if input.chat_enabled == Some(true) {
         set_chat_in(w, &id, now)?;
     }
+    if input.use_memory == Some(false) {
+        c.execute("UPDATE agent_configs SET use_memory = 0 WHERE actor_id = ?1", [&id])?;
+    }
+    // Its own memory folder, Agents/<name>/, with a Notes note (the Team Lead's Team Lead/Notes is made on first use).
+    crate::memory::ensure_agent_notes_in(w, &id)?;
     Ok(id)
 }
 
@@ -398,12 +406,21 @@ pub fn update_agent(db: &Db, actor: &str, actor_id: &str, input: AgentInput) -> 
                 return Err(Error::Invalid("Chat runs on Claude Code: turn Chat off for this agent, or keep it on a Claude Code CLI".into()));
             }
         }
+        let old_name: Option<String> = c.query_row("SELECT name FROM actors WHERE id=?1 AND kind='agent' AND deleted_at IS NULL", [actor_id], |r| r.get(0))
+            .optional()?;
         let n = c.execute(
             "UPDATE actors SET name=?2, title=?3, updated_at=?4, updated_by=?5, version=version+1 WHERE id=?1 AND kind='agent' AND deleted_at IS NULL",
             rusqlite::params![actor_id, a.name, a.title, now, actor],
         )?;
         if n == 0 {
             return Err(Error::NotFound(format!("agent {actor_id}")));
+        }
+        // Its memory folder follows its name (Agents/<old>/ to Agents/<new>/), and the links to its notes with it.
+        if let Some(old) = old_name.filter(|o| *o != a.name) {
+            crate::memory::rename_agent_folder(w, actor, actor_id, &old, &a.name)?;
+        }
+        if let Some(on) = input.use_memory {
+            c.execute("UPDATE agent_configs SET use_memory = ?2 WHERE actor_id = ?1", rusqlite::params![actor_id, on as i64])?;
         }
         c.execute(
             "UPDATE agent_configs SET adapter=?2, model=?3, instructions_md=COALESCE(?4, instructions_md), permission_mode=?5, allowed_tools_json=?6,

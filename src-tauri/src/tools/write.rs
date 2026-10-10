@@ -344,7 +344,7 @@ pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         instructions_md: a.opt("instructions_md"), permission_mode: a.opt("permission_mode").unwrap_or_default(),
         allowed_tools, wakeup: String::new(),
         heartbeat_minutes: None, budget_usd_micros: budget(a, None)?, chat_enabled: None, effort: a.opt("effort"),
-        max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None,
+        max_runs: a.int("cards_at_once")?, board_check_minutes: a.int("board_check_minutes")?, folders: None, use_memory: None,
     }).map_err(err)?;
     agent_result(cx, &id, "created")
 }
@@ -373,7 +373,7 @@ pub(crate) async fn update_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String>
         wakeup: m.wakeup.clone().unwrap_or_default(),
         heartbeat_minutes: m.heartbeat_minutes,
         budget_usd_micros: budget(a, m.budget_usd_micros)?, chat_enabled: None, effort, max_runs: a.int("cards_at_once")?,
-        board_check_minutes: a.int("board_check_minutes")?, folders: None,
+        board_check_minutes: a.int("board_check_minutes")?, folders: None, use_memory: None,
     }).map_err(err)?;
     crate::runs::resume_pull(cx.st, &m.actor_id);
     agent_result(cx, &m.actor_id, "updated")

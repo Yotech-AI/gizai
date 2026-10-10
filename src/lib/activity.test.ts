@@ -28,6 +28,18 @@ describe("describeChange", () => {
   });
 });
 
+// GA-86: the Team Lead's merge_pull_request notes the merge in the card's activity, under the Team Lead's name.
+describe("describeChange for a merge by the Team Lead", () => {
+  it("says it merged the pull request, not that it saw it", () => {
+    const pr = "https://github.com/acme/shop/pull/7";
+    const lead = { ...e("tasks", "update", { pullRequest: pr, merged: true, head: "4f1c2a9e" }), actorName: "Team Lead" };
+    expect(describeChange(lead)).toBe("merged pull request #7 on GitHub");
+    expect(describeChange(e("tasks", "update", { pullRequest: "https://github.com/acme/shop/pulls", merged: true }))).toBe("merged a pull request on GitHub");
+    // the PR check's own entry for the same merge stays as it was
+    expect(describeChange(e("tasks", "update", { pullRequest: pr, prState: "merged" }))).toBe("saw pull request #7 merged on GitHub");
+  });
+});
+
 // GA-60: the activity names Bitbucket for a Bitbucket pull request (its link says which).
 describe("describeChange on Bitbucket", () => {
   it("describes a card's pull request on Bitbucket", () => {

@@ -511,9 +511,9 @@ fn rows(c: &rusqlite::Connection, sql: &str) -> Rows {
 
 /// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns, no agent folders (0009),
 /// none of 0011's column setup (no column agents, Auto or next columns, branches; an empty routing_rules table back)
-/// and no chat Runs on or queue (0012), and no memory (0014).
+/// and no chat Runs on or queue (0012), no memory (0014) and no Team Lead may merge (0015).
 pub fn back_to_7(c: &rusqlite::Connection) {
-    let undo14 = undo_0014();
+    let undo14 = format!("ALTER TABLE projects DROP COLUMN lead_may_merge; {}", undo_0014());
     let m7 = include_str!("../migrations/0007_card_flow.sql");
     let start = m7.find("CREATE TABLE runs_new (").unwrap();
     let end = start + m7[start..].find(") STRICT;").unwrap() + ") STRICT;".len();

@@ -14,7 +14,8 @@ fn select() -> String {
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category = 'done'),
     p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
     (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
-    (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown})
+    (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown}),
+    p.lead_may_merge
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL")
@@ -28,8 +29,21 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         done_tasks: r.get(15)?, updated_at: r.get(16)?, repo_url: r.get(17)?,
         worktree_copy: serde_json::from_str(&r.get::<_, String>(18)?).unwrap_or_default(),
         worktree_install: r.get(19)?, worktree_setup: r.get(20)?,
-        ai_cost_usd_micros: r.get(21)?, ai_unknown_cost_runs: r.get(22)?,
+        ai_cost_usd_micros: r.get(21)?, ai_unknown_cost_runs: r.get(22)?, lead_may_merge: r.get::<_, i64>(23)? != 0,
     })
+}
+
+/// Team Lead may merge (GA-86) is a person's switch, set in the app: a write by anyone else (an agent, Gizai) that gives
+/// it is refused, and nothing changes.
+fn person_sets_lead_may_merge(c: &rusqlite::Connection, actor: &str, input: &ProjectInput) -> Result<()> {
+    if input.lead_may_merge.is_none() {
+        return Ok(());
+    }
+    let kind: Option<String> = c.query_row("SELECT kind FROM actors WHERE id=?1 AND deleted_at IS NULL", [actor], |r| r.get(0)).optional()?;
+    if kind.as_deref() != Some("person") {
+        return Err(Error::Invalid("Team Lead may merge is switched only by a person, in the app (the project page → Edit). Nothing changed.".into()));
+    }
+    Ok(())
 }
 
 /// The start of this month (UTC), from which a project's AI usage counts.
@@ -171,6 +185,7 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
     let (copy, install, setup) = worktree_fields(&input)?;
     db.write(Some(actor), |w| {
         let c = w.conn();
+        person_sets_lead_may_merge(c, actor, &input)?;
         let org = org_id(c)?;
         if c.query_row("SELECT count(*) FROM projects WHERE org_id=?1 AND key=?2", [&org, &key], |r| r.get::<_, i64>(0))? > 0 {
             return Err(Error::Invalid(format!("project key {key} is already used")));
@@ -189,12 +204,12 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
         let id = ids::new_id();
         c.execute(
             "INSERT INTO projects(id, created_at, updated_at, created_by, updated_by, org_id, client_id, number, key, name, status,
-               color, goal_md, team_id, budget_amount_minor, budget_hours, worktree_copy_json, worktree_install, worktree_setup)
+               color, goal_md, team_id, budget_amount_minor, budget_hours, worktree_copy_json, worktree_install, worktree_setup, lead_may_merge)
              VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'active'), ?10, ?11, ?12, ?13, ?14,
-               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''))",
+               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''), coalesce(?18, 0))",
             rusqlite::params![id, now, actor, org, clean(&input.client_id), number, key, name, clean(&input.status),
                               clean(&input.color), clean(&input.goal_md), team, input.budget_amount_minor, input.budget_hours,
-                              copy, install, setup],
+                              copy, install, setup, input.lead_may_merge],
         )?;
         w.insert("projects", &id, serde_json::to_value(&input)?)?;
         upsert_repo(w, actor, &id, &input, now)?;
@@ -211,16 +226,18 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
     validate_status(&input.status)?;
     let (copy, install, setup) = worktree_fields(&input)?;
     db.write(Some(actor), |w| {
+        person_sets_lead_may_merge(w.conn(), actor, &input)?;
         let now = ids::now_ms();
         let n = w.conn().execute(
             "UPDATE projects SET client_id=?2, name=?3, status=coalesce(?4, status), color=?5, goal_md=?6,
                budget_amount_minor=?7, budget_hours=?8, updated_at=?9, updated_by=?10, version=version+1,
                worktree_copy_json=coalesce(?11, worktree_copy_json), worktree_install=coalesce(?12, worktree_install),
-               worktree_setup=CASE WHEN ?13 IS NULL THEN worktree_setup ELSE NULLIF(?13, '') END
+               worktree_setup=CASE WHEN ?13 IS NULL THEN worktree_setup ELSE NULLIF(?13, '') END,
+               lead_may_merge=coalesce(?14, lead_may_merge)
              WHERE id=?1 AND deleted_at IS NULL",
             rusqlite::params![id, clean(&input.client_id), name, clean(&input.status), clean(&input.color),
                               clean(&input.goal_md), input.budget_amount_minor, input.budget_hours, now, actor,
-                              copy, install, setup],
+                              copy, install, setup, input.lead_may_merge],
         )?;
         if n == 0 {
             return Err(Error::NotFound(format!("project {id}")));

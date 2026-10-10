@@ -567,9 +567,9 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     // Step back to schema 6 as it was: none of 0011's columns, agents on columns or branches, routing rules on a label and
     // on a column, no Deploy column (the seed's has no place in schema 6), workflow_states and runs with 0001's CHECKs,
     // no Testing switch, none of 0008's board check columns, no agent folders (0009), no chat Runs on or queue (0012) and
-    // no memory (0014).
+    // no memory (0014) and no Team Lead may merge (0015).
     let c = rusqlite::Connection::open(&path).unwrap();
-    let mut sql = format!("PRAGMA foreign_keys=OFF; BEGIN; {} DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;", undo_0014());
+    let mut sql = format!("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE projects DROP COLUMN lead_may_merge; {} DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;", undo_0014());
     sql.push_str("
         DELETE FROM workflow_states WHERE category='deploy';
         ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;

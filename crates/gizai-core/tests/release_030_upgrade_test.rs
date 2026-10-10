@@ -107,11 +107,12 @@ fn a_v020_database_with_chats_upgrades_to_schema_12_in_one_step() {
     let db = Db::open(&f.path).unwrap();
     let (v, broken) = db.read(|c| Ok((version(c), broken_keys(c)))).unwrap();
     assert_eq!((v, broken), (db::SCHEMA_VERSION, 0), "the current schema, foreign keys intact");
-    assert_eq!(db::SCHEMA_VERSION, 14, "v0.3.0 ships schema 12, GA-59 adds 0013 and GA-19 0014 (memory_test checks it); a new migration needs its own release check");
+    assert_eq!(db::SCHEMA_VERSION, 15, "v0.3.0 ships schema 12, GA-59 adds 0013, GA-19 0014 (memory_test checks it) and GA-86 0015 \
+        (lead_merges_core_test checks it); a new migration needs its own release check");
 
     let names = backup_names(&f.backups);
     assert_eq!(names.len(), 1, "{names:?}");
-    assert!(names[0].starts_with("gizai-before-v14-") && names[0].ends_with(".db"), "{names:?}");
+    assert!(names[0].starts_with("gizai-before-v15-") && names[0].ends_with(".db"), "{names:?}");
     let old = Connection::open(f.backups.join(&names[0])).unwrap();
     let (old_v, old_threads, old_messages): (i64, i64, i64) = (version(&old),
         old.query_row("SELECT count(*) FROM chat_threads", [], |r| r.get(0)).unwrap(),

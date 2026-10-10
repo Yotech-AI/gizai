@@ -243,6 +243,8 @@ const theme = EditorView.theme({
   ".cm-chip-mention": { background: "var(--accent-soft)", color: "var(--accent)" },
   ".cm-wikilink": { color: "var(--accent)", textDecoration: "underline", textDecorationColor: "var(--accent-soft)", textUnderlineOffset: "3px" },
   ".cm-wikilink.missing": { color: "var(--text-2)", textDecorationStyle: "dashed", textDecorationColor: "var(--text-3)" },
+  // Markdown's own link colour inside a [[link]] would hide that it finds no note.
+  ".cm-wikilink.missing *": { color: "inherit !important" },
   ".cm-frontmatter": { fontFamily: "var(--font-mono)", fontSize: "0.86em", lineHeight: "1.55", color: "var(--text-2)" },
   ".cm-frontmatter *": { fontSize: "inherit !important", fontWeight: "inherit !important", color: "inherit !important", fontStyle: "inherit !important" },
 });

@@ -2273,13 +2273,65 @@ async function graphPartC(agentId: string, hubId: string) {
   const agentOk = agentDots.filter((d) => d.kind === "note").length === 21 && textOf(q(".graph-count")).startsWith("21 notes") && foreign.length === 0
     && textOf(q(".topbar .crumbs")) === "Memory/Backend Agent/Graph";
 
+  // The Filters on top of the page: Tags on adds only #agent (the agent's own Notes has it; the shared notes' #topic tags
+  // and the Team Lead's #team-lead stay out), a path: query keeps Agent note 1 and 10 to 19 with their KADE-2 and Not here
+  // dots, Existing notes only drops the Not here dots, Cards off drops KADE-2; the count top left follows what is drawn.
+  // Everything is put back for the reduced-motion check below.
+  graphStage = "agent page filters";
+  q<HTMLButtonElement>("button.graph-panel-open")?.click();
+  await waitFor(() => q(".graph-panel"), 3000);
+  const AP = () => q(".graph-panel") ?? document;
+  if (!checkbox(AP(), "Tags")) { [...AP().querySelectorAll<HTMLButtonElement>(".graph-section-head")].find((h) => textOf(h) === "Filters")?.click(); await frames(2); }
+  const toggle = async (label: string) => { checkbox(AP(), label)?.click(); await frames(3); };
+  const agentNow = () => gdots(globalCanvas());
+  const notesNow = () => agentNow().filter((d) => d.kind === "note");
+  await toggle("Tags");
+  const tagsOn = { tags: agentNow().filter((d) => d.kind === "tag").map((d) => d.label), foreign: agentNow().filter((d) => !own(d) && d.label !== "#agent").length,
+    dots: agentNow().length };
+  await toggle("Tags");
+  const aSearch = q<HTMLInputElement>('input[aria-label="Search the graph"]');
+  if (aSearch) typeInto(aSearch, 'path:"Agents/Backend Agent/Agent note 1"');
+  await frames(3);
+  const queried = { notes: notesNow().map((d) => d.label).sort(), not_here: agentNow().filter((d) => d.label.startsWith("Not here")).length,
+    cards: agentNow().filter((d) => d.kind === "card").map((d) => d.label), foreign: agentNow().filter((d) => !own(d)).length, count: textOf(q(".graph-count")) };
+  if (aSearch) typeInto(aSearch, "");
+  await frames(3);
+  await toggle("Existing notes only");
+  const existingOn = { not_here: agentNow().filter((d) => d.kind === "missing").length, notes: notesNow().length, count: textOf(q(".graph-count")) };
+  await toggle("Existing notes only");
+  await toggle("Cards");
+  const cardsOff = { cards: agentNow().filter((d) => d.kind === "card").length, notes: notesNow().length };
+  await toggle("Cards");
+  const back = { dots: agentNow().length, count: textOf(q(".graph-count")) };
+  out.agent_filters = { tags_on: tagsOn, queried, existing_on: existingOn, cards_off: cardsOff, back };
+  const wantQueried = ["Agent note 1", ...Array.from({ length: 10 }, (_, k) => `Agent note ${10 + k}`)].sort();
+  const agentFiltersOk = !!aSearch && JSON.stringify(tagsOn.tags) === JSON.stringify(["#agent"]) && tagsOn.foreign === 0 && tagsOn.dots === agentDots.length + 1
+    && JSON.stringify(queried.notes) === JSON.stringify(wantQueried) && queried.not_here === 11 && JSON.stringify(queried.cards) === JSON.stringify(["KADE-2"])
+    && queried.foreign === 0 && queried.count.startsWith("11 notes")
+    && existingOn.not_here === 0 && existingOn.notes === 21 && existingOn.count.startsWith("21 notes")
+    && cardsOff.cards === 0 && cardsOff.notes === 21 && back.dots === agentDots.length && back.count.startsWith("21 notes");
+
   // The shared page: no Team Lead's or agent's note.
   location.hash = "#/memory/shared/graph";
   await waitFor(() => (location.hash === "#/memory/shared/graph" && gdots(globalCanvas()).filter((d) => d.kind === "note").length > 300 ? true : null), 6000);
   await frames(3);
   const shared = gdots(globalCanvas()).filter((d) => d.kind === "note");
-  out.shared_page = { notes: shared.length, count: textOf(q(".graph-count")) };
-  const sharedOk = shared.length === 427 && shared.every((d) => noteIndex(d.label) >= 0 && noteIndex(d.label) % 9 !== 8);
+  // And only what shared notes name: KADE-1, the Backend Agent and Missing <n> of shared notes (not 80 or 440, which only
+  // Team Lead notes link), no KADE-2 or Not here <n> (only the agent's notes name those).
+  const sharedOthers = gdots(globalCanvas()).filter((d) => d.kind !== "note").map((d) => `${d.kind}:${d.label}`).sort();
+  const wantShared = ["agent:Backend Agent", "card:KADE-1", ...[0, 40, 120, 160, 200, 240, 280, 320, 360, 400].map((i) => `missing:Missing ${i}`)].sort();
+  const sharedCount = textOf(q(".graph-count"));
+  // With Tags on, the shared notes' #topic tags only: not #agent or #team-lead (the agent's and the Team Lead's Notes).
+  if (!q(".graph-panel")) { q<HTMLButtonElement>("button.graph-panel-open")?.click(); await waitFor(() => q(".graph-panel"), 3000); }
+  await toggle("Tags");
+  const sharedTags = gdots(globalCanvas()).filter((d) => d.kind === "tag").map((d) => d.label).sort();
+  await toggle("Tags");
+  q<HTMLButtonElement>('button[aria-label="Close the settings"]')?.click();
+  await frames(2);
+  out.shared_page = { notes: shared.length, count: sharedCount, others: sharedOthers, tags: sharedTags };
+  const sharedOk = shared.length === 427 && shared.every((d) => noteIndex(d.label) >= 0 && noteIndex(d.label) % 9 !== 8)
+    && sharedCount.startsWith("427 notes") && JSON.stringify(sharedOthers) === JSON.stringify(wantShared)
+    && JSON.stringify(sharedTags) === JSON.stringify(["#topic0", "#topic1", "#topic2"]) && !q(".graph-panel");
 
   // Reduced motion: the layout is worked out at once and doesn't move.
   const mm = window.matchMedia;
@@ -2333,8 +2385,9 @@ async function graphPartC(agentId: string, hubId: string) {
   }
   const reducedOk = still && quick >= 0 && quick < 3000;
 
-  const ok = localOk && reachable && depthOk && followOk && closedOk && agentOk && sharedOk && reducedOk;
-  return { ok, part: "c", local_ok: localOk, reachable, depth_ok: depthOk, follow_ok: followOk, closed_ok: closedOk, agent_ok: agentOk, shared_ok: sharedOk, reduced_ok: reducedOk, ...out };
+  const ok = localOk && reachable && depthOk && followOk && closedOk && agentOk && agentFiltersOk && sharedOk && reducedOk;
+  return { ok, part: "c", local_ok: localOk, reachable, depth_ok: depthOk, follow_ok: followOk, closed_ok: closedOk, agent_ok: agentOk,
+    agent_filters_ok: agentFiltersOk, shared_ok: sharedOk, reduced_ok: reducedOk, ...out };
 }
 
 async function graphPartD(agentId: string) {

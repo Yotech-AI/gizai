@@ -29,10 +29,17 @@ export function titleProblem(title: string): string | null {
   return null;
 }
 
-/** An agent's name as its folder's name (gizai_core::memory::folder_name): what a name can't hold becomes a dash. */
+/** Unicode's White_Space, what Rust's `str::trim` takes off (JavaScript's trim takes off U+FEFF too, and not U+0085). */
+const SPACE = "\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const ENDS = new RegExp(`^[${SPACE}]+|[${SPACE}]+$`, "g");
+const trimRust = (s: string) => s.replace(ENDS, "");
+
+/** An agent's name as its folder's name (gizai_core::memory::folder_name): what a name can't hold, and every control
+ *  character (Rust's char::is_control: U+0000 to U+001F and U+007F to U+009F), becomes a dash. */
 export function agentFolder(name: string): string {
   // eslint-disable-next-line no-control-regex
-  const s = name.trim().replace(/[*"\\/<>:|?#^[\]\u0000-\u001f\u007f]/g, "-").trim().replace(/^\.+|\.+$/g, "").trim();
+  const dashed = trimRust(name).replace(/[*"\\/<>:|?#^[\]\u0000-\u001f\u007f-\u009f]/g, "-");
+  const s = trimRust(trimRust(dashed).replace(/^\.+|\.+$/g, ""));
   return s || "Agent";
 }
 

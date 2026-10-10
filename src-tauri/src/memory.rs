@@ -52,18 +52,22 @@ pub fn run_block(st: &AppState, agent: &Member, role: &str, project: &Project) -
 
 /// Claude Code's own memory notes into Gizai's memory, once per file (GA-85): the Markdown files in `projects/*/memory/`
 /// of every Claude Code account in Settings → Coding CLIs (its CLAUDE_CONFIG_DIR, else Gizai's, else ~/.claude) become
-/// notes in `Team Lead/Imported/`, and `Team Lead/Notes` gets an open thread to sort them. When Gizai starts, after the
-/// migrations; your home folder is $HOME (your profile folder on Windows).
+/// notes in `Team Lead/Imported/`, from the folders of Gizai's own places only (`memory_import::places`: the projects'
+/// linked folders, the cards' worktrees, the Team Lead's code copies and working folder), and `Team Lead/Notes` gets an
+/// open thread to sort them. When Gizai starts, after the migrations; your home folder is $HOME (your profile folder on
+/// Windows).
 pub fn import_claude(st: &AppState) -> Report {
     let home = gizai_core::clis::home();
     let inherited = |name: &str| std::env::var(name).ok();
     let day = crate::tools::ymd(gizai_core::ids::now_ms());
     let done = memory_import::claude_dirs(&st.db, &home, &inherited)
-        .and_then(|dirs| memory_import::import(&st.db, &dirs, &home, &st.you_id, &you(st), &day));
+        .and_then(|dirs| Ok((dirs, memory_import::places(&st.db, &st.data_dir)?)))
+        .and_then(|(dirs, places)| memory_import::import(&st.db, &dirs, &places, &home, &st.you_id, &you(st), &day));
     match done {
         Ok(r) => {
             if !r.imported.is_empty() || !r.skipped.is_empty() {
-                eprintln!("gizai: {} notes came from Claude Code's own memory into Team Lead/Imported/ ({} files could not)", r.imported.len(), r.skipped.len());
+                eprintln!("gizai: {} notes came from Claude Code's own memory into Team Lead/Imported/ ({} files could not; {} folders of other \
+paths, with {} notes, were left out)", r.imported.len(), r.skipped.len(), r.left_out.folders, r.left_out.notes);
                 (st.notify)(crate::runs::Note::RowsChanged("docs"));
             }
             r

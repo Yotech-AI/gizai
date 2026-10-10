@@ -190,12 +190,19 @@ DevOps Agent's `deploy-<KEY>`).
 **The import (GA-85).** When Gizai starts, after the migrations, each Markdown file there, for every Claude Code account
 in Settings → Coding CLIs, becomes a note `Team Lead/Imported/<project folder>/<file name>`: its text as it was, with
 `source: claude-code`, `claude_config_dir`, `claude_project` and `claude_file` added to its properties. `MEMORY.md`
-(Claude Code's index) and the folders below are left out. Each file comes in once (the `claude_memory_imports` setting
-keeps which), also when it changes later. A file with a secret in it, not text or over 200 KB is skipped, listed by its
-path only, and tried again once it changes. `Team Lead/Notes` gets an open thread with what came in and what didn't (a
-list over 2,000 characters goes in a note of its own) and the agents whose instructions still say `MEMORY.md`, so the
-Team Lead sorts the notes with you (`memory_move`, like `deploy-GA` into `Deployments/GA`); until then no agent gets
-them. Gizai only reads those files. Headless test and screenshot runs don't import.
+(Claude Code's index) and the folders below are left out. Only the folders of Gizai's own places come in
+(`memory_import::places`): each project's linked folder, each card's worktree (`<data folder>/worktrees/<KEY>/<card>`),
+the Team Lead's code copies (`code/<KEY>`) and its working folder (`lead`). Claude Code names a folder after each path it
+works in, every character but an ASCII letter or digit as `-` (`/home/jefsev/Herd/gizai` is `-home-jefsev-Herd-gizai`;
+a name over 200 characters is cut, with a hash of the path), and keeps the memory of a run in a worktree in the folder
+of the worktree's repository, the project's linked folder (read in Claude Code 2.1.289). The other folders, your own
+sessions elsewhere, are left out and not read. Each file comes in once (the `claude_memory_imports` setting keeps which),
+also when it changes later. A file with a secret in it, not text or over 200 KB is skipped, listed by its path only, and
+tried again once it changes. `Team Lead/Notes` gets an open thread with what came in and what didn't (a list over 2,000
+characters goes in a note of its own), how many other folders were left out (not which), and the agents whose
+instructions still say `MEMORY.md`, so the Team Lead sorts the notes with you (`memory_move`, like `deploy-GA` into
+`Deployments/GA`); until then no agent gets them. Gizai only reads those files. Headless test and screenshot runs don't
+import.
 
 **The switch.** Task runs, chat answers, board checks and the Team Lead's runs on agents' questions on Claude Code get
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, after the account's own environment lines: in Gizai's runs Claude Code neither reads

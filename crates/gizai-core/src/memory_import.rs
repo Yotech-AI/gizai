@@ -4,9 +4,11 @@
 //! account saw them, and Gizai didn't show them. When Gizai starts, each such file it hasn't imported yet becomes a note
 //! in the Team Lead's folder, `Team Lead/Imported/<project folder>/<file name>`, with where it came from in its
 //! properties, and `Team Lead/Notes` gets an open thread to sort them with the user. They start there so no agent gets
-//! them before someone has read them. The files are only read, never changed. Gizai's own runs start Claude Code with
-//! that memory off (gizai-agents' `claude::AUTO_MEMORY_OFF`). In plain language: `docs/memory.md`.
-use std::collections::BTreeMap;
+//! them before someone has read them. Only the folders of Gizai's own places come in (`places`): Claude Code keeps a
+//! folder per path it works in, so the others are the user's own sessions elsewhere; they are only counted. The files
+//! are only read, never changed. Gizai's own runs start Claude Code with that memory off (gizai-agents'
+//! `claude::AUTO_MEMORY_OFF`). In plain language: `docs/memory.md`.
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
@@ -14,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{Db, Writer};
 use crate::memory::{self, IMPORTED, LEAD, Who};
-use crate::{Error, Result, clis, limits, settings};
+use crate::{Error, Result, clis, folders, limits, settings};
 
 /// What became of every file found so far, by its full path: a setting.
 const KEY: &str = "claude_memory_imports";
@@ -25,6 +27,8 @@ pub const MAX_BYTES: u64 = 200_000;
 /// The open thread lists at most this many characters in `Team Lead/Notes`; a longer list goes in a note of its own in
 /// the import folder, linked from the thread.
 pub const LIST_MAX: usize = 2_000;
+/// Claude Code cuts a folder name in `projects/` at this many characters, with a hash of the path after it.
+const NAME_MAX: usize = 200;
 
 /// A file imported: where it is (`~/.claude-2/projects/-home-me-shop/memory/deploy-SHOP.md`) and the note it became.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +46,15 @@ pub struct Skipped {
     pub why: String,
 }
 
+/// The folders in the accounts' `projects/` that aren't Gizai's places but have notes in `memory/`, and how many notes:
+/// left out, and not read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeftOut {
+    pub folders: usize,
+    pub notes: usize,
+}
+
 /// What one import did; empty when there was nothing new.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +63,8 @@ pub struct Report {
     pub skipped: Vec<Skipped>,
     /// The note the list went in, when it was too long for `Team Lead/Notes`.
     pub list: Option<String>,
+    /// The folders of other paths, counted when something came in or was skipped (else the report is empty).
+    pub left_out: LeftOut,
 }
 
 /// What became of a file: the note it became, or why it was skipped with its size and time then (a skipped file is tried
@@ -97,16 +112,106 @@ pub fn claude_dirs(db: &Db, home: &str, inherited: &dyn Fn(&str) -> Option<Strin
     Ok(out.into_iter().map(|(dir, _)| dir).collect())
 }
 
+/// Gizai's places, the folders it starts Claude Code in, whose folders in an account's `projects/` are imported: each
+/// project's linked folder; each card's worktree (`<data dir>/worktrees/<KEY>/<card>`, of every card, and every folder
+/// there now); the Team Lead's code copies (`<data dir>/code/<KEY>`, of every project, and every folder there now) and
+/// its own working folder (`<data dir>/lead`). Claude Code keeps the memory of a run in a card's worktree in the folder
+/// of the project's linked folder, the repository the worktree belongs to.
+pub fn places(db: &Db, data_dir: &Path) -> Result<Vec<PathBuf>> {
+    let (linked, keys, cards) = db.read(|c| {
+        let linked = c.prepare("SELECT r.local_path FROM repos r JOIN projects p ON p.id = r.project_id
+                                WHERE r.deleted_at IS NULL AND p.deleted_at IS NULL AND r.local_path IS NOT NULL")?
+            .query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let keys = c.prepare("SELECT key FROM projects")?
+            .query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let cards = c.prepare("SELECT p.key, t.identifier FROM tasks t JOIN projects p ON p.id = t.project_id")?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok((linked, keys, cards))
+    })?;
+    let (worktrees, code) = (data_dir.join("worktrees"), data_dir.join("code"));
+    let folders = |dir: &Path| entries(dir).into_iter().map(|(_, p)| p).filter(|p| p.is_dir()).collect::<Vec<_>>();
+    let mut out: Vec<PathBuf> = linked.into_iter().filter(|p| !p.trim().is_empty()).map(PathBuf::from).collect();
+    out.extend(cards.iter().map(|(key, card)| worktrees.join(key).join(card)));
+    // Worktrees and copies whose card or project is no longer in the database are Gizai's too.
+    out.extend(folders(&worktrees).iter().flat_map(|k| folders(k)));
+    out.extend(keys.iter().map(|key| code.join(key)));
+    out.extend(folders(&code));
+    out.push(data_dir.join("lead"));
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// The folder Claude Code keeps a path's sessions and memory in, under an account's `projects/` (read in Claude Code
+/// 2.1.289): each character that isn't an ASCII letter or digit as `-`, one per UTF-16 unit as JavaScript counts them
+/// (an emoji is two); a name longer than 200 is cut there, with `-` and a hash of the path after it.
+/// `/home/jefsev/Herd/gizai` is `-home-jefsev-Herd-gizai`.
+pub fn project_folder(path: &str) -> String {
+    let mut name = String::with_capacity(path.len());
+    for c in path.chars() {
+        if c.is_ascii_alphanumeric() {
+            name.push(c);
+        } else {
+            (0..c.len_utf16()).for_each(|_| name.push('-'));
+        }
+    }
+    if name.len() <= NAME_MAX {
+        return name;
+    }
+    // JavaScript's `h = (h << 5) - h + unit | 0` over the path's UTF-16 units, without its sign, in base 36.
+    let hash = path.encode_utf16().fold(0i32, |h, u| h.wrapping_mul(31).wrapping_add(i32::from(u)));
+    format!("{}-{}", &name[..NAME_MAX], base36(hash.unsigned_abs()))
+}
+
+fn base36(mut n: u32) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = vec![];
+    loop {
+        out.push(DIGITS[(n % 36) as usize]);
+        n /= 36;
+        if n == 0 {
+            break;
+        }
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// The folder names of `places` as Claude Code may have been given them: each as Gizai keeps it (absolute, `~` as
+/// `home`, no slash at the end, on Windows with its drive one way) and as it is on disk (links followed).
+fn place_names(places: &[PathBuf], home: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for p in places {
+        let Some(said) = folders::normalize(&p.to_string_lossy(), Path::new(home)) else { continue };
+        let real = std::fs::canonicalize(&said).ok().and_then(|r| folders::normalize(&r.to_string_lossy(), Path::new("")));
+        for p in std::iter::once(said).chain(real) {
+            out.insert(fold(&project_folder(&p.to_string_lossy())));
+        }
+    }
+    out
+}
+
+/// A folder name as names are compared here: in any case on Windows and macOS, where a path is the same in any case.
+fn fold(name: &str) -> String {
+    if cfg!(any(windows, target_os = "macos")) { name.to_ascii_lowercase() } else { name.to_string() }
+}
+
 /// Imports the Markdown files in `projects/*/memory/` of each account folder in `dirs` that weren't imported yet, except
-/// `MEMORY.md` (Claude Code's index of them) and the folders below. Each becomes a note
+/// `MEMORY.md` (Claude Code's index of them) and the folders below, from the folders of Gizai's `places` only: the
+/// other folders are counted, never read. Each file becomes a note
 /// `Team Lead/Imported/<project folder>/<file name>` (` (2)` and on when two share that path), written by the Team Lead
 /// (by `you_id` when there is none): its text as it was, with where it came from at the top of its properties. A file
 /// with a secret in it, or that is no note (not text, too big, unreadable), is skipped: listed by its path, never its
-/// text, and tried again once it changed. What was imported and skipped goes in `Team Lead/Notes` as an open thread,
-/// dated `day`, to sort with `you`. `home` shows as `~`.
-pub fn import(db: &Db, dirs: &[PathBuf], home: &str, you_id: &str, you: &str, day: &str) -> Result<Report> {
+/// text, and tried again once it changed. What was imported and skipped, and how many other folders were left out, goes
+/// in `Team Lead/Notes` as an open thread, dated `day`, to sort with `you`. `home` shows as `~`.
+pub fn import(db: &Db, dirs: &[PathBuf], places: &[PathBuf], home: &str, you_id: &str, you: &str, day: &str) -> Result<Report> {
     let mut done: BTreeMap<String, Done> = settings::get(db, KEY)?.unwrap_or_default();
-    let found: Vec<Found> = dirs.iter().flat_map(|d| scan(d, home, &done)).collect();
+    let names = place_names(places, home);
+    let mut left_out = LeftOut::default();
+    let mut found: Vec<Found> = vec![];
+    for d in dirs {
+        found.extend(scan(d, home, &names, &done, &mut left_out));
+    }
     if found.is_empty() {
         return Ok(Report::default());
     }
@@ -115,7 +220,7 @@ pub fn import(db: &Db, dirs: &[PathBuf], home: &str, you_id: &str, you: &str, da
         None => Who::Person(you_id.to_string()),
     };
     db.write(Some(who.id()), |w| {
-        let mut report = Report::default();
+        let mut report = Report { left_out, ..Default::default() };
         for f in found {
             match note_for(w, &who, &f)? {
                 Ok((id, path)) => {
@@ -136,22 +241,23 @@ pub fn import(db: &Db, dirs: &[PathBuf], home: &str, you_id: &str, you: &str, da
     })
 }
 
-/// The Markdown files in `projects/*/memory/` of account folder `dir`, by project folder and file name: not `MEMORY.md`,
-/// not the folders below it, and not those `done` has (imported, or skipped and unchanged since).
-fn scan(dir: &Path, home: &str, done: &BTreeMap<String, Done>) -> Vec<Found> {
+/// The Markdown files in `projects/*/memory/` of account folder `dir`, by project folder and file name, in the folders
+/// named after Gizai's places (`names`): not `MEMORY.md`, not the folders below it, and not those `done` has (imported,
+/// or skipped and unchanged since). The other folders with notes are only counted in `left_out`.
+fn scan(dir: &Path, home: &str, names: &BTreeSet<String>, done: &BTreeMap<String, Done>, left_out: &mut LeftOut) -> Vec<Found> {
     let account = limits::tilde(dir, home);
     let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let mut out = vec![];
     for (project, project_dir) in entries(&dir.join("projects")) {
-        for (file, path) in entries(&project_dir.join("memory")) {
-            if !file.to_lowercase().ends_with(".md") || file.eq_ignore_ascii_case(INDEX) {
-                continue;
+        let notes = notes_in(&project_dir.join("memory"));
+        if !names.contains(&fold(&project)) {
+            if !notes.is_empty() {
+                left_out.folders += 1;
+                left_out.notes += notes.len();
             }
-            // A link is followed; a folder or a broken link is no note.
-            let Ok(meta) = std::fs::metadata(&path) else { continue };
-            if !meta.is_file() {
-                continue;
-            }
+            continue;
+        }
+        for (file, path, meta) in notes {
             let key = real.join("projects").join(&project).join("memory").join(&file).display().to_string();
             let stamp = format!("{} {}", meta.len(), modified_ms(&meta));
             if done.get(&key).is_some_and(|d| d.note.is_some() || d.stamp == stamp) {
@@ -162,6 +268,18 @@ fn scan(dir: &Path, home: &str, done: &BTreeMap<String, Done>) -> Vec<Found> {
         }
     }
     out
+}
+
+/// The Markdown files in memory folder `dir`, by name, with their metadata: not `MEMORY.md`. A link is followed; a
+/// folder or a broken link is no note.
+fn notes_in(dir: &Path) -> Vec<(String, PathBuf, std::fs::Metadata)> {
+    entries(dir).into_iter()
+        .filter(|(file, _)| file.to_lowercase().ends_with(".md") && !file.eq_ignore_ascii_case(INDEX))
+        .filter_map(|(file, path)| {
+            let meta = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
+            Some((file, path, meta))
+        })
+        .collect()
 }
 
 /// What is in folder `dir`, by name: (name, path). Nothing when it can't be read.
@@ -364,6 +482,11 @@ with folder \"{folder}\" lists them.", if n == 1 { "" } else { "s" })
         memory::insert_in(w, who, &path, &body, None)?;
         text.push_str(&format!("\n  - The list: [[{path}]]"));
         listed = Some(path);
+    }
+    if r.left_out.folders > 0 {
+        text.push_str(&format!("\n  - Left out, not read: {} of other paths, with {}. Claude Code keeps a folder per path it works in, and \
+only those of Gizai's places come in: a project's linked folder, a card's worktree, the Team Lead's code copies and its working folder.",
+            count(r.left_out.folders, "folder"), count(r.left_out.notes, "note")));
     }
     // Agents made before this keep their own copy of their instructions, which may still say to keep notes there.
     let stale: Vec<String> = {

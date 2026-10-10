@@ -34,7 +34,8 @@ const Card = memo(function Card({ task, onOpen, onArchive, working }: {
       onClick={() => onOpen(task.id)} onKeyDown={(e) => { if (e.key === "Enter") onOpen(task.id); }}>
       <div className="top"><span className="id">{task.identifier}</span>
         {task.prUrl && <span className={`badge ${pullBadge(task.prState).cls}`} title={`Pull request: ${pullBadge(task.prState).text.toLowerCase()} on ${hostName(task.prUrl)}`}>{pullLabel(task.prUrl)}</span>}
-        {task.hold && <span className="badge needs">On hold</span>}{task.priority > 0 && <PriorityIcon priority={task.priority} />}
+        {task.hold && (task.withLead ? <span className="badge live" title="Its question is with the Team Lead">Team Lead</span>
+          : <span className="badge needs">On hold</span>)}{task.priority > 0 && <PriorityIcon priority={task.priority} />}
         {onArchive && (
           // Its own pointer and key events stay here: pressing it neither starts a drag nor opens the card.
           <button className="btn ghost sm icon-only card-archive" aria-label={`Archive ${task.identifier}`} title="Archive"

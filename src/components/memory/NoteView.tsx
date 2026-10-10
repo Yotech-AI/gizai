@@ -76,7 +76,8 @@ const parseLink = (href: string, prefix: string): WikiLink | null => {
 const MAX_DEPTH = 2;
 const Depth = createContext(0);
 
-/** A note's text as the reading view shows it: `from` is the note it is in (its folder decides what a title finds). */
+/** A note's text as the reading view shows it: `from` is the note it is in (its folder decides what a title finds).
+ *  `frontmatter`: the text has no properties block to take off (taken off already, or a part of a note). */
 export function NoteView({ md, from, links, frontmatter = false }: { md: string; from: MemoryNote | null; links: NoteLinks; frontmatter?: boolean }) {
   const components: Components = {
     a: ({ href, children }) => {

@@ -11,7 +11,7 @@ import { relTime } from "../../lib/format";
 import { modKey } from "../../lib/keys";
 import {
   backlinks, folderOf, linkedNote, linkMention, LIST_PROPERTIES, NOTE_TYPES, outgoing, outline, properties, resolve, setProperty, tagCounts,
-  tags, titleOf, titleProblem, unlinkedMentions, type Mention,
+  tags, titleOf, titleProblem, unlinkedMentions, withoutFrontmatter, type Mention,
 } from "../../lib/memory";
 import { MarkdownEditor, type EditorHandle, type WikiSupport } from "../MarkdownEditor";
 import { MarkdownView } from "../MarkdownView";
@@ -101,8 +101,7 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
     <>
       <div className="mem-note">
         <div className="mem-note-bar">
-          <span className={status === "saved" ? "faint" : "muted"} role="status">{statusText}</span>
-          {last && <span className="faint">· {last.authorName ?? "Someone"}, {relTime(last.createdAt)}</span>}
+          <span className={status === "saved" ? "faint" : "muted"} role="status">{statusText}{last && ` · ${last.authorName ?? "Someone"}, ${relTime(last.createdAt)}`}</span>
           <span className="grow" />
           <div className="seg" role="group" aria-label="View">
             <button className={mode === "read" ? "on" : undefined} aria-pressed={mode === "read"} title="The note as it reads, its links working" onClick={() => switchMode("read")}><BookOpen className="icon sm" />Read</button>
@@ -124,13 +123,13 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setTitle(titleOf(note.path)); (e.target as HTMLInputElement).blur(); } }} />
           {mode === "edit" ? (
             <div className="doc-editor">
-              <MarkdownEditor value={text} ariaLabel="Note text" minHeight={420} hint={`[[ links a note · ${modKey()}+click opens a link · ${modKey()}+S saves`} handle={editor}
-                placeholder="Write in Markdown: # headings, [[links to notes]], #tags, KADE-12 refs and @mentions."
+              <MarkdownEditor value={text} ariaLabel="Note text" minHeight={420} handle={editor}
+                placeholder={`Write in Markdown: # headings, [[ links a note (${modKey()}+click opens it), #tags, KADE-12 refs and @mentions.`}
                 wiki={wiki} onChange={ed.edit} onSave={(md) => ed.save(md)} onBlur={ed.blur} />
             </div>
           ) : (
             <div ref={reading} onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest("a, button")) switchMode("edit"); }}>
-              {text.trim() ? <NoteView md={text} from={note} links={{ ...links, notes: all }} />
+              {text.trim() ? <NoteView md={withoutTitle(text, titleOf(note.path))} from={note} links={{ ...links, notes: all }} frontmatter />
                 : <p className="faint">This note is empty. <button className="link-btn" onClick={() => switchMode("edit")}>Write in it</button></p>}
             </div>
           )}
@@ -173,6 +172,13 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
       )}
     </>
   );
+}
+
+/** The reading view's text: without its properties, and without a first heading that only repeats the title above it. */
+function withoutTitle(md: string, title: string): string {
+  const body = withoutFrontmatter(md);
+  const first = /^#\s+(.+?)\s*#*\s*(\n|$)/.exec(body);
+  return first && first[1]!.trim().toLowerCase() === title.trim().toLowerCase() ? body.slice(first[0].length).replace(/^\s*\n/, "") : body;
 }
 
 /** A collapsible section of the right panel; which are closed is kept. */

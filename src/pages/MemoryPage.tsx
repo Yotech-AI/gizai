@@ -214,7 +214,7 @@ function Files({ scope, scopeName, notes, selected, tag, onTag, query, onQuery, 
     <aside className="mem-files" aria-label="Notes">
       <div className="mem-search">
         <Search className="icon sm" />
-        <input className="input" type="search" aria-label="Search notes" placeholder="Search: words, path:Folder, tag:name" value={query}
+        <input className="input" type="search" aria-label="Search notes" placeholder="Search, path: or tag:" title={'Words and "phrases"; path:Folder keeps the notes in a folder, tag:name those with a tag'} value={query}
           onChange={(e) => onQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") onQuery(""); }} />
       </div>
       {query.trim() ? <SearchResults scope={scope} query={query} selected={selected} onOpen={onOpen} /> : <>

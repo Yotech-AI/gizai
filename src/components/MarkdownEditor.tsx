@@ -197,6 +197,25 @@ const wikiPlugin = (get: () => WikiSupport | undefined) => ViewPlugin.fromClass(
   }
 }, { decorations: (v) => v.decorations });
 
+/** A memory note's properties (its frontmatter, `---` … `---` on the first lines) read as plain small text, not as
+ *  Markdown: without this, its last line and the closing `---` show as a big heading. */
+const frontmatterLine = Decoration.line({ class: "cm-frontmatter" });
+function frontmatterDecorations(view: EditorView, on: boolean): DecorationSet {
+  const doc = view.state.doc;
+  if (!on || doc.lines < 2 || doc.line(1).text.trimEnd() !== "---") return Decoration.none;
+  let end = 0;
+  for (let i = 2; i <= Math.min(doc.lines, 300) && !end; i++) if (["---", "..."].includes(doc.line(i).text.trimEnd())) end = i;
+  if (!end) return Decoration.none;
+  const b = new RangeSetBuilder<Decoration>();
+  for (let i = 1; i <= end; i++) b.add(doc.line(i).from, doc.line(i).from, frontmatterLine);
+  return b.finish();
+}
+const frontmatterPlugin = (on: () => boolean) => ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = frontmatterDecorations(view, on()); }
+  update(u: ViewUpdate) { if (u.docChanged) this.decorations = frontmatterDecorations(u.view, on()); }
+}, { decorations: (v) => v.decorations });
+
 /** The wikilink (with its position in the text) or task ref at a point of the text, if any. */
 function linkAt(view: EditorView, pos: number): { wiki: WikiLink } | { task: string } | null {
   const line = view.state.doc.lineAt(pos);
@@ -224,6 +243,8 @@ const theme = EditorView.theme({
   ".cm-chip-mention": { background: "var(--accent-soft)", color: "var(--accent)" },
   ".cm-wikilink": { color: "var(--accent)", textDecoration: "underline", textDecorationColor: "var(--accent-soft)", textUnderlineOffset: "3px" },
   ".cm-wikilink.missing": { color: "var(--text-2)", textDecorationStyle: "dashed", textDecorationColor: "var(--text-3)" },
+  ".cm-frontmatter": { fontFamily: "var(--font-mono)", fontSize: "0.86em", lineHeight: "1.55", color: "var(--text-2)" },
+  ".cm-frontmatter *": { fontSize: "inherit !important", fontWeight: "inherit !important", color: "inherit !important", fontStyle: "inherit !important" },
 });
 
 // `key` is the shortcut's letter, shown with the modifier: Ctrl+B, or Cmd+B on macOS.
@@ -434,7 +455,7 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
             { key: "Mod-k", run: (v) => run(v, "link") },
           ])),
           history(), drawSelection(), EditorView.lineWrapping,
-          markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), livePreview, chips, wikiPlugin(() => wikiRef.current), theme,
+          markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), livePreview, chips, wikiPlugin(() => wikiRef.current), frontmatterPlugin(() => !!wikiRef.current), theme,
           EditorView.domEventHandlers({
             // Ctrl+click (Cmd+click on macOS) on a wikilink opens it, on a task ref its card.
             mousedown: (e, v) => {

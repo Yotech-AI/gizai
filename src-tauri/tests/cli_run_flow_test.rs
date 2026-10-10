@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // Agents on Codex, Gemini, another coding CLI or a second account (GA-3), run end to end with a fake CLI
 // (crates/gizai-agents/tests/fake-cli.sh), never the real ones.
 use gizai_core::clis::Cli;
@@ -66,7 +68,7 @@ async fn a_codex_agent_runs_codex_exec_and_moves_the_card() {
 
     let err = stderr_of(&run);
     let common = std::fs::canonicalize(repo.join(".git")).unwrap();
-    for want in ["argv: exec --json -m gpt-5-codex -c model_reasoning_effort=\"high\" -c approval_policy=\"never\" -c sandbox_mode=\"workspace-write\"",
+    for want in ["argv: exec --json -m gpt-5-codex -c model_reasoning_effort=\"high\" -c approval_policy=\"never\" -c web_search=\"disabled\" -c sandbox_mode=\"workspace-write\"",
                  "sandbox_workspace_write.network_access=true", &format!("sandbox_workspace_write.writable_roots=[\"{}\"] -", common.display())] {
         assert!(err.contains(want), "{want} missing in {err}");
     }

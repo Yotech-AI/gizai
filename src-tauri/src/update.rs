@@ -6,13 +6,13 @@
 //!   the background while Gizai stays usable. Then it backs up your data, installs the release with its own
 //!   install.sh, and offers a restart. A step that fails leaves the installed Gizai as it was and says why; the log in
 //!   <data folder>/update has everything.
-//! - Only a Gizai that install.sh installed (<prefix>/lib/gizai/gizai) updates itself. A dev or test build that runs
-//!   from anywhere else never installs over anything.
+//! - Only a Gizai that install.sh installed (<prefix>/lib/gizai/gizai) updates itself, or on Windows one that
+//!   install.ps1 installed (<prefix>\gizai.exe). A dev or test build that runs from anywhere else never installs over
+//!   anything.
 //!
 //! Usable without a Tauri app (tests): the UI hears about changes through `AppState::notify`.
 use std::io::Write;
-use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -207,13 +207,20 @@ pub fn last_check(st: &AppState) -> Option<LastCheck> {
     settings::get(&st.db, LAST_CHECK).ok().flatten()
 }
 
-/// Where an update installs: the prefix install.sh installed this Gizai into. Else why it can't update itself.
+/// The installer, as these messages name it.
+#[cfg(not(windows))]
+const INSTALLER: &str = "./install.sh";
+#[cfg(windows)]
+const INSTALLER: &str = r".\install.ps1";
+
+/// Where an update installs: the prefix install.sh (install.ps1 on Windows) installed this Gizai into. Else why it can't
+/// update itself.
 fn install_prefix(inner: &Inner) -> Result<PathBuf, String> {
     let Some(exe) = &inner.exe else {
-        return Err("Gizai can't tell where it runs from, so it can't update itself. Install the new version with ./install.sh.".into());
+        return Err(format!("Gizai can't tell where it runs from, so it can't update itself. Install the new version with {INSTALLER}."));
     };
     up::install_prefix(exe).ok_or_else(|| {
-        format!("This Gizai runs from {}, not from an install, so it doesn't update itself. Update its checkout with git, or install with ./install.sh.",
+        format!("This Gizai runs from {}, not from an install, so it doesn't update itself. Update its checkout with git, or install with {INSTALLER}.",
                 exe.display())
     })
 }
@@ -374,7 +381,12 @@ fn run(st: &AppState, release: &Release, repo: &str, prefix: &std::path::Path, s
     let source = dir.canonicalize().unwrap_or(dir).join("source");
     let version = &release.version;
     log.say(&format!("== Updating Gizai {VERSION} to {version}: the release {} from {repo}, installed into {}", release.tag, prefix.display()));
+    // Linux and macOS: Gizai's PATH with the login shell's. Windows gives every program the whole PATH already, and its
+    // `bash` may be WSL's, which Gizai never uses.
+    #[cfg(not(windows))]
     let path = crate::runs::command_path();
+    #[cfg(windows)]
+    let path = std::env::var_os("PATH").unwrap_or_default();
     let built = (|| {
         up::get_source(repo, &release.tag, &source, &log, stop)?;
         match up::source_version(&source) {
@@ -484,7 +496,7 @@ pub fn on_exit(st: &AppState) {
 
 /// The restart after an update: a small shell in a session of its own waits until this Gizai has quit (at most ten
 /// minutes), then starts the installed one with its launcher. The caller quits Gizai the usual way next, which stops
-/// agents at work first.
+/// agents at work first. On Windows a hidden PowerShell, detached from Gizai, does the same with `<prefix>\gizai.exe`.
 pub fn restart_command(st: &AppState) -> Result<std::process::Command, String> {
     let inner = st.updates.lock();
     let ready = inner.job.as_ref().is_some_and(|j| j.status.step == "installed")
@@ -492,26 +504,79 @@ pub fn restart_command(st: &AppState) -> Result<std::process::Command, String> {
     if !ready {
         return Err("No newer Gizai is installed yet: update first".into());
     }
-    let lib = install_prefix(&inner)?.join("lib/gizai");
-    let launcher = [lib.join("gizai-launch"), lib.join("gizai")].into_iter().find(|p| crate::runs::executable(p))
-        .ok_or_else(|| format!("No Gizai is installed in {}", lib.display()))?;
-    // gone: no /proc entry, or a zombie its parent hasn't collected yet
-    const WAIT_THEN_START: &str = r#"i=0
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let lib = install_prefix(&inner)?.join("lib/gizai");
+        let launcher = [lib.join("gizai-launch"), lib.join("gizai")].into_iter().find(|p| gizai_agents::os::executable(p))
+            .ok_or_else(|| format!("No Gizai is installed in {}", lib.display()))?;
+        // gone: no /proc entry, or a zombie its parent hasn't collected yet
+        #[cfg(not(target_os = "macos"))]
+        const WAIT_THEN_START: &str = r#"i=0
 while [ "$i" -lt 3000 ]; do
   s="$(cat "/proc/$1/stat" 2>/dev/null)" || break
   case "${s##*) }" in Z*|X*) break ;; esac
   sleep 0.2; i=$((i + 1))
 done
 [ "$i" -lt 3000 ] && exec "$2""#;
-    let mut cmd = std::process::Command::new("sh");
-    cmd.args(["-c", WAIT_THEN_START, "gizai-restart"]).arg(std::process::id().to_string()).arg(&launcher)
-        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    // SAFETY: setsid(2) is a plain syscall, safe to make between fork and exec.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
+        // macOS has no /proc: gone when kill -0 can't reach it any more, or when ps calls it a zombie
+        #[cfg(target_os = "macos")]
+        const WAIT_THEN_START: &str = r#"i=0
+while [ "$i" -lt 3000 ] && kill -0 "$1" 2>/dev/null; do
+  case "$(ps -o stat= -p "$1" 2>/dev/null)" in *Z*) break ;; esac
+  sleep 0.2; i=$((i + 1))
+done
+[ "$i" -lt 3000 ] && exec "$2""#;
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", WAIT_THEN_START, "gizai-restart"]).arg(std::process::id().to_string()).arg(&launcher)
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        // SAFETY: setsid(2) is a plain syscall, safe to make between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        Ok(cmd)
     }
-    Ok(cmd)
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS};
+        let prefix = install_prefix(&inner)?;
+        let exe = prefix.join("gizai.exe");
+        if !gizai_agents::os::executable(&exe) {
+            return Err(format!("No Gizai is installed in {}", prefix.display()));
+        }
+        // Windows' own PowerShell 5.1, by its full path when Windows says where it is
+        let powershell = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
+            .filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("powershell.exe"));
+        let mut cmd = std::process::Command::new(powershell);
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command"]).arg(windows_restart_script(std::process::id(), &exe))
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        Ok(cmd)
+    }
+}
+
+/// Windows: the PowerShell the restart runs. It waits until Gizai `pid` has quit (at most ten minutes), then starts `exe`;
+/// when Gizai still runs after that, it starts nothing. Builds on every system, so tests can read it.
+pub fn windows_restart_script(pid: u32, exe: &Path) -> String {
+    format!("Wait-Process -Id {pid} -Timeout 600 -ErrorAction SilentlyContinue; \
+             if (-not (Get-Process -Id {pid} -ErrorAction SilentlyContinue)) {{ Start-Process -FilePath {} }}",
+            powershell_quoted(&exe.to_string_lossy()))
+}
+
+/// `text` as a PowerShell string that takes it literally: in single quotes, each quote in it doubled (PowerShell also
+/// reads the typographic single quotes as quotes).
+fn powershell_quoted(text: &str) -> String {
+    let mut out = String::from("'");
+    for c in text.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
 }

@@ -2,6 +2,8 @@
 //! only Codex is installed. Which coding CLIs are installed is faked: HOME is an empty folder and PATH holds only fake
 //! `claude` and `codex` programs, so a login shell finds those and nothing else. The environment belongs to the whole
 //! process, so this file has a single test.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -1,6 +1,8 @@
 //! GA-32 end to end with the fake `claude`: To do is a queue by priority, a start moves the card to In progress, a start
 //! that can't work holds one card, the Testing switch, a DevOps run that never goes to QA, and the Deploy column where only
 //! a person's Run starts an agent.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

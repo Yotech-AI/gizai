@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-45: an agent's folders end to end, with the fake CLIs (never the real ones): what a task run's command line gets,
 // a missing folder skipped with a note in the run log, the Team Lead's tools that can't change the list, and the
 // check update_checkout (GA-44) asks before it updates a folder.
@@ -66,7 +68,7 @@ fn events(st: &gizai_lib::AppState, run_id: &str) -> Vec<Value> {
 
 #[tokio::test]
 async fn a_claude_code_run_gets_its_folders_and_skips_a_missing_one_with_a_note_in_the_run_log() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -94,7 +96,7 @@ async fn a_claude_code_run_gets_its_folders_and_skips_a_missing_one_with_a_note_
 
 #[tokio::test]
 async fn a_live_run_shows_the_notes_first() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -121,7 +123,7 @@ async fn a_live_run_shows_the_notes_first() {
 
 #[tokio::test]
 async fn a_gemini_run_gets_the_read_and_change_folders_and_the_log_says_which_it_left_out() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -149,7 +151,7 @@ struct Lead {
 }
 
 fn lead() -> Lead {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = real_tempdir();
     let st = gizai_lib::test_state(dir.path());
     // the fake answers Claude Code's model list
     gizai_core::settings::set(&st.db, "claude_bin", &FAKE_CLAUDE.to_string()).unwrap();
@@ -219,7 +221,7 @@ fn update_checkout_may_update_a_folder_only_when_the_team_leads_list_sets_it_to_
 
 #[test]
 fn the_forms_check_refuses_gizais_data_folder_and_warns_about_a_main_checkout() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
     gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -231,4 +233,13 @@ fn the_forms_check_refuses_gizais_data_folder_and_warns_about_a_main_checkout() 
     assert!(checks[1].warning.as_deref().unwrap().starts_with("This is Kade's main checkout"), "{checks:?}");
     assert_eq!((&checks[2].error, &checks[2].warning), (&None, &None), "reading it is fine: {checks:?}");
     assert!(checks[3].error.as_deref().unwrap().contains("keys or logins"), "{checks:?}");
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
 }

@@ -45,16 +45,31 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
     if let Some(m @ ("bypassPermissions" | "danger-full-access" | "yolo")) = a.opt("permission_mode").as_deref() {
         return Err(format!("{m} can't be set from chat: it lets an agent run anything. Set it yourself in the agent form if you really want it."));
     }
-    for t in a.list("allowed_tools").unwrap_or_default() {
+    let allowed = a.list("allowed_tools").unwrap_or_default();
+    for t in &allowed {
         let t = t.trim().to_lowercase().replace(' ', "");
         if t == "bash" || t == "bash(*)" || t == "bash(:*)" || t == "bash(*:*)" {
             return Err("an agent can't be allowed to run any command from chat; name the commands, like Bash(npm test:*) or Bash(git commit:*)".into());
         }
     }
+    // Only commands: web search, fetching pages and the CLI's other tools are the user's switches (agent form → Tools), and a
+    // rule for another tool, like Read(//…), could reach past the worktree.
+    if let Some(t) = allowed.iter().find(|t| !is_command(t)) {
+        return Err(format!("allowed_tools takes only commands, like Bash(npm test:*); {t} isn't one. Web search, fetching pages, the browser, \
+                            MCP servers and the CLI's other tools can't be switched on from chat: only the user does that, in the agent form → \
+                            Tools. Nothing changed."));
+    }
     // MCP servers and their tools: only the user switches them, in the agent form → Tools.
     for k in ["mcp_servers", "mcp", "tools", "mcp_tools"] {
         if a.0.get(k).is_some_and(|v| !v.is_null()) {
             return Err("an agent's MCP servers and their tools can't be switched from chat: only the user does that, in the agent form → Tools".into());
+        }
+    }
+    // Web search, fetching pages, the browser and the CLI's built-in tools: the same, only the user (agent form → Tools).
+    for k in ["web_search", "web_fetch", "fetch_domains", "web", "browser", "insecure_certs", "builtin_tools", "builtin", "cli_tools"] {
+        if a.0.get(k).is_some_and(|v| !v.is_null()) {
+            return Err("an agent's web search, fetching pages, browser and built-in tools can't be switched from chat: only the user does that, \
+                        in the agent form → Tools. Nothing changed.".into());
         }
     }
     // The folders an agent may read or change: only the user sets them, in the agent form.
@@ -64,12 +79,17 @@ fn guard_agent_powers(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// A command for an agent's allowed commands: `Bash(…)` with something in it.
+fn is_command(t: &str) -> bool {
+    t.trim().strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')).is_some_and(|inner| !inner.trim().is_empty())
+}
+
 /// A repository path from chat must be a git repository (it has a .git folder or file), and never `/`, your
 /// home folder or a folder above it: agents work there and the Team Lead may read it.
 fn checked_repo(raw: &str) -> Result<String, String> {
     let bad = || format!("{raw} is not a git repository: give the folder that holds the project's .git");
     let p = std::path::Path::new(raw).canonicalize().map_err(|_| bad())?;
-    let home = std::env::var("HOME").ok().and_then(|h| std::path::Path::new(&h).canonicalize().ok());
+    let home = std::path::Path::new(&gizai_core::clis::home()).canonicalize().ok();
     if p.parent().is_none() || home.as_ref().is_some_and(|h| h.starts_with(&p)) || !p.join(".git").exists() {
         return Err(bad());
     }
@@ -549,8 +569,9 @@ pub(crate) fn write_doc(cx: &Cx, a: &Args) -> Result<Value, String> {
 
 pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let raw = a.req("path")?;
-    let path = match raw.strip_prefix("~/") {
-        Some(rest) => std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+    // `~/…`, and on Windows `~\…` too
+    let path = match raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\").filter(|_| cfg!(windows))) {
+        Some(rest) => std::path::PathBuf::from(gizai_core::clis::home()).join(rest),
         None => std::path::PathBuf::from(&raw),
     };
     if !path.is_absolute() {

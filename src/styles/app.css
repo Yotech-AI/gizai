@@ -397,6 +397,14 @@ a.member:hover { border-color: var(--line-2); }
 .mcp-agent .ma-line { color: var(--text-2); font-size: var(--fs-sm); }
 .mcp-agent .warn { font-size: var(--fs-xs); color: var(--warning); }
 .mcp-agent .hint { font-size: var(--fs-xs); color: var(--text-3); }
+/* The agent form's Web, Browser and Built-in tools (AgentCliTools) and the built-in browser in Settings (BrowserEntry). */
+.mcp-agent .ct-tool { display: grid; gap: 2px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.mcp-agent .ct-tool .ma-line { font-size: var(--fs-xs); }
+.ct-domains { display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-sm); }
+.ct-head { display: flex; justify-content: flex-end; }
+.ct-group { display: grid; gap: 6px; margin-top: 6px; }
+.ct-label { color: var(--text-3); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.mcp-builtin { margin: 0 0 6px; padding: 0 0 6px; list-style: none; border-bottom: 1px solid var(--line); }
 /* The Usage page (UsagePage): the period switch, the metrics, the bars per day and the agent and project tables. */
 .usage-page { gap: 18px; }
 .usage-page .usage-metric { margin-top: 10px; }

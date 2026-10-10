@@ -2,6 +2,8 @@
 //! it, one check at a time, what skips it, three failures pause it), the check run itself, the tools check_board,
 //! start_chat and continue_agent_run, what a check may not do, waiting Team Lead chats in read_inbox and
 //! get_overview, and your reply in a Team Lead chat (its preface).
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

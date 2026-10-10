@@ -2,6 +2,7 @@
 import { EditorView } from "@codemirror/view";
 import { emit } from "@tauri-apps/api/event";
 import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, setAgentStatus } from "./api";
+import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { resetAppearance } from "./lib/appearance";
 
@@ -60,7 +61,7 @@ export async function editorProbe(taskId: string, getDescription: (id: string) =
   const typed = " Typed by the self-test: café ✓";
   document.execCommand("insertText", false, typed);
   await sleep(holdMs);
-  content.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, ctrlKey: true, bubbles: true, cancelable: true }));
+  content.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, ctrlKey: !isMac(), metaKey: isMac(), bubbles: true, cancelable: true }));
   let stored = "";
   for (let i = 0; i < 20; i++) {
     await sleep(100);
@@ -156,7 +157,7 @@ export async function docProbe(
   const content = await waitFor(() => document.querySelector(".doc-editor .cm-content") as HTMLElement | null);
   if (!content) return { ok: false, error: "doc editor not found" };
   const v0 = (await api.getDoc(docId)).currentVersion;
-  const ctrlS = () => content.dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", keyCode: 83, ctrlKey: true, bubbles: true, cancelable: true }));
+  const ctrlS = () => content.dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", keyCode: 83, ctrlKey: !isMac(), metaKey: isMac(), bubbles: true, cancelable: true }));
   const until = async (f: (d: { bodyMd: string; currentVersion: number }) => boolean) => {
     for (let i = 0; i < 30; i++) { await sleep(100); const d = await api.getDoc(docId); if (f(d)) return d; }
     return api.getDoc(docId);

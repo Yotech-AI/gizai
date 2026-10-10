@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod pulls;
 mod quit;
 pub mod runs;
+pub mod shell_path;
 pub mod tools;
 pub mod update;
 pub mod worktrees;
@@ -98,6 +99,10 @@ fn exit_app(app: AppHandle, code: i32) {
     app.exit(code);
 }
 
+/// Gizai's identifier (tauri.conf.json's): the macOS app bundle's id, and on Windows the AppUserModelID its Start menu
+/// shortcut and notifications carry.
+pub const APP_ID: &str = "ai.gizai.app";
+
 /// The data folder: GIZAI_DATA_DIR, else the usual one.
 pub fn data_dir() -> PathBuf {
     match std::env::var("GIZAI_DATA_DIR") {
@@ -106,12 +111,23 @@ pub fn data_dir() -> PathBuf {
     }
 }
 
-/// `$XDG_DATA_HOME/gizai`, else `~/.local/share/gizai`: the data of the Gizai you use.
+/// The data of the Gizai you use: `$XDG_DATA_HOME/gizai`, else `~/.local/share/gizai`. On macOS `~/Library/Application
+/// Support/Gizai`, on Windows `%APPDATA%\Gizai`.
 pub fn default_data_dir() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".local/share"));
-    base.join("gizai")
+    #[cfg(target_os = "macos")]
+    return PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join("Library/Application Support/Gizai");
+    // Windows has no HOME: APPDATA is <your profile>\AppData\Roaming
+    #[cfg(windows)]
+    return std::env::var_os("APPDATA").filter(|a| !a.is_empty()).map(PathBuf::from)
+        .unwrap_or_else(|| std::env::home_dir().unwrap_or_else(|| ".".into()).join("AppData").join("Roaming"))
+        .join("Gizai");
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let base = std::env::var("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".local/share"));
+        base.join("gizai")
+    }
 }
 
 /// 12 hex characters naming a data folder (the same folder however it is spelled).
@@ -134,8 +150,13 @@ pub fn data_label(dir: &std::path::Path) -> Option<String> {
     Some(dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| dir.display().to_string()))
 }
 
+/// Your login name with a capital (USER; USERNAME on Windows), else "You".
 fn display_name() -> String {
-    let user = std::env::var("USER").unwrap_or_else(|_| "You".into());
+    #[cfg(not(windows))]
+    const USER: &str = "USER";
+    #[cfg(windows)]
+    const USER: &str = "USERNAME";
+    let user = std::env::var(USER).unwrap_or_else(|_| "You".into());
     let mut c = user.chars();
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
@@ -146,11 +167,10 @@ fn display_name() -> String {
 /// One Gizai per data folder: a second one would treat the first one's running agents as left behind and stop
 /// them, and take over its chat socket. An exclusive lock on `<dir>/gizai.lock`, released when Gizai exits.
 fn lock_data_dir(dir: &std::path::Path) -> Result<std::fs::File, String> {
-    use std::os::unix::io::AsRawFd;
     let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("gizai.lock"))
         .map_err(|e| format!("can't open the lock in {}: {e}", dir.display()))?;
-    // SAFETY: flock on a file descriptor we own.
-    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+    // flock(LOCK_EX | LOCK_NB) on Linux and macOS, LockFileEx on Windows; any failure counts as taken, as before
+    if f.try_lock().is_err() {
         return Err(format!("Gizai is already running with the data in {}", dir.display()));
     }
     Ok(f)
@@ -254,10 +274,10 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
-/// The tray icon: top right in Omarchy's Waybar, in the menu bar on macOS. A click opens its menu (on Linux a click
-/// always does): Open Gizai, and Quit Gizai completely, which goes through `app.exit` like `exit_app`, so agents at
-/// work are stopped first. On Linux it needs libayatana-appindicator (or the older libappindicator); without it there is
-/// no tray icon, and starting Gizai again brings the window back.
+/// The tray icon: top right in Omarchy's Waybar, in the menu bar on macOS, in the notification area of the taskbar on
+/// Windows. A click opens its menu (on Linux a click always does): Open Gizai, and Quit Gizai completely, which goes
+/// through `app.exit` like `exit_app`, so agents at work are stopped first. On Linux it needs libayatana-appindicator (or
+/// the older libappindicator); without it there is no tray icon, and starting Gizai again brings the window back.
 fn tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::TrayIconBuilder;
@@ -269,8 +289,12 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Gizai", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Gizai completely", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
-    TrayIconBuilder::with_id("gizai")
-        .icon(tauri::include_image!("icons/64x64.png"))
+    // macOS: Gizai's glyph in black, a template the menu bar colours for its light or dark look
+    #[cfg(target_os = "macos")]
+    let icon = TrayIconBuilder::with_id("gizai").icon(tauri::include_image!("icons/tray-template.png")).icon_as_template(true);
+    #[cfg(not(target_os = "macos"))]
+    let icon = TrayIconBuilder::with_id("gizai").icon(tauri::include_image!("icons/64x64.png"));
+    icon
         .tooltip("Gizai")
         .menu(&menu)
         .show_menu_on_left_click(true)
@@ -281,6 +305,27 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// macOS: the id of the app menu's own Quit item (see `mac_menu`).
+#[cfg(target_os = "macos")]
+const MAC_QUIT: &str = "gizai-quit";
+
+/// macOS: Tauri's usual menu bar (Gizai, File, Edit, View, Window, Help: Cmd+W closes the window, which hides it), with
+/// the app menu's last item, Quit (Cmd+Q), swapped for Gizai's own. The usual Quit ends the app at once, past
+/// `RunEvent::ExitRequested`, so agents at work would be ended rather than stopped first.
+#[cfg(target_os = "macos")]
+fn mac_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem};
+    let menu = Menu::default(app)?;
+    if let Some(app_menu) = menu.items()?.first().and_then(|m| m.as_submenu()) {
+        let n = app_menu.items()?.len();
+        if n > 0 {
+            app_menu.remove_at(n - 1)?;
+        }
+        app_menu.append(&MenuItem::with_id(app, MAC_QUIT, "Quit Gizai", true, Some("CmdOrCtrl+Q"))?)?;
+    }
+    Ok(menu)
 }
 
 /// Whether the tray's library loads: the tray (libappindicator-sys) panics without it. It stays loaded; the tray loads
@@ -301,7 +346,15 @@ fn appindicator_found() -> bool {
 pub fn test_state(dir: &std::path::Path) -> AppState {
     let mut st = open_data(dir.join("data"), Arc::new(|_| {}), false).expect("test state");
     // Tests keep their socket in their own folder, never in the real runtime dir.
-    st.mcp_socket = st.data_dir.join("mcp.sock");
+    #[cfg(unix)]
+    {
+        st.mcp_socket = st.data_dir.join("mcp.sock");
+    }
+    // Windows: a named pipe, not a file; its name is per data folder already, so a test's is its own.
+    #[cfg(windows)]
+    {
+        st.mcp_socket = mcp::socket_path(&st.data_dir);
+    }
     // Never the real keychain in tests: one in memory, unless the test names a file for it.
     if std::env::var_os("GIZAI_FAKE_KEYCHAIN").is_none() {
         st.keychain = Arc::new(gizai_agents::secrets::MemoryKeychain::default());
@@ -341,13 +394,39 @@ pub fn test_task(st: &AppState, repo: &str, label: &str) -> String {
 pub fn run() {
     let dir = data_dir();
     let _ = std::fs::create_dir_all(&dir); // so the instance id names the folder the same way from the first start
-    tauri::Builder::default()
-        // Starting Gizai again on the same data (the launcher, the gizai command) brings the open window forward, also
-        // when it was closed (hidden): on a desktop without a tray, that is how the window comes back.
-        .plugin(tauri_plugin_single_instance::Builder::new()
-            .dbus_id(instance_id(&dir))
-            .callback(|app, _args, _cwd| show_main(app))
-            .build())
+    // Windows: Gizai's identity (the Start menu shortcut has it too): its notifications show as Gizai's, and the taskbar
+    // groups its window with the shortcut. Before any window opens.
+    #[cfg(windows)]
+    {
+        let id: Vec<u16> = APP_ID.encode_utf16().chain([0]).collect();
+        // SAFETY: a NUL-terminated wide string that lives across the call.
+        unsafe { windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) };
+    }
+    let builder = tauri::Builder::default();
+    // Starting Gizai again on the same data (the launcher, the gizai command) brings the open window forward, also when
+    // it was closed (hidden): on a desktop without a tray, that is how the window comes back.
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(tauri_plugin_single_instance::Builder::new()
+        .dbus_id(instance_id(&dir))
+        .callback(|app, _args, _cwd| show_main(app))
+        .build());
+    // macOS and Windows: the plugin keys the instance by the app's identifier, not by the data folder, so with it a second
+    // Gizai on any data would only bring the first one's window forward and quit. Only the Gizai on the usual data uses
+    // it; one on other data (GIZAI_DATA_DIR: a dev build, a test) runs next to it, and a second one on that same data
+    // stops at the data folder's lock ("Gizai is already running with the data in …").
+    #[cfg(not(target_os = "linux"))]
+    let builder = match data_label(&dir) {
+        None => builder.plugin(tauri_plugin_single_instance::Builder::new().callback(|app, _args, _cwd| show_main(app)).build()),
+        Some(_) => builder,
+    };
+    // macOS: the app menu's Quit (Cmd+Q) quits like Quit Gizai completely, so agents at work are stopped first.
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(mac_menu).on_menu_event(|app, e| {
+        if e.id().as_ref() == MAC_QUIT {
+            app.exit(0);
+        }
+    });
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
@@ -452,7 +531,8 @@ pub fn run() {
             app_info, selftest_report, exit_app,
             commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
             commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
-            commands::agent_mcp, commands::save_agent_mcp,
+            commands::agent_mcp, commands::save_agent_mcp, commands::agent_cli_tools, commands::save_agent_cli_tools, commands::ask_cli_tools,
+            commands::browser_entry, commands::save_browser_entry, commands::list_browser_tools,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
             commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,
@@ -492,9 +572,11 @@ pub fn run() {
             {
                 api.prevent_exit();
             }
-            // Closing the window (Super+W on Omarchy, its X button) only hides it: Gizai keeps running in the tray, with
-            // its agents, heartbeats, chat and MCP socket, and the hidden window keeps its page. Quitting is the tray's or
-            // Settings' Quit Gizai completely, Cmd+Q on macOS or a signal; Exit ends the page process (see `quit`).
+            // Closing the window (Super+W on Omarchy, its X button, Cmd+W on macOS, Alt+F4 on Windows) only hides it:
+            // Gizai keeps running in the tray, with its agents, heartbeats, chat and MCP socket, and the hidden window
+            // keeps its page. Quitting is the tray's or Settings' Quit Gizai completely, Cmd+Q on macOS or a signal; Exit
+            // ends the page process (see `quit`). macOS's own Quit (the Dock's, logging out) and Windows logging off
+            // skip the first step and come straight to Exit, where agents at work end at once.
             if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
                 && label == "main"
             {

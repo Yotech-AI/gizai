@@ -382,6 +382,8 @@ fn resolve_agent(t: &T, name: &str) -> String {
     team::all_agents(&t.st.db).unwrap().into_iter().find(|(_, m)| m.name == name).unwrap().1.actor_id
 }
 
+// Linux and macOS only: Unix paths and $HOME.
+#[cfg(unix)]
 #[tokio::test]
 async fn repo_paths_from_the_chat_must_be_git_repositories() {
     let t = setup();
@@ -398,6 +400,8 @@ async fn repo_paths_from_the_chat_must_be_git_repositories() {
     t.ok("update_project", json!({"project": "KADE", "repo_path": ""})).await; // clearing is fine
 }
 
+// Linux and macOS only: Claude Code's model list comes from the fake Claude Code, a shell script.
+#[cfg(unix)]
 #[tokio::test]
 async fn agents_get_only_models_and_efforts_claude_code_offers() {
     let t = setup();
@@ -455,6 +459,8 @@ async fn the_chat_cannot_unlock_codex_or_gemini_either() {
     assert_eq!(team::agent(&t.st.db, &resolve_agent(&t, "Codex Agent")).unwrap().permission_mode.as_deref(), Some("workspace-write"));
 }
 
+// Linux and macOS only: Claude Code's model list comes from the fake Claude Code, a shell script.
+#[cfg(unix)]
 #[tokio::test]
 async fn moving_an_agent_to_another_kind_of_cli_starts_from_that_clis_defaults() {
     let t = setup();

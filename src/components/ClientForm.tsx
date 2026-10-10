@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getClient, saveClient } from "../api";
 import { go } from "../router";
 import type { Client, ClientInput } from "../types";
+import { modKey } from "../lib/keys";
 import { isIban, isKvk, isVatNumber } from "../lib/validate";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
@@ -38,7 +39,7 @@ export function ClientDrawer({ id, onClose }: { id?: string; onClose: () => void
   };
   return (
     <Drawer title={id ? `Edit ${initial.name}` : "New client"} subtitle="Clients own projects. Dutch registration details are checked as you type."
-      onClose={onClose} dirty={JSON.stringify(v) !== JSON.stringify(initial)} error={err} hint="Ctrl+Enter saves"
+      onClose={onClose} dirty={JSON.stringify(v) !== JSON.stringify(initial)} error={err} hint={`${modKey()}+Enter saves`}
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !v.name.trim()} onClick={save}>{id ? "Save changes" : "Create client"}</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }}>
         <FormSection title="Company" text="The name you use day to day, and its legal form.">

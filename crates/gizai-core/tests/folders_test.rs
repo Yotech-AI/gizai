@@ -1,5 +1,7 @@
 // GA-45: an agent's folders (agent form → Permissions → Folders): what is refused and why, what is saved, what a run
 // gets, and when the Team Lead's update_checkout may update one.
+// Linux and macOS only: Unix paths and a symlink. Windows: folders_windows_test.rs.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 
 use gizai_core::db::{self, Db};

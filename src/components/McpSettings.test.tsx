@@ -63,7 +63,9 @@ type State = { list?: McpServerView[] | null; err?: string | null; msg?: string 
 const states = (s: State) => {
   const v: unknown[] = [s.list === undefined ? list : s.list, s.err ?? null, s.msg ?? null, s.edit ?? null, s.busy ?? {}, s.open ?? {}, s.removing ?? null,
     s.scan ?? null, s.importing ?? false];
-  if (s.picks) v.push(s.picks);
+  // GA-55: the built-in browser's row (BrowserEntryRow: v, edit, busy, err) renders before the import panel; not loaded, it
+  // shows nothing.
+  if (s.picks) v.push(null, null, "", null, s.picks);
   return v;
 };
 function render(s: State = {}) {

@@ -10,7 +10,7 @@ use crate::AppState;
 use crate::runs::Note;
 
 fn home() -> String {
-    std::env::var("HOME").unwrap_or_default()
+    core_clis::home()
 }
 
 /// Gizai's own environment, where a CLI without its own CLAUDE_CONFIG_DIR or CODEX_HOME line gets them.

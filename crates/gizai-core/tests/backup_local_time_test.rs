@@ -1,4 +1,6 @@
 // Backup names use local time (GA-25). One test in its own binary: it sets TZ, which the whole process shares.
+// Linux and macOS only: Windows takes its time zone from its own settings, not from TZ.
+#![cfg(unix)]
 use gizai_core::db::{self, Db};
 use gizai_core::{ids, seed};
 

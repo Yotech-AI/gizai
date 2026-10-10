@@ -839,9 +839,17 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
     )
 }
 
+/// Writes `text` to `path`, readable only by you: mode 0600 on Linux and macOS. On Windows a file in your profile (the
+/// data folder is in it) inherits that folder's access list: you, SYSTEM and Administrators can read it.
 fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
     f.write_all(text.as_bytes())
 }
 
@@ -1005,13 +1013,20 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         return fail(&run_id, e.to_string());
     }
     let settings = crate::runs::get_settings(st);
+    // The Team Lead's Web switches (agent form → Tools): its built-in tools stay Read, Glob and Grep, plus WebSearch and
+    // WebFetch only when on.
+    let (web, _) = crate::runs::web_for_run(agent, gizai_agents::cli::Kind::ClaudeCode, &plan.cli.name);
+    let tools: Vec<String> = ["Read", "Glob", "Grep"].iter().map(|s| s.to_string())
+        .chain(gizai_agents::tool_catalog::claude_web_names(web.search, web.fetch)).collect();
+    let untrusted = !servers.is_empty() || web.search || web.fetch;
     let args = ClaudeArgs {
         bin: bin.bin.clone(), env: bin.env.clone(), prompt: prompt.to_string(), session_id: session.clone(), permission_mode: "manual".into(),
-        allowed_tools: std::iter::once("mcp__gizai".to_string()).chain(mcp_allowed).collect(),
-        append_system_prompt: Some(if servers.is_empty() { system_prompt(st, agent) } else { format!("{}\n\n{}", system_prompt(st, agent), gizai_agents::mcp_run::UNTRUSTED) }),
+        allowed_tools: std::iter::once("mcp__gizai".to_string()).chain(mcp_allowed)
+            .chain(gizai_agents::tool_catalog::claude_web_rules(web.search, web.fetch, &web.fetch_domains)).collect(),
+        append_system_prompt: Some(if !untrusted { system_prompt(st, agent) } else { format!("{}\n\n{}", system_prompt(st, agent), gizai_agents::mcp_run::UNTRUSTED) }),
         model: agent.model.clone(),
         max_budget_usd: settings.max_run_usd, resume, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
-        tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, add_dirs),
+        tools: Some(tools), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, add_dirs),
         no_session_persistence: std::env::var("GIZAI_CHAT_NO_PERSIST").is_ok_and(|v| v == "1"),
         disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
@@ -1107,6 +1122,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     if !servers.is_empty() {
         mcp_states(st, &thread.id, &agent.actor_id, &log_path);
     }
+    crate::mcp_servers::record_seen_tools(st, &agent.actor_id, &plan.cli.id, &log_path);
     let stopped = st.chat.stopped.lock().unwrap().contains(&thread.id);
     let (now_totals, ok) = match &result {
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, .. }) => (

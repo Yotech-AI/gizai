@@ -1,0 +1,101 @@
+# Builds and tests Gizai on Linux, macOS (Apple silicon) and Windows, on every pull request and every push to main.
+# It signs, releases and uploads nothing.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the run that is still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      # Windows' git turns LF into CRLF on checkout; the tests read scripts and text files as they are in the repository.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      # Many tests make git commits, and a runner has no git identity of its own.
+      - name: Git identity for the tests
+        run: |
+          git config --global user.name "Gizai CI"
+          git config --global user.email "ci@gizai.invalid"
+          git config --global init.defaultBranch main
+
+      # What Tauri 2 needs on Linux (the packages install.sh names for Debian and Ubuntu), and D-Bus for the keychain.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev libxdo-dev libdbus-1-dev build-essential pkg-config patchelf curl wget file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # the README asks for Node.js 20 or newer; Vite 8 needs 20.19 or 22.12 and up
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The install scripts parse, and their checks pass (--check and -Check install nothing). On macOS install.sh must
+      # work with the system's own bash, 3.2; install.ps1 with Windows PowerShell 5.1 (what an update runs) and 7.
+      - name: Check install.sh
+        if: runner.os != 'Windows'
+        run: |
+          /bin/bash -n install.sh
+          /bin/bash ./install.sh --check
+
+      - name: Check install.ps1 (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null; $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$tokens, [ref]$errs) | Out-Null
+          if ($errs) { $errs; exit 1 }
+          pwsh -NoProfile -File .\install.ps1 -Check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Check install.ps1 (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null; $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$tokens, [ref]$errs) | Out-Null
+          if ($errs) { $errs; exit 1 }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # First, as it takes seconds: it still runs when the Rust tests fail later.
+      - run: npm test
+
+      # Gizai and its helpers on their own first, so a test that doesn't build still shows whether the app itself does.
+      - run: cargo build --workspace
+
+      # Every test binary, also after one fails, so one run shows all the failures on a system.
+      - run: cargo test --workspace --no-fail-fast

@@ -9,6 +9,8 @@
 //!   fake-ssh-mode with "publickey" in a bare repository makes ssh refuse the key for it.
 //!
 //! Nothing here reaches bitbucket.org, api.bitbucket.org or github.com.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};

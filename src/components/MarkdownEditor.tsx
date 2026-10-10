@@ -1,14 +1,16 @@
 // CodeMirror 6 Markdown editor with a live preview: headings sized, bold/italic styled, syntax marks
 // (# ** ` > and link URLs) dimmed except on the line you're editing, task-list boxes clickable,
 // task refs (KADE-12) and @mentions shown as chips, and links to Gizai items (gizai:) as one chip each. A toolbar formats
-// the selection (design system: MarkdownEditor). Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+K format; Ctrl+Enter or Ctrl+S saves,
-// Escape cancels. Typing @ opens the item picker at the cursor, which links a task, project, client, agent, person or doc.
+// the selection (design system: MarkdownEditor). Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+K format; Ctrl+Enter or Ctrl+S saves
+// (Cmd on macOS), Escape cancels. Typing @ opens the item picker at the cursor, which links a task, project, client,
+// agent, person or doc.
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { Bold, Code, Heading, Italic, Link, List, ListChecks, ListOrdered, Minus, Table, TextQuote, type LucideIcon } from "lucide-react";
 import { activeFormats, format, type FormatCmd } from "../lib/mdFormat";
 import { findTrigger, ITEM_LINK_SOURCE, itemLink, KIND_NAME, parseItemUrl, pickRows, unescapeLinkText, type ItemKind, type PickItem, type PickRow } from "../lib/itemLinks";
 import { loadPickItems } from "../lib/pickItems";
 import { openItem } from "../lib/openItem";
+import { modClick, modKey } from "../lib/keys";
 import { ItemPicker, type PickerAt } from "./ItemPicker";
 import { Compartment, EditorState, Prec, RangeSetBuilder } from "@codemirror/state";
 import {
@@ -98,7 +100,7 @@ const livePreview = ViewPlugin.fromClass(class {
 }, { decorations: (v) => v.decorations });
 
 /** A link to a Gizai item, shown as one chip with its name. The cursor steps over it and Backspace takes it out whole;
- *  Ctrl+click (Cmd+click) opens the item, so a plain click never leaves what you are writing. */
+ *  Ctrl+click (Cmd+click on macOS) opens the item, so a plain click never leaves what you are writing. */
 class ItemChip extends WidgetType {
   constructor(readonly label: string, readonly kind: ItemKind, readonly key: string) { super(); }
   eq(o: ItemChip) { return o.label === this.label && o.kind === this.kind && o.key === this.key; }
@@ -106,16 +108,17 @@ class ItemChip extends WidgetType {
     const s = document.createElement("span");
     s.className = `cm-item-chip item-chip kind-${this.kind}`;
     s.textContent = this.label;
-    s.title = `${KIND_NAME[this.kind]}: ${this.label} (Ctrl+click opens it)`;
+    s.title = `${KIND_NAME[this.kind]}: ${this.label} (${modKey()}+click opens it)`;
     s.addEventListener("mousedown", (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
+      if (!modClick(e)) return;
       e.preventDefault();
       openItem(this.kind, this.key).catch(() => {});
     });
     return s;
   }
-  // Ctrl+click is the chip's own; any other click places the cursor as usual.
-  ignoreEvent(e: Event) { return e.type === "mousedown" && ((e as MouseEvent).ctrlKey || (e as MouseEvent).metaKey); }
+  // Ctrl+click (Cmd+click on macOS, where Ctrl+click is a right click) is the chip's own; any other click places the
+  // cursor as usual.
+  ignoreEvent(e: Event) { return e.type === "mousedown" && modClick(e as MouseEvent); }
 }
 
 const refMark = Decoration.mark({ class: "cm-chip cm-chip-ref" });
@@ -165,11 +168,12 @@ const theme = EditorView.theme({
   ".cm-chip-mention": { background: "var(--accent-soft)", color: "var(--accent)" },
 });
 
-type Tool = { cmd: FormatCmd; icon: LucideIcon; label: string; keys?: string };
+// `key` is the shortcut's letter, shown with the modifier: Ctrl+B, or Cmd+B on macOS.
+type Tool = { cmd: FormatCmd; icon: LucideIcon; label: string; key?: string };
 const TOOLS: (Tool | "sep")[] = [
-  { cmd: "heading", icon: Heading, label: "Heading" }, { cmd: "bold", icon: Bold, label: "Bold", keys: "Ctrl+B" },
-  { cmd: "italic", icon: Italic, label: "Italic", keys: "Ctrl+I" }, { cmd: "quote", icon: TextQuote, label: "Quote" }, "sep",
-  { cmd: "code", icon: Code, label: "Code", keys: "Ctrl+E" }, { cmd: "link", icon: Link, label: "Link", keys: "Ctrl+K" }, "sep",
+  { cmd: "heading", icon: Heading, label: "Heading" }, { cmd: "bold", icon: Bold, label: "Bold", key: "B" },
+  { cmd: "italic", icon: Italic, label: "Italic", key: "I" }, { cmd: "quote", icon: TextQuote, label: "Quote" }, "sep",
+  { cmd: "code", icon: Code, label: "Code", key: "E" }, { cmd: "link", icon: Link, label: "Link", key: "K" }, "sep",
   { cmd: "ordered", icon: ListOrdered, label: "Numbered list" }, { cmd: "bullet", icon: List, label: "Bullet list" },
   { cmd: "check", icon: ListChecks, label: "Checklist" }, "sep",
   { cmd: "rule", icon: Minus, label: "Divider" }, { cmd: "table", icon: Table, label: "Table" },
@@ -409,7 +413,7 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
       {picker}
       <div className="md-toolbar" role="toolbar" aria-label="Formatting">
         {TOOLS.map((t, i) => t === "sep" ? <span key={i} className="sep" /> : (
-          <button key={t.cmd} type="button" title={t.keys ? `${t.label} (${t.keys})` : t.label} aria-label={t.label} aria-pressed={active.has(t.cmd)}
+          <button key={t.cmd} type="button" title={t.key ? `${t.label} (${modKey()}+${t.key})` : t.label} aria-label={t.label} aria-pressed={active.has(t.cmd)}
             onMouseDown={(e) => e.preventDefault() /* keep the editor focused: leaving it saves */}
             onClick={() => viewRef.current && run(viewRef.current, t.cmd)}>
             <t.icon className="icon" />

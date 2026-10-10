@@ -286,13 +286,14 @@ fn two_claude_code_accounts_and_a_codex_account_keep_their_own_limits() {
                                   (limits::FABLE.into(), Some(5.0), Some(1_791_968_400))]);
     assert!(cc.limits.iter().all(|l| l.reading.as_ref().is_some_and(|r| r.run_id.as_deref() == Some(r1.as_str()) && r.observed_at == NOW)),
             "each number keeps its run and when it was read");
-    assert_eq!(cc.account_dir.as_deref(), Some("~/.claude"));
+    // shown as your system writes it: ~\.claude on Windows
+    assert_eq!(cc.account_dir.as_deref(), Some(format!("~{}.claude", std::path::MAIN_SEPARATOR).as_str()));
 
     let cc2 = w.block(&w.cc2);
     assert_eq!(names(&cc2), ["Session limit", "Weekly limit", "Fable limit"], "the three limits always show");
     assert_eq!(numbers(&cc2), vec![(limits::FIVE_HOUR.into(), Some(91.0), Some(1_791_561_600)), (limits::SEVEN_DAY.into(), Some(35.0), Some(1_792_054_800))]);
     assert_eq!(cc2.limits[2].reading, None, "this account reported no Fable window: none is made up");
-    assert_eq!(cc2.account_dir.as_deref(), Some("~/.claude-2"));
+    assert_eq!(cc2.account_dir.as_deref(), Some(format!("~{}.claude-2", std::path::MAIN_SEPARATOR).as_str()));
 
     let codex = w.block(&w.codex);
     assert_eq!(names(&codex), ["5-hour limit", "Weekly limit"]);

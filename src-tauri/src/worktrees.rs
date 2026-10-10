@@ -144,20 +144,33 @@ fn sentence(parts: &[String]) -> String {
     }
 }
 
-/// The disk space the files in `dir` take, as du counts it (their blocks), without following symlinks.
+/// The disk space the files in `dir` take, as du counts it (their blocks), without following symlinks. On Windows, which
+/// has no block count here, the sum of the files' sizes.
 pub fn disk_use(dir: &Path) -> u64 {
-    use std::os::unix::fs::MetadataExt;
     let mut total = 0;
     let mut todo = vec![dir.to_path_buf()];
     while let Some(d) = todo.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
             let Ok(m) = e.metadata() else { continue };
-            total += m.blocks() * 512;
+            total += used(&m);
             if m.is_dir() {
                 todo.push(e.path());
             }
         }
     }
     total
+}
+
+/// What one entry takes on disk: its blocks.
+#[cfg(unix)]
+fn used(m: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    m.blocks() * 512
+}
+
+/// What one entry takes on disk: its size (a folder counts 0).
+#[cfg(windows)]
+fn used(m: &std::fs::Metadata) -> u64 {
+    if m.is_dir() { 0 } else { m.len() }
 }

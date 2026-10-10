@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-62 end to end: the subscription limits a (fake) coding CLI reports in a task run or a chat turn are kept for the
 // coding CLI entry that run used, and only for it; Codex's are read from its own session log after the run. The fakes
 // are small wrappers around crates/gizai-agents/tests/fake-claude.sh, fake-claude-chat.py and fake-cli.sh, never the

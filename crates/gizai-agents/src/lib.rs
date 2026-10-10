@@ -4,6 +4,7 @@
 //! login), prompts and process control,
 //! and Gizai's own updates (the release check, building and installing a release). Never imports Tauri.
 pub mod bitbucket;
+pub mod browser;
 pub mod chat_stream;
 pub mod checkout;
 pub mod claude;
@@ -17,12 +18,14 @@ pub mod mcp_run;
 pub mod mcp_tools;
 pub mod models;
 pub mod oauth;
+pub mod os;
 pub mod outcome;
 pub mod prepare;
 pub mod process;
 pub mod prompt;
 pub mod secrets;
 pub mod stream;
+pub mod tool_catalog;
 pub mod update;
 pub mod worktree;
 

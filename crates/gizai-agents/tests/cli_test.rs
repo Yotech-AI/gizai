@@ -63,8 +63,10 @@ fn codex_runs_exec_json_with_the_prompt_on_stdin_in_its_workspace_sandbox() {
     assert_eq!(e.args.last().map(String::as_str), Some("-"), "the prompt is read from stdin");
     assert_eq!(e.stdin, "Do the card");
     assert_eq!(e.env, vec![("CODEX_HOME".to_string(), "/home/u/.codex-2".to_string())], "a second Codex account");
+    // GA-55: web search is off until the agent's Web switch is on, so a run says so.
     assert_eq!(configs(&e.args), [
         r#"approval_policy="never""#,
+        r#"web_search="disabled""#,
         r#"sandbox_mode="workspace-write""#,
         "sandbox_workspace_write.network_access=true",
         r#"sandbox_workspace_write.writable_roots=["/repo/.git"]"#,
@@ -79,7 +81,7 @@ fn codex_takes_model_effort_and_the_other_sandboxes() {
         permission_mode: "read-only".into(), ..run() });
     let i = e.args.iter().position(|a| a == "-m").expect("-m");
     assert_eq!(e.args[i + 1], "gpt-5-codex");
-    assert_eq!(configs(&e.args), [r#"model_reasoning_effort="high""#, r#"approval_policy="never""#, r#"sandbox_mode="read-only""#]);
+    assert_eq!(configs(&e.args), [r#"model_reasoning_effort="high""#, r#"approval_policy="never""#, r#"web_search="disabled""#, r#"sandbox_mode="read-only""#]);
 
     let e = cli::task_exec(&spec(Kind::Codex, ""), &TaskRun { permission_mode: "danger-full-access".into(), writable_dirs: vec!["/r/.git".into()], ..run() });
     assert!(e.args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()), "{:?}", e.args);

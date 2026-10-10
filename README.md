@@ -2,18 +2,22 @@
 
 A desktop app where a team of coding agents (Claude Code, Codex, Gemini or another coding CLI) works through your software tasks. You keep clients, projects and tasks in Gizai. The agents pick up the cards, build each one in its own git worktree, test each other's work and hand it to you for review. You can also ask the Team Lead agent for things in chat.
 
-Everything runs on your machine, with your own git repositories and your own logins. It's early (v0.1) and runs on Linux only for now. MIT licence.
+Everything runs on your machine, with your own git repositories and your own logins. It's early (v0.1). It runs on Linux, on Macs with Apple silicon and on Windows 11. MIT licence.
 
 ## Install
 
-You need:
+Gizai builds from source on your own computer, on every system: there are no downloads or installers. Its install script checks what is missing, builds Gizai and installs it for you alone, without sudo or administrator rights.
 
-- Linux with WebKitGTK 4.1;
+Every system needs:
+
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once). Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs); the Team Lead chat needs Claude Code;
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
-- for the tray icon, libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it Gizai runs without a tray icon;
 - optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in;
 - or, for a project on Bitbucket Cloud, an SSH key on your Bitbucket account and an API token with the scopes `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket` (Atlassian account → Security → API tokens), saved with your Atlassian email in Settings → Bitbucket. Gizai keeps them in your keychain.
+
+### Linux
+
+You also need WebKitGTK 4.1 (`./install.sh --check` names the packages for your distribution) and, for the tray icon, libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it Gizai runs without a tray icon.
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -29,22 +33,77 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 | `./install.sh` | Installs, or updates (your data is backed up first) |
 | `./install.sh --uninstall` | Removes Gizai and keeps your data in `~/.local/share/gizai` |
 
+### macOS
+
+For Macs with Apple silicon (M1 and later). You also need Apple's Command Line Tools, which bring git and a C compiler: run `xcode-select --install`. Node.js can come from Homebrew (`brew install node`), mise, nvm or the installer on nodejs.org.
+
+```sh
+git clone --branch production https://github.com/Yotech-AI/gizai.git
+cd gizai
+./install.sh
+```
+
+It's the same installer, with the same commands as on Linux. It builds Gizai.app and installs it in `~/.local/lib/gizai`, links it into the Applications folder in your home folder (`~/Applications`), and puts the `gizai` command in `~/.local/bin`. Open Gizai from there and keep it in the Dock. Its tray icon is in the menu bar.
+
+### Windows
+
+For Windows 11. You also need:
+
+- the Microsoft C++ Build Tools, with "Desktop development with C++" ([download](https://visualstudio.microsoft.com/visual-cpp-build-tools/); the Rust installer offers to install them);
+- Git for Windows: Claude Code runs its commands in Git for Windows' Git Bash;
+- WebView2, which comes with Windows 11.
+
+Rust, Node.js and Git can come from winget:
+
+```powershell
+winget install --id Rustlang.Rustup -e
+winget install --id OpenJS.NodeJS.LTS -e
+winget install --id Git.Git -e
+```
+
+Then, in a new PowerShell window:
+
+```powershell
+git clone --branch production https://github.com/Yotech-AI/gizai.git
+cd gizai
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` builds Gizai and installs it in `%LOCALAPPDATA%\Programs\Gizai`, without administrator rights. It adds Gizai to the Start menu with a shortcut that carries Gizai's app ID, which Windows needs to show Gizai's notifications. Gizai runs the coding CLIs installed on Windows itself, like `claude.exe` or npm's `gemini.cmd`. It doesn't use WSL.
+
+| Command | What it does |
+|---|---|
+| `.\install.ps1 -Check` | Shows what is missing and how to install it |
+| `.\install.ps1` | Installs, or updates (your data is backed up first) |
+| `.\install.ps1 -Uninstall` | Removes Gizai and keeps your data in `%APPDATA%\Gizai` |
+
+If PowerShell won't run scripts, start these the way the block above does: `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check`.
+
+### Not signed
+
+Gizai isn't signed yet: there is no Apple Developer account or Windows certificate until Gizai has paid features. A build made on your own computer isn't a download, so Gatekeeper and SmartScreen shouldn't stop it. If they still do:
+
+- macOS: System Settings → Privacy & Security → Open Anyway, or `xattr -dr com.apple.quarantine ~/.local/lib/gizai/Gizai.app`;
+- Windows: More info → Run anyway.
+
+After an update, macOS may ask once whether Gizai may use what it saved in your keychain: choose Always Allow.
+
 ### Updates
 
 Gizai asks GitHub for the latest release 20 seconds after it starts, then every six hours. When a newer one is out, **Update to X.Y.Z** shows above Company in the sidebar.
 
 Click it and Gizai:
 
-1. builds the new version from source in the background, while you keep working;
+1. builds the new version from source in the background with your system's install script, while you keep working;
 2. backs up your data;
 3. installs the new version;
 4. offers a restart.
 
-If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull` and `./install.sh`.
+If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull`, then `./install.sh` (on Windows `.\install.ps1`).
 
 ### Your data
 
-Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it elsewhere). It cleans up after itself when it starts and once a day while it runs:
+Gizai keeps your data in `~/.local/share/gizai` on Linux, `~/Library/Application Support/Gizai` on macOS and `%APPDATA%\Gizai` on Windows (`GIZAI_DATA_DIR` points it elsewhere). It cleans up after itself when it starts and once a day while it runs:
 
 - **Run and chat logs** (`runs/` and `chat/`): kept for 30 days after the run, chat answer or board check ended, then removed. The run stays in the history with its summary, cost and commits; Show output says its log is gone.
 - **Keys for the Team Lead's tools** (`api_tokens` in `gizai.db`): each one lasts a chat answer or board check, and is removed a day after it expired or was revoked.
@@ -57,7 +116,7 @@ Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it else
 3. Open Gizai: the workflow and five agents are ready. The Backend and Frontend Agents work the cards in To do, the QA Agent tests them, the DevOps Agent releases what you merged when you press Run in Deploy, and you talk to the Team Lead on the Chat page. With only Codex installed, Gizai adds it under Settings → Coding CLIs and runs every agent but the Team Lead on it.
 4. Add a project with its git repository, and put a card in To do.
 
-MCP servers: add them in Settings → MCP servers, then switch them on per agent in the agent form → Tools. This works for agents on Claude Code for now; GA-55 adds Codex.
+Tools for agents: web search, fetching pages, a hidden browser for testing web pages, the CLI's own built-in tools and MCP servers (Settings → MCP servers) are switched on per agent in the agent form → Tools. Everything is off until you switch it on.
 
 ![Gizai: the board, a live agent run, the Team Lead chat, the team and an agent](docs/gizai.gif)
 
@@ -120,11 +179,17 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
 - **New agents' commands.** A new agent starts with its role's allowed commands. Gizai's default list has the usual git, package manager and test commands, the read-only helpers agents use in pipes (`head`, `tail`, `wc`, `sort`, `uniq`, `cut`, `diff`, `grep`, `jq`, `pwd`, `which` and `tree`), and `sleep`, to wait between checks. The Team Lead gets that list; builders (Backend, Frontend, Design and your own roles) also get `git push`, `git pull`, `git fetch`, a few read-only git commands, `node`, `echo` and `printf`; QA gets the builders' list plus `gh pr create`, `list`, `view` and `edit`; DevOps gets a list of its own for releases. An agent without a list runs with Gizai's default list. An agent with its own list needs `Bash(sleep:*)` added to it to wait between checks.
 - **Refused in this run.** Claude Code reports every tool call it refused, with the reason. Gizai saves them on the run: the Run panel lists them under "Refused in this run", Show output marks each one where it happened, and the Team Lead's `get_task` and `get_agent` return them for each run. Codex and Gemini don't report refusals, so their runs list none.
 
-## MCP servers for agents
+## Tools for agents: MCP servers, the web and a hidden browser
 
 Agents can use outside services through MCP servers, like Otus OS. Settings → MCP servers holds one list for all agents: add a server by hand (a command, or an address) or **Import from Claude Code**, which reads the servers your Claude Code accounts already have (read only, values into the keychain). **List tools** shows what each tool does, its parameters and its risk before you switch anything on. A server that asks for it gets **Sign in**: Gizai signs in as a device of its own, in your default browser.
 
-Everything is off until you switch it on per agent, in the agent form → Tools, with a switch per server and per tool. Environment values, headers and sign-in tokens stay in the OS keychain, never in Gizai's database. After a chat answer used an outside tool, the Team Lead asks you to confirm before it starts runs or changes agents or columns. On Claude Code for now; Codex and Gemini follow. Details: [docs/agent-tools.md](docs/agent-tools.md).
+The agent form → Tools also has:
+
+- **Web:** search the web, and fetch pages (any, or only the domains you list). Claude Code gets `WebSearch` and `WebFetch`; Codex its own web search; Gemini fetches pages (its web search is on by its own policy).
+- **Browser:** a hidden Chrome for testing web pages, through Chrome DevTools MCP, the built-in entry at the top of Settings → MCP servers. It always runs headless with a throwaway profile: never on your screen, never your own browser, profile or logins. It needs Node 20.19 or newer with npx, and Google Chrome or Chromium (never Brave); the form says what is missing. Gizai installs none of it: `npx` fetches the pinned server, and the server starts the browser.
+- **Built-in tools:** what the agent's CLI offers, from Gizai's catalog merged with what the CLI itself reports (Claude Code's list from the agent's last run, or **Ask Claude Code again**, which starts it without a login). Each says what it allows and how risky it is.
+
+Everything is off until you switch it on per agent, with a switch per server and per tool: a web or built-in tool named in an agent's allowed commands is left out of its runs. Gizai builds no tools of its own: each one is the CLI's own or comes from an MCP server. Environment values, headers and sign-in tokens stay in the OS keychain, never in Gizai's database. After a chat answer used an outside tool (an MCP server, the web, the browser), the Team Lead asks you to confirm before it starts runs or changes agents or columns. MCP servers and the browser work on Claude Code; Codex and Gemini agents show them disabled, with why. Details: [docs/agent-tools.md](docs/agent-tools.md).
 
 ## Development
 
@@ -134,6 +199,8 @@ cargo test --workspace && npm test
 scripts/ui-test.sh        # UI tests in a headless compositor, never on your desktop
 scripts/readme-gif.sh     # remakes the GIF above
 ```
+
+On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds Gizai and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs Gizai from source on macOS and Windows with it (`.github/workflows/install.yml`).
 
 `CLAUDE.md` has the rules for working in this repository, `docs/HANDOFF-2026-10-07.md` explains how it is built, and `docs/RELEASING.md` how a release is made.
 

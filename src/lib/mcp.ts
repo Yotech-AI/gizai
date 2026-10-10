@@ -25,6 +25,13 @@ export function npmWarning(allowedTools: string[], anyOn: boolean): string | nul
     : null;
 }
 
+/** The same warning when web search, fetching pages or the browser is on (`npm_web_warning` in src-tauri/src/mcp_servers.rs). */
+export function npmWebWarning(allowedTools: string[], webOn: boolean): string | null {
+  return npmWarning(allowedTools, webOn)
+    ? "This agent may run npm or npx, and web search, fetching pages or the browser is on: a web page could try to make it run code. Take npm and npx out of its commands, or switch those off."
+    : null;
+}
+
 /** The switches with the server on or off; a server switched on for the first time has all its tools on. */
 export function switchServer(list: AgentServer[], serverId: string, on: boolean): AgentServer[] {
   return list.some((s) => s.serverId === serverId)

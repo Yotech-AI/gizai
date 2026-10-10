@@ -104,6 +104,13 @@ export const mcpSignIn = (id: string) => invoke<T.McpServerView>("mcp_sign_in", 
 export const mcpSignOut = (id: string) => invoke<T.McpServerView>("mcp_sign_out", { id });
 export const agentMcp = (agentId: string) => invoke<T.AgentMcpView>("agent_mcp", { agentId });
 export const saveAgentMcp = (agentId: string, tools: T.AgentTools) => invoke<T.AgentMcpView>("save_agent_mcp", { agentId, tools });
+export const agentCliTools = (agentId: string | null, cliId: string) => invoke<T.ToolsView>("agent_cli_tools", { agentId, cliId });
+export const saveAgentCliTools = (agentId: string, tools: T.CliTools) => invoke<T.CliTools>("save_agent_cli_tools", { agentId, tools });
+/** Ask Claude Code again: its tools, from a start without a login (nothing spent, nothing written in ~/.claude). */
+export const askCliTools = (cliId: string) => invoke<string[]>("ask_cli_tools", { cliId });
+export const browserEntry = () => invoke<T.BrowserView>("browser_entry");
+export const saveBrowserEntry = (entry: T.BrowserEntry) => invoke<T.BrowserView>("save_browser_entry", { entry });
+export const listBrowserTools = () => invoke<T.BrowserView>("list_browser_tools");
 
 /** Settings → Coding CLIs. */
 export const listClis = () => invoke<T.CliStatus[]>("list_clis");

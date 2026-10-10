@@ -43,8 +43,10 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   const agents = (team.data?.members ?? []).filter((m) => m.kind === "agent");
   const lead = leadOf(agents);
   const agent = route.scope && route.scope !== "shared" ? agents.find((a) => a.actorId === route.scope) ?? null : null;
-  const scope = memoryScope(route.scope, agent?.name);
   const notes = all.data ?? [];
+  // An agent's folder by its name; before the team is there (or for an agent that is gone), by its notes.
+  const own = route.scope && !agent ? notes.find((n) => n.ownerId === route.scope && n.path.startsWith("Agents/"))?.path.split("/")[1] : undefined;
+  const scope = memoryScope(route.scope, agent?.name ?? own);
   const scoped = useMemo(() => notes.filter((n) => inScope(n, scope)), [notes, route.scope, agent?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [tag, setTag] = useState<string | null>(null);
@@ -58,7 +60,7 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   const timers = useRef<{ show?: number; hide?: number }>({});
   useEffect(() => { setTag(null); setQuery(""); }, [route.scope]);
 
-  const scopeName = scope.kind === "agent" ? agent?.name ?? "Agent" : scope.kind === "shared" ? "Shared notes" : lead?.name ?? "All notes";
+  const scopeName = scope.kind === "agent" ? agent?.name ?? own ?? "Agent" : scope.kind === "shared" ? "Shared notes" : lead?.name ?? "All notes";
   const open = (note: MemoryNote, heading?: string) => {
     setHover(null);
     setJump(heading ? { id: note.id, heading } : null);

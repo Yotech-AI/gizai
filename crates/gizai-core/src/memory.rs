@@ -22,6 +22,8 @@ pub const LEAD: &str = "Team Lead";
 pub const NOTES: &str = "Notes";
 /// `Team Lead/Imported/`: the notes that came from Claude Code's own memory (`memory_import`), until they are sorted.
 pub const IMPORTED: &str = "Imported";
+/// The `source` property of a note that came from Claude Code's own memory.
+pub const FROM_CLAUDE: &str = "claude-code";
 /// What a note's `type` property may say.
 pub const TYPES: [&str; 9] = ["client", "project", "standard", "workflow", "deployment", "dependency", "decision", "lesson", "note"];
 /// A prompt's Memory block: this many characters of notes in full…
@@ -1268,9 +1270,11 @@ pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
             .partition(|n| n.owner_id.as_deref() == Some(who.id()))
     };
     // What came from Claude Code's own memory waits in Team Lead/Imported/ to be sorted, maybe hundreds of notes: one line
-    // says how many, so they don't crowd the Team Lead's own notes and the others out.
+    // says how many, so they don't crowd the Team Lead's own notes and the others out. A list of them the import put there
+    // (`From Claude Code <day>`) is none of them.
     let imported = format!("{LEAD}/{IMPORTED}/");
-    let waiting = if lead { own.iter().filter(|n| n.path.starts_with(&imported)).count() } else { 0 };
+    let from_claude = |n: &Note| properties(&n.body_md).get("source").is_some_and(|v| v.iter().any(|s| s == FROM_CLAUDE));
+    let waiting = if lead { own.iter().filter(|n| n.path.starts_with(&imported) && from_claude(n)).count() } else { 0 };
     own.retain(|n| !lead || !n.path.starts_with(&imported));
     notes_first(&mut own);
     if !lead {

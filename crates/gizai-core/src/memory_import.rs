@@ -193,6 +193,12 @@ fn note_for(w: &Writer, who: &Who, f: &Found) -> Result<std::result::Result<(Str
     };
     let body = with_source(text, &f.account, &f.project, &f.file);
     if let Some(what) = memory::secret_in(&body) {
+        // A private key's example (-----BEGIN … PRIVATE KEY-----) is what the check looks for itself: the reason goes in
+        // Team Lead/Notes without it, else that line would look like a secret too.
+        let what = match what.split_once(" (") {
+            Some((kind, _)) if memory::secret_in(&what).is_some() => kind.to_string(),
+            _ => what,
+        };
         return Ok(Err(format!("it holds {what}")));
     }
     let c = w.conn();
@@ -239,7 +245,7 @@ fn free_path(c: &Connection, base: &str) -> Result<String> {
 /// (`source: claude-code`, the account's folder, the project folder and the file name). The file's own properties stay,
 /// except any by those names.
 pub fn with_source(text: &str, account: &str, project: &str, file: &str) -> String {
-    let ours = [("source", "claude-code"), ("claude_config_dir", account), ("claude_project", project), ("claude_file", file)];
+    let ours = [("source", memory::FROM_CLAUDE), ("claude_config_dir", account), ("claude_project", project), ("claude_file", file)];
     let head: String = ours.iter().map(|(k, v)| format!("{k}: {}\n", yaml(v))).collect();
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     match frontmatter(text) {
@@ -310,7 +316,8 @@ fn thread(w: &Writer, who: &Who, you: &str, day: &str, r: &Report) -> Result<Opt
     }
     let folder = format!("{LEAD}/{IMPORTED}");
     // The notes by the folder they came from, each linked by its path after the import folder (a move rewrites it),
-    // then the files skipped, by their path. A line whose path looks like a secret isn't written.
+    // then the files skipped, by their path and why. Team Lead/Notes keeps no secret either: a path that looks like one
+    // isn't written, and a reason that would make its line look like one is left out.
     let mut groups: Vec<(&str, Vec<String>)> = vec![];
     for i in &r.imported {
         let from = i.file.rsplit_once(['/', '\\']).map(|(f, _)| f).unwrap_or_default();
@@ -320,23 +327,30 @@ fn thread(w: &Writer, who: &Who, you: &str, day: &str, r: &Report) -> Result<Opt
             None => groups.push((from, vec![link])),
         }
     }
-    let list: Vec<String> = groups.iter().map(|(from, links)| format!("- From {from}: {}", links.join(", ")))
-        .chain(r.skipped.iter().map(|s| format!("- Not imported: {} ({}; nothing of its text was kept)", s.file, s.why)))
-        .map(|l| if memory::secret_in(&l).is_some() { "- Not imported: a file whose path looks like a secret (not shown)".to_string() } else { l })
+    let count = |k: usize, what: &str| if k == 1 { format!("1 {what}") } else { format!("{k} {what}s") };
+    let secret = |s: &str| memory::secret_in(s).is_some();
+    let list: Vec<String> = groups.iter().map(|(from, links)| match format!("- From {from}: {}", links.join(", ")) {
+            l if secret(&l) => format!("- From a folder whose path, or a note's, looks like a secret (not shown): {}", count(links.len(), "note")),
+            l => l,
+        })
+        .chain(r.skipped.iter().map(|s| match format!("- Not imported: {} ({}; nothing of its text was kept)", s.file, s.why) {
+            _ if secret(&s.file) => "- Not imported: a file whose path looks like a secret (not shown)".to_string(),
+            l if secret(&l) => format!("- Not imported: {} (nothing of its text was kept)", s.file),
+            l => l,
+        }))
         .collect();
     let (n, k) = (r.imported.len(), r.skipped.len());
-    let files = |k: usize| if k == 1 { "1 file".to_string() } else { format!("{k} files") };
     let mut text = if n > 0 {
         let deploy = r.imported.iter().map(|i| memory::title_of(&i.note))
             .find(|t| t.len() > 7 && t.is_char_boundary(7) && t[..7].eq_ignore_ascii_case("deploy-"));
-        let example = deploy.map(|t| format!(" (like {t} to Deployments/{})", &t[7..])).unwrap_or_default();
-        let skipped = if k > 0 { format!("; {} could not be imported", files(k)) } else { String::new() };
+        let example = deploy.map(|t| format!(" (like {t} to Deployments/{})", &t[7..])).filter(|e| !secret(e)).unwrap_or_default();
+        let skipped = if k > 0 { format!("; {} could not be imported", count(k, "file")) } else { String::new() };
         format!("- {day}: Imported {n} note{} from Claude Code's own memory into {folder}/, a folder per Claude Code project, each \
 with where it came from in its properties{skipped}. Sort them with {you}: a project's deploy note goes to Deployments/<KEY>{example}, \
 with project: <KEY> and applies_to: devops; the others to a shared folder or an agent's own (memory_move), or they stay. memory_list \
 with folder \"{folder}\" lists them.", if n == 1 { "" } else { "s" })
     } else {
-        format!("- {day}: {} in Claude Code's own memory could not be imported into {folder}/:", files(k))
+        format!("- {day}: {} in Claude Code's own memory could not be imported into {folder}/:", count(k, "file"))
     };
     let mut listed = None;
     if list.iter().map(|l| l.chars().count() + 3).sum::<usize>() <= LIST_MAX {

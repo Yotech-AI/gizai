@@ -593,12 +593,21 @@ async fn in_a_board_check_a_merge_that_has_to_wait_is_offered_again_and_a_failed
     assert!(e.contains("still running") && e.contains("Your next board check offers it again"), "{e}");
     assert!(!seen_keys(&run).contains(&key), "unseen: {:?}", seen_keys(&run));
     assert_eq!(t.task().state_name, "Review");
+    // that check ends: for the next heartbeat the card's finding is new again, so a check starts for it
+    core_board::finish_run(&t.st.db, &run, "succeeded", 1_000, 0, 0, None, Some("KADE-1 waits for CI")).unwrap();
+    let new = |t: &T| -> Vec<String> {
+        let all = gizai_lib::board::findings(&t.st, gizai_core::ids::now_ms()).unwrap();
+        core_board::new_findings(&t.st.db, &t.lead, &all).unwrap().into_iter().map(|f| f.key()).collect()
+    };
+    assert!(new(&t).contains(&key), "{:?}", new(&t));
     // a failed check: refused, and the finding stays seen (it goes to you in a chat)
     t.view(|v| v["statusCheckRollup"][0] = job("ubuntu-24.04", "COMPLETED", json!("FAILURE")));
     let run2 = core_board::create_run(&t.st.db, &t.lead, "S2", "/tmp", "/tmp/c2.jsonl", &core_board::seen_of(&all)).unwrap();
     let e = tools::call_check(&t.st, &t.lead, &run2, "merge_pull_request", json!({"task": "KADE-1"})).await.unwrap_err();
     assert!(e.contains("failed") && !e.contains("offers it again"), "{e}");
     assert!(seen_keys(&run2).contains(&key));
+    core_board::finish_run(&t.st.db, &run2, "succeeded", 1_000, 0, 0, None, Some("KADE-1 has a failed check: asked Jefsev")).unwrap();
+    assert!(!new(&t).contains(&key), "no new check for it: {:?}", new(&t));
     // outside a check a wait unsees nothing
     t.view(|v| v["statusCheckRollup"][0] = job("ubuntu-24.04", "IN_PROGRESS", Value::Null));
     let e = t.merge().await.unwrap_err();
@@ -681,11 +690,9 @@ fn the_lead_role_template_and_the_tool_describe_the_rules() {
         assert!(lead.contains(part), "{part:?} in the lead's template");
     }
     let tool = tools::catalog().into_iter().find(|d| d.name == "merge_pull_request").expect("the tool is in the catalog");
+    // the description is short (tools_test caps it); the rules in full are in the lead's template and the docs
     assert!(!tool.read_only);
-    for part in ["merge commit", "Review with testing on", "qa_pass on exactly the pull request's latest commit", "every check on it succeeded",
-                 "no release card of the project is in Deploy", "GitHub only", "never work around a refusal"] {
-        assert!(tool.description.contains(part), "{part:?} in: {}", tool.description);
-    }
+    assert!(tool.description.contains("qa_pass"), "{}", tool.description);
     let docs = include_str!("../../docs/agent-tools.md");
     for part in ["## The Team Lead merges pull requests", "merge_pull_request", "Team Lead may merge", "--merge --match-head-commit",
                  "A Bitbucket project is refused", "No release is under way", "Not after an outside tool"] {

@@ -279,6 +279,86 @@ describe("graphView: what the settings show", () => {
   });
 });
 
+describe("graphView on a page: only what the page's own notes link to and name, with the filters on top", () => {
+  // Shared notes name KADE-1, @backend, [[Backup plan]], #storage and #ops; the QA agent's notes name KADE-2, @jeffrey,
+  // the WEB project, Acme, [[QA plan]] and #qa, and also KADE-1, [[Backup plan]] and #storage.
+  const notes = [
+    note("Decisions/Use SQLite", "[[Deploy steps]] [[Backup plan]] KADE-1 @backend #storage"),
+    note("Workflows/Deploy steps", "[[Release checklist]] #ops"),
+    note("Standards/Release checklist", "Read the changelog."),
+    note("Lessons/Alone", "Nothing links here."),
+    note("Agents/QA/Notes", "---\nproject: WEB\n---\nTested [[Use SQLite]] and KADE-2 with @jeffrey. Next: [[QA plan]] [C](gizai:client/c1) #qa"),
+    note("Agents/QA/Shared names", "KADE-1 and [[Backup plan]] #storage"),
+    note("Agents/QA/Quiet", "Nothing here either."),
+  ];
+  const g = buildGraph({ notes, ...SOURCES });
+  const all = byId(notes);
+  const shared = (id: string) => !all.get(id)!.path.startsWith("Agents/");
+  const qa = (id: string) => all.get(id)!.path.startsWith("Agents/QA/");
+  const sharedNotes = [dot("Decisions/Use SQLite"), dot("Lessons/Alone"), dot("Standards/Release checklist"), dot("Workflows/Deploy steps")];
+  const qaNotes = [dot("Agents/QA/Notes"), dot("Agents/QA/Quiet"), dot("Agents/QA/Shared names")];
+  const ends = (v: Graph) => v.links.every((l) => v.nodes.some((n) => n.id === l.source) && v.nodes.some((n) => n.id === l.target));
+
+  it("shows on the shared page the shared notes and what they name, not what only an agent's notes name", () => {
+    const v = graphView(g, settings(), all, { scope: shared });
+    expect(ids(v)).toEqual(["agent:a1", "card:KADE-1", "missing:backup plan", ...sharedNotes].sort());
+    // The QA note's line into Use SQLite goes with the QA note.
+    expect(v.links.some((l) => l.source.startsWith("note:id:Agents/"))).toBe(false);
+    expect(ends(v)).toBe(true);
+  });
+
+  it("shows on an agent's page its notes and everything they name, also what shared notes name too", () => {
+    const v = graphView(g, settings(), all, { scope: qa });
+    expect(ids(v)).toEqual(["card:KADE-1", "card:KADE-2", "client:c1", "missing:backup plan", "missing:qa plan", "person:u1", "project:p2", ...qaNotes].sort());
+    expect(ids(v)).not.toContain("agent:a1");
+    expect(lines(v)).not.toContain(`${dot("Agents/QA/Notes")} -> ${dot("Decisions/Use SQLite")} (link)`);
+    expect(ends(v)).toBe(true);
+  });
+
+  it("shows only the page's own notes' tags when Tags is on", () => {
+    const sharedTags = graphView(g, settings({ tags: true }), all, { scope: shared }).nodes.filter((n) => n.kind === "tag").map((n) => n.id).sort();
+    expect(sharedTags).toEqual(["tag:ops", "tag:storage"]);
+    const qaTags = graphView(g, settings({ tags: true }), all, { scope: qa }).nodes.filter((n) => n.kind === "tag").map((n) => n.id).sort();
+    expect(qaTags).toEqual(["tag:qa", "tag:storage"]);
+  });
+
+  it("shows everything on the all-notes page, where every note is in scope, as without a scope", () => {
+    for (const patch of [{}, { tags: true }, { orphans: false }, { query: "path:Agents/" }, { existingOnly: true }] as Partial<GraphSettings>[]) {
+      const v = graphView(g, settings(patch), all, { scope: () => true });
+      const plain = graphView(g, settings(patch), all);
+      expect(ids(v)).toEqual(ids(plain));
+      expect(lines(v)).toEqual(lines(plain));
+    }
+  });
+
+  it("applies the query (path: and tag:) on top of the page", () => {
+    const path = graphView(g, settings({ query: "path:Agents/QA/Shared" }), all, { scope: qa });
+    expect(ids(path)).toEqual(["card:KADE-1", "missing:backup plan", dot("Agents/QA/Shared names")]);
+    const tag = graphView(g, settings({ query: "tag:qa" }), all, { scope: qa });
+    expect(ids(tag)).toEqual(["card:KADE-2", "client:c1", "missing:qa plan", dot("Agents/QA/Notes"), "person:u1", "project:p2"]);
+    // A query for another folder's notes finds nothing on this page.
+    expect(graphView(g, settings({ query: "path:Decisions/" }), all, { scope: qa }).nodes).toEqual([]);
+    expect(graphView(g, settings({ query: "tag:qa" }), all, { scope: shared }).nodes).toEqual([]);
+  });
+
+  it("applies Existing notes only, each hidden kind and Orphans off on top of the page", () => {
+    const existing = graphView(g, settings({ existingOnly: true }), all, { scope: qa });
+    expect(existing.nodes.some((n) => n.kind === "missing")).toBe(false);
+    expect(ids(existing)).toContain("card:KADE-2");
+    for (const kind of EXTRA_KINDS) {
+      const v = graphView(g, settings({ hidden: [kind] }), all, { scope: qa });
+      expect(v.nodes.some((n) => n.kind === kind)).toBe(false);
+      expect(ends(v)).toBe(true);
+    }
+    const lonely = graphView(g, settings({ orphans: false }), all, { scope: qa });
+    expect(ids(lonely)).not.toContain(dot("Agents/QA/Quiet"));
+    expect(ids(lonely)).toContain(dot("Agents/QA/Notes"));
+    // Every card hidden: Shared names still links its dim dot, so it stays; with Existing notes only too, it goes.
+    const bare = graphView(g, settings({ orphans: false, hidden: ["card"], existingOnly: true }), all, { scope: qa });
+    expect(ids(bare)).not.toContain(dot("Agents/QA/Shared names"));
+  });
+});
+
 describe("graphView and localGraph: the local graph around the open note", () => {
   // A -> B -> C -> D -> E -> F -> G, and X -> A
   const chain = ["A", "B", "C", "D", "E", "F", "G"];

@@ -9,11 +9,18 @@ export const KIND_NAME: Record<ItemKind, string> = { task: "Task", project: "Pro
 export const KIND_GROUP: Record<ItemKind, string> = { task: "Tasks", project: "Projects", client: "Clients", agent: "Agents", person: "People", doc: "Docs" };
 
 /** One item the picker lists. `key`: what its link names (a task's identifier, a project's key, else its id). `label`: the
- *  row's text; `text`: the link's text; `hint`: more words it is found by (shown faint). */
-export type PickItem = { kind: ItemKind; key: string; label: string; text: string; hint?: string };
+ *  row's text; `text`: the link's text; `hint`: more words it is found by (shown faint); `column`: a task's column. */
+export type PickItem = { kind: ItemKind; key: string; label: string; text: string; hint?: string; column?: PickColumn };
 
-export const taskItem = (t: Task): PickItem =>
-  ({ kind: "task", key: t.identifier, label: `${t.identifier} - ${t.title}`, text: `${t.identifier} - ${t.title}`, hint: t.projectName ?? undefined });
+/** A task's column (GA-88): its name, and its place in the board's order (left out when that order doesn't have it). */
+export type PickColumn = { name: string; place?: number };
+
+/** A task's row. `columns`: the board's column names in order, which give its column's place. */
+export function taskItem(t: Task, columns: readonly string[] = []): PickItem {
+  const place = columns.indexOf(t.stateName);
+  const column = t.stateName ? { name: t.stateName, ...(place >= 0 ? { place } : {}) } : undefined;
+  return { kind: "task", key: t.identifier, label: `${t.identifier} - ${t.title}`, text: `${t.identifier} - ${t.title}`, hint: t.projectName ?? undefined, column };
+}
 export const projectItem = (p: Project): PickItem =>
   ({ kind: "project", key: p.key, label: `${p.key} - ${p.name}`, text: p.name, hint: p.clientName ?? undefined });
 export const clientItem = (c: Client): PickItem => ({ kind: "client", key: c.id, label: c.name, text: c.name, hint: c.legalName ?? undefined });
@@ -59,7 +66,7 @@ export const IN_KIND = 50;
 /** The picker's rows for what was typed after the @: only @, the kinds; a kind and its dot, that kind's items (all of
  *  them, or those the search finds); else the items of every kind the search finds, grouped by kind in ITEM_KINDS'
  *  order. An item is found when every word appears in its label or hint (ID or key, and name); one whose ID, key or
- *  label starts with the first word comes first. */
+ *  label starts with the first word comes first. Tasks alone (`@task.`) are grouped by column as well (GA-88). */
 export function pickRows(query: string, items: readonly PickItem[]): PickRow[] {
   if (query === "") return ITEM_KINDS.map((kind) => ({ type: "kind", kind }));
   const { kind, text } = parseQuery(query);
@@ -80,9 +87,39 @@ export function pickRows(query: string, items: readonly PickItem[]): PickRow[] {
   const rows: PickRow[] = [];
   for (const k of ITEM_KINDS) {
     if (kind && k !== kind) continue;
-    for (const s of scored.filter((x) => x.item.kind === k).slice(0, limit)) rows.push({ type: "item", item: s.item });
+    const found = scored.filter((x) => x.item.kind === k).slice(0, limit);
+    for (const item of kind === "task" ? byColumn(found) : found.map((s) => s.item)) rows.push({ type: "item", item });
   }
   return rows;
+}
+
+/** The tasks found (the best match first, then the list's order) grouped by column: the columns in the board's order,
+ *  then any that order doesn't have in the list's order; in a column, the order they came in. A task without a column
+ *  comes first, under no heading. */
+function byColumn(found: { item: PickItem; i: number }[]): PickItem[] {
+  const columns = new Map<string, { place: number; first: number }>();
+  for (const { item, i } of found) {
+    if (!item.column) continue;
+    const seen = columns.get(item.column.name);
+    if (seen) seen.first = Math.min(seen.first, i);
+    else columns.set(item.column.name, { place: item.column.place ?? Number.MAX_SAFE_INTEGER, first: i });
+  }
+  const order = new Map([...columns].sort(([, a], [, b]) => a.place - b.place || a.first - b.first).map(([name], n) => [name, n]));
+  const at = (item: PickItem) => (item.column ? order.get(item.column.name) ?? -1 : -1);
+  return found.map((s) => s.item).sort((a, b) => at(a) - at(b));
+}
+
+/** The small heading above row `i`, if any: searching every kind, the kind's (Tasks, Projects …) above its first row;
+ *  tasks alone (`@task.`), the column's above each column's first row. The headings aren't rows: ↑ and ↓ skip them. */
+export function rowHeading(query: string, rows: readonly PickRow[], i: number): string | null {
+  const row = rows[i];
+  if (query === "" || row?.type !== "item") return null;
+  const prev = rows[i - 1];
+  const before = prev?.type === "item" ? prev.item : null;
+  const { kind } = parseQuery(query);
+  if (!kind) return before?.kind === row.item.kind ? null : KIND_GROUP[row.item.kind];
+  const column = kind === "task" ? row.item.column?.name : undefined;
+  return column && before?.column?.name !== column ? column : null;
 }
 
 /** A link's text, safe inside [ ]: one line, with its backslashes and brackets escaped. */

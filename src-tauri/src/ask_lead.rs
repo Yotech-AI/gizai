@@ -124,15 +124,13 @@ pub fn prompt(st: &AppState, q: &Question) -> String {
 fn escalation_comment(you: &str, reason: &str, options: &[String], advice: &str) -> String {
     let mut c = format!("Needs {you}: {}", reason.trim());
     if !options.is_empty() {
-        c.push_str("\n\nOptions:\n");
-        for (i, o) in options.iter().enumerate() {
-            c.push_str(&format!("{}. {}\n", i + 1, o.trim()));
-        }
+        let list: Vec<String> = options.iter().enumerate().map(|(i, o)| format!("{}. {}", i + 1, o.trim())).collect();
+        c.push_str(&format!("\n\nOptions:\n{}", list.join("\n")));
     }
     if !advice.trim().is_empty() {
         c.push_str(&format!("\n\nMy advice: {}", advice.trim()));
     }
-    c.trim_end().to_string()
+    c
 }
 
 /// Starts the Team Lead's work on the question the run `asked_run_id` ended with (`settle`), in the background; `take`
@@ -170,36 +168,40 @@ async fn settle(st: &AppState, asked: &str, lead_id: &str) -> Settled {
         let state = if done.unwrap_or(false) { "escalated" } else { "dropped" };
         Settled { state: state.into(), run_id, reason: Some(reason), continued: None }
     };
+    // The reasons follow "Team Lead escalated to you: " on the card; the comments are the Team Lead's own.
     let (q, lead) = match (questions::question(&st.db, asked), team::agent(&st.db, lead_id)) {
         (Ok(q), Ok(lead)) => (q, lead),
         (Err(e), _) | (_, Err(e)) => {
-            let why = format!("the Team Lead couldn't look at it ({e})");
-            return escalated(None, why.clone(), format!("Needs {you}: {why}."));
+            let why = format!("it couldn't look at the question ({e})");
+            return escalated(None, why, format!("Needs {you}: I couldn't look at this question ({e}), so it is yours to decide."));
         }
     };
     let ran = crate::chat::question_once(st, &lead, asked, &prompt(st, &q)).await;
     let run_id = Some(ran.run_id.clone()).filter(|r| !r.is_empty());
     if ran.status != "succeeded" {
-        let why = match ran.status.as_str() {
-            "timed_out" => format!("the Team Lead's look at it {}", ran.error.clone().unwrap_or_else(|| "stopped at a limit".into())),
-            "cancelled" => "Gizai quit before the Team Lead had answered".to_string(),
-            _ => format!("the Team Lead couldn't look at it ({})", ran.error.clone().unwrap_or_else(|| "its run failed".into())),
+        let error = ran.error.clone().unwrap_or_default();
+        let (why, mine) = match ran.status.as_str() {
+            // "it stopped at the limit (15 min or 60 tool calls)"
+            "timed_out" => {
+                let what = error.strip_prefix("it ").unwrap_or(&error);
+                (format!("its look at the question {what}"), format!("my look at {}'s question {what}", q.agent_name))
+            }
+            "cancelled" => ("Gizai quit before it had answered".to_string(), format!("Gizai quit before I had answered {}'s question", q.agent_name)),
+            _ => (format!("its look at the question failed ({error})"), format!("my look at {}'s question failed ({error})", q.agent_name)),
         };
-        return escalated(run_id, why.clone(), format!("Needs {you}: {why}, so {} waits for your decision.", q.agent_name));
+        return escalated(run_id, why, format!("Needs {you}: {mine}, so it is yours to decide."));
     }
     match verdict(&ran.text) {
-        None => {
-            let why = "the Team Lead ended without an answer".to_string();
-            escalated(run_id, why.clone(), format!("Needs {you}: {why}, so {} waits for your decision.", q.agent_name))
-        }
+        None => escalated(run_id, "it ended without an answer".into(),
+                          format!("Needs {you}: I ended without an answer to {}'s question, so it is yours to decide.", q.agent_name)),
         Some(Verdict::Escalated { reason, options, advice }) => escalated(run_id, reason.clone(), escalation_comment(&you, &reason, &options, &advice)),
         Some(Verdict::Answered { answer, path, text }) => {
             match questions::answering(&st.db, asked, &answer, None) {
                 Ok(true) => {}
                 Ok(false) => return Settled { state: "dropped".into(), run_id, reason: None, continued: None },
                 Err(e) => {
-                    let why = format!("Gizai couldn't record the Team Lead's answer ({e})");
-                    return escalated(run_id, why.clone(), format!("Needs {you}: {why}. Its answer:\n\n{}", quote(&answer)));
+                    return escalated(run_id, format!("Gizai couldn't record its answer ({e})"),
+                                     format!("Needs {you}: Gizai couldn't record my answer ({e}). My answer:\n\n{}", quote(&answer)));
                 }
             }
             // Kept in memory, linked to the card, before the agent goes on.
@@ -229,9 +231,10 @@ async fn settle(st: &AppState, asked: &str, lead_id: &str) -> Settled {
                         }
                     }
                     Err((_, e)) => {
-                        let why = format!("the Team Lead answered, but Gizai couldn't continue {} with it ({})", q.agent_name, e.trim_end_matches('.'));
-                        let comment = format!("Needs {you}: {why}. The Team Lead's answer:\n\n{}\n\nClear the hold and press Run: {} starts again and reads this.",
-                                              quote(&answer), q.agent_name);
+                        let e = e.trim_end_matches('.');
+                        let why = format!("it answered, but Gizai couldn't continue {} with the answer ({e})", q.agent_name);
+                        let comment = format!("Needs {you}: I answered, but Gizai couldn't continue {} with it ({e}). My answer:\n\n{}\n\n\
+                                               Clear the hold and press Run: {} starts again and reads this.", q.agent_name, quote(&answer), q.agent_name);
                         return escalated(run_id, why, comment);
                     }
                 }

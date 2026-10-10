@@ -1324,20 +1324,24 @@ const treeNotes = () => [...document.querySelectorAll(".mem-tree .mem-item.note"
 const wikiLinks = () => [...document.querySelectorAll(".mem-note .note-view a.wikilink")] as HTMLAnchorElement[];
 const wikiLink = (text: string) => wikiLinks().find((a) => textOf(a) === text) ?? null;
 const noteTitle = () => q<HTMLInputElement>('input[aria-label="Note title"]')?.value ?? "";
+const hitPaths = () => [...document.querySelectorAll(".mem-hit")].map((h) => `${textOf(h.querySelector(":scope > .faint"))}/${textOf(h.querySelector(".mem-hit-title"))}`);
+const resultsCount = () => textOf(q(".mem-results > div.faint.mem-pad"));
 const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget: type === "mouseout" ? document.body : null }));
 
 /** GA-68, against prep_memory's notes, starting on Decisions/Use SQLite (`noteId`); `agentId`: the Backend Agent. The
  *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's one. The note
  *  reads with its links: Deploy steps and an alias to its #Rollback heading, Backup plan dashed (no such note), Release
  *  checklist embedded, KADE-1 a card chip; the panel has its outgoing links (Backup plan with Make it), outline, properties
- *  and tags. Resting on a link previews the note; clicking it opens Deploy steps, selected in the tree, with Use SQLite as
+ *  and tags. Resting on a link previews the note, which closes when the mouse leaves the link and stays when it moves
+ *  into the preview (until it leaves that too); clicking it opens Deploy steps, selected in the tree, with Use SQLite as
  *  a linked mention and Flaky tests as an unlinked one, which Link makes a link. Search finds by tag: and by words with
  *  path:, marked; a tag in the panel filters the tree; Ctrl+K finds a note. In the tree a rename (the embed that names the
  *  note follows) and a drag into another folder. The missing link makes the note from the New note drawer, after which
  *  the link finds it; in the new note's editor [[ lists notes, [[Note# their headings, and Ctrl+click opens a link.
  *  KADE-1 opens the card. The agent's page shows only its folder, also when searching (Backend Agent 2's folder starts
- *  the same), and Recently changed says the agent wrote its notes in a run on KADE-1. The Memory page's prefs are put
- *  back at the end. */
+ *  the same), and Recently changed says the agent wrote its notes in a run on KADE-1. The Team Lead's page searches every
+ *  note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
+ *  prefs are put back at the end. */
 export async function memoryProbe(noteId: string, agentId: string) {
   const prefs = Object.fromEntries(MEMORY_PREFS.map((k) => [k, localStorage.getItem(k)]));
   const out: Record<string, unknown> = {};
@@ -1403,6 +1407,25 @@ export async function memoryProbe(noteId: string, agentId: string) {
     around?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, relatedTarget: deploy }));
     const previewGone = !!(await waitFor(() => (q(".note-preview") ? null : true), 3000));
     if (!previewGone) { mouse(q(".note-preview")!, "mouseover"); mouse(q(".note-preview")!, "mouseout"); await waitFor(() => (q(".note-preview") ? null : true), 3000); }
+    // The mouse moves from the link into the preview: it stays open; leaving the preview closes it.
+    const deploy2 = wikiLink("Deploy steps")!;
+    mouse(deploy2, "mouseover");
+    const preview2 = await waitFor(() => q(".note-preview"), 3000);
+    let previewStays = false;
+    let previewLeft = false;
+    if (preview2) {
+      deploy2.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, cancelable: true, relatedTarget: preview2 }));
+      preview2.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, relatedTarget: deploy2 }));
+      await sleep(700);
+      previewStays = q(".note-preview") === preview2 && preview2.isConnected;
+      const outside = deploy2.closest("p") ?? document.body;
+      preview2.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, cancelable: true, relatedTarget: outside }));
+      outside.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, relatedTarget: preview2 }));
+      previewLeft = !!(await waitFor(() => (q(".note-preview") ? null : true), 3000));
+    }
+    out.preview_stays = previewStays;
+    out.preview_left = previewLeft;
+    if (!previewLeft && q(".note-preview")) { mouse(q(".note-preview")!, "mouseover"); mouse(q(".note-preview")!, "mouseout"); await waitFor(() => (q(".note-preview") ? null : true), 3000); }
     const backup = wikiLink("Backup plan")!;
     mouse(backup, "mouseover");
     const offer = await waitFor(() => { const p = q(".note-preview"); return p && textOf(p).includes("No note called Backup plan yet") && buttonByText(p, "Make it") ? p : null; }, 3000);
@@ -1540,8 +1563,9 @@ export async function memoryProbe(noteId: string, agentId: string) {
     if (agentSearch) typeInto(agentSearch, "learned");
     await waitFor(() => (q(".mem-hit") ? true : null), 4000);
     await sleep(400);
-    out.agent_search = [...document.querySelectorAll(".mem-hit")].map((h) => `${textOf(h.querySelector(":scope > .faint"))}/${textOf(h.querySelector(".mem-hit-title"))}`);
-    const agentSearchOk = JSON.stringify(out.agent_search) === JSON.stringify(["Agents/Backend Agent/Notes"]);
+    out.agent_search = hitPaths();
+    out.agent_search_count = resultsCount();
+    const agentSearchOk = JSON.stringify(out.agent_search) === JSON.stringify(["Agents/Backend Agent/Notes"]) && out.agent_search_count === "1 note";
     if (agentSearch) typeInto(agentSearch, "");
     location.hash = "#/memory";
     await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 8 ? true : null), 5000);
@@ -1554,11 +1578,44 @@ export async function memoryProbe(noteId: string, agentId: string) {
     const recentOk = everyone === 8 && byAgents.length === 3 && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent in a run on KADE-1"))
       && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
 
-    const ok = navOk && agentsFirst && linksOk && missingDashed && embedOk && chipOk && selectedOk && outgoingOk && panelOk && !!preview && previewGone
+    // The Team Lead's page searches every note: both agents' notes say "learned"; path:"Team Lead" keeps to its folder.
+    // The shared notes' page lists no agent's or Team Lead note: they all say "data", as Use SQLite does.
+    const searchFor = async (text: string, done: () => boolean) => {
+      const box = q<HTMLInputElement>('input[aria-label="Search notes"]');
+      if (box) typeInto(box, text);
+      await waitFor(() => (done() ? true : null), 4000);
+      await sleep(400);
+      return { hits: hitPaths(), count: resultsCount() };
+    };
+    const sorted = (a: string[]) => [...a].sort();
+    const leadLearned = await searchFor("learned", () => hitPaths().length >= 2);
+    const leadPath = await searchFor('path:"Team Lead" data', () => hitPaths().length === 1 && hitPaths()[0] === "Team Lead/Notes");
+    const leadData = await searchFor("data", () => hitPaths().length >= 4);
+    out.lead_search = { learned: leadLearned, team_lead: leadPath, data: leadData };
+    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/Notes"]) && leadLearned.count === "2 notes"
+      && JSON.stringify(leadPath.hits) === JSON.stringify(["Team Lead/Notes"]) && leadPath.count === "1 note"
+      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
+    const typed = q<HTMLInputElement>('input[aria-label="Search notes"]');
+    if (typed) typeInto(typed, "");
+    location.hash = "#/memory/shared";
+    await waitFor(() => (location.hash === "#/memory/shared" && textOf(q(".topbar .crumbs")) === "Memory/Shared notes" && q('input[aria-label="Search notes"]') ? true : null), 5000);
+    await sleep(300);
+    const sharedData = await searchFor("data", () => hitPaths().includes("Decisions/Use SQLite"));
+    const sharedOnly = await searchFor("learned", () => textOf(q(".mem-results")).includes("No note matches"));
+    out.shared_search = { data: sharedData, learned: { ...sharedOnly, text: textOf(q(".mem-results")).slice(0, 40) } };
+    const sharedSearchOk = sharedData.hits.includes("Decisions/Use SQLite") && sharedData.hits.every((p) => !p.startsWith("Agents/") && !p.startsWith("Team Lead/"))
+      && sharedData.count === `${sharedData.hits.length} ${sharedData.hits.length === 1 ? "note" : "notes"}`
+      && sharedOnly.hits.length === 0 && textOf(q(".mem-results")).includes("No note matches");
+    const typed2 = q<HTMLInputElement>('input[aria-label="Search notes"]');
+    if (typed2) typeInto(typed2, "");
+
+    const ok =navOk && agentsFirst && linksOk && missingDashed && embedOk && chipOk && selectedOk && outgoingOk && panelOk && !!preview && previewGone
       && !!offer && opened && deployOn && backlinksOk && linkedNow && byTag && byWord && narrowed && filtered && unfiltered && palOpened && openKept && renamed && dragged
-      && embedFollowed && drawerOk && madeOk && editorOk && ctrlClicked && nowFound && card && agentOk && agentSearchOk && recentOk;
+      && embedFollowed && drawerOk && madeOk && editorOk && ctrlClicked && nowFound && card && agentOk && agentSearchOk && recentOk
+      && previewStays && previewLeft && leadSearchOk && sharedSearchOk;
     return { ok, nav_ok: navOk, agents_first: agentsFirst, links_ok: linksOk, missing_dashed: missingDashed, embed_ok: embedOk, chip_ok: chipOk,
       selected_ok: selectedOk, outgoing_ok: outgoingOk, panel_ok: panelOk, previewed: !!preview, preview_gone: previewGone, offer: !!offer, opened,
+      lead_search_ok: leadSearchOk, shared_search_ok: sharedSearchOk,
       deploy_on: deployOn, crumbs, backlinks_ok: backlinksOk, linked_now: linkedNow, by_tag: byTag, by_word: byWord, narrowed, filtered, unfiltered,
       pal_opened: palOpened, open_kept: openKept, renamed, dragged, embed_followed: embedFollowed, drawer_ok: drawerOk, made_ok: madeOk, editor_ok: editorOk, ctrl_clicked: ctrlClicked, now_found: nowFound, card,
       agent_ok: agentOk, agent_search_ok: agentSearchOk, recent_ok: recentOk, ...out };

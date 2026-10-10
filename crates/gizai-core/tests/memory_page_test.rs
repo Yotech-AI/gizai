@@ -147,3 +147,71 @@ fn recent_with_versions_at_the_same_moment_orders_them_by_path_and_a_moved_note_
     let moved = memory::recent(&f.db, &f.you(), 30).unwrap().into_iter().find(|c| c.note.id == a.id).unwrap();
     assert_eq!((moved.note.path.as_str(), moved.version, moved.author_name.as_deref()), ("Decisions/A note", 1, Some("Jeffrey")));
 }
+
+#[test]
+fn search_path_with_a_slash_at_the_end_keeps_to_that_folder_and_without_one_matches_every_path_that_starts_with_it() {
+    // An agent's Memory page searches with path:"Agents/<its folder>/" (scopedQuery); the Team Lead's memory_search tool
+    // takes the same query. Backend Agent 2's folder starts as the Backend Agent's does.
+    let db = Db::open_in_memory().unwrap();
+    let s = seed::ensure_seed(&db, "Jeffrey").unwrap();
+    let add = |name: &str, role: &str, chat: bool| team::add_agent(&db, &s.you_id, &s.team_id, AgentInput {
+        name: name.into(), role_key: role.into(), chat_enabled: chat.then_some(true), ..Default::default() }).unwrap();
+    let lead = Who::Lead(add("Team Lead", "lead", true));
+    add("Backend Agent", "backend", false);
+    add("Backend Agent 2", "backend", false);
+    let you = Who::Person(s.you_id.clone());
+    // a subfolder whose name starts as another's does
+    memory::write(&db, &you, "Standards/Rust/Style", "What we learned about style.", None, None).unwrap();
+    memory::write(&db, &you, "Standards/Rust guide/Intro", "What we learned first.", None, None).unwrap();
+    let paths = |who: &Who, q: &str| {
+        let mut p: Vec<String> = memory::search(&db, who, q, 50).unwrap().into_iter().map(|h| h.note.path).collect();
+        p.sort();
+        p
+    };
+
+    // every agent's own Notes says what it "learned"
+    assert_eq!(paths(&you, "learned path:\"Agents/Backend Agent\""), ["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/Notes"],
+               "without a / at the end: every path that starts with it, as before");
+    assert_eq!(paths(&you, "learned path:\"Agents/Backend Agent/\""), ["Agents/Backend Agent/Notes"], "with one: only that folder");
+    assert_eq!(paths(&you, "path:\"Agents/Backend Agent 2/\" learned"), ["Agents/Backend Agent 2/Notes"]);
+    assert_eq!(paths(&you, "learned path:\"agents/BACKEND agent/\""), ["Agents/Backend Agent/Notes"], "case ignored");
+    assert_eq!(paths(&you, "learned path:\"/Agents/Backend Agent//\""), ["Agents/Backend Agent/Notes"], "extra slashes are one");
+    assert_eq!(paths(&you, "learned path:\" Agents/Backend Agent/ \""), ["Agents/Backend Agent/Notes"], "spaces around are dropped");
+    assert_eq!(paths(&you, "learned path:Standards/Rust"), ["Standards/Rust guide/Intro", "Standards/Rust/Style"]);
+    assert_eq!(paths(&you, "learned path:Standards/Rust/"), ["Standards/Rust/Style"]);
+    assert_eq!(paths(&you, "learned path:Standards/"), ["Standards/Rust guide/Intro", "Standards/Rust/Style"], "a folder has its subfolders' notes");
+    assert!(paths(&you, "learned path:Standards/Rust/Style/").is_empty(), "a / at the end means a folder: a note is not one");
+    assert_eq!(paths(&you, "path:Standards/Rust/Style"), ["Standards/Rust/Style"], "without one a note's own path still finds it");
+    // path:/ alone keeps no folder: every note with the word, as before
+    assert_eq!(paths(&you, "learned path:/").len(), paths(&you, "learned").len());
+    assert_eq!(paths(&you, "learned").len(), 4);
+    // only a path: filter, no words
+    assert_eq!(paths(&you, "path:\"Agents/Backend Agent/\""), ["Agents/Backend Agent/Notes"]);
+    // the Team Lead's memory_search tool: the same rule
+    assert_eq!(paths(&lead, "learned path:\"Agents/Backend Agent/\""), ["Agents/Backend Agent/Notes"]);
+    assert_eq!(paths(&lead, "learned path:\"Agents/Backend Agent\"").len(), 2);
+}
+
+/// The same names as `agentFolder` in src/lib/memory.test.ts: the Memory page finds an agent's folder by it.
+#[test]
+fn folder_name_of_names_with_unicode_spaces_and_control_characters_matches_the_memory_pages_agent_folder() {
+    let cases = [
+        ("\u{85}QA\u{85}", "QA"),
+        ("\u{a0}QA\u{3000}", "QA"),
+        ("QA\u{2028}", "QA"),
+        ("\u{b}QA\u{c}", "QA"),
+        ("\u{feff}QA", "\u{feff}QA"),
+        ("a\u{200b}b", "a\u{200b}b"),
+        ("\u{1c}QA", "-QA"),
+        ("Bot\u{85}One", "Bot-One"),
+        ("Bot\u{9f}One", "Bot-One"),
+        ("QA\u{85}.", "QA-"),
+        (". \u{85}QA", "-QA"),
+        ("\u{85}.QA", "QA"),
+        (" .\u{85}. QA", "-. QA"),
+        ("\u{85}", "Agent"),
+    ];
+    for (name, want) in cases {
+        assert_eq!(memory::folder_name(name), want, "{name:?}");
+    }
+}

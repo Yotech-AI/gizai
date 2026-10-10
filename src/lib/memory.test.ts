@@ -176,6 +176,25 @@ describe("agentFolder: an agent's name as its folder's name (gizai_core::memory:
     expect(agentFolder("Bot\u0085One")).toBe("Bot-One");
     expect(agentFolder("Bot\u009bOne")).toBe("Bot-One");
   });
+  // The same names as crates/gizai-core/tests/memory_page_test.rs checks against folder_name.
+  it.each([
+    ["\u0085QA\u0085", "QA"],
+    [" QA　", "QA"],
+    ["QA ", "QA"],
+    ["\u000bQA\u000c", "QA"],
+    ["﻿QA", "﻿QA"],
+    ["a​b", "a​b"],
+    ["\u001cQA", "-QA"],
+    ["Bot\u0085One", "Bot-One"],
+    ["Bot\u009fOne", "Bot-One"],
+    ["QA\u0085.", "QA-"],
+    [". \u0085QA", "-QA"],
+    ["\u0085.QA", "QA"],
+    [" .\u0085. QA", "-. QA"],
+    ["\u0085", "Agent"],
+  ])("trims the ends as Rust's str::trim does (Unicode White_Space): %j", (name, want) => {
+    expect(agentFolder(name)).toBe(want);
+  });
   it("drops dots at either end; 'Agent' when nothing is left", () => {
     expect(agentFolder("..hidden..")).toBe("hidden");
     expect(agentFolder(" . a . ")).toBe("a");

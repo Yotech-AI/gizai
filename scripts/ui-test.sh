@@ -45,11 +45,13 @@
 # 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note and the
 #     Backend Agent with its own folder's. Decisions/Use SQLite reads with its wikilinks (one to a heading, by an alias), a
 #     dashed one to a note that doesn't exist, an embedded note and KADE-1 as a card chip; the panel has its outgoing links,
-#     outline, properties and tags. Resting on a link previews the note (or offers to make it); clicking it opens Deploy
+#     outline, properties and tags. Resting on a link previews the note (or offers to make it), which closes when the
+#     mouse leaves the link and stays while it moves into the preview; clicking it opens Deploy
 #     steps, with a linked and an unlinked mention, which Link makes a link. Search by tag: and by words with path:,
 #     marked; a tag filters the tree; Ctrl+K finds a note. The missing link makes the note from a template, and then finds
 #     it; in its editor [[ lists notes and [[Note# their headings, and Ctrl+click on a link opens its note; KADE-1 opens
-#     the card; the agent's page shows only its folder (its search too), and Recently changed says who wrote what.
+#     the card; the agent's page shows only its folder (its search too, not Backend Agent 2's), and Recently changed says
+#     who wrote what; the Team Lead's page searches every note (path:"Team Lead" its own), the shared page none of theirs.
 #     Then on the demo data (no agents, no notes): Shared notes and Set up the Team Lead in the sidebar, the page says
 #     what memory is, the tree has only the shared folders, and Set up the Team Lead opens the agent form.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).

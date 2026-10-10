@@ -450,6 +450,138 @@ async fn an_answer_with_only_gizais_own_tools_can_act() {
     assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "paused");
 }
 
+// ---- GA-77: an acting call in a chat answer waits until the answer's stream shows it, at most tools::SHOWN_WAIT ----
+
+const PAUSE: &str = r#"CALL set_agent_status {"agent": "Backend Agent", "status": "paused"}"#;
+
+/// The answer's last text. The fake says there how long Gizai took to answer its Gizai call, and, with NO_SHOW, what
+/// Gizai answered (no tool message holds a call the stream never showed).
+fn last_answer(st: &AppState, thread: &str) -> String {
+    chat::messages(&st.db, thread).unwrap().into_iter().filter(|m| m.role == "agent").filter_map(|m| m.body_md).next_back().unwrap_or_default()
+}
+
+/// How long the fake's Gizai call took: "(the call took N ms)" in the answer's last text.
+fn call_took(st: &AppState, thread: &str) -> Duration {
+    let text = last_answer(st, thread);
+    let ms = text.rsplit_once("(the call took ").and_then(|(_, r)| r.split_once(" ms)")).and_then(|(n, _)| n.parse::<u64>().ok())
+        .unwrap_or_else(|| panic!("no call time in {text:?}"));
+    Duration::from_millis(ms)
+}
+
+fn refused_unseen(e: &str, name: &str) -> bool {
+    e.contains(&format!("{name} is refused this time: Gizai couldn't see this call in your answer in time"))
+        && e.contains("Nothing changed: call it again")
+}
+
+/// A stream that is far behind the calls: shown a second after the Gizai call (not 50 ms), the outside tool in the same
+/// message still counts. Also for calls that name their tool use's id in `_meta`, as Claude Code's do.
+#[tokio::test]
+async fn a_gizai_call_the_stream_shows_a_second_late_next_to_an_outside_tool_is_refused_and_changes_nothing() {
+    let t = setup();
+    let st = state(&t);
+    let _server = with_socket(&t);
+    for (words, call) in [
+        ("OUTSIDE_LATE LATE_MS=1000", PAUSE),
+        ("OUTSIDE_LATE LATE_MS=1000 META", PAUSE),
+        ("OUTSIDE_LATE LATE_MS=1000", r#"CALL add_column {"name": "Otus", "after": "Review", "kind": "work"}"#),
+        ("OUTSIDE_LATE LATE_MS=1000 META", r#"CALL create_agent {"name": "Otus Agent", "role": "backend"}"#),
+    ] {
+        let (thread, s) = turn(&st, None, &format!("{words} {call}")).await;
+        assert_eq!(s.status, "succeeded", "{words} {call}: {s:?}");
+        let name = call.split_whitespace().nth(1).unwrap();
+        let msgs = tool_messages(&st, &thread);
+        let gizai = msgs.iter().find(|m| m.0 == format!("mcp__gizai__{name}")).unwrap_or_else(|| panic!("{words} {call}: {msgs:?}"));
+        assert!(gizai.1 && refused_after_outside(&gizai.2, name), "{words} {call}: {msgs:?}");
+        let took = call_took(&st, &thread);
+        assert!(took >= Duration::from_millis(900), "{words} {call}: answered after {took:?}, before the stream showed the call");
+    }
+    assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "active", "nothing paused");
+    assert!(!t.columns().contains(&"Otus".to_string()), "no column added: {:?}", t.columns());
+    assert!(!t.agent_names().contains(&"Otus Agent".to_string()), "no agent created: {:?}", t.agent_names());
+}
+
+/// A call whose tool use the stream doesn't show within SHOWN_WAIT (not at all, or only under another id than the one
+/// the call names) is refused with a reason the model can act on, and changes nothing.
+#[tokio::test]
+async fn a_call_the_stream_doesnt_show_in_time_is_refused_with_a_reason_and_changes_nothing() {
+    let t = setup();
+    let st = state(&t);
+    let _server = with_socket(&t);
+    for words in ["NO_SHOW", "NO_SHOW META"] {
+        let (thread, s) = turn(&st, None, &format!("{words} {PAUSE}")).await;
+        assert_eq!(s.status, "succeeded", "{words}: {s:?}");
+        let text = last_answer(&st, &thread);
+        assert!(text.starts_with("It was refused.") && refused_unseen(&text, "set_agent_status"), "{words}: {text}");
+        let took = call_took(&st, &thread);
+        assert!(took >= tools::SHOWN_WAIT - Duration::from_millis(50) && took < tools::SHOWN_WAIT + Duration::from_secs(3),
+                "{words}: refused after {took:?}, not after SHOWN_WAIT ({:?})", tools::SHOWN_WAIT);
+        assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "active", "{words}: nothing paused");
+    }
+    // the stream shows the same tool with the same arguments, but the call names another tool use: not this call's
+    let (thread, s) = turn(&st, None, &format!("GIZAI_LATE META META_ID=toolu_other {PAUSE}")).await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let msgs = tool_messages(&st, &thread);
+    let gizai = msgs.iter().find(|m| m.0 == "mcp__gizai__set_agent_status").unwrap_or_else(|| panic!("{msgs:?}"));
+    assert!(gizai.1 && refused_unseen(&gizai.2, "set_agent_status"), "{msgs:?}");
+    assert!(call_took(&st, &thread) >= tools::SHOWN_WAIT - Duration::from_millis(50), "{:?}", call_took(&st, &thread));
+    assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "active", "nothing paused");
+}
+
+/// The answer ends (its stream closes) while a call still waits to be shown: the call never goes through.
+#[tokio::test]
+async fn a_call_still_waiting_when_the_answer_ends_never_goes_through() {
+    let t = setup();
+    let st = state(&t);
+    let _server = with_socket(&t);
+    let (_thread, s) = turn(&st, None, &format!("NO_SHOW EXIT_EARLY {PAUSE}")).await;
+    assert_ne!(s.status, "running", "{s:?}");
+    tokio::time::sleep(tools::SHOWN_WAIT + Duration::from_secs(1)).await;
+    assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "active", "nothing paused");
+}
+
+/// Without an outside tool, a call acts as soon as the stream shows it: at once when it was shown first, a moment later
+/// when the call came first (parallel calls), with or without its tool use's id. Never anywhere near SHOWN_WAIT.
+#[tokio::test]
+async fn a_call_the_stream_shows_without_an_outside_tool_acts_without_a_wait_anyone_notices() {
+    let t = setup();
+    let st = state(&t);
+    let _server = with_socket(&t);
+    for words in ["", "META", "GIZAI_LATE", "GIZAI_LATE META"] {
+        t.ok(None, "set_agent_status", json!({"agent": "Backend Agent", "status": "active"})).await;
+        let (thread, s) = turn(&st, None, &format!("{words} {PAUSE}")).await;
+        assert_eq!(s.status, "succeeded", "{words}: {s:?}");
+        let msgs = tool_messages(&st, &thread);
+        assert_eq!(msgs.last().map(|m| (m.0.as_str(), m.1)), Some(("mcp__gizai__set_agent_status", false)), "{words}: {msgs:?}");
+        assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "paused", "{words}");
+        let took = call_took(&st, &thread);
+        assert!(took < Duration::from_millis(1500), "{words}: the call took {took:?}");
+    }
+}
+
+/// Tools not in NOT_AFTER_OUTSIDE never wait for the stream, not even when it never shows them; nor do calls made
+/// directly for a thread (not by an answer's Claude Code, so no stream shows them).
+#[tokio::test]
+async fn tools_not_in_the_list_and_direct_calls_dont_wait_for_the_stream() {
+    let t = setup();
+    let st = state(&t);
+    let _server = with_socket(&t);
+    for call in [r#"CALL get_overview {}"#, r#"CALL create_task {"project": "KADE", "title": "Export"}"#] {
+        let (thread, s) = turn(&st, None, &format!("NO_SHOW {call}")).await;
+        assert_eq!(s.status, "succeeded", "{call}: {s:?}");
+        let text = last_answer(&st, &thread);
+        assert!(text.starts_with("Done."), "{call}: {text}");
+        assert!(call_took(&st, &thread) < Duration::from_millis(1500), "{call}: {text}");
+    }
+    assert!(t.ok(None, "get_task", json!({"task": "KADE-1"})).await.to_string().contains("Export"), "the task was created");
+    let thread = t.thread("Pause the Backend Agent and add a Design review column");
+    let t0 = Instant::now();
+    t.ok(Some(&thread), "set_agent_status", json!({"agent": "Backend Agent", "status": "paused"})).await;
+    t.ok(Some(&thread), "add_column", json!({"name": "Design review", "after": "Review", "kind": "review"})).await;
+    assert!(t0.elapsed() < Duration::from_millis(1500), "direct calls took {:?}", t0.elapsed());
+    assert_eq!(team::agent(&st.db, &t.backend).unwrap().status, "paused");
+    assert!(t.columns().contains(&"Design review".to_string()), "{:?}", t.columns());
+}
+
 // ---- quitting ends the MCP servers a chat answer started ----
 
 #[cfg(target_os = "linux")]

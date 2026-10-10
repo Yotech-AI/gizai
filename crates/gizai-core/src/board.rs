@@ -1,9 +1,8 @@
 //! The Team Lead's board check, in code (no model): what on the board needs attention. Answered cards (a person's
 //! comment after a "needs a decision" hold), other held cards, cards in an Auto column no agent will start (with why)
 //! and cards in In progress whose run stopped part-way. Only To do, In progress and Testing count (cards in a Manual
-//! column wait for Run by design), and paused, done and archived projects are left out. In a project whose Team Lead may
-//! merge switch is on, a card in Review that QA passed is a finding too (GA-86). The Team Lead's scheduled check and the
-//! `check_board` tool both use it, so they see the same thing.
+//! column wait for Run by design), and paused, done and archived projects are left out. The Team Lead's scheduled check and
+//! the `check_board` tool both use it, so they see the same thing.
 //!
 //! What each check saw is kept on its run (`runs.findings_json`): a finding is new when the Team Lead hasn't seen it
 //! yet, or its card changed since (a comment, a run, a move, the hold), not counting the Team Lead's own changes.

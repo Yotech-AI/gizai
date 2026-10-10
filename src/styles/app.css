@@ -574,3 +574,64 @@ span.mem-tag { cursor: default; }
 .mem-template pre { margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--side); font-size: var(--fs-xs); white-space: pre-wrap; }
 .btn.mem-toggle.on { background: var(--selected); color: var(--text); }
 @media (max-width: 1300px) { .mem-files { width: 230px; } .mem-side { width: 270px; } .mem-prop { grid-template-columns: 84px minmax(0, 1fr) 26px; } }
+
+/* ---- The memory graph (GA-69): the canvas on the app's background, its tools and settings panel over its corners,
+   and the local graph beside a note. The dots' colours come from a calm palette in src/lib/graph.ts: no teal or
+   magenta here either. ---- */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.mem-views button { display: inline-flex; gap: 5px; align-items: center; }
+.graph-wrap { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
+.graph-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+.graph-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.graph-tools { position: absolute; left: 12px; top: 10px; z-index: 2; display: flex; align-items: center; gap: 10px; pointer-events: none; }
+.graph-tools > * { pointer-events: auto; }
+.graph-count { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.graph-zoom { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--overlay); }
+.graph-zoom .btn.sm.icon-only { width: 24px; height: 24px; }
+.graph-panel-open { position: absolute; right: 12px; top: 10px; z-index: 2; }
+.graph-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 24px; text-align: center; pointer-events: none; }
+.graph-panel { position: absolute; right: 12px; top: 10px; z-index: 3; width: 272px; max-height: calc(100% - 20px); overflow-y: auto; border: 1px solid var(--line-2);
+  border-radius: var(--radius-l); background: var(--overlay); box-shadow: var(--shadow-pop); font-size: var(--fs-sm); }
+.graph-panel-head { display: flex; align-items: center; gap: 2px; padding: 6px 6px 6px 14px; border-bottom: 1px solid var(--line); }
+.graph-panel-head b { flex: 1; font-weight: 600; }
+.graph-section { border-bottom: 1px solid var(--line); }
+.graph-section:last-child { border-bottom: 0; }
+.graph-section-head { display: flex; align-items: center; gap: 6px; width: 100%; height: 34px; padding: 0 12px; border: 0; background: none; color: var(--text); font: inherit;
+  font-size: var(--fs-sm); font-weight: 600; text-align: left; cursor: pointer; }
+.graph-section-head:hover { background: var(--hover); }
+.graph-section-head .icon { color: var(--text-3); }
+.graph-section-body { display: flex; flex-direction: column; gap: 9px; padding: 2px 14px 14px; }
+.graph-section-body .input { height: 30px; font-size: var(--fs-sm); }
+.graph-check { gap: 7px; font-size: var(--fs-sm); }
+.graph-kind { flex: none; }
+.graph-sub { margin-top: 2px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); }
+.graph-hint { margin: 0; font-size: var(--fs-xs); line-height: 1.45; }
+.graph-slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 3px 8px; }
+.graph-slider label { color: var(--text-2); }
+.graph-slider output { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.graph-slider input[type="range"] { grid-column: 1 / -1; width: 100%; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.graph-add { align-self: flex-start; }
+.graph-group { display: flex; flex-direction: column; gap: 6px; }
+.graph-group-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 26px; align-items: center; gap: 6px; }
+.graph-group-row .input { height: 28px; padding: 0 8px; }
+.graph-swatch { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; }
+.graph-swatch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.graph-swatches { flex-wrap: wrap; gap: 6px; padding-left: 24px; }
+.graph-swatches .swatch { width: 18px; height: 18px; }
+.graph-connections { position: absolute; left: 12px; bottom: 12px; z-index: 2; width: 290px; max-height: 45%; overflow-y: auto; border: 1px solid var(--line-2);
+  border-radius: var(--radius-l); background: var(--overlay); box-shadow: var(--shadow-pop); font-size: var(--fs-sm); }
+.graph-connections-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--line); }
+.graph-connections-head .link-btn { flex: 1; color: var(--text); text-align: left; font-weight: 600; text-decoration: none; }
+.graph-connections-head .link-btn:hover { text-decoration: underline; }
+.graph-conn-list { margin: 0; padding: 4px; list-style: none; }
+.graph-conn-list .mem-row .faint { max-width: 45%; }
+.graph-missing { color: var(--text-2); }
+.mem-local { display: flex; flex-direction: column; flex: none; width: 360px; min-height: 0; border-left: 1px solid var(--line); background: var(--bg); }
+.mem-local-head { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.mem-local-head .faint { flex: 1; }
+.mem-local-head .btn.on { background: var(--selected); color: var(--text); }
+.graph-wrap.local { flex: none; height: 56%; min-height: 220px; border-bottom: 1px solid var(--line); }
+.mem-local .graph-panel { width: calc(100% - 24px); }
+.mem-local-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 10px 16px; font-size: var(--fs-sm); }
+.mem-local-list > p { margin: 2px 4px 6px; }
+@media (max-width: 1300px) { .mem-local { width: 320px; } }

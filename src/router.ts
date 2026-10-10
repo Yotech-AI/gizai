@@ -5,8 +5,8 @@ export const PAGES_WITH_ID = ["task", "project", "client", "doc", "team", "agent
 // chats: Chat → Archive, every chat with a search (chat/<id> is one chat).
 export const PAGES = ["chat", "chats", "inbox", "tasks", "board", "task", "projects", "project", "clients", "client", "doc", "team", "agent", "users", "settings", "usage", "memory"] as const;
 export type Page = (typeof PAGES)[number];
-/** `scope`: on the Memory page only, which notes it shows (`memoryScope`). */
-export type Route = { page: Page; id?: string; scope?: string };
+/** `scope`: on the Memory page only, which notes it shows (`memoryScope`); `view` "graph": its graph (GA-69). */
+export type Route = { page: Page; id?: string; scope?: string; view?: "graph" };
 // Settings' tabs (GA-42): #/settings/<tab> opens one; #/settings, or a tab it doesn't know, opens General.
 export const SETTINGS_TABS = ["general", "appearance", "notifications", "agents", "mcp", "github"] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
@@ -14,11 +14,15 @@ export type SettingsTab = (typeof SETTINGS_TABS)[number];
 // The Memory page (GA-68): #/memory is everything (the Team Lead's view), #/memory/shared the shared folders (no Team
 // Lead yet) and #/memory/agent/<agent id> one agent's own folder. A note's id after any of them opens that note there:
 // #/memory/<note>, #/memory/shared/<note>, #/memory/agent/<agent id>/<note>. The scope is "shared" or the agent's id.
+// GA-69: "graph" in the note's place shows the graph of those notes: #/memory/graph, #/memory/shared/graph,
+// #/memory/agent/<agent id>/graph (a note's id is never "graph").
 function memoryRoute(rest: string[]): Route {
   const [a, b, c] = rest.map((p) => decodeURIComponent(p));
-  if (a === "shared") return b ? { page: "memory", scope: "shared", id: b } : { page: "memory", scope: "shared" };
-  if (a === "agent") return !b ? { page: "memory" } : c ? { page: "memory", scope: b, id: c } : { page: "memory", scope: b };
-  return a ? { page: "memory", id: a } : { page: "memory" };
+  const at = (scope: string | undefined, id: string | undefined): Route =>
+    id === "graph" ? { page: "memory", ...(scope ? { scope } : {}), view: "graph" } : { page: "memory", ...(scope ? { scope } : {}), ...(id ? { id } : {}) };
+  if (a === "shared") return at("shared", b);
+  if (a === "agent") return !b ? { page: "memory" } : at(b, c);
+  return at(undefined, a);
 }
 
 export function parseHash(hash: string): Route {
@@ -36,7 +40,7 @@ export function parseHash(hash: string): Route {
 export function href(r: Route): string {
   if (r.page === "memory") {
     const scope = r.scope === "shared" ? "/shared" : r.scope ? `/agent/${encodeURIComponent(r.scope)}` : "";
-    return `#/memory${scope}${r.id ? "/" + encodeURIComponent(r.id) : ""}`;
+    return `#/memory${scope}${r.view === "graph" ? "/graph" : r.id ? "/" + encodeURIComponent(r.id) : ""}`;
   }
   return `#/${r.page}${r.id ? "/" + encodeURIComponent(r.id) : ""}`;
 }

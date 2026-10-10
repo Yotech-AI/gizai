@@ -94,8 +94,9 @@ wikilink does) or its id. It sees every scope, and the activity feed shows it as
 
 Every chat answer and every board check has the Team Lead's Memory block at the end of its system prompt, in old chats
 and new ones: its own notes (`Team Lead/`, `Notes` first) in full, at most **6,000 characters** (a note that doesn't fit
-is cut, with a pointer to `memory_read`), then the paths of every other note, at most **4,000 characters**. Its task
-runs get the same block. Its instructions ask it to save decisions with their reasons, preferences and gotchas, not to
+is cut, with a pointer to `memory_read`), then the paths of every other note, at most **4,000 characters**. The notes in
+`Team Lead/Imported/` (from Claude Code's own memory, below) are one line there, with how many wait to be sorted. Its
+task runs get the same block. Its instructions ask it to save decisions with their reasons, preferences and gotchas, not to
 copy what the repository or the board say, never to store a secret, and to look in memory before asking the user.
 
 ## Agents' runs
@@ -123,6 +124,30 @@ characters. A result line without `learned` parses as before.
 
 The task page's Runs tab lists the notes a run was given, with their size (and how much was shown when one was cut).
 
+The DevOps role keeps a project's deploy note in `Deployments/<KEY>`, with `type: deployment`, `project: <KEY>` and
+`applies_to: devops`, so it comes into the DevOps Agent's runs; the agent reports what changed as `learned` lines and the
+Team Lead folds them into the note.
+
+## Claude Code's own memory
+
+One memory: Gizai's. Claude Code keeps notes of its own in `projects/<project folder>/memory/` in its account's folder
+(`CLAUDE_CONFIG_DIR`, else `~/.claude`), which only that account sees; agents kept theirs there before memory (like the
+DevOps Agent's `deploy-<KEY>`).
+
+**The import (GA-85).** When Gizai starts, after the migrations, each Markdown file there, for every Claude Code account
+in Settings → Coding CLIs, becomes a note `Team Lead/Imported/<project folder>/<file name>`: its text as it was, with
+`source: claude-code`, `claude_config_dir`, `claude_project` and `claude_file` added to its properties. `MEMORY.md`
+(Claude Code's index) and the folders below are left out. Each file comes in once (the `claude_memory_imports` setting
+keeps which), also when it changes later. A file with a secret in it, not text or over 200 KB is skipped, listed by its
+path only, and tried again once it changes. `Team Lead/Notes` gets an open thread with what came in and what didn't (a
+list over 2,000 characters goes in a note of its own) and the agents whose instructions still say `MEMORY.md`, so the
+Team Lead sorts the notes with you (`memory_move`, like `deploy-GA` into `Deployments/GA`); until then no agent gets
+them. Gizai only reads those files. Headless test and screenshot runs don't import.
+
+**The switch.** Task runs, chat answers and board checks on Claude Code get `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, after
+the account's own environment lines: in Gizai's runs Claude Code neither reads nor writes its memory folder, whatever
+its settings say. Codex and Gemini keep no such folder.
+
 ## Switches
 
 - **Use memory** in an agent's form (on by default): off, its runs get no Memory section and its `learned` lines are not
@@ -133,4 +158,3 @@ The task page's Runs tab lists the notes a run was given, with their size (and h
 
 The Memory page (GA-68), the graph (GA-69), asking the Team Lead before a person (GA-70), an export to a folder for
 Obsidian, deleting notes, a tool for task agents to ask in the middle of a run, semantic search, a review pass.
-Notes an agent kept in its CLI's own memory (like Claude Code's memory folder) are not moved over.

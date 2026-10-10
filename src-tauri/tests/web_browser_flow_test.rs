@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-55: what a task run and the Team Lead's chat get of an agent's Web switches, the hidden browser (Chrome DevTools MCP)
 // and the CLI's built-in tools, end to end with fake Claude Codes, a fake npx and a stand-in browser program that never
 // runs: never the real Claude Code, npx, Chrome DevTools MCP, a browser or a browser profile. Also Settings → MCP
@@ -773,11 +775,22 @@ async fn a_continued_gemini_run_says_web_content_is_data_once_and_codex_with_sea
 
 // ---- Stop, the tool cap and quitting end the browser ----
 
+/// A process's state letter and process group from /proc (None once it is gone).
+#[cfg(target_os = "linux")]
 fn stat(pid: u32) -> Option<(char, u32)> {
     let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = &s[s.rfind(')')? + 1..];
     let f: Vec<&str> = rest.split_whitespace().collect();
     Some((f.first()?.chars().next()?, f.get(2)?.parse().ok()?))
+}
+
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(not(target_os = "linux"))]
+fn stat(pid: u32) -> Option<(char, u32)> {
+    let out = std::process::Command::new("ps").args(["-o", "stat=,pgid=", "-p", &pid.to_string()]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut f = text.split_whitespace();
+    Some((f.next()?.chars().next()?, f.next()?.parse().ok()?))
 }
 
 fn ended(pid: u32) -> bool {

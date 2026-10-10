@@ -28,6 +28,8 @@ esac
 prompt="$(cat)"   # the prompt comes in on stdin, like claude -p
 echo "prompt chars: ${#prompt}" >&2
 echo "argv: $*" >&2
+# Claude Code's own memory switch (GA-85): what Gizai gave it, or "unset".
+echo "auto memory: ${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}" >&2
 if [ -n "${FAKE_TEMP:-}" ]; then
   echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2
   if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then

@@ -17,7 +17,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 GZ=$PWD; DEV=$GZ/.devdata; BIN=$GZ/target/release/gizai; Q=$DEV/quittest
 [ -x "$BIN" ] || { echo "QUIT FAIL: no $BIN (build first)"; exit 1; }
-rm -rf "$Q"; mkdir -p "$Q" "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
+rm -rf "$Q"; mkdir -p "$Q" "$Q/claude" "$DEV/run" "$DEV/xdg"; chmod 700 "$DEV/run"
 FAKE=$GZ/crates/gizai-agents/tests/fake-claude.sh
 # Demo data. The run data adds a Backend Agent on a heartbeat with KADE-1 assigned, so a run starts as soon as Gizai
 # does: run1 and run3 with the fake Claude Code on FAKE_HANG (it ends on Gizai's SIGINT, or on SIGTERM), run2 with a
@@ -120,9 +120,11 @@ quit held-first SIGTERM 10
 RUN
 chmod +x "$RUNNER"
 T0=$(date +%s)
+# An empty Claude Code account folder (CLAUDE_CONFIG_DIR), so Gizai doesn't import your own Claude Code memory notes
+# (~/.claude) into the test data when it starts (GA-85).
 env -i HOME="$HOME" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$DEV/run" \
   WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
-  XDG_DATA_HOME="$DEV/xdg/data" XDG_CACHE_HOME="$DEV/xdg/cache" XDG_CONFIG_HOME="$DEV/xdg/config" \
+  XDG_DATA_HOME="$DEV/xdg/data" XDG_CACHE_HOME="$DEV/xdg/cache" XDG_CONFIG_HOME="$DEV/xdg/config" CLAUDE_CONFIG_DIR="$Q/claude" \
   __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json QT_BIN="$BIN" QT_DIR="$Q" \
   timeout -k 5 180 dbus-run-session -- cage -- "$RUNNER" > "$Q/cage.log" 2>&1
 R=$Q/result.txt

@@ -12,6 +12,7 @@ pub mod sortkey;
 pub mod team;
 pub mod docs;
 pub mod memory;
+pub mod memory_import;
 pub mod files;
 pub mod runs;
 pub mod usage;

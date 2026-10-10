@@ -536,6 +536,14 @@ fn the_runs_entry_starts_through_cmd_with_npx_and_chrome_in_folders_with_spaces(
     let before = tmp.path().join("before.json");
     let done = start_entry(&mcp_run::stdio(&npx.display().to_string(), &args, &env), &project, &before);
     assert!(!done.status.success() && !before.exists(), "npx by its path through cmd /c started: {}", String::from_utf8_lossy(&done.stderr));
+
+    // List tools starts npx.cmd by its path through os::command (as mcp_client does), with Rust's own batch-file quoting:
+    // that copes with the spaces too
+    let listed = tmp.path().join("listed.json");
+    let done = gizai_agents::os::command(&npx).args(&args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).env("FAKE_ARGS_OUT", &listed)
+        .stdin(std::process::Stdio::null()).output().unwrap();
+    assert!(done.status.success(), "{}", String::from_utf8_lossy(&done.stderr));
+    assert_eq!(args_seen(&listed), args);
 }
 
 /// Windows: cmd looks for a program in its current folder before the PATH, so an npx.cmd in the project a run works in

@@ -19,6 +19,8 @@ pub struct GizaiTools {
     pub thread: Option<String>,
     /// The board check run the token was minted for.
     pub check: Option<String>,
+    /// The run the token was minted for: the chat answer (or board check) whose Claude Code makes the calls.
+    pub run: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
@@ -26,8 +28,19 @@ impl gizai_mcp::Tools for GizaiTools {
         catalog()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
-        call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), name, args).await
+        self.call_with_meta(name, args, &Value::Null).await
     }
+    async fn call_with_meta(&self, name: &str, args: Value, meta: &Value) -> Result<Value, String> {
+        // The answer's stream shows the tool use each call comes from, with the id Claude Code gives the call.
+        let from = Stream { run: self.run.as_deref().unwrap_or_default(), tool_use: meta.get("claudecode/toolUseId").and_then(Value::as_str) };
+        call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), Some(from), name, args).await
+    }
+}
+
+/// The chat answer a call over MCP comes from: its run, and the tool use the client named for the call, if it did.
+struct Stream<'a> {
+    run: &'a str,
+    tool_use: Option<&'a str>,
 }
 
 /// Runs one tool as `actor`, outside any chat thread. Errors are plain sentences for the model to act on.
@@ -35,14 +48,15 @@ pub async fn call(st: &AppState, actor: &str, name: &str, args: Value) -> Result
     call_in(st, actor, None, name, args).await
 }
 
-/// Runs one tool as `actor` for a chat thread (what the user said there widens `attach_file`).
+/// Runs one tool as `actor` for a chat thread (what the user said there widens `attach_file`). Called directly, not by
+/// an answer's Claude Code, so no stream shows it: only a thread already marked refuses the tools that act.
 pub async fn call_in(st: &AppState, actor: &str, thread: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
-    call_scoped(st, actor, thread, None, name, args).await
+    call_scoped(st, actor, thread, None, None, name, args).await
 }
 
 /// Runs one tool as `actor` in the board check `run_id`: nobody named a file, and the check's rules hold.
 pub async fn call_check(st: &AppState, actor: &str, run_id: &str, name: &str, args: Value) -> Result<Value, String> {
-    call_scoped(st, actor, None, Some(run_id), name, args).await
+    call_scoped(st, actor, None, Some(run_id), None, name, args).await
 }
 
 /// What a board check may not do, whatever it is asked: attach a file nobody named, change an agent's settings or set up
@@ -54,7 +68,12 @@ const NOT_IN_A_CHECK: [&str; 6] = ["attach_file", "create_agent", "update_agent"
 pub const NOT_AFTER_OUTSIDE: [&str; 9] = ["start_agent_run", "continue_agent_run", "create_agent", "update_agent", "set_agent_status", "add_column",
     "set_column", "attach_file", "update_checkout"];
 
-async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, name: &str, args: Value) -> Result<Value, String> {
+/// How long a call of a tool in `NOT_AFTER_OUTSIDE` in a chat answer waits for the answer's stream to show it
+/// (`chat::wait_shown`). Not shown by then, it is refused, and the model can call it again.
+pub const SHOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Option<&str>, from: Option<Stream<'_>>, name: &str, args: Value)
+    -> Result<Value, String> {
     let a = Args(match args {
         Value::Object(m) => m,
         Value::Null => Map::new(),
@@ -67,9 +86,12 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         });
     }
     if let Some(t) = thread.filter(|_| NOT_AFTER_OUTSIDE.contains(&name)) {
-        // A call in the same message as an outside tool can come in before the answer's stream shows that tool: wait a moment.
-        if crate::chat::used_outside(st, t).is_none() && tokio::runtime::Handle::try_current().is_ok() {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        // A call can come in before Gizai has read the answer's stream up to it, so before an outside tool in the same
+        // message is marked: it waits until the stream shows the call itself. Not shown in time, it is refused.
+        if let Some(s) = from.filter(|_| crate::chat::used_outside(st, t).is_none())
+            && crate::chat::wait_shown(st, s.run, s.tool_use, name, &a.0, SHOWN_WAIT).await != crate::chat::Shown::Yes {
+            return Err(format!("{name} is refused this time: Gizai couldn't see this call in your answer in time, so it can't tell \
+                whether a tool from outside Gizai came before it. Nothing changed: call it again."));
         }
         if let Some(tool) = crate::chat::used_outside(st, t) {
             return Err(format!("{name} is refused for the rest of this answer: it used {tool}, a tool from outside Gizai, and what that \

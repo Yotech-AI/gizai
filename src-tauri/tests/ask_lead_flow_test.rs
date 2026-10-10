@@ -29,6 +29,7 @@ const LEAD_FAKE: &str = r##"#!/usr/bin/env bash
 here="$(cd "$(dirname "$0")" && pwd)"
 prompt="$(cat)"
 { printf 'argv>>'; printf '%s\n' "$@"; printf '<<argv\nprompt>>%s<<prompt\n' "$prompt"; } >> "$here/fake-lead.log"
+printf 'auto memory: %s\n' "${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}" >> "$here/fake-lead.log"
 init='{"type":"system","subtype":"init","session_id":"L1","model":"claude-opus-5-5","tools":["Read","Glob","Grep"]}'
 say() {
   echo "$init"
@@ -261,6 +262,20 @@ async fn the_team_leads_run_reads_the_question_and_has_the_always_escalate_rules
     assert_eq!(after("--allowedTools"), Some("mcp__gizai"), "{argv:?}");
     assert!(argv.contains(&"--no-session-persistence") && argv.contains(&"--strict-mcp-config"), "{argv:?}");
     assert!(after("--mcp-config").is_some(), "{argv:?}");
+}
+
+#[tokio::test]
+async fn the_team_leads_run_on_a_question_starts_claude_code_with_its_own_memory_off() {
+    // GA-85: like task runs, chat answers and board checks, also when the Team Lead's account lines say otherwise.
+    let tmp = tempfile::tempdir().unwrap();
+    let t = setup(tmp.path(), "Export the invoices. FAKE_ASKS LEAD_ESCALATE");
+    let mut list = gizai_core::clis::list(&t.st.db).unwrap();
+    list.iter_mut().find(|c| c.name == "Lead CC").unwrap().env = vec!["CLAUDE_CODE_DISABLE_AUTO_MEMORY=0".into()];
+    gizai_lib::clis::save(&t.st, list).unwrap();
+    let asked = t.run().await;
+    t.settled(&asked.id).await;
+    let log = t.lead_log();
+    assert!(log.contains("auto memory: 1\n") && !log.contains("auto memory: 0") && !log.contains("auto memory: unset"), "{log}");
 }
 
 #[tokio::test]

@@ -19,8 +19,8 @@ The prompt (stdin) decides what happens:
   FAKE_READ_FILES                 reads every file the prompt names that way; the last answer is "Read: <their text>"
   FAKE_REMEMBER <text>            calls memory_append to add "- <text>" (the rest of that line) under Working agreements in
                                   Team Lead/Notes (GA-19), instead of get_overview
-Each run appends {argv, prompt, account, cwd} to fake-calls.jsonl next to its MCP config, for the tests to read; `account`
-is its CLAUDE_CONFIG_DIR. Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
+Each run appends {argv, prompt, account, cwd, auto_memory} to fake-calls.jsonl next to its MCP config, for the tests to
+read; `account` is its CLAUDE_CONFIG_DIR, `auto_memory` its CLAUDE_CODE_DISABLE_AUTO_MEMORY (null when unset, GA-85). Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
 to the MCP config, never in the account's folder), and --resume from another account exits 1 before init, like Claude
 Code when the session file isn't in its CLAUDE_CONFIG_DIR.
 Costs are cumulative per session, as Claude Code reports them: 0.01 on a new session, 0.02 when resumed."""
@@ -53,7 +53,8 @@ account = os.environ.get("CLAUDE_CONFIG_DIR", "")
 here = os.path.dirname(config) if config else None
 if config:
     with open(os.path.join(here, "fake-calls.jsonl"), "a") as f:
-        f.write(json.dumps({"argv": argv, "prompt": prompt, "account": account, "cwd": os.getcwd()}) + "\n")
+        f.write(json.dumps({"argv": argv, "prompt": prompt, "account": account, "cwd": os.getcwd(),
+                            "auto_memory": os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY")}) + "\n")
 
 def sessions():
     try:

@@ -9,6 +9,8 @@
 prompt="$(cat)"   # the prompt on stdin (empty when it came as an argument)
 echo "argv: $*" >&2
 echo "account: ${FAKE_ACCOUNT:-none}" >&2
+# Claude Code's own memory switch (GA-85), which these CLIs aren't given: "unset".
+echo "auto memory: ${CLAUDE_CODE_DISABLE_AUTO_MEMORY-unset}" >&2
 echo "prompt chars: ${#prompt}" >&2
 if [ -n "${FAKE_TEMP:-}" ]; then
   echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2

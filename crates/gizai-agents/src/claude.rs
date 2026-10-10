@@ -1,6 +1,11 @@
 //! The `claude` command line for one headless agent run or chat turn.
 use std::path::PathBuf;
 
+/// Claude Code's own switch for its memory (its auto memory, `projects/<project folder>/memory/` in the account's folder):
+/// set to 1, Claude Code neither reads nor writes that folder, whatever its settings say (read in Claude Code 2.1.273 to
+/// 2.1.289).
+pub const AUTO_MEMORY_OFF: &str = "CLAUDE_CODE_DISABLE_AUTO_MEMORY";
+
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeArgs {
     pub bin: PathBuf,
@@ -35,6 +40,9 @@ pub struct ClaudeArgs {
     pub disable_hooks: bool,
     /// No skills or slash commands (`--disable-slash-commands`), so plugin skills can't steer a headless run.
     pub disable_skills: bool,
+    /// Claude Code's own memory off (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`): an agent keeps its notes in Gizai's memory
+    /// only, not in a second one that only this account sees (GA-85).
+    pub disable_auto_memory: bool,
     /// How hard the model thinks (`--effort`: low, medium, high, xhigh, max); None = Claude Code's default.
     pub effort: Option<String>,
     /// Set on top of Gizai's environment: CLAUDE_CONFIG_DIR for a second Claude Code account.
@@ -42,9 +50,14 @@ pub struct ClaudeArgs {
 }
 
 impl ClaudeArgs {
-    /// The program to start: the arguments below, the environment, and the prompt on stdin.
+    /// The program to start: the arguments below, the environment, and the prompt on stdin. The memory switch comes after
+    /// the account's own lines, so none of them turns Claude Code's memory back on.
     pub fn exec(&self) -> crate::process::Exec {
-        crate::process::Exec { bin: self.bin.clone(), args: self.argv(), env: self.env.clone(), stdin: self.prompt.clone() }
+        let mut env = self.env.clone();
+        if self.disable_auto_memory {
+            env.push((AUTO_MEMORY_OFF.into(), "1".into()));
+        }
+        crate::process::Exec { bin: self.bin.clone(), args: self.argv(), env, stdin: self.prompt.clone() }
     }
 
     /// Arguments after the binary. The prompt is not among them: it goes in on stdin (`claude -p` reads it

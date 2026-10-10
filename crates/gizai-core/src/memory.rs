@@ -20,6 +20,10 @@ pub const AGENTS: &str = "Agents";
 pub const LEAD: &str = "Team Lead";
 /// The note the Team Lead and every agent keep in their own folder.
 pub const NOTES: &str = "Notes";
+/// `Team Lead/Imported/`: the notes that came from Claude Code's own memory (`memory_import`), until they are sorted.
+pub const IMPORTED: &str = "Imported";
+/// The `source` property of a note that came from Claude Code's own memory.
+pub const FROM_CLAUDE: &str = "claude-code";
 /// What a note's `type` property may say.
 pub const TYPES: [&str; 9] = ["client", "project", "standard", "workflow", "deployment", "dependency", "decision", "lesson", "note"];
 /// A prompt's Memory block: this many characters of notes in full…
@@ -141,7 +145,7 @@ pub fn lead_notes_path() -> String {
 }
 
 /// Characters a note's folder or title can't hold: a file name can't (`* " \ / < > : | ?`) or a wikilink can't (`# ^ [ ]`).
-const BAD_CHARS: [char; 13] = ['*', '"', '\\', '/', '<', '>', ':', '|', '?', '#', '^', '[', ']'];
+pub(crate) const BAD_CHARS: [char; 13] = ['*', '"', '\\', '/', '<', '>', ':', '|', '?', '#', '^', '[', ']'];
 
 fn folders_hint() -> String {
     format!("{}, {AGENTS}/<agent name>/ or {LEAD}/", SHARED_FOLDERS.iter().map(|f| format!("{f}/")).collect::<Vec<_>>().join(", "))
@@ -195,7 +199,7 @@ fn agent_by_folder(c: &Connection, name: &str) -> Result<Option<(String, String)
 }
 
 /// The Team Lead: the agent with the lead role that answers on the Chat page, else the first one.
-fn lead_in(c: &Connection) -> Result<Option<String>> {
+pub(crate) fn lead_in(c: &Connection) -> Result<Option<String>> {
     Ok(c.query_row(
         "SELECT a.id FROM team_members m JOIN actors a ON a.id = m.actor_id LEFT JOIN agent_configs g ON g.actor_id = a.id
          WHERE m.is_lead = 1 AND a.kind = 'agent' AND m.deleted_at IS NULL AND a.deleted_at IS NULL
@@ -233,7 +237,7 @@ fn by_id_in(c: &Connection, id: &str) -> Result<Option<Note>> {
     Ok(c.query_row(&format!("SELECT {COLS} {FROM} AND d.id = ?1"), [id], |r| note_row(r, true)).optional()?)
 }
 
-fn by_path_in(c: &Connection, path: &str) -> Result<Option<Note>> {
+pub(crate) fn by_path_in(c: &Connection, path: &str) -> Result<Option<Note>> {
     Ok(c.query_row(&format!("SELECT {COLS} {FROM} AND d.path = ?1 COLLATE NOCASE"), [path], |r| note_row(r, true)).optional()?)
 }
 
@@ -401,6 +405,14 @@ fn find_existing(c: &Connection, path: &str) -> Result<Option<Note>> {
 
 /// Makes a note at `path` (made tidy, and refused where `who` may not write) with `body_md` as version 1.
 fn create_in(w: &Writer, who: &Who, path: &str, body_md: &str, run_id: Option<&str>) -> Result<String> {
+    let id = insert_in(w, who, path, body_md, run_id)?;
+    // The new note may be what other notes' links name: they point at it now.
+    relink_all(w)?;
+    Ok(id)
+}
+
+/// `create_in` without pointing other notes' links at the new note: for many notes at once, with one `relink_all` after.
+pub(crate) fn insert_in(w: &Writer, who: &Who, path: &str, body_md: &str, run_id: Option<&str>) -> Result<String> {
     let c = w.conn();
     let path = clean_path_in(c, path)?;
     let (scope, owner) = place_in(c, &path)?;
@@ -427,8 +439,6 @@ fn create_in(w: &Writer, who: &Who, path: &str, body_md: &str, run_id: Option<&s
     )?;
     w.insert("docs", &id, serde_json::json!({"kind": "memory", "path": path, "scope": scope}))?;
     index_links(w, &id, body_md)?;
-    // The new note may be what other notes' links name: they point at it now.
-    relink_all(w)?;
     Ok(id)
 }
 
@@ -439,7 +449,7 @@ pub fn append(db: &Db, who: &Who, r: &str, heading: Option<&str>, text: &str, ru
     db.write(Some(who.id()), |w| append_in(w, who, r, heading, text, run_id))
 }
 
-fn append_in(w: &Writer, who: &Who, r: &str, heading: Option<&str>, text: &str, run_id: Option<&str>) -> Result<Saved> {
+pub(crate) fn append_in(w: &Writer, who: &Who, r: &str, heading: Option<&str>, text: &str, run_id: Option<&str>) -> Result<Saved> {
     let text = text.trim_end();
     if text.trim().is_empty() {
         return Err(Error::Invalid("give the text to add".into()));
@@ -877,7 +887,7 @@ fn index_links_with(c: &Connection, notes: &[Note], id: &str, folder: &str, body
 
 /// Rebuilds the links of every doc and note with a wikilink: after a note is made or moved, links that named it (or
 /// named another note the same) find it now.
-fn relink_all(w: &Writer) -> Result<()> {
+pub(crate) fn relink_all(w: &Writer) -> Result<()> {
     let c = w.conn();
     let notes = all_in(c, false)?;
     let docs: Vec<(String, String, Option<String>)> = {
@@ -1060,7 +1070,8 @@ fn cut(s: &str, n: usize) -> String {
 /// What in `text` looks like a secret, with its start: a private key block, or an API token (`sk-…`, `ghp_…` and the
 /// other GitHub tokens, `AKIA…`, Slack's `xox…-`, Google's `AIza…`, GitLab's `glpat-…`). None when there is none.
 pub fn secret_in(text: &str) -> Option<String> {
-    if let Some(i) = text.find("-----BEGIN ") {
+    // Every -----BEGIN line, not only the first: in a bundle the private key comes after the certificate.
+    for (i, _) in text.match_indices("-----BEGIN ") {
         let line = text[i..].lines().next().unwrap_or("");
         if line.contains("PRIVATE KEY") {
             return Some("a private key (-----BEGIN … PRIVATE KEY-----)".into());
@@ -1294,7 +1305,8 @@ fn rank_for(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> Option<u8> {
 
 /// The Memory block for `who`'s prompt. The Team Lead (chat, board check and its task runs): its own notes in full (at
 /// most `FULL_CAP` characters, a note that doesn't fit cut with a pointer to memory_read), then the paths of every other
-/// note it may read (at most `INDEX_CAP`). Another agent's task run (`cx`): its own notes first, then the shared notes
+/// note it may read (at most `INDEX_CAP`); the notes imported from Claude Code's own memory (`Team Lead/Imported/`) are
+/// one line there until they are sorted. Another agent's task run (`cx`): its own notes first, then the shared notes
 /// for this card's project, its client, and its role or `all` (`applies_to`), in that order, `FULL_CAP` in total, then
 /// the paths of those that didn't fit (`INDEX_CAP`). Never a note of another client or project, not even from its own
 /// folder. Introduced as data, never instructions.
@@ -1308,6 +1320,13 @@ pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
         notes.into_iter().filter(|n| can_read(who, n) && !elsewhere(&properties(&n.body_md), cx))
             .partition(|n| n.owner_id.as_deref() == Some(who.id()))
     };
+    // What came from Claude Code's own memory waits in Team Lead/Imported/ to be sorted, maybe hundreds of notes: one line
+    // says how many, so they don't crowd the Team Lead's own notes and the others out. A list of them the import put there
+    // (`From Claude Code <day>`) is none of them.
+    let imported = format!("{LEAD}/{IMPORTED}/");
+    let from_claude = |n: &Note| properties(&n.body_md).get("source").is_some_and(|v| v.iter().any(|s| s == FROM_CLAUDE));
+    let waiting = if lead { own.iter().filter(|n| n.path.starts_with(&imported) && from_claude(n)).count() } else { 0 };
+    own.retain(|n| !lead || !n.path.starts_with(&imported));
     notes_first(&mut own);
     if !lead {
         let mut ranked: Vec<(u8, Note)> = rest.into_iter().filter(|n| n.scope == "shared")
@@ -1316,7 +1335,7 @@ pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
         rest = ranked.into_iter().map(|(_, n)| n).collect();
         own.append(&mut rest);
     }
-    if own.is_empty() && rest.is_empty() {
+    if own.is_empty() && rest.is_empty() && waiting == 0 {
         return Ok(Block::default());
     }
     let intro = if lead {
@@ -1357,9 +1376,15 @@ repository and the board don't say (a decision and its reason, a gotcha, how thi
         budget = budget.saturating_sub(shown_chars);
     }
     index.extend(rest.iter());
-    if !index.is_empty() {
+    if !index.is_empty() || waiting > 0 {
         text.push_str(if lead { "\n### Other notes (memory_read gives the text)\n\n" } else { "\n### More notes for this card, not shown in full\n\n" });
         let mut used = 0;
+        if waiting > 0 {
+            let line = format!("- {imported}: {waiting} note{} from Claude Code's own memory, to sort with the user (memory_list with folder \
+\"{LEAD}/{IMPORTED}\" lists them)\n", if waiting == 1 { "" } else { "s" });
+            used += line.chars().count();
+            text.push_str(&line);
+        }
         for (i, n) in index.iter().enumerate() {
             let line = format!("- {} ({} characters)\n", n.path, n.chars);
             if used + line.chars().count() > INDEX_CAP {

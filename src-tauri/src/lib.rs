@@ -457,6 +457,12 @@ pub fn run() {
             // Desktop notifications go to the desktop (a test run only writes them to stderr).
             state.desktop = notifications::real(app.handle(), test_run);
             app.manage(state.clone());
+            // Memory (GA-85): the notes agents kept in Claude Code's own memory come into Gizai's, each file once. Not in
+            // headless test and screenshot runs: they run in your own home folder, with your Claude Code accounts.
+            if !test_run {
+                let st = state.clone();
+                tauri::async_runtime::spawn_blocking(move || memory::import_claude(&st));
+            }
             // After manage: quitting reads the state.
             quit::on_signals(app.handle());
             // The tray icon, with Open Gizai and Quit Gizai completely: closing the window only hides it.

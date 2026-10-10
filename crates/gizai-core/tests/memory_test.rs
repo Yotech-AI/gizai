@@ -426,6 +426,22 @@ fn a_write_with_a_private_key_or_an_api_token_is_refused_with_a_reason_the_model
     assert!(docs::save(&f.db, &f.you, &d, "token ghp_abcdefghijklmnopqrstuvwxyz0123456789", 1).is_ok());
 }
 
+#[test]
+fn a_private_key_after_a_certificate_is_refused_too() {
+    // GA-85: every -----BEGIN line counts, not only the first; in a bundle the key comes after the certificate.
+    let f = setup();
+    let cert = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUQ\n-----END CERTIFICATE-----";
+    let bundle = format!("# TLS\n\n{cert}\n-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIBkg\n-----END EC PRIVATE KEY-----\n");
+    assert!(memory::secret_in(&bundle).is_some_and(|w| w.starts_with("a private key")), "{:?}", memory::secret_in(&bundle));
+    let e = err(memory::write(&f.db, &f.lead(), "Deployments/TLS", &bundle, None, None));
+    assert!(e.contains("Memory doesn't keep secrets") && e.contains("a private key") && e.contains("Nothing was saved"), "{e}");
+    assert!(memory::find(&f.db, "Deployments/TLS").unwrap().is_none());
+    // certificates and a public key, without a private key, pass
+    let fine = format!("# TLS\n\n{cert}\n{cert}\n-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----\n");
+    assert_eq!(memory::secret_in(&fine), None);
+    assert!(memory::write(&f.db, &f.lead(), "Deployments/TLS", &fine, None, None).is_ok());
+}
+
 // ---- The agents' own folders ----
 
 #[test]

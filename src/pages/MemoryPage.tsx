@@ -301,7 +301,7 @@ function FolderRow({ folder, depth, ctx, root }: { folder: TreeFolder; depth: nu
           )}
           {folder.folders.map((f) => <FolderRow key={f.path} folder={f} depth={depth + 1} ctx={ctx} />)}
           {folder.notes.map((n) => <NoteRow key={n.id} note={n} depth={depth + 1} ctx={ctx} />)}
-          {folder.count === 0 && folder.folders.length === 0 && r?.path !== folder.path && <div className="faint mem-item empty" style={{ paddingLeft: 6 + (depth + 1) * 14 + 18 }}>No notes yet</div>}
+          {folder.count === 0 && folder.folders.length === 0 && r?.path !== folder.path && <div className="faint mem-item none" style={{ paddingLeft: 6 + (depth + 1) * 14 + 18 }}>No notes yet</div>}
         </div>
       )}
     </div>

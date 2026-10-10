@@ -473,8 +473,8 @@ a.member:hover { border-color: var(--line-2); }
 .mem-item .chev { margin-right: -2px; }
 .mem-item.drop { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); }
 .mem-item.dragging { opacity: .45; }
-.mem-item.empty { cursor: default; font-size: var(--fs-sm); }
-.mem-item.empty:hover { background: none; color: var(--text-3); }
+.mem-item.none { cursor: default; font-size: var(--fs-sm); }
+.mem-item.none:hover { background: none; color: var(--text-3); }
 .mem-count { margin-left: auto; font-size: var(--fs-xs); }
 .mem-acts { display: none; margin-left: auto; gap: 0; }
 .mem-item:hover .mem-acts, .mem-item:focus-within .mem-acts { display: inline-flex; }
@@ -570,6 +570,7 @@ span.mem-tag { cursor: default; }
 .mem-change-who { color: var(--text-2); white-space: nowrap; }
 .mem-change-who a { color: var(--text-2); }
 .mem-agent { color: var(--text); font-weight: 500; }
+.mem-template { margin-top: 18px; }
 .mem-template pre { margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--side); font-size: var(--fs-xs); white-space: pre-wrap; }
 .btn.mem-toggle.on { background: var(--selected); color: var(--text); }
 @media (max-width: 1300px) { .mem-files { width: 230px; } .mem-side { width: 270px; } .mem-prop { grid-template-columns: 84px minmax(0, 1fr) 26px; } }

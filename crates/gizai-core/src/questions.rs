@@ -126,6 +126,11 @@ pub(crate) fn hand_over_in(w: &Writer, run_id: &str, task_id: &str, agent_id: &s
     if clis::kind_in(c, lead.adapter.as_deref().unwrap_or_default())?.as_deref() != Some("claude_code") {
         return Ok(None);
     }
+    // An answer continues the agent's session: an Other CLI can't resume one.
+    let asked_on: Option<String> = c.query_row("SELECT adapter FROM runs WHERE id=?1", [run_id], |r| r.get(0)).optional()?;
+    if clis::kind_in(c, asked_on.as_deref().unwrap_or_default())?.as_deref() == Some("other") {
+        return Ok(None);
+    }
     if let Some(budget) = lead.budget_usd_micros {
         let spent: i64 = c.query_row("SELECT COALESCE(SUM(cost_usd_micros), 0) FROM runs WHERE agent_actor_id=?1 AND created_at >= ?2",
                                      rusqlite::params![lead.actor_id, runs::month_start_ms(ids::now_ms())], |r| r.get(0))?;

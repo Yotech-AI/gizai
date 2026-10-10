@@ -1,7 +1,10 @@
 // The sidebar (design system: Sidebar): quick actions, work areas, projects, the team's agents and their memory scroll;
 // the company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
-// data than the usual folder says so there.
-import { Building2, ChartColumn, Crown, FlaskConical, FolderKanban, Inbox, Library, ListTodo, MessagesSquare, Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon } from "lucide-react";
+// data than the usual folder says so there. Agents and Memory fold with the caret at the end of their heading (GA-90).
+import {
+  Building2, ChartColumn, ChevronDown, ChevronUp, Crown, FlaskConical, FolderKanban, Inbox, Library, ListTodo, MessagesSquare, Network, Plus, Search,
+  Settings, SquarePen, Users, type LucideIcon,
+} from "lucide-react";
 import { getTeam, listChatThreads, listProjects, listTasks, memoryNotes } from "../api";
 import { go, href, type Route } from "../router";
 import { leadOf, memoryScope, noteCount } from "../lib/memory";
@@ -12,6 +15,7 @@ import { useLiveRuns } from "../lib/useLiveRuns";
 import { inboxCount } from "../lib/inbox";
 import { useDrawer } from "../lib/drawers";
 import { modKey } from "../lib/keys";
+import { liveTotal, useFolded, type Fold } from "../lib/sidebar";
 import { roleIcon } from "./Avatar";
 import { useChatLive } from "./chat/useChat";
 import { UpdateNotice } from "./UpdateNotice";
@@ -39,8 +43,10 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
   const lead = leadOf(agents);
   const threads = useData(() => listChatThreads().catch(() => []));
   const inbox = inboxCount(allTasks.data ?? [], threads.data ?? [], youId);
+  const [folded, fold] = useFolded();
   const is = (...pages: Route["page"][]) => pages.includes(route.page);
   const liveFor = (id: string) => live.filter((r) => r.agentId === id).length;
+  const allLive = liveTotal(live, agents);
   return (
     <aside className="side" aria-label="Navigation">
       <div className="side-main">
@@ -66,8 +72,7 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
         ))}
       </div>
 
-      <div className="nav-section">
-        <div className="nav-label">Agents<button aria-label="Add agent" title="Add agent" onClick={() => open({ kind: "agent", teamId: team.data?.id })}><Plus className="icon sm" /></button></div>
+      <FoldSection section="agents" name="Agents" folded={folded("agents")} onFold={() => fold("agents")} tag={allLive > 0 ? liveTag(allLive) : null}>
         {agents.length === 0 && <a className="nav-item" href={href({ page: "team" })}><span className="faint">No agents yet</span></a>}
         {agents.map((a) => {
           const Role = roleIcon(a.roleKey);
@@ -75,13 +80,13 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
           return (
             <a key={a.actorId} className={`nav-item${route.page === "agent" && route.id === a.actorId ? " on" : ""}`} href={href({ page: "agent", id: a.actorId })}>
               <Role className="icon" /><span>{a.name}</span>
-              <span className="meta">{n > 0 ? <span className="live-tag"><span className="pulse" />{n} live</span> : a.status !== "active" ? <span className="faint">paused</span> : null}</span>
+              <span className="meta">{n > 0 ? liveTag(n) : a.status !== "active" ? <span className="faint">paused</span> : null}</span>
             </a>
           );
         })}
-      </div>
+      </FoldSection>
 
-      <MemorySection route={route} lead={lead} agents={agents} notes={notes.data ?? []}
+      <MemorySection route={route} lead={lead} agents={agents} notes={notes.data ?? []} folded={folded("memory")} onFold={() => fold("memory")}
         setUpLead={() => { go({ page: "team" }); open({ kind: "agent", teamId: team.data?.id, preset: { name: "Team Lead", role: "lead", chat: true } }); }} />
 
       </div>
@@ -101,17 +106,37 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
   );
 }
 
+/** An agent at work (teal means only that): on its row, and on folded Agents' heading for them all. */
+const liveTag = (n: number) => <span className="live-tag"><span className="pulse" />{n} live</span>;
+
+/** A section that folds (GA-90): a click on its heading's text or on the caret at the heading's end leaves only the
+ *  heading, another shows its list again. `tag` shows on the heading while it is folded. */
+function FoldSection({ section, name, label, folded, onFold, tag, children }: {
+  section: Fold; name: string; label?: string; folded: boolean; onFold: () => void; tag?: React.ReactNode; children: React.ReactNode;
+}) {
+  const does = `${folded ? "Show" : "Fold"} ${name}`;
+  const Caret = folded ? ChevronUp : ChevronDown;
+  return (
+    <div className="nav-section" aria-label={label}>
+      <div className="nav-label">
+        <span className="fold" onClick={onFold}>{name}{folded && tag}</span>
+        <button aria-expanded={!folded} aria-controls={`side-${section}`} aria-label={does} title={does} onClick={onFold}><Caret className="icon sm" /></button>
+      </div>
+      <div className="nav-list" id={`side-${section}`} hidden={folded}>{!folded && children}</div>
+    </div>
+  );
+}
+
 /** Memory (GA-68), under Agents: the Team Lead first (it opens every note), then each other agent (its own folder),
  *  each with how many notes it opens. Without a Team Lead: the shared notes and a link that sets one up. */
-function MemorySection({ route, lead, agents, notes, setUpLead }: {
-  route: Route; lead: Member | null; agents: Member[]; notes: MemoryNote[]; setUpLead: () => void;
+function MemorySection({ route, lead, agents, notes, folded, onFold, setUpLead }: {
+  route: Route; lead: Member | null; agents: Member[]; notes: MemoryNote[]; folded: boolean; onFold: () => void; setUpLead: () => void;
 }) {
   const on = (scope?: string) => route.page === "memory" && route.scope === scope;
   const count = (scope?: string, name?: string) => <span className="count" title="Notes">{noteCount(notes, memoryScope(scope, name))}</span>;
   const LeadIcon = lead ? roleIcon(lead.roleKey) : Crown;
   return (
-    <div className="nav-section" aria-label="Memory">
-      <div className="nav-label">Memory</div>
+    <FoldSection section="memory" name="Memory" label="Memory" folded={folded} onFold={onFold}>
       {lead ? (
         <a className={`nav-item${on() ? " on" : ""}`} href={href({ page: "memory" })} title={`${lead.name}: every note (its own, the shared folders and each agent's)`}>
           <LeadIcon className="icon" /><span>{lead.name}</span><span className="meta">{count()}</span>
@@ -132,6 +157,6 @@ function MemorySection({ route, lead, agents, notes, setUpLead }: {
           </a>
         );
       })}
-    </div>
+    </FoldSection>
   );
 }

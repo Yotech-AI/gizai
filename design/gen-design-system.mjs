@@ -12,7 +12,7 @@ const LUCIDE = `${GZ}/node_modules/lucide-react/dist/esm/icons`;
 
 const ICONS = ["square-pen", "inbox", "list-todo", "building-2", "folder-kanban", "network", "users", "settings", "search", "list",
   "columns-3", "list-filter", "arrow-up-down", "layers", "plus", "x", "play", "pause", "square", "paperclip", "file-text", "git-branch",
-  "terminal", "crown", "monitor", "server", "flask-conical", "bot", "chevron-down", "chevron-right", "external-link", "ellipsis",
+  "terminal", "crown", "monitor", "server", "flask-conical", "bot", "chevron-down", "chevron-up", "chevron-right", "external-link", "ellipsis",
   "heading", "bold", "italic", "text-quote", "code", "link", "list-ordered", "list-checks", "minus", "table", "copy", "clock", "tag",
   "user", "message-square", "activity", "upload", "sun", "moon", "check", "trash-2", "pencil", "circle-alert", "layout-dashboard",
   "messages-square", "palette", "container", "arrow-up", "info", "chart-column", "step-forward", "bell", "plug", "sliders-horizontal",
@@ -91,7 +91,8 @@ C.Sidebar = {
   group: "Navigation", height: 700,
   readme: `The sidebar is the app's spine: quick actions, work areas, projects and the team's agents, with the company pages at its foot. There is no rail and no organisation tile: the sidebar is the left edge of the window.
 
-- Order: New task (N), Search (Ctrl K), Inbox with a \`needs\` count; WORK (Chat, Tasks, Clients, Projects; Chat shows a teal "working" tag while the Team Lead answers); PROJECTS with colour dots and a "+"; AGENTS of the team with a role icon, a teal "1 live" tag while working or a faint "paused".
+- Order: New task (N), Search (Ctrl K), Inbox with a \`needs\` count; WORK (Chat, Tasks, Clients, Projects; Chat shows a teal "working" tag while the Team Lead answers); PROJECTS with colour dots and a "+"; AGENTS of the team with a role icon, a teal "1 live" tag while working or a faint "paused"; MEMORY with each agent's note count.
+- AGENTS and MEMORY fold: a caret at the end of the label (chevron down folds the section, chevron up shows it again) or a click on the label's text. Folded, only the label shows; folded AGENTS shows the teal tag with all its live runs. Which are folded is kept on this computer.
 - The foot stays in place while the rest scrolls: the update notice when a newer Gizai is out, COMPANY (Usage, Team, Users, Settings), and a dashed "Test data" tag when Gizai runs on a data folder of its own.
 - Section labels use \`t-nav-label\` in capitals and \`text-3\`; items are 32px with a 16px icon in \`text-3\` that brightens on hover. Items grow with the Interface size (Settings → Appearance), labels and icons don't.
 - The current page gets \`selected\`; nothing else is highlighted.
@@ -108,10 +109,12 @@ The consumer supplies the route, the counts and the lists of projects and agents
 <a class="nav-item on" aria-current="page">${ic("list-todo")}<span>Tasks</span></a><a class="nav-item">${ic("building-2")}<span>Clients</span></a><a class="nav-item">${ic("folder-kanban")}<span>Projects</span></a></div>
 <div class="nav-section"><div class="nav-label">Projects<button aria-label="New project">${ic("plus", "icon sm")}</button></div>
 <a class="nav-item"><span class="dot" style="background:var(--c-yellow)"></span><span>Kade portal</span></a><a class="nav-item"><span class="dot" style="background:var(--c-teal)"></span><span>Groene Fiets webshop</span></a></div>
-<div class="nav-section"><div class="nav-label">Agents<button aria-label="Add agent">${ic("plus", "icon sm")}</button></div>
-<a class="nav-item">${ic("server")}<span>Backend Agent</span><span class="meta"><span class="live-tag"><span class="pulse"></span>1 live</span></span></a>
+<div class="nav-section"><div class="nav-label"><span class="fold">Agents</span><button aria-expanded="true" aria-controls="side-agents" aria-label="Fold Agents">${ic("chevron-down", "icon sm")}</button></div>
+<div class="nav-list" id="side-agents"><a class="nav-item">${ic("server")}<span>Backend Agent</span><span class="meta"><span class="live-tag"><span class="pulse"></span>1 live</span></span></a>
 <a class="nav-item">${ic("monitor")}<span>Frontend Agent</span></a><a class="nav-item">${ic("flask-conical")}<span>QA Agent</span></a>
-<a class="nav-item">${ic("crown")}<span>Team Lead</span><span class="meta"><span class="faint">paused</span></span></a></div>
+<a class="nav-item">${ic("crown")}<span>Team Lead</span><span class="meta"><span class="faint">paused</span></span></a></div></div>
+<div class="nav-section"><div class="nav-label"><span class="fold">Memory</span><button aria-expanded="false" aria-controls="side-memory" aria-label="Show Memory">${ic("chevron-up", "icon sm")}</button></div>
+<div class="nav-list" id="side-memory" hidden></div></div>
 </div>
 <div class="side-foot"><div class="nav-section"><div class="nav-label">Company</div>
 <a class="nav-item">${ic("chart-column")}<span>Usage</span></a><a class="nav-item">${ic("network")}<span>Team</span></a><a class="nav-item">${ic("users")}<span>Users</span></a><a class="nav-item">${ic("settings")}<span>Settings</span></a></div>

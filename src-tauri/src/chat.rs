@@ -1124,7 +1124,8 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         max_budget_usd: settings.max_run_usd, resume, mcp_config: Some(config_path.clone()), partial_messages: true, restricted: true,
         tools: Some(tools), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, add_dirs),
         no_session_persistence: std::env::var("GIZAI_CHAT_NO_PERSIST").is_ok_and(|v| v == "1"),
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
+        // The Team Lead's memory is Gizai's (its Memory block and tools), not Claude Code's own.
+        disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
     let showing = Showing::open(st, &run_id);
     let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
@@ -1380,7 +1381,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         tools: Some(vec!["Read".into(), "Glob".into(), "Grep".into()]), permission_prompts_none: true, add_dirs: lead_dirs(st, agent, &copies),
         // A check's session is never resumed.
         no_session_persistence: true,
-        disable_hooks: true, disable_skills: true, effort: agent.effort.clone(), disallowed_tools: vec![],
+        disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: agent.effort.clone(), disallowed_tools: vec![],
     };
     if crate::runs::is_closing(st) {
         cleanup(&token);

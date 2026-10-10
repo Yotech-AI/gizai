@@ -167,8 +167,8 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
                 .chain(crate::tool_catalog::claude_web_rules(run.web.search, run.web.fetch, &run.web.fetch_domains)).collect(),
             model: run.model.clone(), max_budget_usd: run.max_budget_usd,
             // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
-            // for headless agents.
-            disable_hooks: true, disable_skills: true, effort: run.effort.clone(), env: cli.env.clone(),
+            // for headless agents. Nor is Claude Code's own memory: agents keep their notes in Gizai's.
+            disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: run.effort.clone(), env: cli.env.clone(),
             add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(),
             disallowed_tools: claude_read_only(&run.folders).into_iter().chain(run.disallowed_tools.iter().cloned()).collect(),
             mcp_config: run.mcp_config.clone(),

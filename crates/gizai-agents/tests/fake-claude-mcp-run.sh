@@ -35,15 +35,18 @@ if [ -n "$config" ]; then
 fi
 echo "fake claude (mcp) started" >&2
 fixture="$here/fixtures/run-ok.jsonl"
-if [ -n "${FAKE_MCP_INIT:-}" ]; then head -n1 "$FAKE_MCP_INIT"; else head -n1 "$fixture"; fi
+init="${FAKE_MCP_INIT:-$fixture}"
 # FAKE_MCP_HANG in the prompt (e.g. from the card's description): after its init line it waits until interrupted (and,
-# like Claude Code, exits on SIGINT), so a test can look at the run while it lives and then Stop it.
+# like Claude Code, exits on SIGINT), so a test can look at the run while it lives and then Stop it. Its trap is set
+# before the init line goes out, and the line comes from the foreground child that waits, perl, as in fake-claude.sh's
+# print_and_wait (GA-89): Stop's SIGINT ends that child, and bash then runs its trap.
 case "$prompt" in *FAKE_MCP_HANG*)
   trap 'exit 130' INT
-  sleep 600 &
-  wait $!
+  IFS= read -r first < "$init"
+  perl -e '$| = 1; print "$ARGV[0]\n"; sleep 600' -- "$first"
   exit 0 ;;
 esac
+head -n1 "$init"
 tail -n +2 "$fixture" | while IFS= read -r line; do
   printf '%s\n' "$line"
   sleep 0.02

@@ -1,4 +1,4 @@
-import type { DayStat, Run, RunOutcome, SeqEvent } from "../types";
+import type { DayStat, LeadAnswer, Run, RunOutcome, SeqEvent } from "../types";
 
 /** History from run_events plus live run-event messages: one copy per seq, oldest first, newest `cap` kept. */
 export function mergeEvents(a: SeqEvent[], b: SeqEvent[], cap = 500): SeqEvent[] {
@@ -81,7 +81,21 @@ export function lastAgentText(events: SeqEvent[]): string | null {
 
 const TRIGGER_TEXT: Record<string, string> = {
   manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat", board_check: "Board check", nudge: "Continue", result_nudge: "Nudge",
+  question: "Question",
 };
+
+/** What the Team Lead did with a run's question (GA-70), in a few words: "With the Team Lead", "Team Lead answered",
+ *  "Team Lead escalated to you: <why>". */
+export function leadText(l: LeadAnswer): string {
+  switch (l.state) {
+    case "asking": return "With the Team Lead";
+    case "answering": return "Team Lead answered; the agent carries on";
+    case "answered": return "Team Lead answered";
+    case "escalated": return `Team Lead escalated to you${l.reason ? `: ${l.reason}` : ""}`;
+    case "dropped": return "The Team Lead stopped: the card moved on first";
+    default: return "Team Lead";
+  }
+}
 
 /** What started a run, in a word: a Continue (yours, the Team Lead's or Done, continue) is "Continue", and Gizai's own
  *  nudge after a run ended without its result line is "Nudge" (trigger result_nudge; an older nudge was recorded as a

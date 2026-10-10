@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { runCommits, runEvents } from "../api";
-import { commitCount, elapsed, formatCost, formatTokens, lastAgentText, resumeCommand, runReason, toolCalls, triggerName } from "../lib/runs";
+import { commitCount, elapsed, formatCost, formatTokens, lastAgentText, leadText, resumeCommand, runReason, toolCalls, triggerName } from "../lib/runs";
 import { relTime } from "../lib/format";
 import type { Commit, Run, SeqEvent } from "../types";
 import { MarkdownView } from "./MarkdownView";
@@ -52,7 +52,8 @@ function RunRow({ r }: { r: Run }) {
       <button className="panel-row" aria-expanded={open} onClick={toggle}>
         <ChevronRight className="icon sm chev" />{outcomeBadge(r)}<span className="chip-id">{r.id.slice(-8)}</span>
         <span className="grow">{r.agentName} <span className="faint">· {r.roleKey} · {triggerName(r)}</span>
-          {commits && commits.length > 0 && <span className="faint"> · {commitCount(commits.length)}</span>}{reason && <span className="faint"> · {reason}</span>}</span>
+          {commits && commits.length > 0 && <span className="faint"> · {commitCount(commits.length)}</span>}{reason && <span className="faint"> · {reason}</span>}
+          {r.lead && <span className="faint"> · {leadText({ ...r.lead, reason: null })}</span>}</span>
         <span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" title={when(r.createdAt)}>{relTime(r.createdAt)}</span>
       </button>
       {open && (
@@ -60,6 +61,9 @@ function RunRow({ r }: { r: Run }) {
           {reason && <><h4>Why it ended</h4><p className="run-reason">{reason}</p></>}
           {r.summaryMd ? <><h4>Summary</h4><MarkdownView md={r.summaryMd} /></>
             : last && <><h4>Last message from {r.agentName}</h4><div className="run-last"><MarkdownView md={last} /></div></>}
+          {r.lead && <><h4>Who answered</h4><p className="run-reason">{leadText(r.lead)}</p>
+            {r.lead.answer && <div className="run-last"><MarkdownView md={r.lead.answer} /></div>}
+            {r.lead.learned && <p className="faint">Your answer is kept in memory{r.lead.note ? ` (${r.lead.note})` : ""}.</p>}</>}
           {commits && <RunCommits commits={commits} />}
           <dl className="run-facts">
             {r.startedAt && <><dt>Started</dt><dd>{when(r.startedAt)}</dd></>}
@@ -68,6 +72,7 @@ function RunRow({ r }: { r: Run }) {
             <dt>Tool calls</dt><dd>{events ? toolCalls(events) : "…"}</dd>
             <dt>Tokens</dt><dd>{formatTokens(r.inputTokens)} in, {formatTokens(r.outputTokens)} out</dd>
             <dt>Cost</dt><dd>{formatCost(r.costUsdMicros)}</dd>
+            {r.lead?.runId && <><dt>Team Lead's look</dt><dd>{formatCost(r.lead.costUsdMicros)}, on the Team Lead's budget{r.lead.note && !r.lead.learned ? ` · answer kept in ${r.lead.note}` : ""}</dd></>}
             {r.branch && <><dt>Branch</dt><dd className="mono">{r.branch}</dd></>}
             {r.baseSha && <><dt>Started at commit</dt><dd className="mono">{r.baseSha.slice(0, 9)}</dd></>}
             {r.headSha && <><dt>Ended at commit</dt><dd className="mono">{r.headSha.slice(0, 9)}</dd></>}

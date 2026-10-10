@@ -45,6 +45,8 @@ export type Task = {
   archivedAt?: number | null; archivedBy?: string | null;
   /** Run this for me: while the card is on hold, the commands its latest run asks you to run; Done, continue resumes that run. */
   runForMe?: string[];
+  /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
+  withLead?: boolean;
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -189,6 +191,28 @@ export type Run = {
   runForMe?: string[];
   /** The memory notes its prompt was given (GA-19). */
   memory?: GivenNote[];
+  /** It ended asking for a decision and the Team Lead took the question (GA-70): what it did with it. */
+  lead?: LeadAnswer | null;
+  /** A Team Lead's run on a question (trigger question, GA-70): the card the question is on. */
+  questionTaskId?: string | null;
+};
+/** What the Team Lead did with a run's question (GA-70). state: asking (it looks at it now), answering (it answered and Gizai
+ *  continues the agent), answered, escalated (it asked you: the Inbox) or dropped (the card moved on before it was done). */
+export type LeadAnswer = {
+  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | string;
+  leadId?: string | null;
+  /** The Team Lead's run on the question. */
+  runId?: string | null;
+  /** Escalated: why you decide. */
+  reason?: string | null;
+  /** Answered: the start of its answer (the card's comment has it all). */
+  answer?: string | null;
+  /** The memory note the answer was kept in. */
+  note?: string | null;
+  /** What the Team Lead's run on it cost (it counts toward the Team Lead's budget). */
+  costUsdMicros: number;
+  /** You answered after it escalated, and the Team Lead kept your answer in memory. */
+  learned?: boolean;
 };
 /** A memory note a run's prompt was given: its path, its length and how much of it the prompt showed (less when cut). */
 export type GivenNote = { path: string; chars: number; shown: number };

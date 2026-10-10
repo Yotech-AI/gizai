@@ -20,7 +20,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 
 export default function App() {
@@ -130,7 +130,18 @@ export default function App() {
             appearance = await appearanceProbe(i.selftest_mode === "appearance-kept" ? "kept" : "set");
             if (!appearance.ok) errors.push(`appearance probe: ${JSON.stringify(appearance)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance });
+          // GA-68: GIZAI_SELFTEST_MODE=memory:<agent id> on route memory/<note id> (prep_memory's notes); memory-empty on
+          // route memory/shared (the demo data: no agents, no notes).
+          let memory: Awaited<ReturnType<typeof memoryProbe>> | Awaited<ReturnType<typeof memoryEmptyProbe>> | undefined;
+          if (i.start_route?.startsWith("memory/") && i.selftest_mode?.startsWith("memory:")) {
+            memory = await memoryProbe(decodeURIComponent(i.start_route.slice(7)), i.selftest_mode.slice(7));
+            if (!memory.ok) errors.push(`memory probe: ${JSON.stringify(memory)}`);
+          }
+          if (i.start_route === "memory/shared" && i.selftest_mode === "memory-empty") {
+            memory = await memoryEmptyProbe();
+            if (!memory.ok) errors.push(`memory empty probe: ${JSON.stringify(memory)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory });
           await exitApp(0);
         }
       })

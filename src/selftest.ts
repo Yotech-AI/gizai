@@ -1295,3 +1295,274 @@ async function appearanceKeptProbe() {
   await sleep(1500);
   return { ok: startOk && resetEnabled && afterOk, phase: "kept", start_ok: startOk, reset_enabled: resetEnabled, after_ok: afterOk, start, after };
 }
+
+// ---------- GA-68: the Memory page ----------
+/** GA-68 on the demo data (no agents, no notes), route memory/shared: the sidebar's Memory has Shared notes (0) and Set up
+ *  the Team Lead; the page says what memory is, and its tree has only the shared folders. Set up the Team Lead opens the
+ *  agent form on the Team page with the Team Lead's name. */
+export async function memoryEmptyProbe() {
+  const items = () => [...document.querySelectorAll('.side .nav-section[aria-label="Memory"] .nav-item')]
+    .map((e) => `${e.tagName.toLowerCase()}:${textOf(e)}:${e.getAttribute("href") ?? ""}`);
+  await waitFor(() => (items().length === 2 ? true : null), 6000);
+  const nav = items();
+  const navOk = JSON.stringify(nav) === JSON.stringify(["a:Shared notes0:#/memory/shared", "button:Set up the Team Lead:"]);
+  const empty = await waitFor(() => q(".mem-empty"), 5000);
+  const emptyText = textOf(empty);
+  const emptyOk = textOf(empty?.querySelector("b")) === "No notes yet" && emptyText.includes("Memory is what the Team Lead and the agents keep for later")
+    && !!buttonByText(empty ?? document, "New note");
+  const top = [...document.querySelectorAll(".mem-tree > [role=treeitem]")].map((e) => e.getAttribute("aria-label"));
+  const topOk = JSON.stringify(top) === JSON.stringify(["Clients", "Decisions", "Dependencies", "Deployments", "Lessons", "Projects", "Standards", "Workflows"]);
+  const crumbs = textOf(q(".topbar .crumbs"));
+  [...document.querySelectorAll<HTMLButtonElement>('.side .nav-section[aria-label="Memory"] button.nav-item')][0]?.click();
+  const setUp = !!(await waitFor(() => (location.hash === "#/team" && q<HTMLInputElement>(".drawer #a-name")?.value === "Team Lead" ? true : null), 5000));
+  return { ok: navOk && emptyOk && topOk && crumbs === "Memory/Shared notes" && setUp, nav_ok: navOk, nav, empty_ok: emptyOk, top_ok: topOk, top, crumbs, set_up: setUp };
+}
+
+const MEMORY_PREFS = ["gizai.memory.mode", "gizai.memory.open", "gizai.memory.closed", "gizai.memory.panel", "gizai.memory.folders"];
+const memSection = (title: string) => [...document.querySelectorAll(".mem-side .mem-section")].find((s) => textOf(s.querySelector(".mem-section-head span")) === title) ?? null;
+const treeNotes = () => [...document.querySelectorAll(".mem-tree .mem-item.note")].map((e) => e.getAttribute("title") ?? "");
+const wikiLinks = () => [...document.querySelectorAll(".mem-note .note-view a.wikilink")] as HTMLAnchorElement[];
+const wikiLink = (text: string) => wikiLinks().find((a) => textOf(a) === text) ?? null;
+const noteTitle = () => q<HTMLInputElement>('input[aria-label="Note title"]')?.value ?? "";
+const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget: type === "mouseout" ? document.body : null }));
+
+/** GA-68, against prep_memory's notes, starting on Decisions/Use SQLite (`noteId`); `agentId`: the Backend Agent. The
+ *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's one. The note
+ *  reads with its links: Deploy steps and an alias to its #Rollback heading, Backup plan dashed (no such note), Release
+ *  checklist embedded, KADE-1 a card chip; the panel has its outgoing links (Backup plan with Make it), outline, properties
+ *  and tags. Resting on a link previews the note; clicking it opens Deploy steps, selected in the tree, with Use SQLite as
+ *  a linked mention and Flaky tests as an unlinked one, which Link makes a link. Search finds by tag: and by words with
+ *  path:, marked; a tag in the panel filters the tree; Ctrl+K finds a note. In the tree a rename (the embed that names the
+ *  note follows) and a drag into another folder. The missing link makes the note from the New note drawer, after which
+ *  the link finds it; in the new note's editor [[ lists notes, [[Note# their headings, and Ctrl+click opens a link.
+ *  KADE-1 opens the card. The agent's page shows only its folder, also when searching (Backend Agent 2's folder starts
+ *  the same), and Recently changed says the agent wrote its notes in a run on KADE-1. The Memory page's prefs are put
+ *  back at the end. */
+export async function memoryProbe(noteId: string, agentId: string) {
+  const prefs = Object.fromEntries(MEMORY_PREFS.map((k) => [k, localStorage.getItem(k)]));
+  const out: Record<string, unknown> = {};
+  try {
+    // The sidebar: the Team Lead first (every note, 7), then the Backend Agent and Backend Agent 2 (each its own folder: 1).
+    const nav = () => [...document.querySelectorAll('.side .nav-section[aria-label="Memory"] .nav-item')]
+      .map((e) => ({ name: textOf(e.querySelector("span")), count: textOf(e.querySelector(".count")), href: e.getAttribute("href") }));
+    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "7" ? true : null), 6000);
+    out.nav = nav();
+    const navOk = JSON.stringify(nav().map((n, i) => (i === 2 ? { ...n, href: "" } : n))) === JSON.stringify([
+      { name: "Team Lead", count: "7", href: "#/memory" }, { name: "Backend Agent", count: "1", href: `#/memory/agent/${agentId}` },
+      { name: "Backend Agent 2", count: "1", href: "" }]) && (nav()[2]?.href ?? "").startsWith("#/memory/agent/");
+    const agentsFirst = textOf(q('.side .nav-section[aria-label="Memory"]')?.previousElementSibling?.querySelector(".nav-label")) === "Agents";
+
+    // Read, with the panel and its sections open (a shot may have left them otherwise).
+    if (!(await waitFor(() => q(".mem-note-bar"), 6000))) return { ok: false, error: "the note did not open", page: textOf(q(".main")).slice(0, 300) };
+    const readBtn = q<HTMLButtonElement>(".mem-note-bar .seg button:nth-child(1)");
+    if (readBtn?.getAttribute("aria-pressed") !== "true") { readBtn?.click(); await sleep(200); }
+    if (!q(".mem-side")) { q<HTMLButtonElement>(".mem-toggle")?.click(); await sleep(200); }
+    for (const h of document.querySelectorAll<HTMLButtonElement>('.mem-side .mem-section-head[aria-expanded="false"]')) h.click();
+    await sleep(200);
+
+    // The reading view: links, the missing one dashed, the embed and the card chip.
+    await waitFor(() => (wikiLinks().length >= 3 && q(".mem-note .note-view a.item-chip") ? true : null), 6000);
+    const links = wikiLinks().map((a) => ({ text: textOf(a), missing: a.classList.contains("missing"), title: a.title }));
+    out.links = links;
+    const linksOk = JSON.stringify(links) === JSON.stringify([
+      { text: "Deploy steps", missing: false, title: "Workflows/Deploy steps" }, { text: "roll back", missing: false, title: "Workflows/Deploy steps" },
+      { text: "Backup plan", missing: true, title: "No note called Backup plan yet: click to make it" }]);
+    const missingLink = wikiLink("Backup plan");
+    const missingDashed = !!missingLink && getComputedStyle(missingLink).textDecorationStyle === "dashed"
+      && getComputedStyle(wikiLink("Deploy steps") ?? missingLink).textDecorationStyle !== "dashed";
+    const embed = q(".mem-note .note-view .embed");
+    out.embed = textOf(embed).slice(0, 120);
+    const embedOk = !!embed && textOf(embed.querySelector(".embed-title")) === "Release checklist" && textOf(embed).includes("EMBED-MARK");
+    const chip = q<HTMLAnchorElement>(".mem-note .note-view a.item-chip");
+    const chipOk = textOf(chip) === "KADE-1" && (chip?.getAttribute("href") ?? "").startsWith("gizai:task/");
+    const selectedOk = treeNotes().includes("Decisions/Use SQLite") && !!q('.mem-tree .mem-item.note.on[title="Decisions/Use SQLite"]');
+
+    // The panel.
+    const rows = (title: string, sel: string) => [...(memSection(title)?.querySelectorAll(sel) ?? [])].map((e) => textOf(e));
+    out.outgoing = { found: rows("Outgoing links", "button.mem-row .ellipsis:first-of-type"), missing: rows("Outgoing links", ".mem-row.missing") };
+    const outgoingOk = JSON.stringify(out.outgoing) === JSON.stringify({ found: ["Deploy steps", "Release checklist"], missing: ["Backup plan"] })
+      && !!buttonByText(memSection("Outgoing links") ?? document, "Make it");
+    out.outline = rows("Outline", "button.mem-row");
+    out.properties = [...(memSection("Properties")?.querySelectorAll(".mem-prop:not(.add)") ?? [])]
+      .map((p) => `${textOf(p.querySelector("label"))}=${(p.querySelector("select, input") as HTMLInputElement | null)?.value ?? ""}`);
+    out.tags = rows("Tags", ".mem-tag");
+    const panelOk = JSON.stringify(out.outline) === JSON.stringify(["Use SQLite"]) && JSON.stringify(out.properties) === JSON.stringify(["type=decision", "tags=storage"])
+      && (out.tags as string[]).includes("storage1") && (out.tags as string[]).includes("ops1");
+
+    // Resting on a link shows the note; a link to nothing offers to make it.
+    const deploy = wikiLink("Deploy steps")!;
+    mouse(deploy, "mouseover");
+    const preview = await waitFor(() => { const p = q(".note-preview"); return p && textOf(p).includes("PREVIEW-MARK") ? p : null; }, 3000);
+    out.preview = textOf(preview).slice(0, 120);
+    // The link the mouse rests on is still the same element once the preview shows (a browser sends mouseout to it).
+    out.link_kept = deploy.isConnected;
+    // The mouse moves off the link onto the text around it, as WebKit reports it: mouseout on the element it was over,
+    // then mouseover on the one it is over now.
+    const around = deploy.closest("p") ?? q(".mem-note .note-view p");
+    deploy.dispatchEvent(new MouseEvent("mouseout", { bubbles: true, cancelable: true, relatedTarget: around }));
+    around?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, cancelable: true, relatedTarget: deploy }));
+    const previewGone = !!(await waitFor(() => (q(".note-preview") ? null : true), 3000));
+    if (!previewGone) { mouse(q(".note-preview")!, "mouseover"); mouse(q(".note-preview")!, "mouseout"); await waitFor(() => (q(".note-preview") ? null : true), 3000); }
+    const backup = wikiLink("Backup plan")!;
+    mouse(backup, "mouseover");
+    const offer = await waitFor(() => { const p = q(".note-preview"); return p && textOf(p).includes("No note called Backup plan yet") && buttonByText(p, "Make it") ? p : null; }, 3000);
+    mouse(backup, "mouseout");
+    await waitFor(() => (q(".note-preview") ? null : true), 3000);
+
+    // Opening a note through a link.
+    wikiLink("Deploy steps")?.click();
+    const opened = !!(await waitFor(() => (location.hash.startsWith("#/memory/") && !location.hash.includes(noteId) && noteTitle() === "Deploy steps" ? true : null), 5000));
+    out.opened_hash = location.hash;
+    const deployOn = !!(await waitFor(() => q('.mem-tree .mem-item.note.on[title="Workflows/Deploy steps"]'), 3000));
+    const crumbs = textOf(q(".topbar .crumbs"));
+    const linked = () => [...(memSection("Backlinks")?.querySelectorAll(".mem-mention > button.mem-row") ?? [])].map((e) => textOf(e));
+    const unlinked = () => [...(memSection("Backlinks")?.querySelectorAll(".mem-mention > .mem-row-line > button.mem-row") ?? [])].map((e) => textOf(e));
+    await waitFor(() => (linked().length ? true : null), 3000);
+    out.backlinks = { linked: linked(), unlinked: unlinked() };
+    const backlinksOk = JSON.stringify(out.backlinks) === JSON.stringify({ linked: ["Use SQLite"], unlinked: ["Flaky tests"] });
+    buttonByText(memSection("Backlinks") ?? document, "Link")?.click();
+    const linkedNow = !!(await waitFor(() => (JSON.stringify(linked()) === JSON.stringify(["Use SQLite", "Flaky tests"]) && unlinked().length === 0 ? true : null), 5000));
+    out.backlinks_after_link = { linked: linked(), unlinked: unlinked() };
+
+    // Search: tag:, then words in a path: folder, marked.
+    const search = q<HTMLInputElement>('input[aria-label="Search notes"]');
+    const hits = () => [...document.querySelectorAll(".mem-hit")].map((h) => ({ title: textOf(h.querySelector(".mem-hit-title")), marks: textsOf("mark", h) }));
+    if (search) typeInto(search, "tag:ops");
+    const byTag = !!(await waitFor(() => (JSON.stringify(hits().map((h) => h.title)) === JSON.stringify(["Deploy steps"]) ? true : null), 4000));
+    out.search_tag = hits();
+    if (search) typeInto(search, "changelog path:Standards");
+    const byWord = !!(await waitFor(() => { const h = hits(); return h.length === 1 && h[0]?.title === "Release checklist" && h[0].marks.some((m) => m.toLowerCase() === "changelog") ? true : null; }, 4000));
+    out.search_words = hits();
+    if (search) typeInto(search, "changelog path:Decisions");
+    const narrowed = !!(await waitFor(() => (textOf(q(".mem-results")).includes("No note matches") ? true : null), 4000));
+    if (search) typeInto(search, "");
+    await waitFor(() => q(".mem-tree"), 3000);
+
+    // A tag in the panel filters the tree, and back.
+    [...document.querySelectorAll<HTMLButtonElement>(".mem-side .mem-tag")].find((b) => textOf(b).startsWith("ops"))?.click();
+    const filtered = !!(await waitFor(() => (JSON.stringify(treeNotes()) === JSON.stringify(["Workflows/Deploy steps"]) && q(".mem-filter") ? true : null), 3000));
+    out.filtered_tree = treeNotes();
+    q<HTMLButtonElement>(".mem-filter button")?.click();
+    const unfiltered = !!(await waitFor(() => (treeNotes().includes("Decisions/Use SQLite") && !q(".mem-filter") ? true : null), 3000));
+
+    // Ctrl+K finds notes.
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: !isMac(), metaKey: isMac(), bubbles: true, cancelable: true }));
+    const pal = await waitFor(() => q<HTMLInputElement>(".pal input"), 3000);
+    if (pal) typeInto(pal, "flaky");
+    const palItem = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".pal-item")].find((b) => textOf(b).includes("Flaky tests") && textOf(b.querySelector(".kind")) === "Note") ?? null, 3000);
+    out.palette = textOf(palItem);
+    palItem?.click();
+    const palOpened = !!(await waitFor(() => (noteTitle() === "Flaky tests" && !q(".pal") ? true : null), 4000));
+
+    // The tree: open Standards, rename Release checklist there (the embed that names it follows), drag Flaky tests into it.
+    const folderRow = (name: string) => q(`.mem-tree [role=treeitem][aria-label="${name}"] > .mem-item.folder`);
+    if (q('.mem-tree [role=treeitem][aria-label="Standards"]')?.getAttribute("aria-expanded") !== "true") folderRow("Standards")?.click();
+    await waitFor(() => (treeNotes().includes("Standards/Release checklist") ? true : null), 3000);
+    // which folders are open is kept for the next start
+    const openKept = ["Standards", "Decisions", "Workflows"].every((f) => (JSON.parse(localStorage.getItem("gizai.memory.open") ?? "[]") as string[]).includes(f));
+    q<HTMLButtonElement>('.mem-tree button[aria-label="Rename Release checklist"]')?.click();
+    const nameInput = await waitFor(() => q<HTMLInputElement>(".mem-tree input.mem-name"), 3000);
+    if (nameInput) { typeInto(nameInput, "Release list"); nameInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true })); }
+    const renamed = !!(await waitFor(() => (treeNotes().includes("Standards/Release list") && !treeNotes().includes("Standards/Release checklist") ? true : null), 5000));
+    const flakyRow = q('.mem-tree .mem-item.note[title="Lessons/Flaky tests"]');
+    const standards = folderRow("Standards");
+    if (flakyRow && standards) await pointerDrag(flakyRow, standards);
+    const dragged = !!(await waitFor(() => (treeNotes().includes("Standards/Flaky tests") && !treeNotes().includes("Lessons/Flaky tests") ? true : null), 5000));
+    out.tree_after_moves = treeNotes();
+
+    // The missing link makes the note (New note, its title and folder filled in), and then finds it.
+    location.hash = `#/memory/${encodeURIComponent(noteId)}`;
+    await waitFor(() => (noteTitle() === "Use SQLite" && wikiLink("Backup plan") ? true : null), 5000);
+    const embedFollowed = !!(await waitFor(() => { const e = q(".mem-note .note-view .embed"); return e && textOf(e.querySelector(".embed-title")) === "Release list" && textOf(e).includes("EMBED-MARK") ? true : null; }, 4000));
+    out.embed_after_rename = textOf(q(".mem-note .note-view .embed")).slice(0, 80);
+    wikiLink("Backup plan")?.click();
+    const drawer = await waitFor(() => q<HTMLInputElement>("#mem-title"), 3000);
+    out.new_note = { title: drawer?.value ?? null, folder: q<HTMLSelectElement>("#mem-folder")?.value ?? null, type: q<HTMLSelectElement>("#mem-type")?.value ?? null };
+    const drawerOk = JSON.stringify(out.new_note) === JSON.stringify({ title: "Backup plan", folder: "Decisions", type: "note" });
+    const make = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => textOf(b) === "Make the note");
+    make?.click();
+    const made = await waitFor(() => { const c = q(".mem-note .doc-editor .cm-content"); return noteTitle() === "Backup plan" && c ? c : null; }, 5000);
+    const madeText = made ? docOf(made) : "";
+    out.made = madeText.slice(0, 80);
+    const madeOk = !!made && madeText.startsWith("---\ntype: note\n") && madeText.includes("# Backup plan") && treeNotes().includes("Decisions/Backup plan");
+
+    // The new note's editor: [[ lists notes (Enter links one), [[Note# its headings; the links are styled; Ctrl+click opens one.
+    const view = made ? EditorView.findFromDOM(made as HTMLElement) : null;
+    const wikiRowsShown = () => [...document.querySelectorAll(".wiki-picker .opt")].map((e) => textOf(e));
+    let editorOk = false;
+    if (view && made) {
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+      view.focus();
+      await sleep(100);
+      write("See [[deploy");
+      const noteRows = await waitFor(() => (wikiRowsShown().length ? wikiRowsShown() : null), 3000);
+      out.wiki_note_rows = noteRows;
+      out.wiki_label = textOf(q(".wiki-picker .pop-label"));
+      press(made as HTMLElement, "Enter", 13);
+      await sleep(200);
+      write(" and [[Deploy steps#ro");
+      const headRows = await waitFor(() => (q('.wiki-picker[aria-label="Link a heading"]') && wikiRowsShown().length ? wikiRowsShown() : null), 3000);
+      out.wiki_heading_rows = headRows;
+      press(made as HTMLElement, "Enter", 13);
+      await sleep(300);
+      const text = view.state.doc.toString();
+      out.wiki_text = text.slice(text.indexOf("See "));
+      const styled = [...made.querySelectorAll(".cm-wikilink")].map((e) => ({ text: textOf(e), missing: e.classList.contains("missing") }));
+      out.wiki_styled = styled;
+      editorOk = JSON.stringify(noteRows) === JSON.stringify(["Deploy stepsWorkflows"]) && out.wiki_label === "Link a note"
+        && JSON.stringify(headRows) === JSON.stringify(["RollbackH2"]) && text.endsWith("See [[Deploy steps]] and [[Deploy steps#Rollback]]")
+        && styled.length >= 2 && styled.every((s) => !s.missing);
+      // Ctrl+click on the first link opens Deploy steps (what was typed is saved on the way)
+      const link = made.querySelector(".cm-wikilink") as HTMLElement | null;
+      const r = link?.getBoundingClientRect();
+      if (link && r) link.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, clientX: r.left + 4, clientY: r.top + r.height / 2, ctrlKey: !isMac(), metaKey: isMac() }));
+    }
+    const ctrlClicked = !!(await waitFor(() => (noteTitle() === "Deploy steps" ? true : null), 4000));
+    q<HTMLButtonElement>(".mem-note-bar .seg button:nth-child(1)")?.click();
+    location.hash = `#/memory/${encodeURIComponent(noteId)}`;
+    const nowFound = !!(await waitFor(() => { const l = wikiLink("Backup plan"); return noteTitle() === "Use SQLite" && l && !l.classList.contains("missing") ? true : null; }, 5000));
+
+    // KADE-1 opens the card.
+    q<HTMLAnchorElement>(".mem-note .note-view a.item-chip")?.click();
+    const card = !!(await waitFor(() => (location.hash.startsWith("#/task/") ? true : null), 4000));
+    out.card_hash = location.hash;
+
+    // An agent's page: only its folder; Recently changed says it wrote its notes in a run on KADE-1.
+    location.hash = `#/memory/agent/${encodeURIComponent(agentId)}`;
+    await waitFor(() => (treeNotes().length && q(".mem-change") ? true : null), 5000);
+    out.agent_tree = treeNotes();
+    out.agent_recent = textsOf(".mem-change");
+    const agentOk = JSON.stringify(out.agent_tree) === JSON.stringify(["Agents/Backend Agent/Notes"])
+      && (out.agent_recent as string[]).length === 1 && (out.agent_recent as string[])[0]!.includes("Backend Agent in a run on KADE-1")
+      && !!q(`.side .nav-section[aria-label="Memory"] a.nav-item.on[href="#/memory/agent/${agentId}"]`);
+    // its search keeps to its folder too: Backend Agent 2's notes say "learned" as well
+    const agentSearch = q<HTMLInputElement>('input[aria-label="Search notes"]');
+    if (agentSearch) typeInto(agentSearch, "learned");
+    await waitFor(() => (q(".mem-hit") ? true : null), 4000);
+    await sleep(400);
+    out.agent_search = [...document.querySelectorAll(".mem-hit")].map((h) => `${textOf(h.querySelector(":scope > .faint"))}/${textOf(h.querySelector(".mem-hit-title"))}`);
+    const agentSearchOk = JSON.stringify(out.agent_search) === JSON.stringify(["Agents/Backend Agent/Notes"]);
+    if (agentSearch) typeInto(agentSearch, "");
+    location.hash = "#/memory";
+    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 8 ? true : null), 5000);
+    const everyone = textsOf(".mem-change").length;
+    buttonByText(q(".mem-recent") ?? document, "Agents")?.click();
+    await sleep(200);
+    out.recent = { everyone, agents: textsOf(".mem-change") };
+    // by agents: the Backend Agent's notes (in a run), Backend Agent 2's and the Team Lead's (each made its own)
+    const byAgents = textsOf(".mem-change");
+    const recentOk = everyone === 8 && byAgents.length === 3 && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent in a run on KADE-1"))
+      && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
+
+    const ok = navOk && agentsFirst && linksOk && missingDashed && embedOk && chipOk && selectedOk && outgoingOk && panelOk && !!preview && previewGone
+      && !!offer && opened && deployOn && backlinksOk && linkedNow && byTag && byWord && narrowed && filtered && unfiltered && palOpened && openKept && renamed && dragged
+      && embedFollowed && drawerOk && madeOk && editorOk && ctrlClicked && nowFound && card && agentOk && agentSearchOk && recentOk;
+    return { ok, nav_ok: navOk, agents_first: agentsFirst, links_ok: linksOk, missing_dashed: missingDashed, embed_ok: embedOk, chip_ok: chipOk,
+      selected_ok: selectedOk, outgoing_ok: outgoingOk, panel_ok: panelOk, previewed: !!preview, preview_gone: previewGone, offer: !!offer, opened,
+      deploy_on: deployOn, crumbs, backlinks_ok: backlinksOk, linked_now: linkedNow, by_tag: byTag, by_word: byWord, narrowed, filtered, unfiltered,
+      pal_opened: palOpened, open_kept: openKept, renamed, dragged, embed_followed: embedFollowed, drawer_ok: drawerOk, made_ok: madeOk, editor_ok: editorOk, ctrl_clicked: ctrlClicked, now_found: nowFound, card,
+      agent_ok: agentOk, agent_search_ok: agentSearchOk, recent_ok: recentOk, ...out };
+  } finally {
+    for (const [k, v] of Object.entries(prefs)) { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }
+  }
+}

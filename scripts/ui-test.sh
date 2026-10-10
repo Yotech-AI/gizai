@@ -42,6 +42,16 @@
 #     rows grow, the chat column, sidebar and board columns get wider, and in the 1280 px window nothing is cut off or scrolls
 #     sideways, in dark and in light. Compact; each font everywhere at once. Then a second start: Geist, light, compact and
 #     the sizes are still there, and Reset to defaults brings everything back (so later starts begin at the defaults).
+# 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note and the
+#     Backend Agent with its own folder's. Decisions/Use SQLite reads with its wikilinks (one to a heading, by an alias), a
+#     dashed one to a note that doesn't exist, an embedded note and KADE-1 as a card chip; the panel has its outgoing links,
+#     outline, properties and tags. Resting on a link previews the note (or offers to make it); clicking it opens Deploy
+#     steps, with a linked and an unlinked mention, which Link makes a link. Search by tag: and by words with path:,
+#     marked; a tag filters the tree; Ctrl+K finds a note. The missing link makes the note from a template, and then finds
+#     it; in its editor [[ lists notes and [[Note# their headings, and Ctrl+click on a link opens its note; KADE-1 opens
+#     the card; the agent's page shows only its folder (its search too), and Recently changed says who wrote what.
+#     Then on the demo data (no agents, no notes): Shared notes and Set up the Team Lead in the sidebar, the page says
+#     what memory is, the tree has only the shared folders, and Set up the Team Lead opens the agent form.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -89,4 +99,9 @@ fresh
 DATA=$PWD/.devdata/uitest ROUTE=settings/appearance MODE=appearance-set scripts/smoke-cage.sh || fail=1
 # the same WebKit storage (.devdata/xdg): a restart
 DATA=$PWD/.devdata/uitest ROUTE=settings/appearance MODE=appearance-kept scripts/smoke-cage.sh || fail=1
+fresh
+MEM=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_memory -- .devdata/uitest "$PWD/crates/gizai-agents/tests/fake-claude.sh")
+DATA=$PWD/.devdata/uitest ROUTE="memory/${MEM% *}" MODE="memory:${MEM#* }" scripts/smoke-cage.sh || fail=1
+fresh
+DATA=$PWD/.devdata/uitest ROUTE=memory/shared MODE=memory-empty scripts/smoke-cage.sh || fail=1
 exit $fail

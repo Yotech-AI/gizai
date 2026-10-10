@@ -1,0 +1,67 @@
+/* Settings → Appearance (GA-42, src/lib/appearance.ts). The app puts the choices on <html>: data-font, data-density and,
+   only for sizes other than the default, how much each part's text grows in px: --ui-grow (the interface), --chat-grow and
+   --docs-grow (tasks and docs) for reading text, the -head ones (half as much) for headings and titles, --ui-grow-meta (at
+   most 1px) for small things; --ui-box for how much rows and controls grow (shorter when compact), and --chat-scale for
+   how much wider the chat column gets. Without them every size below is the design system's (tokens.css), so the app
+   looks as it always did. Small things with their own px size (IDs, badges, keyboard hints, group labels, avatars,
+   icons) keep it. */
+
+/* ---------- fonts: a choice sets the text font and the code font. On <html> it is the app's; in Settings each choice
+   shows itself in its own font. The Atkinson stacks repeat tokens.json's families. ---------- */
+[data-font="atkinson"] { --font-sans: "Atkinson Hyperlegible Next", system-ui, sans-serif; --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace; }
+[data-font="jetbrains-mono"] { --font-sans: "JetBrains Mono", ui-monospace, monospace; --font-mono: "JetBrains Mono", ui-monospace, monospace; }
+[data-font="inter"] { --font-sans: "Inter", system-ui, sans-serif; --font-mono: "JetBrains Mono", ui-monospace, monospace; }
+[data-font="geist"] { --font-sans: "Geist", system-ui, sans-serif; --font-mono: "Geist Mono", ui-monospace, monospace; }
+[data-font="hack"] { --font-sans: "Hack", ui-monospace, monospace; --font-mono: "Hack", ui-monospace, monospace; }
+
+/* ---------- text sizes (the defaults are tokens.json's) ---------- */
+:root {
+  /* the interface: its text fully, headings (sections, drawers, page titles) half, meta and hints at most 1px */
+  --fs-xs: calc(11.5px + var(--ui-grow-meta, 0px));
+  --fs-sm: calc(12.5px + var(--ui-grow-meta, 0px));
+  --fs: calc(13.5px + var(--ui-grow, 0px));
+  --fs-md: calc(15px + var(--ui-grow-head, 0px));
+  --fs-lg: calc(20px + var(--ui-grow-head, 0px));
+  --fs-xl: calc(26px + var(--ui-grow-head, 0px));
+  /* and the layout with it: rows and the top bar, the sidebar 6px and a board column 8px wider a step */
+  --size-row: calc(40px + var(--ui-box, 0px));
+  --size-topbar: calc(52px + var(--ui-box, 0px));
+  --size-side: calc(248px + 6 * var(--ui-grow, 0px));
+  --size-board-col: calc(286px + 8 * var(--ui-grow, 0px));
+  /* tasks and docs: Markdown read and edited (descriptions, acceptance criteria, comments, docs); headings half */
+  --fs-prose: calc(15px + var(--docs-grow, 0px));
+  --prose-grow-head: var(--docs-grow-head, 0px);
+  /* the chat: your messages and the composer */
+  --fs-chat: calc(13.5px + var(--chat-grow, 0px));
+}
+/* In a chat (and its sample in Settings) the agent's messages are prose at the chat size. */
+.chat-main:not(.chat-archive), .chat-sample {
+  --fs-prose: calc(15px + var(--chat-grow, 0px));
+  --prose-grow-head: var(--chat-grow-head, 0px);
+}
+
+/* ---------- compact: rows, menus, buttons and fields are 4px shorter (in --ui-box), cards a bit tighter ---------- */
+[data-density="compact"] .card { gap: 6px; padding: 8px 11px; }
+[data-density="compact"] .col-body { gap: 6px; }
+
+/* ---------- Settings → Appearance ---------- */
+.appearance-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.font-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.font-choice { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 3px 10px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-l); background: var(--raised); font-family: var(--font-sans); cursor: pointer; }
+.font-choice:hover { border-color: var(--line-2); }
+.font-choice.on { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--raised); }
+.font-choice input { margin: 0; accent-color: var(--accent); }
+.font-choice .fc-name { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.font-choice .fc-sample, .font-choice .fc-note { grid-column: 2; min-width: 0; }
+.font-choice .fc-sample { color: var(--text-2); }
+.font-choice .fc-sample .mono { margin-left: 4px; color: var(--text-3); }
+.font-choice .fc-note { color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
+.field > .seg { align-self: flex-start; }
+.size-seg button { min-width: 38px; font-variant-numeric: tabular-nums; }
+.seg-label { display: inline-flex; align-items: center; gap: 5px; }
+.size-preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; align-items: start; }
+.size-preview > .panel { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px 14px; background: var(--bg); }
+.size-preview .faint { font-size: var(--fs-xs); }
+.size-preview .chat-msg.user .bubble { max-width: 85%; }
+.size-preview .prose > :last-child { margin-bottom: 0; }

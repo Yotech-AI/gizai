@@ -24,9 +24,9 @@ Gizai keeps their scanning density and adds its own meaning for colour.
 
 ## Visual foundations
 
-**Dark first.** The `dark` theme is the default; `light` swaps the same token names. Surfaces go
-from dim to bright in this order: `rail` → `side` → `bg` (the canvas) → `raised` (cards, panels) →
-`overlay` (drawers, palette). The sidebar is dimmer than the canvas so the work stands out.
+**Dark first.** The `dark` theme is the default; `light` swaps the same token names (Settings →
+Appearance, or the t key). Surfaces go from dim to bright in this order: `side` → `bg` (the canvas) →
+`raised` (cards, panels) → `overlay` (drawers, palette). The sidebar is dimmer than the canvas so the work stands out.
 Separate regions with 1px borders in `line`; use `line-2` for controls (inputs, buttons, pills)
 and the drawer edge. Shadows only on things that float: `shadow-pop`, `shadow-drawer`,
 `shadow-drag`.
@@ -54,15 +54,25 @@ not ad-hoc sizes: `t-body` (13.5px) for UI, `t-row` (14px, 500) for task titles 
 `t-group` for group heads, `t-entity-title` for agent/project/client names, `t-task-title` on the
 task page, `t-drawer-title` in drawers.
 
+Settings → Appearance lets the user pick another font for the whole app, each setting both
+families: JetBrains Mono, Inter (code in JetBrains Mono), Geist (code in Geist Mono) or Hack. All
+ship with the app. It also has three text sizes, in px of each part's main text: Chat (15 by
+default), Interface (13.5, `fs`) and Tasks and docs (15, `t-prose`). Reading text grows by the whole
+step, headings by about half, and small things (IDs, label pills, times, badges, keyboard hints,
+group labels, avatars, icons) stay the same or grow at most 1px. Rows, the sidebar, board columns
+and the chat column grow with the text. So: size text with the `fs*` tokens, and give a size that
+should never grow its own px value (see TextSizes).
+
 **Spacing and shape.** A 4px grid: `space-1` … `space-8`. List pages use a `space-5` (20px)
 gutter; detail pages `space-6`–`space-8`. Rows are `size-row` (40px). Radii by role: `radius-s` for
 chips and small controls, `radius` for buttons, inputs, rows and nav items, `radius-l` for cards
 and panels, `radius-pill` for badges. Never round everything the same.
 
-**Layout.** Four zones: org rail (`size-rail`), sidebar (`size-side`), the main column, and on
-detail pages a properties panel (`size-props`) that can be closed. A top bar (`size-topbar`) holds
-breadcrumbs and page actions; list pages add a view toolbar below it (New task on the left; view
-switch, Filters, Sort, Group on the right).
+**Layout.** Three zones: the sidebar (`size-side`), the main column, and on detail pages a
+properties panel (`size-props`) that can be closed. There is no org rail: Gizai has one
+organisation. A top bar (`size-topbar`) holds breadcrumbs and page actions; list pages add a view
+toolbar below it (New task on the left; view switch, Filters, Sort, Group on the right). Pages with
+parts (Usage, Settings) show them as tabs, the open one in the address.
 
 **Drawers, not dialogs.** Every create and edit form (new task, new project, edit client, add
 agent, agent settings, new doc) slides in from the right in a Drawer at least `size-drawer`
@@ -106,5 +116,4 @@ Gizai's own (StatusIcon), drawn on a 16px grid. Map concepts consistently:
 | Branch, terminal | `git-branch`, `terminal` |
 | Agent roles | lead `crown`, frontend `monitor`, backend `server`, design `palette`, QA `flask-conical`, DevOps `container`, other `bot` |
 
-No emoji, no illustrations. Gizai has no logo yet: the org tile shows the organisation's initials
-on `accent`, and the name is set in plain type.
+No emoji, no illustrations. Gizai has no logo yet: the name is set in plain type.

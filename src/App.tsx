@@ -19,10 +19,8 @@ import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
-
-function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
-function writePref(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
+import { appearanceProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 
 export default function App() {
   const route = useRoute();
@@ -32,19 +30,15 @@ export default function App() {
   const [drawer, setDrawer] = useState<DrawerReq | null>(null);
 
   useEffect(() => {
-    const root = document.documentElement;
-    const theme = readPref("gizai-theme"); if (theme) root.dataset.theme = theme;
-    const density = readPref("gizai-density"); if (density) root.dataset.density = density;
+    // The theme and density are on <html> already (main.tsx); t and d switch them, like Settings → Appearance.
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return; // handled by an editor (Ctrl+K makes a link there)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); return; }
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable], .cm-editor") || e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "n" && !document.querySelector("[role=dialog]")) { e.preventDefault(); setDrawer({ kind: "task" }); }
-      if (e.key === "t") { // dark is the default; t switches
-        root.dataset.theme = (root.dataset.theme ?? "dark") === "dark" ? "light" : "dark"; writePref("gizai-theme", root.dataset.theme);
-      }
-      if (e.key === "d") { root.dataset.density = root.dataset.density === "compact" ? "" : "compact"; writePref("gizai-density", root.dataset.density); }
+      if (e.key === "t") toggleTheme(); // dark is the default
+      if (e.key === "d") toggleDensity();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -60,9 +54,18 @@ export default function App() {
         if (kind === "task" || kind === "project" || kind === "client" || kind === "person") setDrawer({ kind });
         if (kind === "agent-lead") setDrawer({ kind: "agent", preset: { name: "Team Lead", role: "lead", chat: true } });
         if (i.selftest_mode === "theme:light") document.documentElement.dataset.theme = "light";
+        // GIZAI_SELFTEST_MODE=appearance:chat=20,ui=16.5,docs=20,font=inter,theme=light[;<step>…]: Settings → Appearance for
+        // this start only (not kept), then the steps, as below.
+        let steps: string[] = [];
+        if (i.selftest_mode?.startsWith("appearance:")) {
+          const [spec = "", ...then] = i.selftest_mode.slice(11).split(";");
+          setAppearance(appearanceOf(spec), false);
+          steps = then;
+        }
         // GIZAI_SELFTEST_MODE=steps:<step>;<step>…: a step "#/route" goes there, any other step clicks that CSS selector.
-        if (i.selftest_mode?.startsWith("steps:")) {
-          for (const step of i.selftest_mode.slice(6).split(";")) {
+        if (i.selftest_mode?.startsWith("steps:")) steps = i.selftest_mode.slice(6).split(";");
+        if (steps.length) {
+          for (const step of steps) {
             await new Promise((r) => setTimeout(r, 1200));
             if (step.startsWith("#/")) window.location.hash = step;
             else { const el = document.querySelector(step) as HTMLElement | null; el?.scrollIntoView({ block: "start" }); el?.click(); }
@@ -121,7 +124,12 @@ export default function App() {
             chats = await chatArchiveProbe();
             if (!chats.ok) errors.push(`chat archive probe: ${JSON.stringify(chats)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats });
+          let appearance: Awaited<ReturnType<typeof appearanceProbe>> | undefined;
+          if (i.start_route === "settings/appearance" && (i.selftest_mode === "appearance-set" || i.selftest_mode === "appearance-kept")) {
+            appearance = await appearanceProbe(i.selftest_mode === "appearance-kept" ? "kept" : "set");
+            if (!appearance.ok) errors.push(`appearance probe: ${JSON.stringify(appearance)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance });
           await exitApp(0);
         }
       })
@@ -142,7 +150,7 @@ export default function App() {
             : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />
             : route.page === "agent" && route.id ? <AgentPage key={route.id} id={route.id} />
             : route.page === "team" ? <TeamPage />
-            : route.page === "settings" ? <SettingsPage />
+            : route.page === "settings" ? <SettingsPage tab={route.id} />
             : route.page === "clients" ? <ClientsPage />
             : route.page === "client" && route.id ? <ClientPage key={route.id} id={route.id} />
             : route.page === "users" ? <UsersPage />

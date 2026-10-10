@@ -3,7 +3,7 @@
 // same total. The Subscription tab (GA-62), first, shows each coding CLI's subscription limits as its runs and chat turns
 // last reported them (limits.rs), with the agents on it.
 import { useEffect, useState, type ReactNode } from "react";
-import { ChartColumn, FolderKanban, Gauge, MessagesSquare, Users, type LucideIcon } from "lucide-react";
+import { ChartColumn, FolderKanban, Gauge, MessagesSquare, Users } from "lucide-react";
 import { subscriptionLimits, usageSummary } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
@@ -18,9 +18,10 @@ import {
 } from "../lib/usage";
 import type { CliLimits, SubscriptionLimit, Usage, UsageDay, UsagePeriod, UsageTotals } from "../types";
 import { roleIcon } from "../components/Avatar";
+import { Tabs, type TabDef } from "../components/Tabs";
 
 type Tab = "subscription" | "total" | "agents" | "projects";
-const TABS: [Tab, LucideIcon, string][] = [
+const TABS: TabDef<Tab>[] = [
   ["subscription", Gauge, "Subscription"], ["total", ChartColumn, "Total"], ["agents", Users, "Agents"], ["projects", FolderKanban, "Projects"],
 ];
 
@@ -259,11 +260,7 @@ export function UsagePage() {
       {!limits && error && <div className="error-banner">{error}</div>}
       <div className="content">
         <div className="page usage-page">
-          <div className="tabs" role="tablist">
-            {TABS.map(([k, I, l]) => (
-              <button key={k} className="tab" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}><I className="icon" />{l}</button>
-            ))}
-          </div>
+          <Tabs tabs={TABS} open={tab} onOpen={setTab} />
           {limits ? (
             <div role="tabpanel" className="usage-tab"><SubscriptionTab /></div>
           ) : u && u.total.runs === 0 ? (

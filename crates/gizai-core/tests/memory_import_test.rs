@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use gizai_core::clis::{self, Cli};
 use gizai_core::db::Db;
 use gizai_core::memory::{self, Context, Who};
-use gizai_core::memory_import::{self, Report};
+use gizai_core::memory_import::{self, Report, Skipped};
 use gizai_core::model::*;
 use gizai_core::{seed, settings, team};
 
@@ -296,6 +296,53 @@ fn a_file_with_a_private_key_is_listed_by_its_path_only() {
 }
 
 #[test]
+fn a_certificate_comes_in_but_a_bundle_with_a_private_key_after_it_is_skipped_and_listed_by_its_path() {
+    // Round 2: the secret check looks at every -----BEGIN line, so a private key after a certificate is found too, and the
+    // thread names the file by its path with the reason, without the -----BEGIN … example.
+    let f = setup();
+    const CERT: &str = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUQ\n-----END CERTIFICATE-----\n";
+    f.file(".claude/projects/-p/memory/cert.md", format!("The shop's certificate:\n{CERT}").as_bytes());
+    f.file(".claude/projects/-p/memory/bundle.md",
+           format!("{CERT}-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEF\n-----END PRIVATE KEY-----\n").as_bytes());
+    let r = f.import();
+    assert_eq!(r.imported.iter().map(|i| i.note.as_str()).collect::<Vec<_>>(), ["Team Lead/Imported/-p/cert"]);
+    assert_eq!(r.skipped, [Skipped { file: "~/.claude/projects/-p/memory/bundle.md".into(), why: "it holds a private key".into() }]);
+    assert!(f.note("Team Lead/Imported/-p/cert").body_md.ends_with(CERT));
+    let notes = f.note("Team Lead/Notes").body_md;
+    assert!(notes.contains("- Not imported: ~/.claude/projects/-p/memory/bundle.md (it holds a private key; nothing of its text was kept)"),
+            "{notes}");
+    assert!(!notes.contains("MIIEvQ") && !notes.contains("-----BEGIN") && !notes.contains("looks like a secret"), "{notes}");
+}
+
+#[test]
+fn a_note_whose_path_turns_into_a_token_comes_in_and_the_thread_leaves_that_path_out() {
+    // Round 2: ':' can't be in a note's path, so a file "sk:" + 20 letters becomes a note "sk-…", which looks like an API
+    // key; a file "deploy-sk-…" would give the example "Deployments/sk-…". Team Lead/Notes refuses a text with a secret, so
+    // such a line would have failed the whole import at every start: the thread leaves those out, the import goes through.
+    let f = setup();
+    let key = "abcdefghijklmnopqrstuvwxyz";
+    f.file(&format!(".claude/projects/-p/memory/sk:{key}.md"), b"A note.\n");
+    f.file(&format!(".claude/projects/-q/memory/deploy-sk-{key}.md"), b"Deploy mode: manual.\n");
+    f.file(".claude/projects/-q/memory/prefs.md", b"Short answers.\n");
+    let r = f.import();
+    let mut notes: Vec<String> = r.imported.iter().map(|i| i.note.clone()).collect();
+    notes.sort();
+    assert_eq!(notes, [format!("Team Lead/Imported/-p/sk-{key}"), format!("Team Lead/Imported/-q/deploy-sk-{key}"),
+                       "Team Lead/Imported/-q/prefs".to_string()]);
+    assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+    let text = f.note("Team Lead/Notes").body_md;
+    assert_eq!(memory::secret_in(&text), None, "{text}");
+    assert!(text.contains(&format!("- {DAY}: Imported 3 notes from Claude Code's own memory")), "{text}");
+    assert!(text.contains("- From a folder whose path, or a note's, looks like a secret (not shown): 1 note"), "{text}");
+    assert!(text.contains(&format!("- From ~/.claude/projects/-q/memory: [[-q/deploy-sk-{key}]], [[-q/prefs]]")), "{text}");
+    assert!(text.contains("a project's deploy note goes to Deployments/<KEY>, with project: <KEY>"), "no example: {text}");
+    assert!(!text.contains(&format!("/sk-{key}")) && !text.contains("[[-p/"), "{text}");
+    // each file was recorded: a second start adds nothing
+    assert_eq!(f.import(), Report::default());
+    assert_eq!(f.imported().len(), 3);
+}
+
+#[test]
 fn a_file_whose_name_holds_a_token_is_skipped_and_its_path_not_shown() {
     let f = setup();
     f.file(&format!(".claude/projects/-p/memory/{TOKEN}.md"), b"Nothing secret in here.\n");
@@ -351,6 +398,28 @@ fn a_long_list_goes_in_a_note_of_its_own_linked_from_the_thread() {
     let notes = f.note("Team Lead/Notes").body_md;
     assert!(notes.contains(&format!("- The list: [[{list}]]")) && notes.contains("Imported 40 notes"), "{notes}");
     assert!(!notes.contains("note-number-39"), "the thread links the list instead: {notes}");
+}
+
+#[test]
+fn the_team_leads_memory_block_counts_the_imported_notes_not_the_list_of_them() {
+    // Round 2: the list note (From Claude Code <day>) is in Team Lead/Imported/ too, but it came from no file: 40 files are
+    // 40 notes in the block, and one sorted out of the folder makes 39.
+    let f = setup();
+    let project = "-home-me-a-project-with-a-rather-long-folder-name";
+    for i in 0..40 {
+        f.file(&format!(".claude/projects/{project}/memory/note-number-{i:02}-about-something.md"), format!("Note {i}.\n").as_bytes());
+    }
+    let r = f.import();
+    assert!(r.list.is_some(), "the list in a note of its own");
+    assert_eq!(f.imported().len(), 41, "40 notes and the list");
+    let block = |f: &F| memory::prompt_block(&f.db, &f.lead(), &Context::default()).unwrap().text;
+    let text = block(&f);
+    assert!(text.contains("- Team Lead/Imported/: 40 notes from Claude Code's own memory, to sort with the user"), "{text}");
+    // neither the notes nor the list in full (Team Lead/Notes, shown in full, links the list)
+    assert!(!text.contains("note-number-") && !text.contains("### Team Lead/Imported/"), "{text}");
+    memory::move_note(&f.db, &f.lead(), &format!("Team Lead/Imported/{project}/note-number-00-about-something"), "Lessons/Note zero", false)
+        .unwrap();
+    assert!(block(&f).contains("- Team Lead/Imported/: 39 notes from Claude Code's own memory"), "{}", block(&f));
 }
 
 #[test]

@@ -263,6 +263,15 @@ pub fn set_memory_enabled(app: AppHandle, st: State<AppState>, on: bool) -> R<()
     changed(&app, "settings");
     Ok(())
 }
+/// Agents ask the Team Lead before you (Settings → Runs, GA-70): on unless switched off.
+#[tauri::command]
+pub fn ask_lead_enabled(st: State<AppState>) -> bool { gizai_core::questions::enabled(&st.db) }
+#[tauri::command]
+pub fn set_ask_lead_enabled(app: AppHandle, st: State<AppState>, on: bool) -> R<()> {
+    gizai_core::questions::set_enabled(&st.db, on).map_err(e)?;
+    changed(&app, "settings");
+    Ok(())
+}
 
 #[tauri::command]
 pub fn doc_versions(st: State<AppState>, id: String) -> R<Vec<DocVersion>> { docs::versions(&st.db, &id).map_err(e) }

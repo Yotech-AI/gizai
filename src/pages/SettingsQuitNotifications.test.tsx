@@ -150,8 +150,8 @@ describe("Settings → Notifications", () => {
     const got = sets;
     sets = null;
     const boxes = findAll(tree, (p) => p.type === "checkbox" && typeof p.onChange === "function") as { onChange: (e: unknown) => void; checked: boolean }[];
-    // the four switches come first on the page, before Pause all agents and Use memory (GA-19)
-    expect(boxes.length).toBe(6);
+    // the four switches come first on the page, before Pause all agents, Use memory (GA-19) and Ask the Team Lead first (GA-70)
+    expect(boxes.length).toBe(7);
     boxes[2].onChange({ target: { checked: false } });
     await settle();
     const want = { hold: true, waiting: true, leadAsks: false, leadAnswered: true };

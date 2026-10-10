@@ -37,6 +37,10 @@ pub struct GateResult {
     pub moved_to: Option<String>,
     /// The hold the card got.
     pub hold: Option<String>,
+    /// The Team Lead took the card's question (GA-70, `questions::hand_over_in`): its id. The card stays on hold, out of
+    /// the Inbox, while the Team Lead answers it or asks you.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead: Option<String>,
 }
 
 struct TaskRow {
@@ -346,7 +350,7 @@ fn reviewer(c: &Connection, t: &TaskRow) -> Result<Option<String>> {
     })
 }
 
-fn set_hold(w: &Writer, task_id: &str, hold: &str, reason: &str) -> Result<()> {
+pub(crate) fn set_hold(w: &Writer, task_id: &str, hold: &str, reason: &str) -> Result<()> {
     w.conn().execute("UPDATE tasks SET hold=?2, hold_reason=?3, hold_at=?4, updated_at=?4, version=version+1 WHERE id=?1",
                      rusqlite::params![task_id, hold, reason, ids::now_ms()])?;
     w.update("tasks", task_id, serde_json::json!({"hold": hold, "holdReason": reason}))
@@ -366,7 +370,8 @@ fn set_fields(w: &Writer, task_id: &str, sql_set: &str, params: &[&dyn rusqlite:
 ///   it stays. A card a run moves into Review is assigned to the person who reviews; one it moves elsewhere loses its
 ///   agent assignee, so the next column's agents pick it up.
 /// - `qa_fail` sends it back to the column it came from, to the agent that built it; three bounces hold it.
-/// - `needs_decision` holds it where it is.
+/// - `needs_decision` holds it where it is. The Team Lead looks at the question first when it can (GA-70,
+///   `questions::hand_over_in`, then `GateResult::lead`): the card stays out of the Inbox until it answers or asks you.
 /// Cards a person moved to Backlog, Done or Cancelled while the agent worked stay where they are, and a Deploy card
 /// moves only on `deployed`. GA-32's DevOps rules hold: a DevOps run never sends a card to QA (`ready_for_testing`
 /// outside Deploy ends in Review) and doesn't make the DevOps Agent the card's implementer, and `deployed` outside a
@@ -476,6 +481,10 @@ pub fn apply_outcome_with(db: &Db, run_id: &str, outcome: Option<&Outcome>, run_
                     };
                     set_hold(w, &task_id, "needs_decision", &reason)?;
                     g.hold = Some("needs_decision".into());
+                    // GA-70: the Team Lead looks at the question first when it can; the card stays out of the Inbox meanwhile.
+                    if o.outcome == "needs_decision" {
+                        g.lead = crate::questions::hand_over_in(w, run_id, &task_id, &agent, &role, run_for_me)?;
+                    }
                 }
             },
             None => {
@@ -519,7 +528,7 @@ pub fn hold_unpushed_with(db: &Db, run_id: &str, outcome: Option<&Outcome>, run_
         task_row(w.conn(), &task_id)?;
         record_verdict(w, run_id, &run.agent_id, &task_id, outcome, run_for_me)?;
         set_hold(w, &task_id, "blocked", reason)?;
-        Ok(GateResult { moved_to: None, hold: Some("blocked".into()) })
+        Ok(GateResult { moved_to: None, hold: Some("blocked".into()), lead: None })
     })
 }
 

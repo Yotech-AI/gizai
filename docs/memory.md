@@ -92,7 +92,10 @@ block (`-----BEGIN … PRIVATE KEY-----`) or an API token (`sk-…`, `ghp_…` a
 The Team Lead's tools: `memory_list`, `memory_search`, `memory_read`, `memory_write` (a whole note, with the version it
 read; a new path makes the note), `memory_append` (under a heading, without rewriting the note) and `memory_move` (move
 or copy, rewriting links). `memory_read`, `memory_append` and `memory_move` find a note by its path, its title (as a
-wikilink does) or its id. It sees every scope, and the activity feed shows it as the author.
+wikilink does) or its id. It sees every scope, and the activity feed shows it as the author. Once a chat answer has used
+a tool from outside Gizai (another MCP server, the web, the browser), `memory_write`, `memory_append` and `memory_move`
+are refused for the rest of that answer, like its other tools that act: it proposes the note, and saves it once you
+confirm in a new message.
 
 Every chat answer and every board check has the Team Lead's Memory block at the end of its system prompt, in old chats
 and new ones: its own notes (`Team Lead/`, `Notes` first) in full, at most **6,000 characters** (a note that doesn't fit
@@ -125,11 +128,60 @@ characters. A result line without `learned` parses as before.
 
 The task page's Runs tab lists the notes a run was given, with their size (and how much was shown when one was cut).
 
+## Agents ask the Team Lead first (GA-70)
+
+When a task agent ends its run with `needs_decision`, the Team Lead looks at the question before you
+(`gizai_core::questions`, the app's `ask_lead`):
+
+1. **Who gets it.** The Team Lead takes it when the step is on (Settings → Runs → Ask the Team Lead first, on by default),
+   agents aren't paused in Settings, the Team Lead (the agent with Chat on) is active, runs on a Claude Code CLI and is
+   under its monthly budget, the asking agent isn't the Team Lead and its CLI can continue a session, and the limits allow
+   it: one try per question, two per card, and the question right after a Team Lead answer goes to you (no loops; the
+   board check leaves such a question to you as well, and the Runs tab says which limit sent it). Otherwise, and for a
+   `run_for_me` request, a gate's hold (QA bounces, an answer the role can't give) or a failed push,
+   the card goes to the Inbox as before.
+2. **Meanwhile.** The card stays on hold `needs_decision` but is "with the Team Lead": not in the Inbox (`tasks::needs_you`
+   and the UI's `needsYou`), no notification, and the board check leaves it out. The card's Hold row says With the Team
+   Lead.
+3. **The Team Lead's run on the question** (trigger `question`, role lead, no card of its own, so the card's latest run
+   stays the agent's): a fresh session with the question, the card, its description, acceptance criteria and last
+   comments, and its Memory block. It only reads: memory, the card and the project's docs through the gizai tools (the
+   tools that change things are refused), and its copies of the code with Read, Glob and Grep. Its rules: always leave
+   money, scope, deadlines, messages to clients, security, deleting and anything it can't find in memory or on the card to
+   you. It ends with a result line:
+
+   ```
+   GIZAI_RESULT: {"outcome":"answered","answer":"…","memory":{"path":"Standards/Exports","text":"…"}}
+   GIZAI_RESULT: {"outcome":"escalated","reason":"…","options":["…","…"],"advice":"…"}
+   ```
+
+4. **Answered:** the answer is kept in memory as the Team Lead's, with the card's identifier (so it links to the card): as
+   a dated line in the shared note the result names, else in `Decisions/<project name>` (made with `type: decision` and
+   `project:`, so the agents on that project's cards get it). Then the agent's session continues with the answer as the
+   Team Lead's Continue note (GA-31), which is also its comment on the card. A start that only has to wait (Runs at once
+   full, the agent paused or over its budget) is tried again every 30 seconds for ten minutes, with the card still with
+   the Team Lead.
+5. **Escalated**, and also a failed or timed-out run, one without its result line, or an answer the agent can't be
+   continued with: the Team Lead's comment "Needs <you>: why", the options and its advice, and the hold's reason becomes
+   "Team Lead escalated to you: why", in the Inbox (it notifies as a new hold). A question still with the Team Lead when
+   Gizai stops goes to you at the next start. A later Continue doesn't count the Team Lead's comment as an answer. When the
+   Team Lead can't run here at all (no gizai-mcp helper, its CLI not found), the question goes to you as before, without
+   a comment, and the Runs tab says why.
+6. **Your answer.** When the agent starts again on a card whose question the Team Lead escalated, the comments people
+   wrote since are kept in `Decisions/<project name>` as the Team Lead's, with the card, once per question.
+
+The question's record is kept under `lead` in the asking run's `outcome_json` (state `asking`, `answering`, `answered`,
+`escalated`, `dropped` when you took the card over first, `skipped`, or `limit`), and the Team Lead's run is stored with trigger `approval` and
+read as `question`: no new columns. The Runs tab shows on the asking run who answered, the answer or the reason, and what
+the Team Lead's look cost; that cost counts toward the Team Lead's budget. The Team Lead's agent page lists its runs on
+questions with their cards.
+
 ## Switches
 
 - **Use memory** in an agent's form (on by default): off, its runs get no Memory section and its `learned` lines are not
   kept (for the Team Lead: no notes in chat and board checks either).
 - **Settings → Runs → Use memory** (on by default): off for every agent. The Team Lead's memory tools still work.
+- **Settings → Runs → Ask the Team Lead first** (on by default): off, an agent's question puts its card in the Inbox at once.
 
 ## The Memory page
 
@@ -163,6 +215,6 @@ opens. With no Team Lead yet it shows **Shared notes** and *Set up the Team Lead
 
 ## Not yet
 
-The graph (GA-69), asking the Team Lead before a person (GA-70), an export to a folder for
-Obsidian, deleting notes, a tool for task agents to ask in the middle of a run, semantic search, a review pass.
+The Memory page (GA-68), the graph (GA-69), an export to a folder for Obsidian, deleting notes, a tool for task agents to
+ask in the middle of a run, semantic search, a review pass.
 Notes an agent kept in its CLI's own memory (like Claude Code's memory folder) are not moved over.

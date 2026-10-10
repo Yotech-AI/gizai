@@ -51,6 +51,17 @@ pub fn list(db: &Db) -> Result<Vec<Cli>> {
     Ok(out)
 }
 
+/// The kind of the CLI with this id (empty: the built-in Claude Code), on a connection that is open already (inside a
+/// write); None when there is no such CLI.
+pub(crate) fn kind_in(c: &rusqlite::Connection, id: &str) -> Result<Option<String>> {
+    let id = if id.trim().is_empty() { CLAUDE_CODE } else { id.trim() };
+    if id == CLAUDE_CODE {
+        return Ok(Some("claude_code".into()));
+    }
+    let added = settings::get_in::<Vec<Cli>>(c, KEY)?.unwrap_or_default();
+    Ok(added.into_iter().find(|x| x.id == id).map(|x| x.kind))
+}
+
 /// The CLI with this id; empty means the built-in Claude Code.
 pub fn get(db: &Db, id: &str) -> Result<Cli> {
     let id = if id.trim().is_empty() { CLAUDE_CODE } else { id.trim() };

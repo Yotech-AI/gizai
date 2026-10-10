@@ -2,6 +2,8 @@
 //! tab. Runs use the fake Claude Code, never the real one: FAKE_COMMIT_TWICE in the card makes it commit twice.
 // Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
 #![cfg(unix)]
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -137,6 +139,7 @@ async fn a_card_run_a_previous_gizai_left_running_saves_where_it_ended_at_start_
     git(Path::new(&wt), &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "Left behind"]);
     drop(st);
 
+    data_lock::released(&tmp.path().join("data")).await;
     let st = gizai_lib::test_state(tmp.path());
     let run = gizai_core::runs::get(&st.db, &left).unwrap();
     assert_eq!((run.status.as_str(), run.error.as_deref()), ("failed", Some("interrupted")));

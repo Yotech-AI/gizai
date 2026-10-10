@@ -585,11 +585,75 @@ export async function chatProbe(listTitles: () => Promise<string[]>) {
   const thread = window.location.hash.startsWith("#/chat/");
   const listed = !!document.querySelector(".chat-threads .th.on");
   const first = onTeam && name === "Team Lead" && chatOn && agentPage && !!card && reply && made && thread && listed;
+  const layout = await composerLayoutProbe();
   const runsOn = await runsOnAndQueueProbe();
   const linksAndFiles = await chatPickerAndFilesProbe();
-  const ok = first && runsOn.ok && linksAndFiles.ok;
+  const ok = first && layout.ok && runsOn.ok && linksAndFiles.ok;
   return { ok, on_team: onTeam, name, chat_on: chatOn, agent_page: agentPage, tool_card: card?.textContent, reply, task_made: made, thread_url: thread,
-    thread_listed: listed, runs_on: runsOn, links_and_files: linksAndFiles };
+    thread_listed: listed, composer_layout: layout, runs_on: runsOn, links_and_files: linksAndFiles };
+}
+
+const rectOf = (el: Element | null | undefined) => el?.getBoundingClientRect();
+const round = (n: number | undefined) => (n === undefined ? undefined : Math.round(n * 10) / 10);
+/** How wide `text` is in `el`'s font (the select's), in px. */
+function textWidth(el: Element, text: string) {
+  const cs = getComputedStyle(el);
+  const ctx = document.createElement("canvas").getContext("2d")!;
+  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  return ctx.measureText(text).width;
+}
+
+/** GA-83, in a chat that has answered once, in the 1280x720 window: the composer is one rounded box with the text on top, two
+ * lines high when empty, and under it, inside the box, one 28px row: + lined up with the text's left edge, the three tips
+ * on one line, Runs on as wide as the picked CLI's name (not its longest option), and Send lined up with the text's right
+ * edge. No hint row under the box. A press on the tips or the box's edge puts the cursor in the text. */
+async function composerLayoutProbe() {
+  const sel = await waitFor(() => { const p = picker(); return p && !p.disabled && !document.querySelector(".composer-box .stop-btn") ? p : null; }, 8000);
+  const boxEl = document.querySelector(".composer-box") as HTMLElement | null;
+  if (!sel || !boxEl) return { ok: false, error: "no idle composer with Runs on" };
+  const oneBox = document.querySelectorAll(".composer-box").length === 1 && boxEl.parentElement?.lastElementChild === boxEl
+    && [...document.querySelectorAll(".composer-foot, .composer-hint, .runs-on")].every((e) => boxEl.contains(e));
+  const radius = parseFloat(getComputedStyle(boxEl).borderTopLeftRadius);
+  const editor = rectOf(boxEl.querySelector(".composer-editor"))!;
+  const line = boxEl.querySelector(".cm-line") as HTMLElement | null;
+  const textLeft = (rectOf(line)?.left ?? NaN) + parseFloat(line ? getComputedStyle(line).paddingLeft : "0");
+  const foot = rectOf(boxEl.querySelector(".composer-foot"))!;
+  const plus = rectOf(boxEl.querySelector(".composer-plus"))!;
+  const send = rectOf(boxEl.querySelector('button[aria-label="Send"]'))!;
+  const hint = rectOf(boxEl.querySelector(".composer-hint"))!;
+  const label = rectOf(sel.closest(".runs-on"))!;
+  const pick = rectOf(sel)!;
+  const plusAligned = Math.abs(plus.left - editor.left) <= 1 && Math.abs(plus.left - textLeft) <= 3;
+  const sendAligned = Math.abs(send.right - editor.right) <= 1;
+  const under = foot.top >= editor.bottom - 0.5;
+  const mid = (r: DOMRect) => r.top + r.height / 2;
+  const oneRow = foot.height <= 29 && label.height <= 29 && [plus, pick, send, hint].every((r) => Math.abs(mid(r) - mid(foot)) <= 1)
+    && plus.height === 28 && send.height === 28 && pick.height === 28;
+  const tips = [...boxEl.querySelectorAll(".composer-hint > span")].map((s) => ({ text: textOf(s), r: rectOf(s)! }));
+  const shownTips = tips.filter((t) => t.r.top < hint.bottom - 1 && t.r.right <= hint.right + 0.5).map((t) => t.text);
+  const tipsOneLine = shownTips.length === 3 && tips.every((t) => Math.abs(t.r.top - tips[0]!.r.top) <= 0.5);
+  const content = boxEl.querySelector(".cm-content") as HTMLElement;
+  const lines = rectOf(content)!.height / parseFloat(getComputedStyle(content).lineHeight);
+  const twoLines = lines > 1.8 && lines < 2.2;
+  // Runs on: the select is its name plus its padding and border (8 + 26 + 2 px), well under its longest option.
+  const options = [...sel.options].map((o) => o.textContent ?? "");
+  const nameW = textWidth(sel, sel.selectedOptions[0]?.textContent ?? "");
+  const widestW = Math.max(...options.map((o) => textWidth(sel, o)));
+  const fitsName = Math.abs(pick.width - (nameW + 36)) <= 3 && pick.width < widestW + 36 - 20;
+  // A press on the first tip, then on the box's own edge, focuses the text and keeps the press from doing anything else.
+  const pressFocuses = (el: Element) => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    const quiet = !el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    return quiet && content.contains(document.activeElement);
+  };
+  const tipFocuses = pressFocuses(boxEl.querySelector(".composer-hint > span")!);
+  const edgeFocuses = pressFocuses(boxEl);
+  const ok = oneBox && radius >= 14 && plusAligned && sendAligned && under && oneRow && tipsOneLine && twoLines && fitsName && tipFocuses && edgeFocuses;
+  return { ok, one_box: oneBox, radius, plus_aligned: plusAligned, send_aligned: sendAligned, row_under_text: under, one_row: oneRow, tips_one_line: tipsOneLine,
+    shown_tips: shownTips, empty_lines: round(lines), runs_on_fits_name: fitsName, tip_focuses: tipFocuses, edge_focuses: edgeFocuses,
+    px: { box: [round(rectOf(boxEl)?.left), round(rectOf(boxEl)?.right), round(rectOf(boxEl)?.height)], editor: [round(editor.left), round(editor.right), round(editor.height)],
+      text_left: round(textLeft), plus: [round(plus.left), round(plus.height)], send: [round(send.right), round(send.height)], foot_h: round(foot.height),
+      hint_w: round(hint.width), runs_on: [round(pick.width), round(nameW), round(widestW)] } };
 }
 
 const enter = (el: HTMLElement) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true, cancelable: true }));
@@ -612,6 +676,9 @@ async function chatPickerAndFilesProbe() {
   const plus = document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null;
   if (!idle || !plus) return { ok: false, error: "no idle composer or no + button" };
   const threadId = window.location.hash.slice("#/chat/".length);
+  // GA-83: the empty text box's height (two lines), which it gets back after a send.
+  const cmHeight = () => rectOf(document.querySelector(".composer-editor .cm-editor"))?.height ?? NaN;
+  const emptyH = cmHeight();
   plus.click();
   const menu = await waitFor(() => document.querySelector('.composer-box .pop.up[role="menu"]') as HTMLElement | null, 2000);
   const items = menu ? textsOf("button", menu) : [];
@@ -638,6 +705,8 @@ async function chatPickerAndFilesProbe() {
   enter(content);
   const sentChip = await waitFor(() => [...document.querySelectorAll(".chat-msg.user:not(.queued) .bubble a.item-chip.kind-task")].pop() as HTMLElement | null, 4000);
   const cleared = !!(await waitFor(() => (docOf(composer()!) === "" ? true : null), 3000));
+  await sleep(100);
+  const sentBackToTwo = Math.abs(cmHeight() - emptyH) <= 1;
   await waitFor(() => (!document.querySelector(".composer-box .stop-btn") && !document.querySelector(".chat-working") ? true : null), 15000);
 
   // Files, dropped the way Tauri reports a native drop: physical pixels over the Chat page.
@@ -655,6 +724,9 @@ async function chatPickerAndFilesProbe() {
   const dropState = textOf(await waitFor(() => document.querySelector(".chat-main.dropping .chat-drop"), 2000));
   await emit("tauri://drag-drop", { paths: [file, data], position });
   const chips = await waitFor(() => { const n = textsOf(".composer-box .files.compact li b"); return n.length ? n : null; }, 4000);
+  // GA-83: the chips sit above the text, inside the box.
+  const chipsAbove = (rectOf(document.querySelector(".composer-box .files.compact"))?.bottom ?? Infinity)
+    <= (rectOf(document.querySelector(".composer-box .composer-editor"))?.top ?? -Infinity) + 0.5;
   const dropGone = !document.querySelector(".chat-drop");
   const refused = textOf(await waitFor(() => document.querySelector(".chat-composer .chat-banner.warn"), 2000));
   (document.querySelector('.composer-box button[aria-label="Remove gizai.db"]') as HTMLButtonElement | null)?.click();
@@ -681,6 +753,8 @@ async function chatPickerAndFilesProbe() {
   const grows = oneLine < 60 && tall > 150 && tall <= 201 && scroller.scrollHeight > scroller.clientHeight + 20 && sentCount() === before + 2;
   const view = EditorView.findFromDOM(box)!;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+  await sleep(100);
+  const shrinks = sentBackToTwo && Math.abs(cmHeight() - emptyH) <= 1;
 
   // While the Team Lead is paused: the text box, + and drops are off.
   const leadId = (await listChatThreads()).find((t) => t.id === threadId)?.agentId ?? "";
@@ -715,8 +789,8 @@ async function chatPickerAndFilesProbe() {
     && typedAt && pickerUp && !!tasks && enterLinks && chipInBox && twoLines && !!sentChip && cleared
     && dropState === "Drop to add to this message" && JSON.stringify(chips) === '["gizai.db"]' && dropGone && refused.includes("is a folder, not a file") && removed
     && JSON.stringify(again) === '["gizai.db"]' && textOf(sentFile) === "gizai.db" && chipsCleared && saved?.files?.[0]?.name === "gizai.db"
-    && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk;
-  return { ok, grows: { ok: grows, one_line: oneLine, tall }, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
+    && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk && chipsAbove && shrinks;
+  return { ok, grows: { ok: grows, one_line: oneLine, tall, back_to_two_lines: shrinks, sent_back_to_two_lines: sentBackToTwo, empty: emptyH }, chips_above_text: chipsAbove, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
     no_drop: noDrop, on_again: on }, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
     enter_links_without_sending: enterLinks, chip_in_box: chipInBox, shift_enter_new_line: twoLines, sent_chip: sentChip?.textContent, cleared,
     drop_state: dropState, chips, drop_state_gone: dropGone, refused, removed, dropped_again: again, sent_file: textOf(sentFile), chips_cleared: chipsCleared,
@@ -738,6 +812,7 @@ async function runsOnAndQueueProbe() {
   const onLead = sel.value === "claude_code" && !sel.disabled;
   const cc2 = options.find((o) => o.name === "Claude Code 2" && !o.disabled);
   const codexOff = options.some((o) => o.name.startsWith("Codex") && o.disabled && o.name.includes("the chat runs on Claude Code only"));
+  const widthBefore = sel.getBoundingClientRect().width;
   sel.focus();
   sel.click();
   if (cc2) pickOption(sel, cc2.value);
@@ -745,6 +820,11 @@ async function runsOnAndQueueProbe() {
   let saved = false;
   for (let i = 0; i < 40 && !saved && cc2; i++) { await sleep(100); saved = (await listChatThreads()).find((t) => t.id === threadId)?.cli === cc2.value; }
   const shows = picker()?.value === cc2?.value;
+  // GA-83: Runs on's width follows the picked name ("Claude Code 2" is wider than "Claude Code" by the " 2").
+  await sleep(100);
+  const widthAfter = picker()?.getBoundingClientRect().width ?? 0;
+  const grew = textWidth(sel, "Claude Code 2") - textWidth(sel, "Claude Code");
+  const follows = Math.abs(widthAfter - widthBefore - grew) <= 2;
 
   const box = composer();
   if (!box) return { ok: false, error: "no composer" };
@@ -753,17 +833,34 @@ async function runsOnAndQueueProbe() {
   enter(box);
   const answering = !!(await waitFor(() => document.querySelector(".composer-box .stop-btn"), 4000));
   const locked = !!picker()?.disabled;
+  // GA-83: while it answers, Runs on is greyed with why, the tip says Enter queues, and Stop shows before Queue (once typed).
+  const lockedSel = picker();
+  const lockedLook = lockedSel ? { title: (lockedSel.closest(".runs-on") as HTMLElement | null)?.title, border: getComputedStyle(lockedSel).borderTopColor,
+    color: getComputedStyle(lockedSel).color } : null;
+  const lockedWhy = !!lockedLook?.title?.startsWith("Runs on can change when this answer is done");
+  const queuesTip = textOf(document.querySelector(".composer-hint > span")) === "Enter queues";
   const box2 = composer();
-  if (box2) { typeIn(box2, "and one more thing"); await sleep(50); enter(box2); }
+  let stopFirst = false;
+  if (box2) {
+    typeIn(box2, "and one more thing");
+    await sleep(50);
+    const stop = rectOf(document.querySelector(".composer-box .stop-btn"));
+    const queueBtn = rectOf(document.querySelector('.composer-box button[aria-label="Queue"]'));
+    stopFirst = !!stop && !!queueBtn && stop.right <= queueBtn.left && Math.abs(stop.top - queueBtn.top) <= 1;
+    enter(box2);
+  }
   const queued = !!(await waitFor(() => [...document.querySelectorAll(".chat-queue .chat-msg.queued")].find((e) =>
     (e.textContent ?? "").includes("and one more thing") && (e.textContent ?? "").includes("Queued: goes when this answer is done")) || null, 3000));
   const notYet = !userSaid("and one more thing");
   const went = !!(await waitFor(() => (!document.querySelector(".chat-queue") && userSaid("and one more thing") ? true : null), 15000));
   const done = !!(await waitFor(() => (!document.querySelector(".composer-box .stop-btn") ? true : null), 10000));
   const note = [...document.querySelectorAll(".chat-note")].some((e) => (e.textContent ?? "").includes("Now on Claude Code 2."));
-  const ok = right && onLead && !!cc2 && codexOff && saved && shows && answering && locked && queued && notYet && went && done && note;
+  const ok = right && onLead && !!cc2 && codexOff && saved && shows && answering && locked && queued && notYet && went && done && note
+    && follows && lockedWhy && queuesTip && stopFirst;
   return { ok, right_of_hints: right, on_lead: onLead, options, codex_disabled: codexOff, saved, shows, answering, locked_while_answering: locked,
-    queued, not_sent_yet: notYet, went_after: went, answer_done: done, switch_note: note };
+    queued, not_sent_yet: notYet, went_after: went, answer_done: done, switch_note: note,
+    width_follows_name: { ok: follows, before: round(widthBefore), after: round(widthAfter), text_grew: round(grew) }, locked_why: lockedWhy, locked_look: lockedLook,
+    enter_queues_tip: queuesTip, stop_before_queue: stopFirst };
 }
 
 const DAY = 86_400_000;

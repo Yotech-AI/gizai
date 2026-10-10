@@ -99,6 +99,17 @@ fn devops_keeps_a_projects_deploy_note_in_gizais_memory_not_in_claude_codes() {
 }
 
 #[test]
+fn the_lead_folds_a_devops_agents_learned_lines_into_the_projects_deploy_note() {
+    // GA-85 round 3: the DevOps role reports a deploy's changes as learned lines; the Team Lead folds them into the note.
+    let lead = role_template("lead");
+    let line = lead.lines().find(|l| l.starts_with("- Fold a DevOps agent's learned lines")).unwrap_or_else(|| panic!("{lead}"));
+    for want in ["about a deploy", "Deployments/<KEY>", "project: <KEY>", "applies_to: devops", "from its summary when there is none yet"] {
+        assert!(line.contains(want), "{want}: {line}");
+    }
+    assert!(!lead.contains("MEMORY.md"), "{lead}");
+}
+
+#[test]
 fn design_is_the_frontend_text_with_its_own_name_and_job() {
     let d = role_template("design");
     let (first, _) = d.split_once('\n').unwrap();

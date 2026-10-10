@@ -1,7 +1,7 @@
 // An agent's page (Paperclip's agent page): who it is, what it is doing, how its runs went, and its settings.
 import { useState } from "react";
-import { Check, CircleAlert, MessagesSquare, Pause, Pencil, Play, Plus, X } from "lucide-react";
-import { agentNextTask, agentRuns, agentStats, getAgent, getTeam, listTasks, setAgentStatus, startRun } from "../api";
+import { Check, CircleAlert, MessagesSquare, NotebookText, Pause, Pencil, Play, Plus, X } from "lucide-react";
+import { agentNextTask, agentNotes, agentRuns, agentStats, getAgent, getTeam, listTasks, setAgentStatus, startRun } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -58,6 +58,8 @@ export function AgentPage({ id }: { id: string }) {
   const { data: tasks } = useData(() => listTasks({}));
   const [teamId] = useCurrentTeam();
   const { data: team } = useData(() => getTeam(teamId), [teamId]);
+  // Its own notes in Memory (GA-19): Team Lead/Notes for the Team Lead, Agents/<name>/Notes for another agent.
+  const { data: notes } = useData(() => agentNotes(id).catch(() => null), [id]);
   const live = useLiveRuns().filter((r) => r.agentId === id);
   const open = useDrawer();
   const [msg, setMsg] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export function AgentPage({ id }: { id: string }) {
               <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""}{agent.chatEnabled && agent.boardCheckMinutes ? ` · checks the board every ${agent.boardCheckMinutes} min` : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""}{onColumns}</p></div>
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
+              {notes && <a className="btn" href={href({ page: "doc", id: notes.id })} title={`Memory: ${notes.path}`}><NotebookText className="icon" />Notes</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>
               <BusyButton className="btn" pending={pending} name="run" busyLabel="Starting…" icon={<Play className="icon" />} onClick={runNext} disabled={state !== "idle"}>Run</BusyButton>
               <button className="btn" onClick={() => setAgentStatus(id, agent.status === "active" ? "paused" : "active").catch((e) => setMsg(String(e)))}>

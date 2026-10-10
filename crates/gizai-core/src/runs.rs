@@ -13,7 +13,7 @@ const COLS: &str = "r.id, r.agent_actor_id, a.name, r.task_id, r.role_key, r.tri
                     r.started_at, r.ended_at, COALESCE(r.cost_usd_micros,0), COALESCE(r.input_tokens,0), COALESCE(r.output_tokens,0),
                     r.branch, r.worktree_path, r.session_id, r.error, r.log_path, r.pid, r.base_sha, r.adapter, r.head_sha,
                     COALESCE((SELECT f.refused_json FROM run_refusals f WHERE f.run_id = r.id), '[]'), r.nudged,
-                    json_extract(r.outcome_json, '$.run_for_me')";
+                    json_extract(r.outcome_json, '$.run_for_me'), r.memory_json";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
     let nudged = r.get::<_, i64>(25)? != 0;
@@ -26,6 +26,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Run> {
         refused: serde_json::from_str(&r.get::<_, String>(24)?).unwrap_or_default(),
         nudged,
         run_for_me: commands_of(r.get(26)?),
+        memory: r.get::<_, Option<String>>(27)?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
     })
 }
 

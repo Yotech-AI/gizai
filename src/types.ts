@@ -94,6 +94,8 @@ export type Member = {
   cliTools?: CliTools;
   /** Its runs get a Memory section and its learned lines are kept (on when absent). */
   useMemory?: boolean;
+  /** The agent whose memory folder it shares, the group's owner (GA-96); null or absent: its own folder. */
+  sharesMemoryWith?: string | null;
 };
 /** A folder an agent's file tools may use besides its worktree: "read", or "change" (read and change). */
 export type AgentFolder = { path: string; access: "read" | "change" };
@@ -131,6 +133,9 @@ export type AgentInput = {
   folders?: AgentFolder[] | null;
   /** Memory for its runs; null/absent: on for a new agent, unchanged on update. */
   useMemory?: boolean | null;
+  /** The id of the agent whose memory folder it shares (that agent's group's owner when it shares one; never the Team
+   *  Lead), "" for its own folder (GA-96); null/absent: its own folder for a new agent, unchanged on update. */
+  sharesMemoryWith?: string | null;
 };
 /** A column's category: its name can change, the gates key off this. Deploy: merged, not deployed yet (worked by you). */
 export type StateCategory = "backlog" | "ready" | "in_progress" | "testing" | "review" | "deploy" | "done" | "cancelled";

@@ -11,6 +11,7 @@ pub mod comments;
 pub mod sortkey;
 pub mod team;
 pub mod docs;
+pub mod memory;
 pub mod files;
 pub mod runs;
 pub mod usage;

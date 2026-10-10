@@ -34,3 +34,23 @@ pub fn parse(final_text: &str) -> Option<Outcome> {
     let o: Outcome = serde_json::from_str(line["GIZAI_RESULT:".len()..].trim()).ok()?;
     OUTCOMES.contains(&o.outcome.as_str()).then_some(o)
 }
+
+/// At most this many `learned` lines are kept from one result.
+pub const MAX_LEARNED: usize = 20;
+
+/// Memory (GA-19): the optional `learned` list on the last result line that `parse` accepts, the short lines the agent
+/// wants kept in its own notes. A single string counts as a list of one; blank entries, other values and a result line
+/// without the list give nothing. Apart from `Outcome`, so a result line parses as it always did.
+pub fn learned(final_text: &str) -> Vec<String> {
+    if parse(final_text).is_none() {
+        return vec![];
+    }
+    let Some(line) = final_text.lines().rev().map(str::trim_start).find(|l| l.starts_with("GIZAI_RESULT:")) else { return vec![] };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line["GIZAI_RESULT:".len()..].trim()) else { return vec![] };
+    let list = match v.get("learned") {
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        Some(serde_json::Value::Array(items)) => items.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+        _ => vec![],
+    };
+    list.into_iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).take(MAX_LEARNED).collect()
+}

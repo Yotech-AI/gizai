@@ -16,6 +16,7 @@
 # can change things while the run is still live.
 # FAKE_RUN_FOR_ME in the prompt finishes like run-for-me: a needs_decision whose result line asks the user to run two
 # commands (`run_for_me`, GA-31). FAKE_ASKS finishes like run-asks: a needs_decision without them (an older result line).
+# FAKE_LEARNED in the prompt finishes like run-learned: run-ok with two `learned` lines on its result line (GA-19).
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -41,6 +42,7 @@ fixture="$here/fixtures/run-ok.jsonl"
 case "$prompt" in *FAKE_REFUSED*) fixture="$here/fixtures/run-refused.jsonl" ;; esac
 case "$prompt" in *FAKE_NO_RESULT*) fixture="$here/fixtures/run-no-result.jsonl" ;; esac
 case "$prompt" in *FAKE_RUN_FOR_ME*) fixture="$here/fixtures/run-for-me.jsonl" ;; *FAKE_ASKS*) fixture="$here/fixtures/run-asks.jsonl" ;; esac
+case "$prompt" in *FAKE_LEARNED*) fixture="$here/fixtures/run-learned.jsonl" ;; esac
 if [ -n "${FAKE_NO_RESULT:-}" ]; then fixture="$here/fixtures/run-no-result.jsonl"; fi
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
 case "$prompt" in *FAKE_REFUSED_THEN_HANG*) prompt=refusedhang ;; esac

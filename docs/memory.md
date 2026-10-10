@@ -245,7 +245,38 @@ opens. With no Team Lead yet it shows **Shared notes** and *Set up the Team Lead
   agent, a person) and the run's card when a run did, filtered by Everyone, Agents or You; or, with no notes yet, what
   memory is.
 
+## The graph (GA-69)
+
+**Notes | Graph** at the top of the Memory page switches to the graph of the page's notes and what they link to and
+name (`#/memory/graph`, `#/memory/shared/graph`, `#/memory/agent/<agent id>/graph`): an agent's page or the shared
+page leaves out the other folders' notes and the cards, agents and missing notes only those name. With a note open,
+**Open local graph** (next to the panel's button) shows that note and its neighbours in the panel's place, and follows
+the note that is open.
+
+- **What it shows** (`src/lib/graph.ts`, `buildGraph`): each note is a dot, each link a line: `[[wikilinks]]` and
+  embeds, card references (`KADE-12`), `@mentions`, the @ picker's links and the `client:` and `project:` properties.
+  A dot grows with its links. A link to a note that doesn't exist yet ends at a dim dot. The cards, projects, clients,
+  agents and people notes name are dots of their own shape and colour, and tags are dots when *Tags* is on.
+- **Using it:** pointing at a dot lights it and its links up in the blue accent and dims the rest; a click opens it (a
+  note; New note for a dim dot; a tag's notes in the tree; a card's, project's, client's or agent's page). Drag a dot
+  and the layout follows; the wheel zooms and dragging the background pans; labels fade in as you zoom. The keyboard:
+  the arrow keys go from dot to dot and list that dot's connections, Enter opens it, + and - zoom and 0 fits the graph
+  in view. The local graph lists its note's connections under it.
+- **Settings** (the panel over the graph's corner, kept on this computer like the Memory page's other settings, the
+  global graph's and the local graph's each their own): *Filters*, a search like Memory's (words, `"phrases"`, `path:`
+  and `tag:`; a matching note keeps what it links to), Tags, Orphans, Existing notes only, and each kind of dot; for the
+  local graph also its depth (1 to 5) and incoming and outgoing links. *Groups*: a note gets the colour of the first
+  group whose query it matches; it starts with one group per top folder. *Display*: arrows, text fade threshold, node
+  size, link thickness, and *Animate*, which replays the graph growing in the order the notes were made. *Forces*:
+  centre, repel, link force, link distance. The restore button puts them back.
+- **The look:** the app's background and fonts, grey dots, thin low-contrast lines, the accent for what you point at
+  and the open note; group and kind colours come from a calm palette without teal or magenta. The layout is d3-force
+  (ISC licence) and settles in a couple of seconds; with reduced motion it is worked out at once and doesn't move.
+
 ## Not yet
 
+An export to a folder for Obsidian, deleting notes, a tool for task agents to ask in the middle of a run, semantic
+search, a review pass.
+Notes an agent kept in its CLI's own memory (like Claude Code's memory folder) are not moved over.
 The graph (GA-69), an export to a folder for Obsidian, deleting notes, a tool for task agents to ask in the middle of a
 run, semantic search, a review pass.

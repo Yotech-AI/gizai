@@ -134,3 +134,29 @@ describe("Memory page (GA-68)", () => {
     expect(parseHash("#/doc")).toEqual({ page: "projects" });
   });
 });
+
+describe("Memory graph (GA-69)", () => {
+  it("#/memory/graph, #/memory/shared/graph and #/memory/agent/<id>/graph are the graph of those notes", () => {
+    expect(parseHash("#/memory/graph")).toEqual({ page: "memory", view: "graph" });
+    expect(parseHash("#/memory/shared/graph")).toEqual({ page: "memory", scope: "shared", view: "graph" });
+    expect(parseHash("#/memory/agent/a1/graph")).toEqual({ page: "memory", scope: "a1", view: "graph" });
+  });
+  it("writes the graph's hash for each scope, without the note open last", () => {
+    expect(href({ page: "memory", view: "graph" })).toBe("#/memory/graph");
+    expect(href({ page: "memory", scope: "shared", view: "graph" })).toBe("#/memory/shared/graph");
+    expect(href({ page: "memory", scope: "a1", view: "graph" })).toBe("#/memory/agent/a1/graph");
+    expect(href({ page: "memory", scope: "a1", id: "n1", view: "graph" })).toBe("#/memory/agent/a1/graph");
+  });
+  it("round-trips the graph routes, and leaves a note's route a note's", () => {
+    const routes: Route[] = [
+      { page: "memory", view: "graph" },
+      { page: "memory", scope: "shared", view: "graph" },
+      { page: "memory", scope: "0192-agent", view: "graph" },
+      { page: "memory", scope: "a/1 #x", view: "graph" },
+      { page: "memory", id: "0192-graph" },
+      { page: "memory", scope: "shared", id: "graphs" },
+    ];
+    for (const r of routes) expect(parseHash(href(r)), JSON.stringify(r)).toEqual(r);
+    expect(parseHash("#/memory/agent/graph")).toEqual({ page: "memory", scope: "graph" });
+  });
+});

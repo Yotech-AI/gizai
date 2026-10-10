@@ -3,18 +3,22 @@
 // with the search (words, "phrases", path: and tag:) above it; in the centre the note (NotePane) or, with none open,
 // Recently changed (who wrote what, so agents' additions can be reviewed) or what memory is; on the right the note's
 // panel. #/memory shows every note (the Team Lead's view), #/memory/shared the shared folders and
-// #/memory/agent/<id> one agent's own folder (router.ts).
+// #/memory/agent/<id> one agent's own folder (router.ts). GA-69: Notes | Graph switches to the graph of those notes
+// (#/memory/graph and the like), and beside an open note the local graph can take the panel's place.
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import {
-  Brain, ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderOpen, FolderPlus, Hash, PanelRight, Pencil, Search, X,
+  Brain, ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderOpen, FolderPlus, Hash, PanelRight, Pencil, Search, Waypoints, X,
 } from "lucide-react";
 import { getTeam, listTasks, memoryCreate, memoryMove, memoryNotes, memoryRecent, memorySearch } from "../api";
 import { go, href, type Route } from "../router";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { relTime } from "../lib/format";
+import { openItem } from "../lib/openItem";
+import { GRAPH_DEFAULTS, parseGraphPrefs, type GraphNode, type GraphPrefs } from "../lib/graph";
+import { GlobalGraph, LocalGraph } from "../components/memory/MemoryGraph";
 import {
   AGENTS, buildTree, findFolder, folderOf, foldersTo, hasTag, highlight, inScope, isNoteFolder, isOwnFolder, LEAD, leadOf, linkedNote, memoryScope, moveTarget, newNotePath,
   notesIn, noteTemplate, NOTE_TYPES, rebase, scopedQuery, scopeRoots, searchWords, section, titleOf, titleProblem, today, TYPE_FOLDER, TYPE_HINT,
@@ -28,6 +32,10 @@ import type { MemoryChange, MemoryHit, MemoryNote } from "../types";
 const OPEN_KEY = "gizai.memory.open";
 const FOLDERS_KEY = "gizai.memory.folders";
 const PANEL_KEY = "gizai.memory.panel";
+/** The graph's settings panel, the global graph's and the local graph's (GA-69), kept with the other Memory settings. */
+const GRAPH_KEY = "gizai.memory.graph";
+/** The local graph is open beside a note. */
+const LOCAL_KEY = "gizai.memory.local";
 
 const readList = (key: string): string[] => { try { const v = JSON.parse(localStorage.getItem(key) ?? "[]"); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; } };
 const writeList = (key: string, list: string[]) => localStorage.setItem(key, JSON.stringify([...new Set(list)]));
@@ -91,43 +99,89 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
   };
   const current = route.id ? notes.find((n) => n.id === route.id) ?? null : null;
 
+  // ---- The graph (GA-69) ----
+  const graphOn = route.view === "graph";
+  const [prefs, setPrefs] = useState<GraphPrefs>(() => parseGraphPrefs(localStorage.getItem(GRAPH_KEY)));
+  const keepPrefs = (p: GraphPrefs) => { setPrefs(p); localStorage.setItem(GRAPH_KEY, JSON.stringify(p)); };
+  const [local, setLocal] = useState(() => localStorage.getItem(LOCAL_KEY) === "on");
+  const showLocal = (on: boolean) => { setLocal(on); localStorage.setItem(LOCAL_KEY, on ? "on" : "off"); };
+  // The note open last: Notes opens it again, and the graph shows it in the accent.
+  const lastNote = useRef<string | null>(null);
+  if (route.id) lastNote.current = route.id;
+  const scopeKey = JSON.stringify(scope);
+  const inPage = useMemo(() => (n: MemoryNote) => inScope(n, scope), [scopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** A dot opens what it is: a note; for a link that finds none, New note with its name; a tag shows its notes in the
+   *  tree; a card, project, client, agent or person its page. */
+  const openNode = (n: GraphNode) => {
+    if (n.kind === "note") { const note = notes.find((x) => x.id === n.ref); if (note) open(note); return; }
+    if (n.kind === "missing") { const path = n.path ?? newNotePath(n.ref, scopeRoots(scope)[0] ?? ""); setNewNote({ title: titleOf(path), folder: folderOf(path) }); return; }
+    if (n.kind === "tag") { setTag(n.ref); setQuery(""); go({ page: "memory", scope: route.scope, ...(lastNote.current ? { id: lastNote.current } : {}) }); return; }
+    openItem(n.kind === "card" ? "task" : n.kind, n.ref).catch((e) => setErr(String(e)));
+  };
+  const sidePanel = panel && !local;
+  const togglePanel = () => {
+    if (local) { showLocal(false); setPanel(true); localStorage.setItem(PANEL_KEY, "on"); return; }
+    setPanel(!panel); localStorage.setItem(PANEL_KEY, panel ? "off" : "on");
+  };
+
   return (
     <>
       <div className="topbar">
         <div className="crumbs">
           <a href={href({ page: "memory", scope: route.scope })}>Memory</a><span className="sep">/</span>
-          {current ? <>
+          {graphOn ? <>
+            <a href={href({ page: "memory", scope: route.scope })}>{scopeName}</a><span className="sep">/</span><b>Graph</b>
+          </> : current ? <>
             <a href={href({ page: "memory", scope: route.scope })}>{scopeName}</a><span className="sep">/</span>
             {folderOf(current.path).split("/").filter(Boolean).map((f, i) => <span key={i} className="crumb-part"><span>{f}</span><span className="sep">/</span></span>)}
             <b>{titleOf(current.path)}</b>
           </> : <b>{scopeName}</b>}
         </div>
         <div className="actions">
-          {route.id && (
-            <button className={`btn ghost icon-only mem-toggle${panel ? " on" : ""}`} aria-pressed={panel} aria-label={panel ? "Hide the note's panel" : "Show the note's panel"}
-              title={panel ? "Hide the note's panel" : "Show the note's panel"} onClick={() => { setPanel(!panel); localStorage.setItem(PANEL_KEY, panel ? "off" : "on"); }}>
+          {route.id && !graphOn && <>
+            <button className={`btn ghost icon-only mem-toggle${sidePanel ? " on" : ""}`} aria-pressed={sidePanel} aria-label={sidePanel ? "Hide the note's panel" : "Show the note's panel"}
+              title={sidePanel ? "Hide the note's panel" : "Show the note's panel"} onClick={togglePanel}>
               <PanelRight className="icon" />
             </button>
-          )}
+            <button className={`btn ghost icon-only mem-toggle${local ? " on" : ""}`} aria-pressed={local} aria-label={local ? "Close the local graph" : "Open local graph"}
+              title={local ? "Close the local graph" : "Open local graph: this note and its neighbours"} onClick={() => showLocal(!local)}>
+              <Waypoints className="icon" />
+            </button>
+          </>}
+          <div className="seg mem-views" role="group" aria-label="Show">
+            <button className={graphOn ? undefined : "on"} aria-pressed={!graphOn} title="The notes, in folders"
+              onClick={() => go({ page: "memory", scope: route.scope, ...(lastNote.current ? { id: lastNote.current } : {}) })}><FileText className="icon sm" />Notes</button>
+            <button className={graphOn ? "on" : undefined} aria-pressed={graphOn} title="The notes as dots and their links as lines"
+              onClick={() => go({ page: "memory", scope: route.scope, view: "graph" })}><Waypoints className="icon sm" />Graph</button>
+          </div>
           <button className="btn primary" onClick={() => setNewNote({ folder: current ? folderOf(current.path) : undefined })}><FilePlus className="icon" />New note</button>
         </div>
       </div>
       {(all.error || err) && <div className="error-banner" role="alert">{all.error ?? err}<button className="btn ghost sm" onClick={() => setErr(null)}>Dismiss</button></div>}
       <div className="split memory">
-        <Files scope={scope} scopeName={scopeName} notes={scoped} selected={route.id ?? null} tag={tag} onTag={setTag} query={query} onQuery={setQuery}
-          onOpen={open} onNewNote={(folder) => setNewNote({ folder })} onError={setErr} />
-        {route.id ? (
-          <NotePane key={route.id} id={route.id} notes={notes} scopeNotes={scoped} links={links} tagFilter={tag} onTag={setTag} panel={panel}
-            editing={fresh === route.id} heading={jump?.id === route.id ? jump.heading : undefined} />
-        ) : (
-          <div className="mem-note">
-            <div className="doc-in mem-home">
-              {all.data && scoped.length === 0
-                ? <MemoryEmpty scope={scope} onNew={() => setNewNote({})} />
-                : <RecentChanges scope={scope} youId={youId} onOpen={open} />}
+        {graphOn ? (
+          all.data && <GlobalGraph notes={notes} inScope={inPage} settings={prefs.global} onSettings={(g) => keepPrefs({ ...prefs, global: g })}
+            onReset={() => keepPrefs({ ...prefs, global: { ...GRAPH_DEFAULTS, panel: prefs.global.panel, open: prefs.global.open } })} onOpen={openNode} focus={lastNote.current} />
+        ) : <>
+          <Files scope={scope} scopeName={scopeName} notes={scoped} selected={route.id ?? null} tag={tag} onTag={setTag} query={query} onQuery={setQuery}
+            onOpen={open} onNewNote={(folder) => setNewNote({ folder })} onError={setErr} />
+          {route.id ? (
+            <NotePane key={route.id} id={route.id} notes={notes} scopeNotes={scoped} links={links} tagFilter={tag} onTag={setTag} panel={sidePanel}
+              editing={fresh === route.id} heading={jump?.id === route.id ? jump.heading : undefined} />
+          ) : (
+            <div className="mem-note">
+              <div className="doc-in mem-home">
+                {all.data && scoped.length === 0
+                  ? <MemoryEmpty scope={scope} onNew={() => setNewNote({})} />
+                  : <RecentChanges scope={scope} youId={youId} onOpen={open} />}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {route.id && local && all.data && (
+            <LocalGraph notes={notes} inScope={inPage} noteId={route.id} settings={prefs.local} onSettings={(l) => keepPrefs({ ...prefs, local: l })}
+              onReset={() => keepPrefs({ ...prefs, local: { ...GRAPH_DEFAULTS, panel: prefs.local.panel, open: prefs.local.open } })} onOpen={openNode} onClose={() => showLocal(false)} />
+          )}
+        </>}
       </div>
       {newNote && <NewNoteDrawer scope={scope} notes={notes} start={newNote} onClose={() => setNewNote(null)} onCreate={create} />}
       {hover && <NotePreview hover={hover} links={links} onStay={() => window.clearTimeout(timers.current.hide)} onLeave={() => links.hover(null, null, null)} />}

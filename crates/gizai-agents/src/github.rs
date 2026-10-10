@@ -73,7 +73,6 @@ pub struct PullDetails {
     /// CLEAN, UNSTABLE, BLOCKED, BEHIND, DIRTY, DRAFT, HAS_HOOKS or UNKNOWN.
     pub merge_state_status: String,
     /// Every check on its latest commit: GitHub Actions jobs and other check runs, and commit statuses.
-    #[serde(deserialize_with = "null_as_empty")]
     pub status_check_rollup: Vec<CheckItem>,
 }
 
@@ -135,8 +134,13 @@ impl CheckItem {
     }
 }
 
-fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<CheckItem>, D::Error> {
-    Ok(Option::<Vec<CheckItem>>::deserialize(d)?.unwrap_or_default())
+/// `v` without its null fields, at every level: a field gh gives as null reads as missing (its default).
+fn without_nulls(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(m) => m.into_iter().filter(|(_, x)| !x.is_null()).map(|(k, x)| (k, without_nulls(x))).collect(),
+        serde_json::Value::Array(a) => a.into_iter().map(without_nulls).collect(),
+        other => other,
+    }
 }
 
 /// The fields of `PullDetails`.
@@ -147,7 +151,8 @@ pub const DETAIL_FIELDS: &str =
 pub fn pull_details(gh: &Path, dir: &Path, repo: &str, number: u64) -> Result<PullDetails, String> {
     let n = number.to_string();
     let out = run_gh(gh, dir, &["pr", "view", &n, "--repo", repo, "--json", DETAIL_FIELDS], None)?;
-    serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))
+    let v: serde_json::Value = serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))?;
+    serde_json::from_value(without_nulls(v)).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))
 }
 
 /// Merges pull request `number` of `repo` with a merge commit (never squash or rebase), only while `head` is still its

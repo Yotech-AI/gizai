@@ -16,7 +16,7 @@ import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { relTime } from "../lib/format";
 import {
-  buildTree, findFolder, folderOf, foldersTo, hasTag, highlight, inScope, isNoteFolder, isOwnFolder, LEAD, leadOf, linkedNote, memoryScope, moveTarget, newNotePath,
+  AGENTS, buildTree, findFolder, folderOf, foldersTo, hasTag, highlight, inScope, isNoteFolder, isOwnFolder, LEAD, leadOf, linkedNote, memoryScope, moveTarget, newNotePath,
   notesIn, noteTemplate, NOTE_TYPES, rebase, scopedQuery, scopeRoots, searchWords, section, titleOf, titleProblem, today, TYPE_FOLDER, TYPE_HINT,
   TYPE_NAME, withoutFrontmatter, type MemoryScope, type NoteType, type TreeFolder, type WikiLink,
 } from "../lib/memory";
@@ -152,7 +152,7 @@ function Files({ scope, scopeName, notes, selected, tag, onTag, query, onQuery, 
   const shown = tag ? notes.filter((n) => hasTag(n.bodyMd, tag)) : notes;
   const roots = scopeRoots(scope);
   const extra = made.filter((f) => roots.some((r) => f.toLowerCase() === r.toLowerCase() || f.toLowerCase().startsWith(`${r.toLowerCase()}/`)));
-  const tree = buildTree(shown, tag ? [] : [...roots.filter((r) => r !== "Agents" || scope.kind === "all"), ...extra]);
+  const tree = buildTree(shown, tag ? [] : [...roots.filter((r) => r !== AGENTS || scope.kind === "all"), ...extra]);
   const top = scope.kind === "agent" ? findFolder(tree, scope.folder) ?? { path: scope.folder, name: titleOf(scope.folder), folders: [], notes: [], count: 0 } : tree;
   const sel = selected ? notes.find((n) => n.id === selected) : undefined;
 
@@ -221,7 +221,7 @@ function Files({ scope, scopeName, notes, selected, tag, onTag, query, onQuery, 
           <span className="ellipsis" title={scopeName}>{scopeName}</span>
           <button className="btn ghost sm icon-only" aria-label="New note" title="New note" onClick={() => onNewNote(sel ? folderOf(sel.path) : undefined)}><FilePlus className="icon" /></button>
           <button className="btn ghost sm icon-only" aria-label="New folder" title="New folder"
-            onClick={() => { const at = sel ? folderOf(sel.path) : scope.kind === "agent" ? scope.folder : roots.find((r) => r !== "Agents") ?? ""; setRenaming({ kind: "new-folder", path: at }); setOpenSet((s) => new Set([...s, at])); }}>
+            onClick={() => { const at = sel ? folderOf(sel.path) : scope.kind === "agent" ? scope.folder : roots.find((r) => r !== AGENTS) ?? ""; setRenaming({ kind: "new-folder", path: at }); setOpenSet((s) => new Set([...s, at])); }}>
             <FolderPlus className="icon" />
           </button>
         </div>
@@ -421,14 +421,17 @@ function RecentChanges({ scope, youId, onOpen }: { scope: MemoryScope; youId: st
 
 // ---- New note ---------------------------------------------------------------------------------------------------------
 
-/** The folders a new note can go in on this page: its memory folders and the folders in them. */
+/** The folders a new note can go in on this page: its memory folders and the folders in them (an agent's page: only
+ *  its own folder; the shared notes: only the shared folders). */
 function folderChoices(scope: MemoryScope, notes: MemoryNote[], extra: string[]): string[] {
-  const roots = scopeRoots(scope).filter((r) => r !== "Agents");
-  const tree = buildTree(notes.filter((n) => inScope(n, scope)), [...roots, ...readList(FOLDERS_KEY), ...extra]);
+  const roots = scopeRoots(scope).filter((r) => r !== AGENTS);
+  const low = (x: string) => x.toLowerCase();
+  const under = (f: string) => roots.some((r) => low(f) === low(r) || low(f).startsWith(`${low(r)}/`)) || (scope.kind === "all" && low(f).startsWith(`${low(AGENTS)}/`));
+  const tree = buildTree(notes.filter((n) => inScope(n, scope)), [...roots, ...readList(FOLDERS_KEY), ...extra].filter(under));
   const out: string[] = [];
-  const walk = (f: TreeFolder) => { if (f.path && isNoteFolder(f.path) && (inScope({ path: `${f.path}/x`, scope: "shared", ownerId: null }, scope) || scope.kind === "agent")) out.push(f.path); f.folders.forEach(walk); };
+  const walk = (f: TreeFolder) => { if (f.path && isNoteFolder(f.path) && under(f.path)) out.push(f.path); f.folders.forEach(walk); };
   walk(tree);
-  return out.filter((f) => scope.kind !== "agent" || f.toLowerCase() === scope.folder.toLowerCase() || f.toLowerCase().startsWith(`${scope.folder.toLowerCase()}/`));
+  return out;
 }
 
 function NewNoteDrawer({ scope, notes, start, onClose, onCreate }: {

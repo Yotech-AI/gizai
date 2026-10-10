@@ -62,6 +62,12 @@ export function scopeRoots(scope: MemoryScope): string[] {
   return [LEAD, ...SHARED_FOLDERS, AGENTS];
 }
 
+/** The Team Lead among a team's agents: the one with the lead role that answers in Chat, else the first with the lead
+ *  role (as gizai_core::memory finds it). Null when there is none yet. */
+export function leadOf<M extends { isLead: boolean; chatEnabled: boolean }>(agents: readonly M[]): M | null {
+  return agents.find((a) => a.isLead && a.chatEnabled) ?? agents.find((a) => a.isLead) ?? null;
+}
+
 /** How many notes a sidebar entry opens: the Team Lead every note; another agent its own folder's. */
 export function noteCount(notes: readonly Pick<MemoryNote, "path" | "scope" | "ownerId">[], scope: MemoryScope): number {
   return notes.filter((n) => inScope(n, scope)).length;

@@ -349,6 +349,49 @@ async fn a_failed_a_silent_and_a_timed_out_team_lead_run_send_the_question_to_yo
 }
 
 #[tokio::test]
+async fn an_answer_the_agent_cant_be_continued_with_goes_to_you_with_the_answer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = setup(tmp.path(), "FAKE_ASKS LEAD_GATE LEAD_ANSWER");
+    let asked = t.run().await;
+    // its worktree is gone before the Team Lead answers: Continue can't work
+    std::fs::remove_dir_all(asked.worktree_path.as_deref().unwrap()).unwrap();
+    std::fs::write(t.lead_dir.join("lead-go"), "").unwrap();
+    let s = t.settled(&asked.id).await;
+    assert_eq!(s.state, "escalated", "{s:?}");
+    assert!(s.continued.is_none());
+    let reason = s.reason.unwrap();
+    assert!(reason.starts_with("it answered, but Gizai couldn't continue Backend Agent with the answer ("), "{reason}");
+    let card = t.card();
+    assert_eq!(card.hold_reason.as_deref(), Some(format!("Team Lead escalated to you: {reason}").as_str()));
+    assert!(t.in_inbox() && !card.with_lead);
+    let c = t.leads_comments();
+    assert_eq!(c.len(), 1, "{c:?}");
+    assert!(c[0].body_md.contains("My answer:\n\n> Use CSV with semicolons, as Standards/Exports says.")
+            && c[0].body_md.ends_with("Clear the hold and press Run: Backend Agent starts again and reads this."), "{}", c[0].body_md);
+    assert_eq!(core_runs::list_for_task(&t.st.db, &t.task).unwrap().len(), 1, "no continued run");
+}
+
+#[tokio::test]
+async fn a_card_you_took_over_while_the_team_lead_looked_is_left_to_you() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = setup(tmp.path(), "FAKE_ASKS LEAD_GATE LEAD_ANSWER");
+    let asked = t.run().await;
+    // you clear the hold before the Team Lead has answered
+    tasks::update(&t.st.db, &t.st.you_id, &t.task, TaskPatch { hold: Some(String::new()), ..Default::default() }).unwrap();
+    std::fs::write(t.lead_dir.join("lead-go"), "").unwrap();
+    let s = t.settled(&asked.id).await;
+    assert_eq!(s.state, "dropped", "{s:?}");
+    assert!(s.continued.is_none());
+    assert_eq!(t.card().hold, None, "no hold set again");
+    assert!(t.leads_comments().is_empty(), "nothing posted");
+    assert!(memory::find(&t.st.db, "Standards/Exports").unwrap().is_none(), "nothing kept");
+    assert_eq!(core_runs::get(&t.st.db, &asked.id).unwrap().lead.unwrap().state, "dropped");
+    assert_eq!(core_runs::list_for_task(&t.st.db, &t.task).unwrap().len(), 1, "no continued run");
+    // the Team Lead's run still counts (its cost is on its budget)
+    assert_eq!(t.lead_runs().remove(0).cost_usd_micros, 30_000);
+}
+
+#[tokio::test]
 async fn a_second_question_after_a_team_lead_answer_goes_to_the_inbox() {
     let tmp = tempfile::tempdir().unwrap();
     let t = setup(tmp.path(), "FAKE_ASKS LEAD_AGAIN");

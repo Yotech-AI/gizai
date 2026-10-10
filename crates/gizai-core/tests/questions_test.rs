@@ -431,6 +431,8 @@ fn an_answer_is_kept_in_the_projects_decisions_note_linked_to_the_card() {
     assert!(note.body_md.starts_with("---\ntype: decision\nproject: KADE\n---\n# Kade\n"), "{}", note.body_md);
     assert!(note.body_md.contains(&format!("- 2026-10-10 (KADE-1, answered by Team Lead): {QUESTION} → Use CSV, like the other exports.")), "{}", note.body_md);
     assert!(memory::task_refs(&note.body_md).contains(&"KADE-1".to_string()), "linked to the card");
+    assert!(memory::links_from(&q.db, &note.id).unwrap().iter().any(|l| l.target_type == "task" && l.target_id == q.task && l.kind == "link"),
+            "the note links to the card: {:?}", memory::links_from(&q.db, &note.id).unwrap());
     // the agents on that project's cards get it
     assert_eq!(memory::properties(&note.body_md).get("project").cloned(), Some(vec!["KADE".to_string()]));
     // a second answer is added to the same note
@@ -449,8 +451,10 @@ fn an_answer_goes_to_the_shared_note_the_team_lead_names_else_to_decisions() {
     let saved = questions::remember(&q.db, &q.lead, &r, None, "Team Lead", "CSV", Some("Standards/Exports"), Some("Exports are CSV with semicolons"),
                                     "2026-10-10").unwrap();
     assert_eq!(saved.path, "Standards/Exports");
-    let body = q.note("Standards/Exports").unwrap().body_md;
+    let note = q.note("Standards/Exports").unwrap();
+    let body = note.body_md.clone();
     assert!(body.contains("- 2026-10-10: Exports are CSV with semicolons (KADE-1)"), "the card's identifier is added: {body}");
+    assert!(memory::links_from(&q.db, &note.id).unwrap().iter().any(|l| l.target_type == "task" && l.target_id == q.task), "linked to the card");
     // already naming the card: not twice
     questions::remember(&q.db, &q.lead, &r, None, "Team Lead", "CSV", Some("Standards/Exports"), Some("KADE-1: dates as ISO"), "2026-10-10").unwrap();
     assert!(q.note("Standards/Exports").unwrap().body_md.contains("- 2026-10-10: KADE-1: dates as ISO\n") || q.note("Standards/Exports").unwrap().body_md.ends_with("- 2026-10-10: KADE-1: dates as ISO"));

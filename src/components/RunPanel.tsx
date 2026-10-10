@@ -178,11 +178,11 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
         <div className="run-actions">
           <span className="grow">{continuable ? `Continue picks up ${run!.agentName}'s session where it stopped${task.hold ? " and clears the hold" : ""}; Run starts fresh`
             : task.hold ? "On hold" : suggestedName ? `Run starts ${suggestedName} unless you pick another agent` : "No agent picks this card up by itself; pick one"}</span>
-          <div className="run-controls">
-            <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!!pending.busy}>
-              <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
-              {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}
-            </select>
+          <select className="select" aria-label="Agent" value={agentId} onChange={(e) => setAgentId(e.target.value)} disabled={!!pending.busy}>
+            <option value="">{suggestedName ? `${suggestedName} (${suggested === task.assigneeId ? "assigned" : "on the column"})` : "Choose an agent"}</option>
+            {agents.map((a) => <option key={a.actorId} value={a.actorId}>{a.name}</option>)}
+          </select>
+          <div className="run-buttons">
             {continuable && <BusyButton className="btn sm primary" pending={pending} name="resume" busyLabel="Continuing…" icon={<StepForward className="icon" />} onClick={resume}>Continue</BusyButton>}
             <BusyButton className={`btn sm${continuable ? "" : " primary"}`} pending={pending} name="start" busyLabel="Starting…" icon={<Play className="icon" />} onClick={start}
               disabled={!!task.hold || (!agentId && !suggestedName)}>Run</BusyButton>

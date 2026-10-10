@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-39: what a task run and the Team Lead's chat get of an agent's MCP servers, end to end with fake Claude Codes
 // (crates/gizai-agents/tests/fake-claude-mcp-run.sh and fake-claude-mcp-chat.py keep their argv and a copy of the MCP
 // config while the run lives), never the real one; secrets live in the in-memory keychain of `test_state`.

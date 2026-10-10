@@ -1,6 +1,8 @@
 //! GA-44: the Team Lead's own read-only copies of the projects' code (`<data dir>/code/<KEY>`), refreshed before each
 //! chat turn, and the note and update of an outdated linked folder. "GitHub" is a local bare repository; runs use the
 //! fake Claude Code, never the real one.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
@@ -90,8 +92,14 @@ fn copy(st: &AppState, key: &str) -> PathBuf {
     st.data_dir.join("code").join(key)
 }
 
+/// Whether `git worktree list` in `repo` shows `dir`. git gives the real path, which on macOS differs for a temp folder
+/// (/var/folders/… is /private/var/folders/…).
 fn listed(repo: &Path, dir: &Path) -> bool {
-    git_out(repo, &["worktree", "list", "--porcelain"]).lines().any(|l| l == format!("worktree {}", dir.display()))
+    let real = dir.canonicalize().ok()
+        .or_else(|| Some(dir.parent()?.canonicalize().ok()?.join(dir.file_name()?)))
+        .unwrap_or_else(|| dir.to_path_buf());
+    git_out(repo, &["worktree", "list", "--porcelain"]).lines()
+        .any(|l| l == format!("worktree {}", dir.display()) || l == format!("worktree {}", real.display()))
 }
 
 fn mtimes(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
@@ -114,7 +122,7 @@ fn always_fetch(st: &AppState) {
 
 #[tokio::test]
 async fn a_commit_pushed_to_github_shows_up_in_the_copy_at_the_next_turn_and_the_herd_folder_stays_as_it_is() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
@@ -152,7 +160,7 @@ async fn a_commit_pushed_to_github_shows_up_in_the_copy_at_the_next_turn_and_the
 
 #[tokio::test]
 async fn a_repository_with_two_github_remotes_follows_the_one_the_project_links() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let origin = Github::new(tmp.path(), "origin");
     let oranje = Github::new(tmp.path(), "oranje-uil");
@@ -172,7 +180,7 @@ async fn a_repository_with_two_github_remotes_follows_the_one_the_project_links(
 
 #[tokio::test]
 async fn a_second_turn_within_a_minute_doesnt_fetch_and_an_unmoved_copy_is_not_touched() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
@@ -200,7 +208,7 @@ async fn a_second_turn_within_a_minute_doesnt_fetch_and_an_unmoved_copy_is_not_t
 
 #[tokio::test]
 async fn a_card_start_that_just_fetched_saves_the_copy_a_fetch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
@@ -213,7 +221,7 @@ async fn a_card_start_that_just_fetched_saves_the_copy_a_fetch() {
 
 #[tokio::test]
 async fn a_failing_fetch_keeps_the_last_good_copy_and_the_line_says_why() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
@@ -231,7 +239,7 @@ async fn a_failing_fetch_keeps_the_last_good_copy_and_the_line_says_why() {
 
 #[tokio::test]
 async fn with_github_unreachable_the_turn_starts_within_ten_seconds_on_the_last_good_copy() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
@@ -252,7 +260,7 @@ async fn with_github_unreachable_the_turn_starts_within_ten_seconds_on_the_last_
 
 #[tokio::test]
 async fn a_paused_archived_or_unlinked_project_loses_its_copy_at_the_next_turn_or_start_up() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let mut folders = vec![];
@@ -302,12 +310,17 @@ async fn a_paused_archived_or_unlinked_project_loses_its_copy_at_the_next_turn_o
 
 #[tokio::test]
 async fn settings_data_doesnt_list_the_copies_and_a_new_card_never_takes_one_over() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
     let task = gizai_lib::test_task(&st, herd.to_str().unwrap(), "backend");
     set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    // the card's worktree installs nothing: the run is what counts here, and composer isn't on every system (macOS CI)
+    let p = project(&st, "KADE");
+    projects::update(&st.db, &st.you_id, &p.id, ProjectInput { name: p.name.clone(), key: p.key.clone(), status: Some("active".into()),
+        repo_path: p.repo_path.clone(), repo_url: Some(gh.url().into()), default_branch: Some("main".into()),
+        worktree_install: Some(false), ..Default::default() }).unwrap();
     code::startup(&st).await;
     let dir = copy(&st, "KADE");
     let at = git_out(&dir, &["rev-parse", "HEAD"]);
@@ -328,7 +341,7 @@ async fn settings_data_doesnt_list_the_copies_and_a_new_card_never_takes_one_ove
 
 #[tokio::test]
 async fn an_outdated_linked_folder_is_noted_on_a_chats_first_turn_and_again_only_when_it_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let gh = Github::new(tmp.path(), "github");
     let herd = gh.herd(tmp.path(), "herd");
@@ -357,7 +370,7 @@ async fn an_outdated_linked_folder_is_noted_on_a_chats_first_turn_and_again_only
 
 #[tokio::test]
 async fn update_checkout_is_chat_only_for_the_linked_folder_and_posts_its_result_in_the_chat() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let lead = lead(&st);
     let gh = Github::new(tmp.path(), "github");
@@ -411,7 +424,7 @@ async fn update_checkout_is_chat_only_for_the_linked_folder_and_posts_its_result
 
 #[tokio::test]
 async fn an_update_and_a_card_preparation_of_the_same_project_wait_for_each_other() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let lead = lead(&st);
     let gh = Github::new(tmp.path(), "github");
@@ -457,7 +470,7 @@ async fn an_update_and_a_card_preparation_of_the_same_project_wait_for_each_othe
 #[tokio::test]
 async fn update_checkout_leaves_the_linked_folder_alone_when_the_team_leads_folders_set_it_to_read() {
     // GA-47: PR #21 asked whichever of GA-44 and GA-45 merged second to call lead_may_update in update_checkout.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let st = gizai_lib::test_state(tmp.path());
     let lead = lead(&st);
     let gh = Github::new(tmp.path(), "github");
@@ -491,4 +504,13 @@ async fn update_checkout_leaves_the_linked_folder_alone_when_the_team_leads_fold
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(git_out(&herd, &["rev-parse", "HEAD"]), to);
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
 }

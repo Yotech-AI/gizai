@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-39: Stop, the time cap and quitting end the MCP servers a run started, also a server that starts a helper in a
 // process group of its own (setsid) and ends it only when it gets SIGINT or SIGTERM. The fake claude
 // (fake-claude-mcp.py) starts the fake server (fake-mcp-server.sh) as its child, in the run's process group, like Claude
@@ -20,11 +22,21 @@ async fn drain(h: &mut RunHandle) -> Vec<RunEvent> {
 }
 
 /// A process's state letter and process group from /proc (None once it is gone).
+#[cfg(target_os = "linux")]
 fn stat(pid: u32) -> Option<(char, u32)> {
     let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = &s[s.rfind(')')? + 1..];
     let f: Vec<&str> = rest.split_whitespace().collect();
     Some((f.first()?.chars().next()?, f.get(2)?.parse().ok()?))
+}
+
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(not(target_os = "linux"))]
+fn stat(pid: u32) -> Option<(char, u32)> {
+    let out = std::process::Command::new("ps").args(["-o", "stat=,pgid=", "-p", &pid.to_string()]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut f = text.split_whitespace();
+    Some((f.next()?.chars().next()?, f.next()?.parse().ok()?))
 }
 
 /// Ended: no /proc entry, or a zombie waiting to be reaped.

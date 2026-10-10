@@ -7,7 +7,6 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 
 use crate::AgentError;
 
@@ -60,7 +59,7 @@ pub async fn fetch_models(bin: &Path, cwd: &Path) -> Result<Vec<ModelOption>, Ag
 
 /// The same for a Claude Code that runs with its own environment (a second account's CLAUDE_CONFIG_DIR).
 pub async fn fetch_models_with_env(bin: &Path, cwd: &Path, env: &[(String, String)]) -> Result<Vec<ModelOption>, AgentError> {
-    let mut child = Command::new(bin)
+    let mut child = crate::os::tokio_command(bin)
         .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
                "--setting-sources", "user", "--settings", r#"{"disableAllHooks":true}"#, "--disable-slash-commands", "--strict-mcp-config"])

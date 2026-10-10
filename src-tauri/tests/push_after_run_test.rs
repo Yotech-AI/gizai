@@ -2,6 +2,8 @@
 //! holds a card up. End to end with fake CLIs (never the real ones) and "GitHub" as a local bare repository: the
 //! project's clone sends https://github.com/acme/ there and allows no transport but local files, so nothing here can
 //! reach the real GitHub.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};

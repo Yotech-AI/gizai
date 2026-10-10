@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // Settings → MCP servers → Import from Claude Code (GA-39): scan() and import() over every Claude Code in Settings →
 // Coding CLIs. HOME is the process's, so the tests here take turns (ENV): each points HOME at its own scratch folder and
 // removes CLAUDE_CONFIG_DIR before anything reads them. Nothing here reads the real ~/.claude.json, ~/.claude or the OS

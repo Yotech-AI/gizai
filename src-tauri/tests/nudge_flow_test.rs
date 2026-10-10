@@ -2,6 +2,8 @@
 //! the nudge message; when that run also ends without one, the card is held stalled and no third run starts. No nudge
 //! after Stop, a limit, a failed run or Gizai quitting, nor when a start isn't allowed now. Runs use the fake Claude Code
 //! (FAKE_NO_RESULT makes it end its message waiting for CI, FAKE_GATE holds it until a file exists), never the real one.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};

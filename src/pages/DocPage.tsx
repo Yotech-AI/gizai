@@ -3,6 +3,7 @@ import { docVersionBody, docVersions, getDoc, getProject, renameDoc, saveDoc } f
 import { href } from "../router";
 import { useData } from "../lib/useData";
 import { relTime } from "../lib/format";
+import { modKey } from "../lib/keys";
 import { MarkdownEditor } from "../components/MarkdownEditor";
 import { MarkdownView } from "../components/MarkdownView";
 import { Drawer } from "../components/Drawer";
@@ -60,7 +61,7 @@ export function DocPage({ id }: { id: string }) {
 
   const openVersion = async (v: number) => { try { setViewing({ version: v, body: await docVersionBody(id, v) }); } catch (e) { setErr(String(e)); } };
   const saveTitle = () => { const t = title.trim(); if (!t) setTitle(doc.title); else if (t !== doc.title) renameDoc(id, t).catch((e) => setErr(String(e))); };
-  const statusText = { saved: `Saved · version ${base}`, unsaved: "Unsaved changes · Ctrl+S saves", saving: "Saving…", conflict: "Not saved" }[status];
+  const statusText = { saved: `Saved · version ${base}`, unsaved: `Unsaved changes · ${modKey()}+S saves`, saving: "Saving…", conflict: "Not saved" }[status];
 
   return (
     <>
@@ -87,7 +88,7 @@ export function DocPage({ id }: { id: string }) {
             <input className="title-input" aria-label="Doc title" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
             <div className="doc-editor">
-              <MarkdownEditor value={text} ariaLabel="Doc text" minHeight={460} hint="Ctrl+S saves"
+              <MarkdownEditor value={text} ariaLabel="Doc text" minHeight={460} hint={`${modKey()}+S saves`}
                 placeholder="Write in Markdown: # headings, **bold**, - [ ] checklists, tables, KADE-12 refs and @mentions."
                 onChange={(md) => { setText(md); setStatus((s) => (s === "conflict" || s === "saving" ? s : md === saved.current ? "saved" : "unsaved")); }}
                 onSave={(md) => save(md)} onBlur={(md) => { if (live.current.status === "unsaved") save(md); }} />

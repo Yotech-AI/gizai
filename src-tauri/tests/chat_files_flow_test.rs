@@ -1,3 +1,5 @@
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 // GA-41, end to end with the fake Claude Code: files added to a chat message (the + button or a drop) are stored with
 // the message, copied into the Team Lead's own folder (its working folder in chat, which its file tools read) and named
 // in the turn's prompt with that path; the Team Lead can read them and attach one to a task when asked. In a new chat

@@ -10,7 +10,8 @@
 //! counts as seen, and an item notifies again only after it left the Inbox and came back.
 //!
 //! Every notification goes through `AppState::desktop`: the real one (`real`) shows it with notify-rust and, on a
-//! click, shows the window on the card or the chat. Tests set their own, so no test shows a notification.
+//! click, shows the window on the card or the chat (Linux and Windows; on macOS a notification only informs). Tests set
+//! their own, so no test shows a notification.
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -311,7 +312,7 @@ fn window_away(app: &AppHandle) -> bool {
 }
 
 /// A click on a notification: the window shows, on the card or the chat.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 fn open(app: &AppHandle, route: &str) {
     crate::show_main(app);
     if let (Some(w), Ok(hash)) = (app.get_webview_window("main"), serde_json::to_string(route)) {
@@ -321,7 +322,7 @@ fn open(app: &AppHandle, route: &str) {
 
 /// At most this many notifications wait for a click at once (each on a thread, until the notification closes): beyond
 /// it a notification only informs.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 const MAX_WAITING: usize = 32;
 
 /// Linux (freedesktop notifications, such as mako on Omarchy): the notification has a default action, which a click
@@ -351,9 +352,43 @@ fn show_now(app: &AppHandle, n: Notice) {
     WAITING.fetch_sub(1, Ordering::SeqCst);
 }
 
-/// Elsewhere (macOS) the notification only informs: the tray's Open Gizai and the Dock icon bring the window back.
-#[cfg(not(all(unix, not(target_os = "macos"))))]
+/// Windows: a toast from Gizai (its AppUserModelID, `APP_ID`, which install.ps1's Start menu shortcut carries; without
+/// that shortcut, as in a dev build, Windows shows no toast). A click on it while it shows opens the window on the card
+/// or the chat; this thread waits for that until the toast goes (it times out into the notification centre, or is
+/// dismissed). Gizai doesn't hear a click in the notification centre later.
+#[cfg(windows)]
+fn show_now(app: &AppHandle, n: Notice) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static WAITING: AtomicUsize = AtomicUsize::new(0);
+    let mut note = notify_rust::Notification::new();
+    note.app_id(crate::APP_ID).summary(&n.title).body(&n.body);
+    let handle = match note.show() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("gizai: a desktop notification couldn't be shown: {e}");
+            return;
+        }
+    };
+    if WAITING.fetch_add(1, Ordering::SeqCst) < MAX_WAITING {
+        // a click on the toast itself (not a button: it has none) is the default response
+        let _ = handle.wait_for_response(|r: &notify_rust::NotificationResponse| {
+            if matches!(r, notify_rust::NotificationResponse::Default) {
+                open(app, &n.route);
+            }
+        });
+    }
+    WAITING.fetch_sub(1, Ordering::SeqCst);
+}
+
+/// macOS: the notification only informs (a click shows nothing more): the tray's Open Gizai and the Dock icon bring the
+/// window back. It comes from Gizai (`APP_ID`, Gizai.app's bundle id) when macOS knows Gizai.app, else from notify-rust's
+/// stand-in, Finder. Whether it shows is up to System Settings → Notifications.
+#[cfg(target_os = "macos")]
 fn show_now(_app: &AppHandle, n: Notice) {
+    static APP: std::sync::Once = std::sync::Once::new();
+    APP.call_once(|| {
+        let _ = notify_rust::set_application(crate::APP_ID);
+    });
     let mut note = notify_rust::Notification::new();
     note.appname("Gizai").summary(&n.title).body(&n.body);
     if let Err(e) = note.show() {

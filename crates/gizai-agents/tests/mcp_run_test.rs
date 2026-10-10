@@ -1,6 +1,7 @@
 // GA-39: an agent's MCP servers in one Claude Code run or chat turn (`mcp_run`): the per-run MCP config, which tools are
 // allowed or refused, the prompt line for outside servers, and what Claude Code's init line says about each server
 // (`cli::Parser` → notes and `RunEvent::McpServers`).
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 use gizai_agents::cli::{self, CliSpec, Kind, Parser, RunFolder, TaskRun};
@@ -34,7 +35,11 @@ fn feed(lines: &[&str]) -> Vec<RunEvent> {
 #[test]
 fn a_command_servers_entry_has_its_command_arguments_and_environment_values() {
     let e = mcp_run::stdio("npx", &strings(&["-y", "@otus/mcp"]), &[("OTUS_TOKEN".into(), "s3cret".into()), ("OTUS_REGION".into(), "eu".into())]);
+    #[cfg(not(windows))]
     assert_eq!(e, json!({"type": "stdio", "command": "npx", "args": ["-y", "@otus/mcp"], "env": {"OTUS_TOKEN": "s3cret", "OTUS_REGION": "eu"}}));
+    // Windows: npx is a batch file (npx.cmd), which goes through cmd /c, as Claude Code asks there
+    #[cfg(windows)]
+    assert_eq!(e, json!({"type": "stdio", "command": "cmd", "args": ["/c", "npx", "-y", "@otus/mcp"], "env": {"OTUS_TOKEN": "s3cret", "OTUS_REGION": "eu"}}));
     assert_eq!(mcp_run::stdio("/usr/bin/x", &[], &[]), json!({"type": "stdio", "command": "/usr/bin/x", "args": [], "env": {}}));
 }
 
@@ -82,6 +87,8 @@ fn a_server_with_some_tools_off_allows_the_ones_on_by_full_name_and_refuses_the_
     assert!(mcp_run::permissions(&[]) == (vec![], vec![]), "no servers: nothing allowed, nothing refused");
 }
 
+// Linux and macOS: file modes. Windows has none; the file is in the user's own profile (docs/PLATFORMS.md).
+#[cfg(unix)]
 #[test]
 fn the_config_file_is_written_for_its_owner_only_also_over_one_left_behind() {
     let tmp = tempfile::tempdir().unwrap();

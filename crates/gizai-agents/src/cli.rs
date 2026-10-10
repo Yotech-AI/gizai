@@ -111,11 +111,24 @@ pub struct RunFolder {
 }
 
 /// Claude Code's deny rules that keep the read folders read only: `Edit(//<path>/**)` and `Write(//<path>/**)`. In a
-/// permission rule `//` starts an absolute path (a single `/` is relative to the settings).
+/// permission rule `//` starts an absolute path (a single `/` is relative to the settings). On Windows Claude Code
+/// matches a path in its POSIX form: `C:\Users\me\x` → `Edit(//c/Users/me/x/**)`.
 pub fn claude_read_only(folders: &[RunFolder]) -> Vec<String> {
     folders.iter().filter(|f| !f.change)
-        .flat_map(|f| { let p = f.path.trim_end_matches('/').to_string(); ["Edit", "Write"].map(|t| format!("{t}(/{p}/**)")) })
+        .flat_map(|f| { let p = rule_path(&f.path); ["Edit", "Write"].map(|t| format!("{t}(/{p}/**)")) })
         .collect()
+}
+
+/// A folder's absolute path as Claude Code's permission rules see it, without a slash at the end: on Linux and macOS as
+/// it is (`/home/me/x`); on Windows with `/` between its folders and the drive a lower case first folder
+/// (`C:\Users\me\x` → `/c/Users/me/x`).
+fn rule_path(path: &str) -> String {
+    let p = if cfg!(windows) { path.replace('\\', "/") } else { path.to_string() };
+    let p = p.trim_end_matches('/');
+    match p.as_bytes() {
+        [d, b':', ..] if cfg!(windows) && d.is_ascii_alphabetic() => format!("/{}{}", d.to_ascii_lowercase() as char, &p[2..]),
+        _ => p.to_string(),
+    }
 }
 
 /// What a CLI can't be given of the agent's folders, as a note for the run log: Gemini can't keep a folder read only,

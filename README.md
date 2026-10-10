@@ -2,18 +2,22 @@
 
 A desktop app where a team of coding agents (Claude Code, Codex, Gemini or another coding CLI) works through your software tasks. You keep clients, projects and tasks in Gizai. The agents pick up the cards, build each one in its own git worktree, test each other's work and hand it to you for review. You can also ask the Team Lead agent for things in chat.
 
-Everything runs on your machine, with your own git repositories and your own logins. It's early (v0.1) and runs on Linux only for now. MIT licence.
+Everything runs on your machine, with your own git repositories and your own logins. It's early (v0.1). It runs on Linux, on Macs with Apple silicon and on Windows 11. MIT licence.
 
 ## Install
 
-You need:
+Gizai builds from source on your own computer, on every system: there are no downloads or installers. Its install script checks what is missing, builds Gizai and installs it for you alone, without sudo or administrator rights.
 
-- Linux with WebKitGTK 4.1;
+Every system needs:
+
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in (run `claude` once). Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs); the Team Lead chat needs Claude Code;
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer;
-- for the tray icon, libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it Gizai runs without a tray icon;
 - optionally the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account, to review cards as pull requests on GitHub. Settings → GitHub shows what's missing and can log gh in;
 - or, for a project on Bitbucket Cloud, an SSH key on your Bitbucket account and an API token with the scopes `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket` (Atlassian account → Security → API tokens), saved with your Atlassian email in Settings → Bitbucket. Gizai keeps them in your keychain.
+
+### Linux
+
+You also need WebKitGTK 4.1 (`./install.sh --check` names the packages for your distribution) and, for the tray icon, libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it Gizai runs without a tray icon.
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -29,22 +33,77 @@ The installer builds Gizai and installs it for your user in `~/.local`, with no 
 | `./install.sh` | Installs, or updates (your data is backed up first) |
 | `./install.sh --uninstall` | Removes Gizai and keeps your data in `~/.local/share/gizai` |
 
+### macOS
+
+For Macs with Apple silicon (M1 and later). You also need Apple's Command Line Tools, which bring git and a C compiler: run `xcode-select --install`. Node.js can come from Homebrew (`brew install node`), mise, nvm or the installer on nodejs.org.
+
+```sh
+git clone --branch production https://github.com/Yotech-AI/gizai.git
+cd gizai
+./install.sh
+```
+
+It's the same installer, with the same commands as on Linux. It builds Gizai.app and installs it in `~/.local/lib/gizai`, links it into the Applications folder in your home folder (`~/Applications`), and puts the `gizai` command in `~/.local/bin`. Open Gizai from there and keep it in the Dock. Its tray icon is in the menu bar.
+
+### Windows
+
+For Windows 11. You also need:
+
+- the Microsoft C++ Build Tools, with "Desktop development with C++" ([download](https://visualstudio.microsoft.com/visual-cpp-build-tools/); the Rust installer offers to install them);
+- Git for Windows: Claude Code runs its commands in Git for Windows' Git Bash;
+- WebView2, which comes with Windows 11.
+
+Rust, Node.js and Git can come from winget:
+
+```powershell
+winget install --id Rustlang.Rustup -e
+winget install --id OpenJS.NodeJS.LTS -e
+winget install --id Git.Git -e
+```
+
+Then, in a new PowerShell window:
+
+```powershell
+git clone --branch production https://github.com/Yotech-AI/gizai.git
+cd gizai
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` builds Gizai and installs it in `%LOCALAPPDATA%\Programs\Gizai`, without administrator rights. It adds Gizai to the Start menu with a shortcut that carries Gizai's app ID, which Windows needs to show Gizai's notifications. Gizai runs the coding CLIs installed on Windows itself, like `claude.exe` or npm's `gemini.cmd`. It doesn't use WSL.
+
+| Command | What it does |
+|---|---|
+| `.\install.ps1 -Check` | Shows what is missing and how to install it |
+| `.\install.ps1` | Installs, or updates (your data is backed up first) |
+| `.\install.ps1 -Uninstall` | Removes Gizai and keeps your data in `%APPDATA%\Gizai` |
+
+If PowerShell won't run scripts, start these the way the block above does: `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check`.
+
+### Not signed
+
+Gizai isn't signed yet: there is no Apple Developer account or Windows certificate until Gizai has paid features. A build made on your own computer isn't a download, so Gatekeeper and SmartScreen shouldn't stop it. If they still do:
+
+- macOS: System Settings → Privacy & Security → Open Anyway, or `xattr -dr com.apple.quarantine ~/.local/lib/gizai/Gizai.app`;
+- Windows: More info → Run anyway.
+
+After an update, macOS may ask once whether Gizai may use what it saved in your keychain: choose Always Allow.
+
 ### Updates
 
 Gizai asks GitHub for the latest release 20 seconds after it starts, then every six hours. When a newer one is out, **Update to X.Y.Z** shows above Company in the sidebar.
 
 Click it and Gizai:
 
-1. builds the new version from source in the background, while you keep working;
+1. builds the new version from source in the background with your system's install script, while you keep working;
 2. backs up your data;
 3. installs the new version;
 4. offers a restart.
 
-If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull` and `./install.sh`.
+If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off. You can still update from a terminal with `git pull`, then `./install.sh` (on Windows `.\install.ps1`).
 
 ### Your data
 
-Gizai keeps your data in `~/.local/share/gizai` (`GIZAI_DATA_DIR` points it elsewhere). It cleans up after itself when it starts and once a day while it runs:
+Gizai keeps your data in `~/.local/share/gizai` on Linux, `~/Library/Application Support/Gizai` on macOS and `%APPDATA%\Gizai` on Windows (`GIZAI_DATA_DIR` points it elsewhere). It cleans up after itself when it starts and once a day while it runs:
 
 - **Run and chat logs** (`runs/` and `chat/`): kept for 30 days after the run, chat answer or board check ended, then removed. The run stays in the history with its summary, cost and commits; Show output says its log is gone.
 - **Keys for the Team Lead's tools** (`api_tokens` in `gizai.db`): each one lasts a chat answer or board check, and is removed a day after it expired or was revoked.
@@ -139,6 +198,8 @@ cargo test --workspace && npm test
 scripts/ui-test.sh        # UI tests in a headless compositor, never on your desktop
 scripts/readme-gif.sh     # remakes the GIF above
 ```
+
+On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds Gizai and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs Gizai from source on macOS and Windows with it (`.github/workflows/install.yml`).
 
 `CLAUDE.md` has the rules for working in this repository, `docs/HANDOFF-2026-10-07.md` explains how it is built, and `docs/RELEASING.md` how a release is made.
 

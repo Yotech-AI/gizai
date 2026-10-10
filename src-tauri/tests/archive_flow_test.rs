@@ -1,6 +1,8 @@
 //! GA-43 in the app: the Team Lead's get_task finds an archived card by its identifier and says so, list_tasks leaves
 //! archived cards out unless archived: true asks for them, its other tools can't change one, and no run starts on an
 //! archived card. A card an agent works on can't be archived.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 
 use gizai_core::model::*;

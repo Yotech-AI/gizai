@@ -5,6 +5,7 @@ import { go } from "../router";
 import { DEFAULT_TOOLS, draftFrom, foldersFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
 import { CLAUDE_CODE, EFFORTS_BY_KIND, FOLDERS_NOTE, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
 import { fitCliTools, sameCliTools } from "../lib/cliTools";
+import { modKey } from "../lib/keys";
 import { cleanSwitches, sameSwitches } from "../lib/mcp";
 import { effortChoices, findModel, modelHint } from "../lib/models";
 import type { AgentFolder, CliKind, CliStatus, FolderCheck, Member, ModelOption } from "../types";
@@ -181,7 +182,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   };
   return (
     <Drawer wide title={isNew ? "Add agent" : `${initial.name} settings`} subtitle="Each agent runs its coding CLI headless in its own git worktree, with the instructions and permissions below."
-      onClose={onClose} dirty={JSON.stringify(d) !== JSON.stringify(initial)} error={err} hint="Ctrl+Enter saves"
+      onClose={onClose} dirty={JSON.stringify(d) !== JSON.stringify(initial)} error={err} hint={`${modKey()}+Enter saves`}
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !d.name.trim()} onClick={save}>{isNew ? "Add agent" : "Save changes"}</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }}>
         <FormSection title="Agent" text="Its name and the job it does. The role gives it its starting instructions, its branch in the organisation chart and its usual columns.">

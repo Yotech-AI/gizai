@@ -1,12 +1,12 @@
 //! List tools: Gizai starts an MCP server (stdio) or calls it (Streamable HTTP, or the older HTTP+SSE), says hello
 //! (`initialize`) and reads every page of `tools/list`. Blocking code: callers run it with `spawn_blocking`.
 //! A server Gizai starts runs in a process group of its own, which is always ended afterwards (SIGTERM, SIGKILL after
-//! 3 s; never pid 0 or 1), and no error shows the values of the server's environment or headers.
+//! 3 s; never pid 0 or 1; on Windows a Job Object, ended at once, see `os::Tree`), and no error shows the values of the
+//! server's environment or headers.
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -20,6 +20,7 @@ use ureq::http::{HeaderName, HeaderValue, Method, Response, StatusCode, Uri};
 
 use crate::cli::plain;
 use crate::mcp_tools::PARAM_ORDER;
+use crate::os::{self, End, Tree};
 use crate::stream::cut;
 
 /// The MCP version Gizai asks for; the server answers with the one it speaks.
@@ -450,8 +451,8 @@ fn list_stdio(t: &Target, limit: Limit) -> Result<Listing, ListError> {
 /// A server Gizai started, and the threads that write its stdin and read its stdout and stderr.
 struct Server {
     child: Child,
-    /// Its process group (its leader is the program Gizai started).
-    group: u32,
+    /// Its process group (its leader is the program Gizai started); on Windows its job.
+    tree: Tree,
     /// Lines for its stdin; dropped to close it.
     input: Option<mpsc::Sender<Vec<u8>>>,
     /// Its JSON messages, or why its output can't be read; closed when its stdout ends.
@@ -484,17 +485,17 @@ impl Server {
                 return Err(failed(format!("The value of {k} isn't valid text.")));
             }
         }
-        let mut cmd = Command::new(command);
+        // os::command: `npx` is npx.cmd on Windows
+        let mut cmd = os::command(command);
         cmd.args(&t.args)
             .envs(t.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0);
+            .stderr(Stdio::piped());
         if let Some(dir) = &t.cwd {
             cmd.current_dir(dir);
         }
-        let mut child = cmd.spawn().map_err(|e| {
+        let (mut child, tree) = os::spawn_tree(&mut cmd, false).map_err(|e| {
             failed(match e.kind() {
                 io::ErrorKind::NotFound => format!("Couldn't start {command}: not found. Give the full path, or a program in your PATH."),
                 io::ErrorKind::PermissionDenied => format!("Couldn't start {command}: it may not be run (permission denied)."),
@@ -506,10 +507,9 @@ impl Server {
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>();
         let (out_tx, out_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel::<()>();
-        let group = child.id();
         // From here on, dropping `server` ends the process group.
         let server = Server {
-            child, group, input: Some(in_tx), output: out_rx, tail: tail.clone(), stderr_done: done_rx, status: None, ended: false, limit,
+            child, tree, input: Some(in_tx), output: out_rx, tail: tail.clone(), stderr_done: done_rx, status: None, ended: false, limit,
         };
         let not_started = |e: io::Error| failed(format!("Couldn't start {command}: Gizai couldn't read its output ({e})."));
         if let Some(mut w) = stdin {
@@ -584,7 +584,7 @@ impl Server {
     }
 
     /// Closes its stdin, sends SIGTERM to its process group, SIGKILL after 3 s when anything in it is still running,
-    /// and reaps it. Runs once.
+    /// and reaps it. Runs once. On Windows its job ends at once (see `os::End`).
     fn end(&mut self) {
         if self.ended {
             return;
@@ -592,8 +592,8 @@ impl Server {
         self.ended = true;
         // The writer closes stdin once it has written what it had.
         self.input = None;
-        if group_alive(self.group) {
-            signal_group(self.group, libc::SIGTERM);
+        if self.tree.alive() {
+            self.tree.end(End::Terminate);
         }
         let start = Instant::now();
         loop {
@@ -603,11 +603,11 @@ impl Server {
                 self.status = Some(s);
             }
             // The leader counts until it has been reaped (just above), its own children until they end.
-            if !group_alive(self.group) {
+            if !self.tree.alive() {
                 break;
             }
             if start.elapsed() >= END_GRACE {
-                signal_group(self.group, libc::SIGKILL);
+                self.tree.end(End::Kill);
                 break;
             }
             thread::sleep(Duration::from_millis(20));
@@ -718,27 +718,6 @@ fn push_tail(tail: &Mutex<VecDeque<String>>, line: &str) {
     t.push_back(cut(line, 300));
     while t.len() > TAIL_LINES {
         t.pop_front();
-    }
-}
-
-/// SIGTERM, SIGKILL, … to a server's process group; never to pid 0 or 1 (or what a negative of them would address).
-fn signal_group(group: u32, sig: i32) {
-    if let Ok(g) = i32::try_from(group)
-        && g > 1
-    {
-        // SAFETY: plain syscall; a negative pid addresses the process group Gizai made for this server.
-        unsafe {
-            libc::kill(-g, sig);
-        }
-    }
-}
-
-/// Whether anything is still in the server's process group (one that ended counts until it has been reaped).
-fn group_alive(group: u32) -> bool {
-    match i32::try_from(group) {
-        // SAFETY: signal 0 only checks that the group exists; nothing is sent.
-        Ok(g) if g > 1 => unsafe { libc::kill(-g, 0) == 0 },
-        _ => false,
     }
 }
 

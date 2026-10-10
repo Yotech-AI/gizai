@@ -1,6 +1,8 @@
 //! The connection to GitHub without GitHub: Push over's one-command git settings (checked with git's own URL
 //! expansion and credential helpers), plain words for a failed push, gh's status and login with a fake gh, and a push
 //! over HTTPS to a local server that refuses every login. Nothing here runs ssh, so nothing can reach github.com.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};

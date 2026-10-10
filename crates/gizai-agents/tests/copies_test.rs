@@ -46,7 +46,7 @@ fn mtimes(dir: &Path) -> Vec<(PathBuf, SystemTime)> {
 
 #[test]
 fn a_copy_is_a_detached_worktree_at_main_with_tracked_files_only_and_no_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let branches = git_out(&repo, &["branch", "--list"]);
     let dir = tmp.path().join("data/code/KADE");
@@ -59,7 +59,7 @@ fn a_copy_is_a_detached_worktree_at_main_with_tracked_files_only_and_no_branch()
     assert_eq!(git_out(&dir, &["branch", "--show-current"]), "", "no branch checked out");
     assert_eq!(git_out(&repo, &["branch", "--list"]), branches, "no branch made");
     let listed = git_out(&repo, &["worktree", "list", "--porcelain"]);
-    assert!(listed.contains(&format!("worktree {}\nHEAD {}\ndetached", dir.display(), at.sha)), "{listed}");
+    assert!(listed.contains(&format!("worktree {}\nHEAD {}\ndetached", git_path(&dir), at.sha)), "{listed}");
     assert_eq!(std::fs::read_to_string(dir.join("README.md")).unwrap(), "one\n", "main's file, not the uncommitted change");
     assert!(!dir.join(".env").exists() && !dir.join("vendor").exists(), "only tracked files");
     assert!(copies::is_checkout_of(&dir, &repo));
@@ -71,7 +71,7 @@ fn a_copy_is_a_detached_worktree_at_main_with_tracked_files_only_and_no_branch()
 
 #[test]
 fn a_copy_moves_when_main_moved_and_is_left_alone_when_it_didnt() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let dir = tmp.path().join("code/KADE");
     let (first, _) = copies::sync(&repo, &dir, "main").unwrap();
@@ -99,7 +99,7 @@ fn a_copy_moves_when_main_moved_and_is_left_alone_when_it_didnt() {
 
 #[test]
 fn a_copy_whose_folder_was_deleted_by_hand_is_made_again() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let dir = tmp.path().join("code/KADE");
     copies::sync(&repo, &dir, "main").unwrap();
@@ -110,7 +110,7 @@ fn a_copy_whose_folder_was_deleted_by_hand_is_made_again() {
 
 #[test]
 fn a_folder_that_isnt_a_copy_of_the_repository_is_not_synced_over() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let other_tmp = tmp.path().join("other");
     std::fs::create_dir(&other_tmp).unwrap();
@@ -127,7 +127,7 @@ fn a_folder_that_isnt_a_copy_of_the_repository_is_not_synced_over() {
 
 #[test]
 fn remove_takes_the_copy_out_of_gits_list_and_never_touches_anything_outside_the_folder_of_copies() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = real_tempdir();
     let repo = repo(tmp.path());
     let root = tmp.path().join("code");
     let dir = root.join("KADE");
@@ -143,11 +143,29 @@ fn remove_takes_the_copy_out_of_gits_list_and_never_touches_anything_outside_the
     assert_eq!(git_out(&repo, &["branch", "--show-current"]), "feature/x");
     assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "work in progress\n");
     copies::remove(&dir, &root).unwrap(); // gone already: fine
-    // a link in the folder of copies loses only the link, never what it points to
-    let keep = tmp.path().join("keep");
-    std::fs::create_dir(&keep).unwrap();
-    std::fs::write(keep.join("important.txt"), "mine\n").unwrap();
-    std::os::unix::fs::symlink(&keep, root.join("LINK")).unwrap();
-    copies::remove(&root.join("LINK"), &root).unwrap();
-    assert!(!root.join("LINK").exists() && keep.join("important.txt").is_file());
+    // a link in the folder of copies loses only the link, never what it points to (a Unix symlink: one on Windows
+    // needs Developer Mode or an administrator)
+    #[cfg(unix)]
+    {
+        let keep = tmp.path().join("keep");
+        std::fs::create_dir(&keep).unwrap();
+        std::fs::write(keep.join("important.txt"), "mine\n").unwrap();
+        std::os::unix::fs::symlink(&keep, root.join("LINK")).unwrap();
+        copies::remove(&root.join("LINK"), &root).unwrap();
+        assert!(!root.join("LINK").exists() && keep.join("important.txt").is_file());
+    }
+}
+
+/// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
+/// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
+/// Windows drive.
+fn real_tempdir() -> tempfile::TempDir {
+    let base = std::env::temp_dir().canonicalize().unwrap();
+    let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
+    tempfile::tempdir_in(base).unwrap()
+}
+
+/// A path as `git worktree list` prints it: with / between folders, also on Windows.
+fn git_path(p: &std::path::Path) -> String {
+    p.display().to_string().replace('\\', "/")
 }

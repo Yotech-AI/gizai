@@ -18,6 +18,7 @@ pub mod mcp_run;
 pub mod mcp_tools;
 pub mod models;
 pub mod oauth;
+pub mod os;
 pub mod outcome;
 pub mod prepare;
 pub mod process;

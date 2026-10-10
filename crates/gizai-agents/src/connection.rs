@@ -9,7 +9,7 @@
 //! Bitbucket's login (your email and an API token, for its REST API) is in `bitbucket`.
 use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
@@ -331,12 +331,12 @@ fn sh_quote(s: &str) -> String {
 fn ssh_t(to: &str, host: Host, limit: Duration) -> Result<String, Problem> {
     let mut cmd = match std::env::var("GIT_SSH_COMMAND") {
         Ok(own) if !own.trim().is_empty() => {
-            let mut c = Command::new("sh");
+            let mut c = crate::os::command(own_ssh_shell()?);
             c.arg("-c").arg(format!("{own} \"$@\"")).arg(&own);
             c
         }
         _ => {
-            let mut c = Command::new("ssh");
+            let mut c = crate::os::command("ssh");
             c.args(["-o", "BatchMode=yes"]);
             c
         }
@@ -348,6 +348,17 @@ fn ssh_t(to: &str, host: Host, limit: Duration) -> Result<String, Problem> {
         _ => Problem::plain(format!("can't run ssh: {e}")),
     })?;
     Ok(format!("{err}\n{out}"))
+}
+
+/// The shell that runs your GIT_SSH_COMMAND, as git's own does: `sh` on Linux and macOS, Git Bash on Windows (Git for
+/// Windows runs it with its own shell too).
+fn own_ssh_shell() -> Result<PathBuf, Problem> {
+    #[cfg(not(windows))]
+    return Ok(PathBuf::from("sh"));
+    #[cfg(windows)]
+    crate::os::git_bash(&std::env::var_os("PATH").unwrap_or_default()).ok_or_else(|| {
+        Problem::new("Git for Windows isn't installed", "Install Git for Windows: Gizai runs your GIT_SSH_COMMAND with its Git Bash, as git does.")
+    })
 }
 
 /// Whether ssh reaches GitHub with your keys, in batch mode so it never asks: `ssh -T git@github.com`, which GitHub

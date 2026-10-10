@@ -1,3 +1,5 @@
+// Linux and macOS only: the tests age files with utimensat and make symlinks.
+#![cfg(unix)]
 // Housekeeping (GA-25): the chat tools' dead tokens and the run and chat logs older than 30 days go; everything else
 // stays.
 use std::fs::{self, File};

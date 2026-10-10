@@ -1,6 +1,5 @@
 //! One git worktree per task, on its own branch, so agents never touch the main checkout.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -50,7 +49,7 @@ pub fn slug(title: &str, max: usize) -> String {
 }
 
 pub(crate) fn git(repo: &Path, args: &[&str]) -> Result<String, AgentError> {
-    let out = Command::new("git").arg("-C").arg(repo).args(args).output()
+    let out = crate::os::command("git").arg("-C").arg(repo).args(args).output()
         .map_err(|e| AgentError::Git(format!("can't run git: {e}")))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
@@ -625,7 +624,7 @@ impl Failure {
 /// git without prompts, ended after `limit`: no terminal and no askpass program, ssh in batch mode (unless you set your
 /// own ssh command), and `config` as `-c` settings for this one command.
 fn quiet(repo: &Path, config: &[String], args: &[&str], limit: Duration) -> Result<String, Failure> {
-    let mut cmd = Command::new("git");
+    let mut cmd = crate::os::command("git");
     cmd.arg("-C").arg(repo);
     for c in config {
         cmd.arg("-c").arg(c);

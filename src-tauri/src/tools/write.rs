@@ -89,7 +89,7 @@ fn is_command(t: &str) -> bool {
 fn checked_repo(raw: &str) -> Result<String, String> {
     let bad = || format!("{raw} is not a git repository: give the folder that holds the project's .git");
     let p = std::path::Path::new(raw).canonicalize().map_err(|_| bad())?;
-    let home = std::env::var("HOME").ok().and_then(|h| std::path::Path::new(&h).canonicalize().ok());
+    let home = std::path::Path::new(&gizai_core::clis::home()).canonicalize().ok();
     if p.parent().is_none() || home.as_ref().is_some_and(|h| h.starts_with(&p)) || !p.join(".git").exists() {
         return Err(bad());
     }
@@ -569,8 +569,9 @@ pub(crate) fn write_doc(cx: &Cx, a: &Args) -> Result<Value, String> {
 
 pub(crate) async fn attach_file(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let raw = a.req("path")?;
-    let path = match raw.strip_prefix("~/") {
-        Some(rest) => std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest),
+    // `~/…`, and on Windows `~\…` too
+    let path = match raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\").filter(|_| cfg!(windows))) {
+        Some(rest) => std::path::PathBuf::from(gizai_core::clis::home()).join(rest),
         None => std::path::PathBuf::from(&raw),
     };
     if !path.is_absolute() {

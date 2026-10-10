@@ -1061,8 +1061,7 @@ fn same_secret(a: &str, b: &str) -> bool {
 /// 32 random bytes from the system as base64url: a PKCE code verifier (43 characters) or a state.
 fn random_code() -> Result<String, String> {
     let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes))
-        .map_err(|e| format!("Couldn't make a random code for the sign-in: {e}"))?;
+    getrandom::fill(&mut bytes).map_err(|e| format!("Couldn't make a random code for the sign-in: {e}"))?;
     Ok(b64url(&bytes))
 }
 

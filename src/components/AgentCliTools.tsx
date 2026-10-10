@@ -63,7 +63,12 @@ export function AgentCliToolsFields({ agentId, cliId, allowedTools, value, onCha
   const lr = view.browser.lastRun ? lastRunLabel(view.browser.lastRun.status) : null;
   const needs = view.browser.needs;
   const setDomainText = (text: string) => { setDomains(text); onChange({ ...value, fetchDomains: parseDomains(text) }); };
-  const builtin = view.builtin.tools.filter((t) => t.group !== "web");
+  // Slash commands and skills: one switch for the CLI's tools that take it (Claude Code's SlashCommand and Skill).
+  const slashTools = view.builtin.tools.filter((t) => t.how === "slash");
+  const slashWhyNot = view.builtin.slash ?? null;
+  const slashOn = value.slashCommands && !slashWhyNot;
+  const slashRisk = slashTools[0]?.risk ?? "medium";
+  const builtin = view.builtin.tools.filter((t) => t.group !== "web" && t.how !== "slash");
   const known = builtin.filter((t) => !(t.risk === "unknown" && t.how === "switch"));
   const others = builtin.filter((t) => t.risk === "unknown" && t.how === "switch");
   return (
@@ -124,13 +129,25 @@ export function AgentCliToolsFields({ agentId, cliId, allowedTools, value, onCha
         </ul>
       </Field>
       <Field label="Built-in tools" wide
-        hint={<>{view.builtin.source}{lead && " In chat the Team Lead keeps only Read, Glob and Grep, plus the web tools when they are on."}</>}>
+        hint={<>{view.builtin.source}{lead && " In chat the Team Lead keeps only Read, Glob and Grep, plus the web tools when they are on, and never slash commands or skills."}</>}>
         <div className="ct-head">
           {view.builtin.canAsk && (
             <button type="button" className="btn ghost sm" disabled={asking} onClick={ask} title="Starts Claude Code without a login: nothing is spent, nothing is written in ~/.claude">
               <RefreshCw className="icon" />{asking ? "Asking…" : "Ask Claude Code again"}</button>
           )}
         </div>
+        <ul className="mcp-agent" aria-label="Slash commands and skills">
+          <li className={`ma-server${slashOn ? " on" : ""}`}>
+            <div className="ma-head">
+              <label className="check"><input type="checkbox" aria-label="Use slash commands and skills" checked={slashOn} disabled={!!slashWhyNot}
+                onChange={(e) => onChange({ ...value, slashCommands: e.target.checked })} /> <b>Slash commands and skills</b></label>
+              {slashTools.length > 0 && <span className="mono faint">{slashTools.map((t) => t.id).join(", ")}</span>}
+              <span className={`badge ${RISK_BADGE[slashRisk] ?? "outline"}`}>{RISK_TEXT[slashRisk] ?? slashRisk}</span>
+              {slashTools.some((t) => t.reported) && <span className="badge outline" title="The CLI named it in its list of tools">Reported</span>}
+            </div>
+            <span className="ma-line">{slashWhyNot ?? slashTools[0]?.description}</span>
+          </li>
+        </ul>
         {GROUPS.map(([g, label]) => {
           const list = known.filter((t) => t.group === g);
           return list.length === 0 ? null : (

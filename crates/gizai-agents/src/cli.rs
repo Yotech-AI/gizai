@@ -89,6 +89,10 @@ pub struct TaskRun {
     pub disallowed_tools: Vec<String>,
     /// The agent's Web switches (agent form → Tools → Web), in each CLI's own terms (`task_exec`).
     pub web: WebTools,
+    /// Claude Code: the agent's Slash commands and skills switch (agent form → Tools → Built-in tools). On, the run goes
+    /// without `--disable-slash-commands` and gets `SlashCommand` and `Skill` in its allowed tools; hooks stay off and
+    /// settings still come from the user's only. Off by default; other CLIs ignore it.
+    pub slash_commands: bool,
 }
 
 /// The Web switches of a run. Claude Code gets `WebSearch` and `WebFetch` (or one `WebFetch(domain:…)` per domain) in its
@@ -164,11 +168,13 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             bin: cli.bin.clone(), prompt: run.prompt.clone(), session_id: run.session_id.clone(), resume: run.resume,
             permission_mode: if run.permission_mode.is_empty() { "acceptEdits".into() } else { run.permission_mode.clone() },
             allowed_tools: run.allowed_tools.iter().cloned()
-                .chain(crate::tool_catalog::claude_web_rules(run.web.search, run.web.fetch, &run.web.fetch_domains)).collect(),
+                .chain(crate::tool_catalog::claude_web_rules(run.web.search, run.web.fetch, &run.web.fetch_domains))
+                .chain(crate::tool_catalog::claude_slash_tools(run.slash_commands)).collect(),
             model: run.model.clone(), max_budget_usd: run.max_budget_usd,
-            // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
-            // for headless agents. Nor is Claude Code's own memory: agents keep their notes in Gizai's.
-            disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: run.effort.clone(), env: cli.env.clone(),
+            // Your own hooks (e.g. a SessionStart hook) are for your sessions, not for headless agents, and so are your
+            // slash commands and plugin skills (e.g. superpowers), unless the agent has Slash commands and skills on. Nor
+            // is Claude Code's own memory: agents keep their notes in Gizai's.
+            disable_hooks: true, disable_skills: !run.slash_commands, disable_auto_memory: true, effort: run.effort.clone(), env: cli.env.clone(),
             add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(),
             disallowed_tools: claude_read_only(&run.folders).into_iter().chain(run.disallowed_tools.iter().cloned()).collect(),
             mcp_config: run.mcp_config.clone(),

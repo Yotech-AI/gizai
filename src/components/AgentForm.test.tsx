@@ -108,3 +108,34 @@ describe("the agent form with GA-39's Tools and GA-53's columns", () => {
     for (const k of ["mcp", "tools", "wakeup", "heartbeatMinutes"]) expect(input, k).not.toHaveProperty(k);
   });
 });
+
+// GA-96: Shares memory with, in the Memory section under Use memory. Rendered on the server, so no agents load: the
+// choices themselves are checked in src/lib/memoryGroups.test.ts.
+describe("Shares memory with in the agent form (GA-96)", () => {
+  const memory = (html: string) => html.slice(html.indexOf("<h3>Memory</h3>"), html.indexOf("<h3>", html.indexOf("<h3>Memory</h3>") + 1));
+  const select = (html: string) => memory(html).match(/<select id="a-shares"[^>]*>.*?<\/select>/)?.[0] ?? "";
+
+  it("sits under Use memory, on Its own folder for a new agent, and says what sharing does", () => {
+    const html = memory(renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ role: "backend" }} onClose={() => {}} />));
+    expect(html).toContain("Each agent has its own folder in Memory, or shares another agent&#x27;s.");
+    expect(html.indexOf("Use memory")).toBeGreaterThan(-1);
+    expect(html.indexOf('<label for="a-shares">Shares memory with</label>')).toBeGreaterThan(html.indexOf("Use memory"));
+    expect(select(html)).toMatch(/^<select id="a-shares" class="select">/);
+    expect(select(html)).toContain('<option value="" selected="">Its own folder</option>');
+    expect(html).toContain("Backend Agent 2 with Backend Agent");
+    expect(html).toContain("Joining moves its notes into that folder; back to its own folder, it starts a fresh Notes.");
+  });
+
+  it("names the new agent's own folder by its name", () => {
+    const html = memory(renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ name: "Ops: 2/3", role: "devops" }} onClose={() => {}} />));
+    expect(html).toContain("Its own folder (Agents/Ops- 2-3/)");
+  });
+
+  it("is off on the Team Lead's form, which keeps its own notes", () => {
+    for (const preset of [{ name: "Team Lead", role: "lead", chat: true }, { name: "Team Lead", role: "lead" }, { name: "Chat Agent", role: "backend", chat: true }]) {
+      const html = memory(renderToStaticMarkup(<AgentDrawer teamId="t1" preset={preset} onClose={() => {}} />));
+      expect(select(html), JSON.stringify(preset)).toMatch(/^<select id="a-shares" class="select" disabled="">/);
+      expect(html).toContain("The Team Lead keeps its own notes, in Team Lead/.");
+    }
+  });
+});

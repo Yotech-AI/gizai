@@ -213,6 +213,7 @@ pub(crate) fn get_agent(cx: &Cx, a: &Args) -> Result<Value, String> {
     v["fetch_domains"] = json!(c.fetch_domains);
     v["browser"] = json!(m.tools.browser_on());
     v["builtin_tools_on"] = json!(c.builtin);
+    v["slash_commands"] = json!(c.slash_commands);
     v["instructions_md"] = json!(m.instructions_md);
     let recent: Vec<Value> = runs::list_for_agent(cx.db(), &m.actor_id, 10).map_err(err)?.into_iter().map(|r| json!({
         "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "cost_usd": usd(r.cost_usd_micros), "error": r.error,

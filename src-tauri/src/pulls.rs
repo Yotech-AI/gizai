@@ -1,7 +1,8 @@
 //! Review on GitHub or Bitbucket. Open pull request (a card in Review) pushes the card's branch and opens its pull
 //! request: on GitHub over SSH with your keys, or over HTTPS with gh's login (Settings → GitHub → Push over), with your
 //! GitHub CLI (gh); on Bitbucket over SSH with your keys, with Bitbucket's API and your login (Settings → Bitbucket).
-//! The end of every run pushes the card's branch to the same place, the same way (`push_to`, `push_over_for`).
+//! The end of every run pushes the card's branch to the same place, the same way (`push_to`, `push_over_for`), and an
+//! agent's own push in a run goes the same way too (`run_git_config`).
 //! The PR check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet:
 //! every two minutes, when a run moves a card to Review, and when you open such a card. A merge moves its card to
 //! Deploy (Done for a team without a Deploy column), where nothing starts by itself, and removes its worktree. Usable
@@ -157,6 +158,20 @@ pub(crate) fn push_over_for(st: &AppState, provider: &str) -> Result<PushOver, S
         "github" if crate::github::push_over_name(st) == "https" => gh_bin(st).map(|gh| crate::github::push_over(st, &gh)),
         _ => Ok(PushOver::Ssh),
     }
+}
+
+/// The git settings of a task run of `project` (GA-92), whose worktree is `wt`: the agent's own `git push` to the
+/// project's repository goes the way Gizai's push after the run goes (`push_over_for`), and nothing else changes
+/// (`PushOver::run_config`). The repository goes by the project's link and by each of its remotes that is the same
+/// repository. None without a GitHub or Bitbucket link: a push to another git URL goes as its address says. Err: Push
+/// over HTTPS without gh. Finding gh can start a login shell: blocking.
+pub(crate) fn run_git_config(st: &AppState, project: &gizai_core::model::Project, wt: &Path) -> Result<Vec<(String, String)>, String> {
+    let Some(link) = project.repo_url.as_deref().and_then(|u| gizai_core::repo_url::normalize(u).ok().flatten()) else { return Ok(vec![]) };
+    let Some(full_name) = link.full_name() else { return Ok(vec![]) };
+    let over = push_over_for(st, &link.provider)?;
+    let remotes = worktree::remote_urls(wt).into_iter().map(|(_, url)| url).filter(|url| gizai_core::repo_url::same_repo(url, &link.url));
+    let addresses: Vec<String> = std::iter::once(link.url.clone()).chain(remotes).collect();
+    Ok(over.run_config(&full_name, &addresses, &worktree::own_rewrites(wt)))
 }
 
 /// Finds `gh` and saves what it finds: on Linux and macOS the way a login shell would, then in the usual install places;

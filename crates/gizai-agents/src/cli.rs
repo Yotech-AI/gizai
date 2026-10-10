@@ -83,6 +83,10 @@ pub struct TaskRun {
     /// The run's temp folder (`<worktree>/.gizai-tmp`, `worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and
     /// TEMP. None when Gizai couldn't make it.
     pub temp_dir: Option<String>,
+    /// The git settings that send the agent's own push to the project's repository the way Gizai pushes
+    /// (`connection::PushOver::run_config`): every CLI gets them as GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and
+    /// GIT_CONFIG_VALUE_<n> (`task_exec`). Empty: none.
+    pub git_config: Vec<(String, String)>,
     /// Claude Code: the run's MCP config file (`mcp_run`), with the agent's MCP servers on.
     pub mcp_config: Option<PathBuf>,
     /// Claude Code: more tools to refuse, like the MCP tools switched off (`mcp_run::permissions`).
@@ -149,12 +153,15 @@ pub fn folders_left_out(kind: Kind, folders: &[RunFolder]) -> Option<String> {
 /// - Gemini: `--include-directories` for each read and change folder; read folders are left out;
 /// - Other: none.
 ///
-/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, after its own environment lines.
+/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, then the git settings of the agent's own push
+/// (`TaskRun::git_config`) as GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n>, after its own environment
+/// lines. Codex gets those also in its shell environment policy (`codex_args`).
 pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
     let mut exec = cli_exec(cli, run);
     if let Some(dir) = &run.temp_dir {
         exec.env.extend(crate::worktree::temp_env(std::path::Path::new(dir)));
     }
+    exec.env.extend(crate::connection::git_env(&run.git_config));
     exec
 }
 
@@ -220,6 +227,12 @@ fn codex_args(run: &TaskRun) -> Vec<String> {
                 a.extend(["-c".into(), format!("sandbox_workspace_write.writable_roots=[{}]", roots.join(","))]);
             }
         }
+    }
+    // The git settings of the agent's own push, also in the policy's `set`: a policy that leaves out names with KEY in
+    // them (ignore_default_excludes = false) would keep GIT_CONFIG_COUNT without GIT_CONFIG_KEY_0, and then every git
+    // command fails.
+    for (name, value) in crate::connection::git_env(&run.git_config) {
+        a.extend(["-c".into(), format!("shell_environment_policy.set.{name}={}", toml_str(&value))]);
     }
     if run.resume {
         a.push(run.session_id.clone());

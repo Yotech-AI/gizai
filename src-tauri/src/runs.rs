@@ -881,6 +881,22 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             None
         }
     };
+    // GA-92: the agent's own `git push` to the project's repository goes the way Gizai's push after the run goes, through
+    // git settings in the run's environment only (every CLI, new and continued runs). Over HTTPS without gh the run
+    // starts without them, and its log says why.
+    let (st2, p2, dir) = (st.clone(), project.clone(), wt.path.clone());
+    let git_config = match tokio::task::spawn_blocking(move || crate::pulls::run_git_config(&st2, &p2, &dir)).await {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            notes.push(format!("Couldn't set up this run's own git push over HTTPS (Settings → GitHub): {e}. Its git push goes as \
+                                the repository's remote says, and Gizai still pushes the branch when the run ends."));
+            vec![]
+        }
+        Err(e) => {
+            eprintln!("gizai: setting up the own git push of run {run_id} failed: {e}");
+            vec![]
+        }
+    };
     let allowed_tools: Vec<String> =
         if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() };
     // Web search, fetching pages and the CLI's other tools come only from their switches (agent form → Tools), never from the
@@ -952,7 +968,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
-        folders, temp_dir,
+        folders, temp_dir, git_config,
     };
     let exec = agent_cli::task_exec(&spec, &run);
     // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then

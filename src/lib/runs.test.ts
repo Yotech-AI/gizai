@@ -143,3 +143,38 @@ describe("triggerName (GA-31)", () => {
     expect(triggerName({ trigger: "webhook" })).toBe("webhook");
   });
 });
+
+import { leadText } from "./runs";
+import type { LeadAnswer } from "../types";
+
+describe("a question the Team Lead took (GA-70)", () => {
+  const lead = (o: Partial<LeadAnswer>): LeadAnswer => ({ state: "asking", costUsdMicros: 0, ...o });
+  const asked = (l: Partial<LeadAnswer> | null) => run({ status: "succeeded", outcome: "needs_decision", lead: l ? lead(l) : null });
+  it("badges the asking run teal while the Team Lead has it, and as answered once it did", () => {
+    expect(badgeOf(asked({ state: "asking" }))).toEqual({ cls: "live", text: "With the Team Lead" });
+    expect(badgeOf(asked({ state: "answering" }))).toEqual({ cls: "live", text: "With the Team Lead" });
+    expect(badgeOf(asked({ state: "answered" }))).toEqual({ cls: "ok", text: "Team Lead answered" });
+  });
+  it("keeps Needs your decision when it went to you: escalated, a limit, skipped, or no Team Lead", () => {
+    for (const state of ["escalated", "limit", "skipped", "dropped"]) {
+      expect(badgeOf(asked({ state }))).toEqual({ cls: "needs", text: "Needs your decision" });
+    }
+    expect(badgeOf(asked(null))).toEqual({ cls: "needs", text: "Needs your decision" });
+  });
+  it("says who answered", () => {
+    expect(leadText(lead({ state: "asking" }))).toBe("With the Team Lead");
+    expect(leadText(lead({ state: "answering" }))).toBe("Team Lead answered; the agent carries on");
+    expect(leadText(lead({ state: "answered" }))).toBe("Team Lead answered");
+    expect(leadText(lead({ state: "escalated", reason: "the client decides on the format" }))).toBe("Team Lead escalated to you: the client decides on the format");
+    expect(leadText(lead({ state: "escalated" }))).toBe("Team Lead escalated to you");
+    expect(leadText(lead({ state: "dropped" }))).toBe("The Team Lead stopped: the card moved on first");
+    expect(leadText(lead({ state: "skipped", reason: "The gizai-mcp helper is missing" })))
+      .toBe("Went to you: the Team Lead can't look at questions here (The gizai-mcp helper is missing)");
+    expect(leadText(lead({ state: "limit", reason: "the Team Lead answered this card's last question" })))
+      .toBe("Went to you: the Team Lead answered this card's last question");
+    expect(leadText(lead({ state: "limit" }))).toBe("Went to you: the Team Lead's limit for this card");
+  });
+  it("names the Team Lead's run on a question", () => {
+    expect(triggerName({ trigger: "question" })).toBe("Question");
+  });
+});

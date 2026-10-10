@@ -45,6 +45,8 @@ export type Task = {
   archivedAt?: number | null; archivedBy?: string | null;
   /** Run this for me: while the card is on hold, the commands its latest run asks you to run; Done, continue resumes that run. */
   runForMe?: string[];
+  /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
+  withLead?: boolean;
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -189,12 +191,45 @@ export type Run = {
   runForMe?: string[];
   /** The memory notes its prompt was given (GA-19). */
   memory?: GivenNote[];
+  /** It ended asking for a decision and the Team Lead took the question (GA-70): what it did with it. */
+  lead?: LeadAnswer | null;
+  /** A Team Lead's run on a question (trigger question, GA-70): the card the question is on. */
+  questionTaskId?: string | null;
+};
+/** What the Team Lead did with a run's question (GA-70). state: asking (it looks at it now), answering (it answered and Gizai
+ *  continues the agent), answered, escalated (it asked you: the Inbox), dropped (the card moved on before it was done),
+ *  skipped (it can't run here, reason says why: the question went to you as before) or limit (the limits sent it to you,
+ *  reason says which). */
+export type LeadAnswer = {
+  state: "asking" | "answering" | "answered" | "escalated" | "dropped" | "skipped" | "limit" | string;
+  leadId?: string | null;
+  /** The Team Lead's run on the question. */
+  runId?: string | null;
+  /** Escalated: why you decide. */
+  reason?: string | null;
+  /** Answered: the start of its answer (the card's comment has it all). */
+  answer?: string | null;
+  /** The memory note the answer was kept in. */
+  note?: string | null;
+  /** What the Team Lead's run on it cost (it counts toward the Team Lead's budget). */
+  costUsdMicros: number;
+  /** You answered after it escalated, and the Team Lead kept your answer in memory. */
+  learned?: boolean;
+  /** Escalated: the Team Lead's comment that asks you. */
+  commentId?: string | null;
 };
 /** A memory note a run's prompt was given: its path, its length and how much of it the prompt showed (less when cut). */
 export type GivenNote = { path: string; chars: number; shown: number };
 /** A note in Gizai's Memory (GA-19): a doc of kind memory, with a path like "Team Lead/Notes". */
 export type MemoryNote = { id: string; path: string; scope: "shared" | "agent"; ownerId?: string | null; bodyMd: string; currentVersion: number;
   updatedAt: number; updatedBy?: string | null; chars: number };
+/** What saving a memory note did. */
+export type MemorySaved = { id: string; path: string; version: number; created: boolean };
+/** A memory search result: the note (without its text) and the line that matched. */
+export type MemoryHit = { note: MemoryNote; snippet: string };
+/** A note's last saved version (Memory → Recently changed): who wrote it, the run and its card when a run did, and when. */
+export type MemoryChange = { note: MemoryNote; version: number; at: number; authorId?: string | null; authorName?: string | null;
+  authorKind?: string | null; runId?: string | null; taskId?: string | null; taskIdentifier?: string | null };
 /** A tool call a run's CLI refused: the tool, what it asked for (the command, the file) and why, when the CLI said. */
 export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */

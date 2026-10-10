@@ -6,8 +6,10 @@
 // DevTools MCP or a browser.
 // The command, the options and the versions are checked on every system. The browser program, what it needs and Stop and
 // the time cap only on Linux and macOS: they run shell or Python scripts as fake programs, which Windows can't start.
+// GA-79, Windows only: Node and npx found as node.exe and npx.cmd, Google Chrome in its three Windows places, the program
+// you set with a drive letter or `~\`, and the run's entry started through `cmd /c` with paths that have spaces (a node
+// fake behind an npx.cmd, like os_test's).
 use std::ffi::OsStr;
-#[cfg(unix)]
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
@@ -15,8 +17,9 @@ use std::time::{Duration, Instant};
 use gizai_agents::browser;
 #[cfg(unix)]
 use gizai_agents::claude::ClaudeArgs;
+use gizai_agents::mcp_run;
 #[cfg(unix)]
-use gizai_agents::mcp_run::{self, RunServer};
+use gizai_agents::mcp_run::RunServer;
 #[cfg(unix)]
 use gizai_agents::process::{Caps, RunHandle, spawn};
 #[cfg(unix)]
@@ -206,6 +209,369 @@ fn node_versions_the_pinned_server_takes() {
     for bad in ["v20.18.9", "v21.7.3", "v22.11.0", "v18.20.4", "", "garbage"] {
         assert!(!browser::node_ok(bad), "{bad}");
     }
+}
+
+// ---- GA-79: Linux and macOS as before, Windows' own ----
+
+#[test]
+fn the_full_path_message_gives_this_systems_example() {
+    #[cfg(not(windows))]
+    {
+        assert_eq!(browser::EXAMPLE_PROGRAM, "/usr/bin/chromium");
+        // word for word what it said before GA-79
+        assert_eq!(browser::check_program(" chromium ", "").unwrap_err(), "give the browser program as a full path, like /usr/bin/chromium: not \"chromium\"");
+    }
+    #[cfg(windows)]
+    {
+        assert_eq!(browser::EXAMPLE_PROGRAM, r"C:\Program Files\Google\Chrome\Application\chrome.exe");
+        assert_eq!(browser::check_program(" chrome.exe ", "").unwrap_err(),
+                   r#"give the browser program as a full path, like C:\Program Files\Google\Chrome\Application\chrome.exe: not "chrome.exe""#);
+    }
+}
+
+/// The browser's entry in a run's config. On Linux and macOS it is `mcp_run::stdio`'s, npx by its path with the server's
+/// arguments and environment lines, as before GA-79, also with spaces in the path. On Windows too when npx isn't a batch
+/// file in a folder (a bare `npx`, an npx.exe).
+#[test]
+fn the_runs_entry_is_npx_by_its_path_on_linux_and_macos() {
+    let args = browser::args("1.10.1", Some("/opt/Google Chrome/chrome"), true);
+    let env = browser::env(OsStr::new("/usr/local/bin:/usr/bin"));
+    #[cfg(not(windows))]
+    for npx in ["/usr/bin/npx", "/home/me/.nvm/versions/node/v24.1.0/bin/npx", "/opt/Program Files/nodejs/npx"] {
+        let e = browser::entry(npx, &args, &env);
+        assert_eq!(e, mcp_run::stdio(npx, &args, &env), "{npx}");
+        assert_eq!(e, serde_json::json!({"type": "stdio", "command": npx, "args": args, "env": {
+            "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1", "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1", "PATH": "/usr/local/bin:/usr/bin"}}));
+    }
+    #[cfg(windows)]
+    for npx in ["npx", r"C:\tools\npx.exe"] {
+        assert_eq!(browser::entry(npx, &args, &env), mcp_run::stdio(npx, &args, &env), "{npx}");
+    }
+}
+
+// ---- Windows (GA-79) ----
+// Node and npx as Node's installer puts them, Google Chrome in its three places, the program you set, and the run's
+// entry started through cmd. Programs are empty `.exe` files (os::executable goes by PATHEXT), never a real browser; npx
+// is an npx.cmd like Node's own that runs the node fake of os_test.
+
+#[cfg(windows)]
+const FAKE_NODE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake-claude-node.cjs");
+
+/// Node's own npx.cmd (Node 22), without its look for a global npm: node.exe next to it, else the one on PATH, runs
+/// node_modules\npm\bin\npx-cli.js with the arguments as cmd got them.
+#[cfg(windows)]
+const NPX_CMD: &str = "@ECHO OFF\r\n\r\nSETLOCAL\r\n\r\nSET \"NODE_EXE=%~dp0\\node.exe\"\r\nIF NOT EXIST \"%NODE_EXE%\" (\r\n  SET \"NODE_EXE=node\"\r\n)\r\n\r\nSET \"NPX_CLI_JS=%~dp0\\node_modules\\npm\\bin\\npx-cli.js\"\r\n\r\n\"%NODE_EXE%\" \"%NPX_CLI_JS%\" %*\r\n";
+
+/// The variables `find_browser` reads for Google Chrome's places, in its order.
+#[cfg(windows)]
+const PLACE_VARS: [&str; 3] = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"];
+
+/// The tests that read or change Chrome's places (`PLACE_VARS`) take turns.
+#[cfg(windows)]
+static PLACES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(windows)]
+fn turn() -> std::sync::MutexGuard<'static, ()> {
+    PLACES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Chrome's three places pointed at a test's folders while it holds its turn, and put back as they were when it ends,
+/// also when it fails.
+#[cfg(windows)]
+struct Places {
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    _turn: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(windows)]
+impl Places {
+    fn at(dirs: &[PathBuf; 3]) -> Places {
+        let t = turn();
+        let saved = PLACE_VARS.iter().map(|k| (*k, std::env::var_os(k))).collect();
+        for (k, d) in PLACE_VARS.iter().zip(dirs) {
+            // SAFETY: only the tests in this file read these variables, and they take turns (PLACES).
+            unsafe { std::env::set_var(k, d) };
+        }
+        Places { saved, _turn: t }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Places {
+    fn drop(&mut self) {
+        for (k, v) in &self.saved {
+            // SAFETY: as in `at`; the turn is let go only after this (fields drop after `drop`).
+            unsafe {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+}
+
+/// An empty file at `p` as a program.
+#[cfg(windows)]
+fn program(p: &Path) -> PathBuf {
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, "").unwrap();
+    p.to_path_buf()
+}
+
+/// npx in `dir` as Node's installer puts it there: npx.cmd (`NPX_CMD`), whose npx-cli.js is the node fake, and an `npx`
+/// without an extension (Node's script for Git Bash), which Windows can't run.
+#[cfg(windows)]
+fn install_npx(dir: &Path) -> PathBuf {
+    let cli = dir.join(r"node_modules\npm\bin\npx-cli.js");
+    std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+    std::fs::write(&cli, format!("require({});\n", serde_json::to_string(FAKE_NODE).unwrap())).unwrap();
+    std::fs::write(dir.join("npx"), "#!/usr/bin/env bash\nnode \"$(dirname \"$0\")/node_modules/npm/bin/npx-cli.js\" \"$@\"\n").unwrap();
+    std::fs::write(dir.join("npx.cmd"), NPX_CMD).unwrap();
+    dir.join("npx.cmd")
+}
+
+/// Starts a run's config entry the way Claude Code starts a stdio server: its command with its arguments (Rust's Command,
+/// like Node's spawn, puts quotes around each argument with a space and leaves the others as they are) and its env lines
+/// over the environment, in the run's folder. The node fake writes the arguments it got to `out`.
+#[cfg(windows)]
+fn start_entry(e: &serde_json::Value, cwd: &Path, out: &Path) -> std::process::Output {
+    let mut cmd = std::process::Command::new(e["command"].as_str().unwrap());
+    cmd.args(e["args"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()));
+    for (k, v) in e["env"].as_object().unwrap() {
+        cmd.env(k, v.as_str().unwrap());
+    }
+    cmd.env("FAKE_ARGS_OUT", out).current_dir(cwd).stdin(std::process::Stdio::null()).output().unwrap()
+}
+
+#[cfg(windows)]
+fn args_seen(out: &Path) -> Vec<String> {
+    serde_json::from_str(&std::fs::read_to_string(out).expect("the fake wrote its arguments")).unwrap()
+}
+
+/// Windows: on the runner's own PATH (Node 22 from actions/setup-node), Node is node.exe with its version and npx is
+/// npx.cmd, and nothing is missing about either.
+#[cfg(windows)]
+#[test]
+fn needs_finds_node_exe_and_npx_cmd_on_the_path_with_nodes_version() {
+    let _t = turn();
+    let n = browser::needs(&std::env::var_os("PATH").unwrap_or_default(), "", "");
+    let lower = |s: &Option<String>| s.clone().unwrap_or_default().to_lowercase();
+    assert!(lower(&n.node).ends_with(r"\node.exe"), "{n:?}");
+    assert!(lower(&n.npx).ends_with(r"\npx.cmd"), "{n:?}");
+    let v = n.node_version.clone().unwrap_or_default();
+    assert!(v.starts_with('v') && browser::node_ok(&v), "Node's version: {n:?}");
+    assert!(!n.missing.iter().any(|m| m.contains("Node") || m.contains("npx")), "{:?}", n.missing);
+}
+
+/// Windows: in a folder like the one Node's installer makes (C:\Program Files\nodejs), npx is npx.cmd, not the `npx`
+/// without an extension next to it; node.exe (a copy of the runner's) gives its version.
+#[cfg(windows)]
+#[test]
+fn in_nodes_own_folder_npx_is_npx_cmd_and_node_exe_gives_its_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let nodejs = tmp.path().join(r"Program Files\nodejs");
+    install_npx(&nodejs);
+    let real = gizai_agents::os::find_in("node", &std::env::var_os("PATH").unwrap_or_default()).expect("node on PATH");
+    std::fs::copy(&real, nodejs.join("node.exe")).unwrap();
+    let path = nodejs.as_os_str();
+    assert_eq!(browser::on_path("node", path), Some(nodejs.join("node.exe")));
+    assert_eq!(browser::on_path("npx", path), Some(nodejs.join("npx.cmd")));
+    let _t = turn();
+    let n = browser::needs(path, "", "");
+    assert_eq!((n.node.clone(), n.npx.clone()), (Some(nodejs.join("node.exe").display().to_string()), Some(nodejs.join("npx.cmd").display().to_string())));
+    let v = n.node_version.clone().unwrap_or_default();
+    assert!(v.starts_with('v') && browser::node_ok(&v), "Node's version: {n:?}");
+    assert!(!n.missing.iter().any(|m| m.contains("Node") || m.contains("npx")), "{:?}", n.missing);
+    // only the one without an extension: not found
+    std::fs::remove_file(nodejs.join("npx.cmd")).unwrap();
+    assert_eq!(browser::on_path("npx", path), None);
+    assert!(browser::needs(path, "", "").missing.iter().any(|m| m.starts_with("npx isn't found")));
+}
+
+/// Windows: Google Chrome in each of its places, `Google\Chrome\Application\chrome.exe` under %ProgramFiles%,
+/// %ProgramFiles(x86)% and %LOCALAPPDATA% (an install for one user), with by_itself: chrome-devtools-mcp 1.10.1's
+/// Puppeteer looks in all three, so a run passes no --executablePath. On PATH Chrome or Chromium is found too, and passed.
+/// Brave never counts, in its own places or on PATH.
+#[cfg(windows)]
+#[test]
+fn find_browser_finds_chrome_in_its_three_windows_places_and_never_brave() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dirs = ["Program Files", "Program Files (x86)", r"Users\me\AppData\Local"].map(|d| tmp.path().join(d));
+    for d in &dirs {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let _places = Places::at(&dirs);
+    let chrome = |d: &Path| d.join(r"Google\Chrome\Application\chrome.exe");
+    let found = |p: &Path, name: &'static str, by_itself: bool| Some(browser::Found { path: p.to_path_buf(), name, by_itself });
+    let none = OsStr::new("");
+    assert_eq!(browser::find_browser(none), None, "nothing installed");
+
+    // Brave in its own places, and its folder on PATH with a chrome.exe in it too
+    for d in &dirs {
+        program(&d.join(r"BraveSoftware\Brave-Browser\Application\brave.exe"));
+    }
+    let brave_dir = dirs[0].join(r"BraveSoftware\Brave-Browser\Application");
+    program(&brave_dir.join("chrome.exe"));
+    assert_eq!(browser::find_browser(brave_dir.as_os_str()), None);
+    assert!(browser::needs(brave_dir.as_os_str(), "", "").missing.iter().any(|m| m.contains("No Google Chrome or Chromium found")));
+
+    // each place on its own
+    for (d, var) in dirs.iter().zip(PLACE_VARS) {
+        let c = program(&chrome(d));
+        assert_eq!(browser::find_browser(brave_dir.as_os_str()), found(&c, "Google Chrome", true), "%{var}%");
+        assert_eq!(browser::program_for_run("", "", none), Ok(None), "%{var}%: the server finds it by itself");
+        std::fs::remove_file(&c).unwrap();
+    }
+    // all three: %ProgramFiles% first, then %ProgramFiles(x86)%, then %LOCALAPPDATA%; before Chrome on PATH
+    let bin = tmp.path().join("bin");
+    let on_path = program(&bin.join("chrome.exe"));
+    for d in dirs.iter().rev() {
+        let c = program(&chrome(d));
+        assert_eq!(browser::find_browser(bin.as_os_str()), found(&c, "Google Chrome", true));
+    }
+    let n = browser::needs(bin.as_os_str(), "", "");
+    assert_eq!((n.browser.clone(), n.browser_name.as_deref()), (Some(chrome(&dirs[0]).display().to_string()), Some("Google Chrome")));
+
+    // none in its places: Chrome on PATH, then Chromium on PATH, by their paths
+    for d in &dirs {
+        std::fs::remove_file(chrome(d)).unwrap();
+    }
+    assert_eq!(browser::find_browser(bin.as_os_str()), found(&on_path, "Google Chrome", false));
+    assert_eq!(browser::program_for_run("", "", bin.as_os_str()), Ok(Some(on_path.display().to_string())));
+    std::fs::remove_file(&on_path).unwrap();
+    let chromium = program(&bin.join("chromium.exe"));
+    assert_eq!(browser::find_browser(bin.as_os_str()), found(&chromium, "Chromium", false));
+    assert_eq!(browser::program_for_run("", "", bin.as_os_str()), Ok(Some(chromium.display().to_string())));
+}
+
+/// Windows: the program you set is a full path with a drive letter, or `~\…` or `~/…` in your profile folder; a path
+/// without a drive letter, a missing file and Brave's are refused, and the message's example is Chrome's Windows path.
+#[cfg(windows)]
+#[test]
+fn check_program_takes_a_path_with_a_drive_letter_or_tilde_and_refuses_the_rest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().display().to_string(); // the profile folder, C:\Users\<you>
+    let chrome = program(&tmp.path().join(r"AppData\Local\Google\Chrome\Application\chrome.exe"));
+    let full = chrome.display().to_string();
+    assert!(full.as_bytes().get(1) == Some(&b':'), "a drive letter: {full}");
+    for ok in [full.clone(), format!("  {full}  "), r"~\AppData\Local\Google\Chrome\Application\chrome.exe".into(),
+               "~/AppData/Local/Google/Chrome/Application/chrome.exe".into()] {
+        assert_eq!(browser::check_program(&ok, &home), Ok(chrome.clone()), "{ok}");
+        assert_eq!(browser::program_for_run(&ok, &home, OsStr::new("")), Ok(Some(full.clone())), "{ok}");
+    }
+    let _t = turn();
+    let n = browser::needs(OsStr::new(""), r"~\AppData\Local\Google\Chrome\Application\chrome.exe", &home);
+    assert_eq!((n.browser.clone(), n.browser_name.as_deref()), (Some(full.clone()), Some("The program you set")));
+
+    for rel in ["chrome.exe", r"Google\Chrome\Application\chrome.exe", r"\Program Files\Google\Chrome\Application\chrome.exe", "C:chrome.exe",
+                "/usr/bin/chromium"] {
+        let e = browser::check_program(rel, &home).unwrap_err();
+        assert_eq!(e, format!(r#"give the browser program as a full path, like C:\Program Files\Google\Chrome\Application\chrome.exe: not "{rel}""#));
+    }
+    let gone = tmp.path().join(r"Program Files\Google\Chrome\Application\chrome.exe");
+    assert!(browser::check_program(&gone.display().to_string(), &home).unwrap_err().contains("isn't a program"), "a missing file");
+    let notes = program(&tmp.path().join("notes.txt"));
+    assert!(browser::check_program(&notes.display().to_string(), &home).unwrap_err().contains("isn't a program"), "not a program");
+    let brave = program(&tmp.path().join(r"AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe"));
+    for b in [brave.display().to_string(), r"~\AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe".into(),
+              r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe".into()] {
+        assert!(browser::check_program(&b, &home).unwrap_err().contains("Brave"), "{b}");
+    }
+    assert!(browser::needs(OsStr::new(""), &brave.display().to_string(), &home).missing.iter().any(|m| m.contains("Brave")));
+}
+
+/// Windows: the browser's entry in a run's config with npx and Chrome both under C:\Program Files. Claude Code puts
+/// quotes around each argument with a space, and cmd strips the first and the last quote of the text after /c when it
+/// starts with one and has more than two (`cmd /?`): `cmd /c "C:\Program Files\nodejs\npx.cmd" …
+/// "--executablePath=C:\Program Files\…\chrome.exe"` would run `C:\Program`. The entry starts npx by its name, so the
+/// text after /c starts with `npx`, not a quote, and cmd keeps every quote; cmd finds npx.cmd in the folder put first on
+/// the PATH line, and `--executablePath=…` stays one argument.
+#[cfg(windows)]
+#[test]
+fn the_runs_entry_gives_npx_by_its_name_through_cmd_with_its_folder_first_on_path() {
+    let npx = r"C:\Program Files\nodejs\npx.cmd";
+    let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+    let args = browser::args("1.10.1", Some(chrome), false);
+    let env = browser::env(OsStr::new(r"C:\Windows\system32;C:\Windows"));
+    let e = browser::entry(npx, &args, &env);
+    let want: Vec<String> = ["/c", "npx"].map(String::from).into_iter().chain(args.iter().cloned()).collect();
+    assert_eq!((&e["type"], &e["command"]), (&serde_json::json!("stdio"), &serde_json::json!("cmd")), "{e}");
+    assert_eq!(e["args"], serde_json::json!(want));
+    assert_eq!(e["args"].as_array().unwrap().last(), Some(&serde_json::json!(format!("--executablePath={chrome}"))), "one argument");
+    assert!(!e["args"].as_array().unwrap().iter().any(|a| a.as_str().unwrap().contains(r"Program Files\nodejs")), "npx by its name: {e}");
+    assert_eq!(e["env"]["PATH"], r"C:\Program Files\nodejs;C:\Windows\system32;C:\Windows");
+    for (k, v) in [("NoDefaultCurrentDirectoryInExePath", "1"), ("CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS", "1"), ("CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS", "1")] {
+        assert_eq!(e["env"][k], v, "{e}");
+    }
+    // as the run's config file has it
+    let server = mcp_run::RunServer { name: "chrome-devtools".into(), entry: e.clone(), tools_off: vec![], known_tools: vec![] };
+    assert_eq!(mcp_run::config(vec![], &[server])["mcpServers"]["chrome-devtools"], e);
+    // an uppercase extension is a batch file too, and an env without a PATH line gets one
+    let e = browser::entry(r"C:\Program Files\nodejs\NPX.CMD", &args, &[]);
+    assert_eq!((&e["command"], &e["args"][1], &e["env"]["PATH"]), (&serde_json::json!("cmd"), &serde_json::json!("NPX"), &serde_json::json!(r"C:\Program Files\nodejs")));
+}
+
+/// Windows: the entry started as Claude Code starts it, with npx.cmd and Chrome in folders with spaces: npx gets every
+/// argument unchanged, `--executablePath=…` as one. The entry as it was before GA-79, npx by its path, doesn't start at
+/// all (cmd runs `…\Program`): that shows cmd's quote rule is at work here.
+#[cfg(windows)]
+#[test]
+fn the_runs_entry_starts_through_cmd_with_npx_and_chrome_in_folders_with_spaces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let npx = install_npx(&tmp.path().join(r"Program Files\nodejs"));
+    let chrome = program(&tmp.path().join(r"Program Files\Google\Chrome\Application\chrome.exe"));
+    let args = browser::args("1.10.1", Some(&chrome.display().to_string()), true);
+    let env = browser::env(&std::env::var_os("PATH").unwrap_or_default());
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let out = tmp.path().join("args.json");
+    let done = start_entry(&browser::entry(&npx.display().to_string(), &args, &env), &project, &out);
+    assert!(done.status.success(), "{}", String::from_utf8_lossy(&done.stderr));
+    let seen = args_seen(&out);
+    assert_eq!(seen, args);
+    assert!(seen.contains(&format!("--executablePath={}", chrome.display())), "{seen:?}");
+
+    let before = tmp.path().join("before.json");
+    let done = start_entry(&mcp_run::stdio(&npx.display().to_string(), &args, &env), &project, &before);
+    assert!(!done.status.success() && !before.exists(), "npx by its path through cmd /c started: {}", String::from_utf8_lossy(&done.stderr));
+
+    // List tools starts npx.cmd by its path through os::command (as mcp_client does), with Rust's own batch-file quoting:
+    // that copes with the spaces too
+    let listed = tmp.path().join("listed.json");
+    let done = gizai_agents::os::command(&npx).args(&args).envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).env("FAKE_ARGS_OUT", &listed)
+        .stdin(std::process::Stdio::null()).output().unwrap();
+    assert!(done.status.success(), "{}", String::from_utf8_lossy(&done.stderr));
+    assert_eq!(args_seen(&listed), args);
+}
+
+/// Windows: cmd looks for a program in its current folder before the PATH, so an npx.cmd in the project a run works in
+/// would start instead of npx. The entry's NoDefaultCurrentDirectoryInExePath=1 stops that: npx.cmd from npx's folder
+/// starts. Without that line the project's would (cmd's own lookup, checked here too).
+#[cfg(windows)]
+#[test]
+fn the_runs_entry_never_starts_an_npx_cmd_from_the_project_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let npx = install_npx(&tmp.path().join(r"Program Files\nodejs"));
+    let args = browser::args("1.10.1", None, false);
+    let env = browser::env(&std::env::var_os("PATH").unwrap_or_default());
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("npx.cmd"), "@ECHO OFF\r\necho project> \"%~dp0ran.txt\"\r\n").unwrap();
+
+    let e = browser::entry(&npx.display().to_string(), &args, &env);
+    let out = tmp.path().join("args.json");
+    let done = start_entry(&e, &project, &out);
+    assert!(done.status.success(), "{}", String::from_utf8_lossy(&done.stderr));
+    assert!(!project.join("ran.txt").exists(), "the project's npx.cmd ran");
+    assert_eq!(args_seen(&out), args);
+
+    let mut without = e.clone();
+    without["env"].as_object_mut().unwrap().remove("NoDefaultCurrentDirectoryInExePath");
+    let out = tmp.path().join("without.json");
+    start_entry(&without, &project, &out);
+    assert!(project.join("ran.txt").exists() && !out.exists(), "without the line cmd starts the project's npx.cmd");
 }
 
 // ---- Stop and the time cap end the browser ----

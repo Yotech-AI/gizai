@@ -1,5 +1,5 @@
-// GA-41: the chat with the @ picker and files. The composer has a + button (a menu that opens upward) and the @ tip under
-// it; your sent and queued messages show their links to Gizai items as chips and their files; shown Markdown keeps
+// GA-41: the chat with the @ picker and files. The composer has a + button (a menu that opens upward) and the @ tip (since
+// GA-83 both in the row under the text, inside the box); your sent and queued messages show their links to Gizai items as chips and their files; shown Markdown keeps
 // gizai: links as chips and still drops unsafe links; while the Team Lead is paused the + button is off. Rendered to HTML
 // on the server with the conversation handed in.
 import { describe, expect, it, vi } from "vitest";
@@ -42,10 +42,13 @@ describe("the composer", () => {
   chat.queue = [];
   const html = render();
 
-  it("has a + button before the text box that opens a menu", () => {
+  // GA-83 moved + from before the text box to the row under it, the row's first control.
+  it("has a + button under the text box, first in its row, that opens a menu", () => {
     const plus = html.indexOf('aria-label="Add files or link an item"');
     expect(plus).toBeGreaterThan(-1);
-    expect(html.indexOf("composer-editor")).toBeGreaterThan(plus);
+    expect(html.indexOf("composer-editor")).toBeLessThan(plus);
+    expect(html.indexOf('class="composer-foot"')).toBeLessThan(plus);
+    expect(html.indexOf('class="composer-hint"')).toBeGreaterThan(plus);
     expect(html).toMatch(/<span aria-haspopup="menu" aria-expanded="false"><button type="button" class="btn ghost sm icon-only composer-plus"/);
   });
   it("is a Markdown editor without a toolbar", () => {

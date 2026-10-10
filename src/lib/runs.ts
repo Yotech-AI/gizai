@@ -1,4 +1,4 @@
-import type { DayStat, Run, RunOutcome, SeqEvent } from "../types";
+import type { DayStat, LeadAnswer, Run, RunOutcome, SeqEvent } from "../types";
 
 /** History from run_events plus live run-event messages: one copy per seq, oldest first, newest `cap` kept. */
 export function mergeEvents(a: SeqEvent[], b: SeqEvent[], cap = 500): SeqEvent[] {
@@ -41,6 +41,9 @@ export function badgeOf(r: Run): { cls: string; text: string } {
   if (r.status === "running" || r.status === "queued") return { cls: "live", text: STATUS_TEXT[r.status] };
   if (r.status === "cancelled") return { cls: "", text: "stopped" };
   if (r.status === "timed_out") return { cls: "warn", text: STATUS_TEXT.timed_out };
+  // GA-70: a question the Team Lead has, or answered, doesn't need you (teal while it works on it).
+  if (r.outcome === "needs_decision" && (r.lead?.state === "asking" || r.lead?.state === "answering")) return { cls: "live", text: "With the Team Lead" };
+  if (r.outcome === "needs_decision" && r.lead?.state === "answered") return { cls: "ok", text: "Team Lead answered" };
   const ok = r.status === "succeeded" && r.outcome !== "no_result";
   const cls = r.outcome === "needs_decision" || r.outcome === "qa_fail" ? "needs" : ok ? "ok" : "fail";
   const text = r.trigger === "chat" && r.status === "succeeded" ? "answered" : (r.outcome ? OUTCOME_TEXT[r.outcome] : undefined) ?? STATUS_TEXT[r.status] ?? r.status;
@@ -81,7 +84,23 @@ export function lastAgentText(events: SeqEvent[]): string | null {
 
 const TRIGGER_TEXT: Record<string, string> = {
   manual: "Manual", routed: "Heartbeat", assigned: "Assigned", chat: "Chat", board_check: "Board check", nudge: "Continue", result_nudge: "Nudge",
+  question: "Question",
 };
+
+/** What the Team Lead did with a run's question (GA-70), in a few words: "With the Team Lead", "Team Lead answered",
+ *  "Team Lead escalated to you: <why>". */
+export function leadText(l: LeadAnswer): string {
+  switch (l.state) {
+    case "asking": return "With the Team Lead";
+    case "answering": return "Team Lead answered; the agent carries on";
+    case "answered": return "Team Lead answered";
+    case "escalated": return `Team Lead escalated to you${l.reason ? `: ${l.reason}` : ""}`;
+    case "dropped": return "The Team Lead stopped: the card moved on first";
+    case "skipped": return `Went to you: the Team Lead can't look at questions here${l.reason ? ` (${l.reason})` : ""}`;
+    case "limit": return `Went to you: ${l.reason ?? "the Team Lead's limit for this card"}`;
+    default: return "Team Lead";
+  }
+}
 
 /** What started a run, in a word: a Continue (yours, the Team Lead's or Done, continue) is "Continue", and Gizai's own
  *  nudge after a run ended without its result line is "Nudge" (trigger result_nudge; an older nudge was recorded as a

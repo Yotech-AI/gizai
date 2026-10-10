@@ -50,9 +50,22 @@ export const docVersions = (id: string) => invoke<T.DocVersion[]>("doc_versions"
 export const docVersionBody = (id: string, version: number) => invoke<string>("doc_version_body", { id, version });
 /** An agent's own notes in Memory (the Team Lead's Team Lead/Notes is made the first time); null when it has none. */
 export const agentNotes = (agentId: string) => invoke<T.MemoryNote | null>("agent_notes", { agentId });
+/** The Memory page (GA-68), as you: every note by path, with their text when `text`. */
+export const memoryNotes = (text = false) => invoke<T.MemoryNote[]>("memory_notes", { text });
+/** A new note at `path` (folder and title); refused when the path is taken or the folder isn't a memory folder. */
+export const memoryCreate = (path: string, bodyMd: string) => invoke<T.MemorySaved>("memory_create", { path, bodyMd });
+/** Moves or renames a note: `to` is a whole path, or a folder ending in / that keeps its title. Links to it follow. */
+export const memoryMove = (id: string, to: string) => invoke<T.MemoryNote>("memory_move", { id, to });
+/** Words, "phrases", path:Folder and tag:name. */
+export const memorySearch = (query: string, limit?: number) => invoke<T.MemoryHit[]>("memory_search", { query, limit: limit ?? null });
+/** Notes by their last saved version, newest first, with who wrote it. */
+export const memoryRecent = (limit?: number) => invoke<T.MemoryChange[]>("memory_recent", { limit: limit ?? null });
 /** Memory for every agent (Settings → Runs). */
 export const memoryEnabled = () => invoke<boolean>("memory_enabled");
 export const setMemoryEnabled = (on: boolean) => invoke<void>("set_memory_enabled", { on });
+/** Agents ask the Team Lead before you (Settings → Runs, GA-70). */
+export const askLeadEnabled = () => invoke<boolean>("ask_lead_enabled");
+export const setAskLeadEnabled = (on: boolean) => invoke<void>("set_ask_lead_enabled", { on });
 
 export const addFiles = (ownerType: T.FileOwner, ownerId: string, paths: string[]) => invoke<T.AddFilesResult>("add_files", { ownerType, ownerId, paths });
 export const listFiles = (ownerType: T.FileOwner, ownerId: string) => invoke<T.FileRow[]>("list_files", { ownerType, ownerId });

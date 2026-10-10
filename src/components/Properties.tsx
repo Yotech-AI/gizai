@@ -72,7 +72,9 @@ export function Properties({ task, team, people, onError, onClose, onReadComment
           </>)))}
         {row("Project", task.projectId ? <a className="v editable" href={href({ page: "project", id: task.projectId })}><span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", background: task.projectColor ?? "var(--text-3)" }} />{task.projectName}</a> : <span className="v none">None</span>)}
         {task.hold && row("Hold", <span className="v" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-          <span className="badge needs">{HOLD_NAMES[task.hold] ?? task.hold}</span>
+          {/* GA-70: the question is with the Team Lead (an agent at work, so teal), not with you yet. */}
+          {task.withLead ? <span className="badge live" title="The Team Lead answers it, or asks you in the Inbox">With the Team Lead</span>
+            : <span className="badge needs">{HOLD_NAMES[task.hold] ?? task.hold}</span>}
           {task.holdReason && <span className="muted" style={{ fontSize: "var(--fs-sm)", overflowWrap: "anywhere" }} title={reasonEnd ? task.holdReason : undefined}>
             {reasonEnd ?? task.holdReason}</span>}
           {reasonEnd && onReadComments && <button className="link" style={{ color: "var(--accent)" }} onClick={onReadComments}>Read in comments</button>}

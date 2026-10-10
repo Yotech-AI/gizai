@@ -1,7 +1,8 @@
 // The conversation in one thread (or a new, empty one), the live answer, the messages queued meanwhile, and the
-// composer with Runs on (the coding CLI the chat's answers run on). The composer is a Markdown editor without a toolbar:
-// @ links a Gizai item, and + (or a drop on the Chat page) adds files to the message.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+// composer. The composer is one box: a Markdown editor without a toolbar (@ links a Gizai item), and under the text a row
+// with + (add files, or link an item; a drop on the Chat page adds files too), the tips, Runs on (the coding CLI the
+// chat's answers run on) and Send, or Stop while the Team Lead answers.
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
 import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
@@ -22,17 +23,29 @@ import { useChat } from "./useChat";
 /** Stop, Send now and Answer on <CLI>: each spins from its click until the chat shows what it did. */
 type ChatButtons = Pending<"stop" | "send" | `answer:${string}`>;
 
-function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor }: {
+/** The text box on top; under it, in the same box, + on the left, the tips, `picker` (Runs on), and Send (Stop while the
+ *  Team Lead answers) on the right. */
+function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor, picker }: {
   value: string; setValue: (v: string) => void; files: string[]; onAddFiles: (paths: string[]) => void; onRemoveFile: (path: string) => void;
   onSend: (text?: string) => void; onStop: () => void; working: boolean; disabled: boolean; busy: boolean; pending: ChatButtons;
-  editor: React.MutableRefObject<EditorHandle | null>;
+  editor: React.MutableRefObject<EditorHandle | null>; picker: ReactNode;
 }) {
   useEffect(() => { if (!disabled) editor.current?.focus(); }, [disabled, editor]);
   const ready = !!value.trim() || files.length > 0;
+  // A click in the box around the text (its edges, the tips) puts the cursor in the text, as in one big text field.
+  const toText = (e: React.MouseEvent) => {
+    if (disabled || (e.target as Element).closest("button, select, label, a, .md-editor, .pop")) return;
+    e.preventDefault();
+    editor.current?.focus();
+  };
   return (
-    <div className={`composer-box${disabled ? " disabled" : ""}`}>
+    <div className={`composer-box${disabled ? " disabled" : ""}`} onMouseDown={toText}>
       <PendingFileList paths={files} onRemove={onRemoveFile} disabled={disabled} compact />
-      <div className="composer-row">
+      {/* While the Team Lead answers, Enter queues the message: it goes when the answer is done. */}
+      <MarkdownEditor className="composer-editor" toolbar={false} value={value} onChange={setValue} onEnter={(md) => onSend(md)} disabled={disabled}
+        pickerUp handle={editor} ariaLabel="Message the Team Lead"
+        placeholder={working ? "Queue a message for when this answer is done…" : "Message the Team Lead…"} />
+      <div className="composer-foot">
         <Popover up label="Add to this message" disabled={disabled} button={(open) => (
           <button type="button" className={`btn ghost sm icon-only composer-plus${open ? " on" : ""}`} disabled={disabled}
             aria-label="Add files or link an item" title="Add files or link an item"><Plus className="icon" /></button>
@@ -46,10 +59,10 @@ function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, on
             </>
           )}
         </Popover>
-        {/* While the Team Lead answers, Enter queues the message: it goes when the answer is done. */}
-        <MarkdownEditor className="composer-editor" toolbar={false} value={value} onChange={setValue} onEnter={(md) => onSend(md)} disabled={disabled}
-          pickerUp handle={editor} ariaLabel="Message the Team Lead"
-          placeholder={working ? "Queue a message for when this answer is done…" : "Message the Team Lead…"} />
+        {/* The tips that don't fit the row's width are left out, the last first. */}
+        <div className="composer-hint"><span><span className="kbd">Enter</span> {working ? "queues" : "sends"}</span><span><span className="kbd">Shift</span> <span className="kbd">Enter</span> new line</span>
+          <span><span className="kbd">@</span> links a task, project, client or agent</span></div>
+        {picker}
         {working && <BusyButton className="btn sm stop-btn" pending={pending} name="stop" busyLabel="Stopping…" icon={<Square className="icon sm" />} onClick={onStop}
           title="Stop the answer">Stop</BusyButton>}
         {(!working || ready) && (
@@ -61,16 +74,25 @@ function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, on
   );
 }
 
-/** Runs on, under the text box: the coding CLIs from Settings; those that can't run the chat are listed but disabled, with why. */
+/** A coding CLI as Runs on lists it: its name, and why it can't run the chat. */
+const cliLabel = (c: ChatCli) => `${c.name}${c.problem ? ` (${c.problem})` : ""}`;
+
+/** Runs on, in the composer's bottom row: the coding CLIs from Settings; those that can't run the chat are listed but
+ *  disabled, with why. */
 function RunsOn({ value, clis, disabled, onChange }: { value: string; clis: ChatCli[] | null; disabled: boolean; onChange: (id: string) => void }) {
-  const known = clis?.some((c) => c.id === value);
+  const picked = clis?.find((c) => c.id === value);
+  const shown = picked ? cliLabel(picked) : clis ? value : "Loading…";
   return (
     <label className="runs-on" title={disabled ? "Runs on can change when this answer is done; a change applies from the next message" : "The coding CLI this chat's answers run on"}>
       <span>Runs on</span>
-      <select className="select" aria-label="Runs on" value={value} disabled={disabled || !clis} onChange={(e) => onChange(e.target.value)}>
-        {(!clis || !known) && <option value={value}>{clis ? value : "Loading…"}</option>}
-        {clis?.map((c) => <option key={c.id} value={c.id} disabled={!!c.problem}>{c.name}{c.problem ? ` (${c.problem})` : ""}</option>)}
-      </select>
+      {/* A select is as wide as its longest option; the hidden copy of the picked one's name makes it as wide as that. */}
+      <span className="runs-on-pick">
+        <span className="runs-on-size" aria-hidden="true">{shown}</span>
+        <select className="select" aria-label="Runs on" value={value} disabled={disabled || !clis} onChange={(e) => onChange(e.target.value)}>
+          {!picked && <option value={value}>{shown}</option>}
+          {clis?.map((c) => <option key={c.id} value={c.id} disabled={!!c.problem}>{cliLabel(c)}</option>)}
+        </select>
+      </span>
     </label>
   );
 }
@@ -250,12 +272,8 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
           )}
           <Composer value={value} setValue={setValue} files={files} onAddFiles={addFiles} onRemoveFile={(p) => setFiles((f) => f.filter((x) => x !== p))}
             onSend={send} onStop={() => { if (threadId) pending.act("stop", () => stopChat(threadId), fail); }}
-            working={working} disabled={paused} busy={busy} pending={pending} editor={editor} />
-          <div className="composer-foot">
-            <div className="composer-hint"><span><span className="kbd">Enter</span> {working ? "queues" : "sends"}</span><span><span className="kbd">Shift</span> <span className="kbd">Enter</span> new line</span>
-              <span><span className="kbd">@</span> links a task, project, client or agent</span></div>
-            <RunsOn value={runsOn} clis={clis} disabled={working} onChange={pickCli} />
-          </div>
+            working={working} disabled={paused} busy={busy} pending={pending} editor={editor}
+            picker={<RunsOn value={runsOn} clis={clis} disabled={working} onChange={pickCli} />} />
         </div>
       </div>
     </section>

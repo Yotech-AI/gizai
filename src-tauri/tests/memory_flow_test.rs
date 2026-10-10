@@ -2,6 +2,8 @@
 //! runs; the memory tools as the Team Lead; the Memory section and `learned` in task runs on Claude Code, Codex, Gemini
 //! and Other (the fake CLIs, never the real ones); the notes a run was given; the Use memory switches; and agents made
 //! before memory getting their folder at start-up.
+// Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
+#![cfg(unix)]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -458,6 +460,32 @@ async fn the_use_memory_switches_leave_the_memory_section_and_learned_out() {
     let (task, _) = r.card("backend", "Three. FAKE_LEARNED");
     let run = r.run(&task).await;
     assert!(prompt_of(&run).contains(SECTION) && !run.memory.is_empty());
+    assert_eq!(r.own_notes(&agent).current_version, 2);
+}
+
+#[tokio::test]
+async fn with_web_search_on_the_memory_section_stays_its_own_section_before_the_runs_rules_and_the_untrusted_line() {
+    // GA-55 (merged in): an agent with web search on gets it in its run's flags and the untrusted-content line after "How
+    // this run works". The Memory section stays apart from both, and the rules section keeps at most 12 bullets.
+    use gizai_agents::mcp_run::UNTRUSTED;
+    use gizai_core::mcp_servers::CliTools;
+    let r = run_setup();
+    let (task, agent) = r.card("backend", "Export invoices as CSV. FAKE_LEARNED");
+    let cli = add_cli(&r.st, "Claude Code (prints its prompt)", "claude_code", FAKE_CLAUDE, &["FAKE_TEMP=1"]);
+    put_on(&r.st, &agent, &cli);
+    gizai_lib::mcp_servers::save_cli_tools(&r.st, &agent, CliTools { web_search: true, ..Default::default() }).unwrap();
+    let run = r.run(&task).await;
+    let prompt = prompt_of(&run);
+    check_memory_section(&prompt, "### Agents/Backend Agent/Notes (version 1)");
+    let memory_at = prompt.find(SECTION).unwrap();
+    let rules_at = prompt.find("\n## How this run works").unwrap();
+    let untrusted_at = prompt.find(UNTRUSTED).unwrap_or_else(|| panic!("web search on: the untrusted line: {prompt}"));
+    assert!(memory_at < rules_at && rules_at < untrusted_at, "task, Memory, How this run works, then the untrusted line: {prompt}");
+    assert_eq!((prompt.matches(SECTION).count(), prompt.matches("\n## How this run works").count()), (1, 1));
+    let rules = &prompt[rules_at..untrusted_at];
+    assert!(!rules.contains("Kade deploys on Fridays.") && !prompt[untrusted_at..].contains("Kade deploys"), "no notes in the rules: {rules}");
+    assert!(rules.lines().filter(|l| l.starts_with("- ")).count() <= 12, "at most 12 bullets: {rules}");
+    // and what it learned is kept as without web search
     assert_eq!(r.own_notes(&agent).current_version, 2);
 }
 

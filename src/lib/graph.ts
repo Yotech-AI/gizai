@@ -424,8 +424,8 @@ export function localGraph(g: Pick<Graph, "links">, centre: string, depth: numbe
 
 /** What the graph shows with these settings: without the kinds that are off (tags unless on, missing notes when
  *  existing notes only, the hidden extras) and the notes outside `scope`; then the local graph around `centre`, when
- *  there is one; then only the notes the query matches, with what they link to and name; then without the dots that
- *  have no line left, unless orphans are on. `centre` always stays. */
+ *  there is one (nothing when that note isn't in the graph); then only the notes the query matches, with what they link
+ *  to and name; then without the dots that have no line left, unless orphans are on. `centre` always stays. */
 export function graphView(g: Graph, s: Pick<GraphSettings, "query" | "tags" | "orphans" | "existingOnly" | "hidden" | "depth" | "incoming" | "outgoing">,
   notes: ReadonlyMap<string, Pick<MemoryNote, "path" | "bodyMd">>, opts: { centre?: string | null; scope?: (noteId: string) => boolean } = {}): Graph {
   const { centre, scope } = opts;
@@ -434,8 +434,9 @@ export function graphView(g: Graph, s: Pick<GraphSettings, "query" | "tags" | "o
   let nodes = g.nodes.filter(kindOn);
   let keep = new Set(nodes.map((n) => n.id));
   let links = g.links.filter((l) => keep.has(l.source) && keep.has(l.target));
-  if (centre && keep.has(centre)) {
-    keep = localGraph({ links }, centre, s.depth, s.incoming, s.outgoing);
+  // A local graph around a note that isn't there (yet) is empty.
+  if (centre) {
+    keep = keep.has(centre) ? localGraph({ links }, centre, s.depth, s.incoming, s.outgoing) : new Set();
     nodes = nodes.filter((n) => keep.has(n.id));
     links = links.filter((l) => keep.has(l.source) && keep.has(l.target));
   }

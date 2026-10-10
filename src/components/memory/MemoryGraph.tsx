@@ -101,7 +101,7 @@ export function GlobalGraph({ notes, inScope, settings, onSettings, onReset, onO
         </button>
       )}
       {panel && <GraphPanel settings={settings} onChange={onSettings} groups={groups} onAnimate={() => canvas.current?.animate()} onReset={onReset} onClose={() => setPanel(false)} />}
-      {graph.nodes.length === 0 ? <p className="graph-empty faint">No notes yet: the graph shows them and their links once there are some.</p>
+      {scoped.length === 0 ? <p className="graph-empty faint">No notes here yet: the graph shows them and their links once there are some.</p>
         : view.nodes.length === 0 ? <p className="graph-empty faint">No dot matches these filters.</p> : null}
       {chosenNode && (
         <div className="graph-connections" role="region" aria-label={`Connections of ${chosenNode.label}`}>

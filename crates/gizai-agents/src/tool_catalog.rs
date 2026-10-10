@@ -11,6 +11,7 @@ use std::ffi::OsStr;
 use serde::Serialize;
 
 use crate::cli::Kind;
+use crate::os::{self, End};
 
 /// How a run gets a tool.
 pub mod how {
@@ -281,15 +282,16 @@ pub fn log_tools(path: &std::path::Path) -> Option<Vec<String>> {
 /// Asks the installed Claude Code for its tools without a login: starts `claude` with a scratch `CLAUDE_CONFIG_DIR` and
 /// HOME in `scratch` and only PATH from Gizai's environment (no API key or token can reach it, so nothing can be spent, and
 /// nothing is written in ~/.claude), reads its init line (printed before its "Not logged in" error), and ends its process
-/// group. Takes a second or two. `bin`: the Claude Code program; `path`: the PATH it gets.
+/// group (its Job Object on Windows: `os::Tree`). Takes a second or two. `bin`: the Claude Code program; `path`: the PATH
+/// it gets.
 pub async fn ask_claude(bin: &std::path::Path, scratch: &std::path::Path, path: &OsStr) -> Result<Vec<String>, String> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let (home, config, tmp) = (scratch.join("home"), scratch.join("config"), scratch.join("tmp"));
     for d in [&home, &config, &tmp] {
         std::fs::create_dir_all(d).map_err(|e| format!("couldn't make a scratch folder {}: {e}", d.display()))?;
     }
-    let mut child = tokio::process::Command::new(bin)
-        .env_clear()
+    let mut cmd = os::tokio_command(bin);
+    cmd.env_clear()
         .env("PATH", path).env("HOME", &home).env("CLAUDE_CONFIG_DIR", &config).env("TMPDIR", &tmp).env("LANG", "C.UTF-8")
         .args(["-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--setting-sources", "user",
                "--settings", r#"{"disableAllHooks":true}"#, "--disable-slash-commands", "--strict-mcp-config",
@@ -298,11 +300,8 @@ pub async fn ask_claude(bin: &std::path::Path, scratch: &std::path::Path, path: 
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| format!("couldn't start {}: {e}", bin.display()))?;
-    let group = child.id().unwrap_or(0);
+        .kill_on_drop(true);
+    let (mut child, tree) = os::spawn_tree_tokio(&mut cmd).map_err(|e| format!("couldn't start {}: {e}", bin.display()))?;
     let mut stdin = child.stdin.take().expect("stdin is piped");
     let stdout = child.stdout.take().expect("stdout is piped");
     let _ = stdin.write_all(b"Reply with OK.").await;
@@ -318,16 +317,11 @@ pub async fn ask_claude(bin: &std::path::Path, scratch: &std::path::Path, path: 
         None
     };
     let found = tokio::time::timeout(std::time::Duration::from_secs(30), read).await.ok().flatten();
-    // Its own process group only: SIGTERM, then SIGKILL if it lingers.
-    if group > 1 {
-        // SAFETY: a negative pid addresses the process group this function created for it.
-        unsafe { libc::kill(-(group as i32), libc::SIGTERM); }
-    }
+    // Its own process group only: SIGTERM, then SIGKILL if it lingers. On Windows the first ends its job at once (see
+    // `os::End`).
+    tree.end(End::Terminate);
     if tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await.is_err() {
-        if group > 1 {
-            // SAFETY: as above.
-            unsafe { libc::kill(-(group as i32), libc::SIGKILL); }
-        }
+        tree.end(End::Kill);
         let _ = child.wait().await;
     }
     match found {

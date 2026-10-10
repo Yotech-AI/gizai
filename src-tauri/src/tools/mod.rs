@@ -22,20 +22,37 @@ pub struct GizaiTools {
     pub check: Option<String>,
     /// The run the token was minted for: the chat answer (or board check) whose Claude Code makes the calls.
     pub run: Option<String>,
+    /// GA-70: the question (the run that asked) a Team Lead's run on a question was minted for: only the tools that
+    /// read work there (`IN_A_QUESTION`).
+    pub question: Option<String>,
 }
 
 impl gizai_mcp::Tools for GizaiTools {
     fn list(&self) -> Vec<ToolDef> {
-        catalog()
+        // A run on a question only reads: it isn't offered the rest.
+        catalog().into_iter().filter(|t| self.question.is_none() || t.read_only).collect()
     }
     async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
         self.call_with_meta(name, args, &Value::Null).await
     }
     async fn call_with_meta(&self, name: &str, args: Value, meta: &Value) -> Result<Value, String> {
+        if self.question.is_some() && !reads_only(name) {
+            return Err(IN_A_QUESTION.replace("{tool}", name));
+        }
         // The answer's stream shows the tool use each call comes from, with the id Claude Code gives the call.
         let from = Stream { run: self.run.as_deref().unwrap_or_default(), tool_use: meta.get("claudecode/toolUseId").and_then(Value::as_str) };
         call_scoped(&self.st, &self.actor, self.thread.as_deref(), self.check.as_deref(), Some(from), name, args).await
     }
+}
+
+/// Why a Team Lead's run on a question (GA-70) can't use a tool that changes something: Gizai does what its result line
+/// says (answers on the card and continues the agent, or asks the user).
+const IN_A_QUESTION: &str = "{tool} can't be used while you look at an agent's question: you only look things up (memory, the card, \
+    docs, your copies of the code). End with your GIZAI_RESULT line: Gizai answers on the card and continues the agent, or asks the user.";
+
+/// A tool that only reads (`ToolDef::read_only`): the gets, lists and reads, check_board and the memory reads.
+fn reads_only(name: &str) -> bool {
+    catalog().iter().any(|t| t.name == name && t.read_only)
 }
 
 /// The chat answer a call over MCP comes from: its run, and the tool use the client named for the call, if it did.

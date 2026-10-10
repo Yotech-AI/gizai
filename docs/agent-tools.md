@@ -132,6 +132,30 @@ Only what a per-run switch can give, checked against the installed CLIs' own fil
 - **Only you switch them.** Only you add, import, sign in to and switch on MCP servers, the web tools, the browser and built-in tools, in Settings and the agent form. The Team Lead's `get_agent` shows an agent's switches, but `create_agent` and `update_agent` can't change them, and no Team Lead tool adds, imports or signs in to a server. Their `allowed_tools` takes only commands (`Bash(…)`). A run takes web search, fetching pages and built-in tools only from their switches: one of them in an agent's Allowed commands (like `WebSearch`, `WebFetch(domain:…)`, `Skill` or a tool the catalog doesn't know) is left out, and the run log says so.
 - **npm and npx.** The form warns when an MCP server, a web tool or the browser is on together with `Bash(npm:*)` or `Bash(npx:*)`: a server's answer or a web page could try to make the agent run code.
 - **The browser is always hidden with a throwaway profile**: never on your screen, never your browser, profile or logins.
+- **Merging after an outside tool.** `merge_pull_request` (below) is refused for the rest of a chat answer that used a tool from outside Gizai, like the tools above; a board check uses none, and may merge.
+
+## The Team Lead merges pull requests
+
+In a project you switch on, the Team Lead may merge a card's pull request once QA passed it and CI is green, in chat and in its board checks (GA-86). Releases, tags and deploys (the Deploy column) stay yours, and so does re-running failed CI jobs (the DevOps Agent or you).
+
+**The switch.** The project form → Repository → **Team Lead may merge**, off by default; the project page shows it under Repository. Only you set it, in the app: `update_project` and `create_project` refuse it, and Gizai's core refuses it from anyone but a person.
+
+**The tool.** `merge_pull_request` (a task) merges that card's own pull request only when every rule holds, checked in Gizai's code; otherwise it refuses with the reason and changes nothing:
+
+1. The project's **Team Lead may merge** is on.
+2. The card is in **Review with testing on**, not on hold, and no agent is working on it. A card with testing off went to Review without QA: it stays yours to open and merge.
+3. **QA passed exactly this commit**: the card's latest QA verdict (`qa_pass` or `qa_fail`) is `qa_pass`, and that QA run's `head_sha` is the pull request's latest commit now, so nothing was pushed after QA.
+4. **The pull request can be merged**: open, not a draft, from the card's branch in the same repository, into the project's main branch, and GitHub says it is mergeable (no conflicts; not behind main when the branch must be up to date; no rule like a required review blocks it).
+5. **CI is green**: every check on the pull request (`statusCheckRollup`, as `docs/RELEASING.md` reads it) completed with success; GitHub's skipped and neutral count as passed, as in its own merge rules. A check still running: it refuses and says to wait. A failed check: it refuses. No checks at all: it refuses too (CI hasn't started, or the repository has none; then you merge).
+6. **No release is under way**: no card of the project in Deploy is assigned to an agent with role devops (a release card), so main doesn't move under the commit a release waits on.
+7. **Not after an outside tool** in the same chat answer (Safety rules above). A board check may merge.
+8. **GitHub only**, with your gh. A Bitbucket project is refused with a reason.
+
+**The merge.** `gh pr view <number> --json …` reads the pull request, then `gh pr merge <number> --repo <owner/name> --merge --match-head-commit <sha>`: a merge commit, as the team merges, and GitHub merges only while the latest commit is still the one QA passed. Never `--admin`, `--auto`, squash or rebase, and no branch is deleted.
+
+**After a merge.** The card gets the Team Lead's comment (the pull request, its head commit, the QA run and the checks that passed), its activity says the Team Lead merged it, and a desktop notification says so too (under Settings → Notifications → "A card waits for your review or deploy"). Then Gizai's pull request check runs at once: it moves the card to Deploy, as when you merge, and cleans up its worktree.
+
+**In a board check.** A card in Review that QA passed, in a project that lets the Team Lead merge, is a finding (`review`, `may_merge`), so the check starts for it; the Team Lead merges what the tool allows and says so in the check's summary, and never works around a refusal. When the merge has to wait (checks still running, GitHub still working out whether it can be merged), the next check offers the card again, for up to three hours after QA passed it. Failed checks, conflicts and blocked merges go to you in a chat.
 
 ## Try it with Otus OS
 

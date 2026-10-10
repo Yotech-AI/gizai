@@ -22,12 +22,16 @@ export type Project = {
   aiCostUsdMicros: number; aiUnknownCostRuns: number;
   /** How a new worktree is prepared: paths copied from the main checkout, the install of what is missing, a setup command. */
   worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
+  /** Team Lead may merge (GA-86): the Team Lead may merge a pull request QA passed, once its checks are green. Off by default. */
+  leadMayMerge?: boolean;
 };
 export type ProjectInput = {
   clientId?: string | null; name: string; key: string; status?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null;
   defaultBranch?: string | null; color?: string | null; budgetAmountMinor?: number | null; budgetHours?: number | null;
   /** Left out (null): kept as they are. */
   worktreeCopy?: string[] | null; worktreeInstall?: boolean | null; worktreeSetup?: string | null;
+  /** Left out (null): kept as it is. Only a person sets it (here, in the app). */
+  leadMayMerge?: boolean | null;
 };
 export type Label = { id: string; name: string; color?: string | null };
 export type Task = {

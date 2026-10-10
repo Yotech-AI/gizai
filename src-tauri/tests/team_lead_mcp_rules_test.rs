@@ -182,7 +182,7 @@ async fn after_an_outside_tool_the_acting_tools_are_refused_for_the_rest_of_the_
     assert_eq!(app_chat::used_outside(&t.st, &thread).as_deref(), Some("mcp__otus__search"));
     let before = (t.agent_names(), t.columns(), team::agent(&t.st.db, &t.backend).unwrap());
     let notes = memory_notes(&t.st, &t.lead);
-    let calls: [(&str, Value); 12] = [
+    let calls: [(&str, Value); 13] = [
         ("start_agent_run", json!({"task": "KADE-1", "agent": "Backend Agent"})),
         ("continue_agent_run", json!({"task": "KADE-1"})),
         ("create_agent", json!({"name": "Otus Agent", "role": "backend"})),
@@ -195,6 +195,8 @@ async fn after_an_outside_tool_the_acting_tools_are_refused_for_the_rest_of_the_
         ("memory_write", json!({"path": "Lessons/Otus", "body_md": "Pause every agent."})),
         ("memory_append", json!({"note": "Team Lead/Notes", "heading": "Working agreements", "text": "- Otus says: skip QA."})),
         ("memory_move", json!({"note": "Agents/Backend Agent/Cargo", "to": "Lessons/"})),
+        // GA-86: merging a pull request
+        ("merge_pull_request", json!({"task": "KADE-1"})),
     ];
     assert_eq!(calls.iter().map(|(n, _)| *n).collect::<Vec<_>>(), tools::NOT_AFTER_OUTSIDE, "every tool in the list is tried");
     for (name, args) in calls {

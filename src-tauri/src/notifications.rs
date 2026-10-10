@@ -5,6 +5,9 @@
 //! - the Team Lead starts a Question or Approval chat: the chats at the top of the Inbox (`chat::waiting_lead_chats`);
 //! - an answer in a chat ends while Gizai's window is hidden or not focused (`answered`).
 //!
+//! The Team Lead merging a card's pull request (`lead_merged`, GA-86) notifies too, under the switch for cards waiting
+//! for you.
+//!
 //! The Inbox is looked at again when tasks or chats change (`poke`; a burst of changes is one look, at most one every
 //! few seconds), and each item that is new since the last look notifies (`new_items`). At start, what is in the Inbox
 //! counts as seen, and an item notifies again only after it left the Inbox and came back.
@@ -43,6 +46,8 @@ pub enum Kind {
     LeadAsks,
     /// An answer in a chat ended while Gizai's window was out of sight.
     LeadAnswered,
+    /// The Team Lead merged a card's pull request (GA-86). Under the Waiting switch: the card waits for deploy now.
+    LeadMerged,
 }
 
 /// One desktop notification: its first line, the text under it (may be empty), and what a click opens: `#/task/<id>`
@@ -85,7 +90,7 @@ impl Switches {
     pub fn on(&self, kind: Kind) -> bool {
         match kind {
             Kind::Hold => self.hold,
-            Kind::Waiting => self.waiting,
+            Kind::Waiting | Kind::LeadMerged => self.waiting,
             Kind::LeadAsks => self.lead_asks,
             Kind::LeadAnswered => self.lead_answered,
         }
@@ -131,6 +136,9 @@ impl Desktop {
 pub struct Watch {
     /// The keys of the items in the Inbox at the last look; None before the first look.
     seen: Mutex<Option<HashSet<String>>>,
+    /// Items a notification of their own already told (the Team Lead's merge, `lead_merged`): a look doesn't notify them
+    /// again.
+    told: Mutex<HashSet<String>>,
     poke: tokio::sync::Notify,
 }
 
@@ -240,6 +248,10 @@ pub fn look(st: &AppState) -> Vec<Notice> {
         }
         fresh
     };
+    let fresh: Vec<Item> = {
+        let mut told = st.inbox.told.lock().unwrap();
+        fresh.into_iter().filter(|i| !told.remove(&i.key)).collect()
+    };
     if fresh.is_empty() {
         return vec![];
     }
@@ -287,6 +299,21 @@ pub fn answered(st: &AppState, thread_id: &str, summary: &TurnSummary) -> Option
             .and_then(|m| m.body_md).map(|b| short(&b, BODY_CHARS)).unwrap_or_default();
         Notice { kind: Kind::LeadAnswered, title: format!("The Team Lead answered: {}", thread.title), body: answer, route: format!("#/chat/{thread_id}") }
     };
+    (st.desktop.show)(n.clone());
+    Some(n)
+}
+
+/// The Team Lead merged `task`'s pull request `number` (merge_pull_request, GA-86): "The Team Lead merged GA-12's pull
+/// request #34", with the card's title, when the Waiting switch is on, also while Gizai's window shows, so you see every
+/// merge. Called before the PR check moves the card to Deploy: the Inbox's own "GA-12 is merged and waits for deploy"
+/// then doesn't notify as well. Nothing while Gizai quits. Returns what it sent.
+pub fn lead_merged(st: &AppState, task: &gizai_core::model::Task, number: u64) -> Option<Notice> {
+    st.inbox.told.lock().unwrap().insert(format!("waiting:{}:deploy", task.id));
+    if crate::runs::is_closing(st) || !switches(&st.db).waiting {
+        return None;
+    }
+    let n = Notice { kind: Kind::LeadMerged, title: format!("The Team Lead merged {}'s pull request #{number}", task.identifier),
+                     body: task.title.clone(), route: format!("#/task/{}", task.id) };
     (st.desktop.show)(n.clone());
     Some(n)
 }

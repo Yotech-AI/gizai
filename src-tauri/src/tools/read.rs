@@ -121,6 +121,8 @@ pub(crate) fn get_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         "id": p.id, "key": p.key, "number": p.number, "name": p.name, "client": p.client_name, "status": p.status, "goal_md": p.goal_md,
         "repo_path": p.repo_path, "default_branch": p.default_branch, "color": p.color,
         "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()),
+        // GA-86: whether merge_pull_request may merge its pull requests (the user's switch, set in the app)
+        "team_lead_may_merge": p.lead_may_merge,
     }, "tasks_by_column": by_column, "docs": docs, "files": file_lines(files::list(cx.db(), "project", &p.id).map_err(err)?)}))
 }
 

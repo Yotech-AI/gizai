@@ -326,9 +326,9 @@ fn schema_10_gives_existing_sessions_the_cli_of_their_last_turn() {
         say(&db, &id, "user", "Hi");
         (id, fresh)
     };
-    // One schema step back: 0012 hadn't run (nor GA-19's 0014, which comes after it).
+    // One schema step back: 0012 hadn't run (nor GA-19's 0014 and GA-86's 0015, which come after it).
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; {} COMMIT;", undo_0014())).unwrap();
+    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE projects DROP COLUMN lead_may_merge; {} COMMIT;", undo_0014())).unwrap();
     c.execute_batch("DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json;
                      ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; PRAGMA user_version = 11;").unwrap();
     drop(c);

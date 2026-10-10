@@ -240,6 +240,8 @@ export type Refusal = { tool: string; input: string; reason?: string };
 export type Commit = { sha: string; subject: string };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
+  /** Settings → Runs: the limits of an answer of the Team Lead (also a board check and its look at a question). */
+  maxChatMinutes: number; maxChatToolCalls: number;
   /** The GitHub CLI; null = found when needed. */
   ghBin?: string | null;
   /** How Open pull request and Push branch reach GitHub. */

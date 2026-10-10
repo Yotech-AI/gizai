@@ -1020,7 +1020,8 @@ fn cut(s: &str, n: usize) -> String {
 /// What in `text` looks like a secret, with its start: a private key block, or an API token (`sk-…`, `ghp_…` and the
 /// other GitHub tokens, `AKIA…`, Slack's `xox…-`, Google's `AIza…`, GitLab's `glpat-…`). None when there is none.
 pub fn secret_in(text: &str) -> Option<String> {
-    if let Some(i) = text.find("-----BEGIN ") {
+    // Every -----BEGIN line, not only the first: in a bundle the private key comes after the certificate.
+    for (i, _) in text.match_indices("-----BEGIN ") {
         let line = text[i..].lines().next().unwrap_or("");
         if line.contains("PRIVATE KEY") {
             return Some("a private key (-----BEGIN … PRIVATE KEY-----)".into());

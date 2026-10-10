@@ -65,6 +65,39 @@ describe("loadPickItems", () => {
     expect(api.listTasks).toHaveBeenCalledTimes(2);
   });
 
+  it("gives each task its column's place: the board's order by sortKey, team after team, a shared name where the first team has it (GA-88)", async () => {
+    const state = (name: string, sortKey: string) => ({ id: `s-${name}`, name, category: "work", sortKey });
+    api.listTasks.mockResolvedValue([
+      { identifier: "GA-1", title: "Ship it", projectName: "Giz AI", stateName: "Deploy" },
+      { identifier: "GA-2", title: "Draw it", projectName: "Giz AI", stateName: "Design" },
+      { identifier: "GA-3", title: "Check it", projectName: "Giz AI", stateName: "Review" },
+      { identifier: "GA-4", title: "Plan it", projectName: "Giz AI", stateName: "Backlog" },
+    ]);
+    api.getTeam.mockImplementation(async (id: string) => ({
+      members: [],
+      states: id === "t1"
+        ? [state("Review", "e"), state("Backlog", "a"), state("Deploy", "f"), state("To do", "b"), state("Testing", "d"), state("In progress", "c")]
+        : [state("Review", "a"), state("Design", "b")],
+    }));
+    const { loadPickItems } = await import("./pickItems");
+    const { pickRows } = await import("./itemLinks");
+    const items = await loadPickItems();
+    expect(items.filter((i) => i.kind === "task").map((i) => [i.key, i.column])).toEqual([
+      ["GA-1", { name: "Deploy", place: 5 }],
+      ["GA-2", { name: "Design", place: 6 }],
+      ["GA-3", { name: "Review", place: 4 }],
+      ["GA-4", { name: "Backlog", place: 0 }],
+    ]);
+    expect(pickRows("task.", items).map((r) => (r.type === "item" ? r.item.key : r.kind))).toEqual(["GA-4", "GA-3", "GA-1", "GA-2"]);
+  });
+
+  it("still lists a task under its column's name when its team can't be read", async () => {
+    api.listTasks.mockResolvedValue([{ identifier: "GA-1", title: "Ship it", projectName: "Giz AI", stateName: "Deploy" }]);
+    api.getTeam.mockRejectedValue("no team");
+    const { loadPickItems } = await import("./pickItems");
+    expect((await loadPickItems()).find((i) => i.kind === "task")?.column).toEqual({ name: "Deploy" });
+  });
+
   it("still lists the rest when a team or a project's docs can't be read", async () => {
     api.getTeam.mockRejectedValue("no team");
     api.listDocs.mockRejectedValue("no docs");

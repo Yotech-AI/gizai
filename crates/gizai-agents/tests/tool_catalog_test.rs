@@ -1,17 +1,24 @@
 // GA-55: the coding CLIs' own tools (agent form → Tools). Gizai's catalog per CLI, merged with what Claude Code reports in
 // its init line (never only one of them), the Web switches on each CLI's command line, and Ask Claude Code again with a
 // fake Claude Code that isn't logged in (fake-claude-tools.sh), never the real one.
+// Ask Claude Code again only on Linux and macOS: its fake is a shell script, which Windows can't start.
+#[cfg(unix)]
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use gizai_agents::cli::{self, CliSpec, Kind, TaskRun, WebTools};
 use gizai_agents::tool_catalog::{self, how};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+#[cfg(unix)]
 const FAKE_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake-claude-tools.sh");
 
 /// A committed fake, made runnable (its mode in git is 755; a checkout without it still runs).
+#[cfg(unix)]
 fn executable(p: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -253,10 +260,13 @@ fn the_list_is_the_catalog_marked_with_what_claude_code_reported_and_an_unknown_
 }
 
 // ---- Ask Claude Code again ----
+// Linux and macOS only: the fake Claude Code is a shell script, and the checks use Unix process groups and signals.
 
 /// Ends (SIGKILL) whatever of these PIDs still runs, checked by its command line, on drop.
+#[cfg(unix)]
 struct Leftovers(Vec<u32>);
 
+#[cfg(unix)]
 impl Drop for Leftovers {
     fn drop(&mut self) {
         for &pid in &self.0 {
@@ -269,6 +279,7 @@ impl Drop for Leftovers {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn ended(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Err(_) => true,
@@ -276,10 +287,19 @@ fn ended(pid: u32) -> bool {
     }
 }
 
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn ended(pid: u32) -> bool {
+    let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().chars().next()).is_none_or(|st| st == 'Z')
+}
+
+#[cfg(unix)]
 fn pid_in(p: &Path) -> u32 {
     std::fs::read_to_string(p).unwrap_or_default().trim().parse().unwrap_or(0)
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn ask_claude_reads_the_tools_from_a_start_without_a_login_in_a_scratch_config_and_home() {
     let tmp = tempfile::tempdir().unwrap();
@@ -307,6 +327,7 @@ async fn ask_claude_reads_the_tools_from_a_start_without_a_login_in_a_scratch_co
     assert!(seen.join("prompt").is_file());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn ask_claude_ends_a_claude_code_that_keeps_running_after_its_init_line_with_its_process_group() {
     let tmp = tempfile::tempdir().unwrap();
@@ -328,6 +349,7 @@ async fn ask_claude_ends_a_claude_code_that_keeps_running_after_its_init_line_wi
     assert!(ended(claude) && ended(child), "still running: claude {} child {}", !ended(claude), !ended(child));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn ask_claude_without_an_init_line_says_it_gave_no_list() {
     let tmp = tempfile::tempdir().unwrap();

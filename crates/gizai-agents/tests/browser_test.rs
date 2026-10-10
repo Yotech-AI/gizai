@@ -4,20 +4,31 @@
 // or Chromium) is looked up on a fake PATH; and Stop and the time cap end the browser the server started in a process group
 // of its own. The run's claude is fake-claude-browser.py and the server fake-npx-browser.sh: never the real npx, Chrome
 // DevTools MCP or a browser.
+// The command, the options and the versions are checked on every system. The browser program, what it needs and Stop and
+// the time cap only on Linux and macOS: they run shell or Python scripts as fake programs, which Windows can't start.
 use std::ffi::OsStr;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use gizai_agents::browser;
+#[cfg(unix)]
 use gizai_agents::claude::ClaudeArgs;
+#[cfg(unix)]
 use gizai_agents::mcp_run::{self, RunServer};
+#[cfg(unix)]
 use gizai_agents::process::{Caps, RunHandle, spawn};
+#[cfg(unix)]
 use gizai_agents::stream::RunEvent;
 
+#[cfg(unix)]
 const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake-claude-browser.py");
+#[cfg(unix)]
 const FAKE_NPX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake-npx-browser.sh");
 
 /// A committed fake, made runnable (its mode in git is 755; a checkout without it still runs).
+#[cfg(unix)]
 fn executable(p: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -25,6 +36,7 @@ fn executable(p: &str) -> PathBuf {
 }
 
 /// A small script at `path` (made runnable).
+#[cfg(unix)]
 fn script(path: &Path, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -96,6 +108,8 @@ fn only_an_exact_version_is_taken() {
 
 // ---- the browser program ----
 
+// Linux and macOS only: shell scripts as the browser programs, and a Unix symlink.
+#[cfg(unix)]
 #[test]
 fn brave_is_never_the_browser_by_its_path_or_where_a_link_leads() {
     let tmp = tempfile::tempdir().unwrap();
@@ -123,6 +137,8 @@ fn brave_is_never_the_browser_by_its_path_or_where_a_link_leads() {
 
 // ---- what it needs ----
 
+// Linux and macOS only: shell scripts as Node, npx and the browser, and a Unix symlink.
+#[cfg(unix)]
 #[test]
 fn what_the_browser_needs_is_found_on_path_or_named_with_what_to_install() {
     let tmp = tempfile::tempdir().unwrap();
@@ -141,15 +157,18 @@ fn what_the_browser_needs_is_found_on_path_or_named_with_what_to_install() {
     std::fs::create_dir_all(&brave_only).unwrap();
     std::os::unix::fs::symlink(&brave, brave_only.join("chromium")).unwrap();
     let path = |d: &Path| d.as_os_str().to_owned();
-    // Google Chrome where the server finds it itself, or Chromium in its usual place, counts on any PATH
-    let system = ["/opt/google/chrome/chrome", "/usr/lib/chromium/chromium", "/usr/lib/chromium-browser/chromium-browser"]
-        .into_iter().find(|p| Path::new(p).is_file());
+    // Google Chrome where the server finds it itself, or Chromium in its usual place, counts on any PATH: Linux's places
+    // and macOS's, in browser.rs's order (a macOS runner has Google Chrome in /Applications)
+    let chrome = ["/opt/google/chrome/chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
+    let system = chrome.into_iter()
+        .chain(["/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/lib/chromium/chromium", "/usr/lib/chromium-browser/chromium-browser"])
+        .find(|p| Path::new(p).is_file());
 
     let n = browser::needs(&path(&new), "", &home);
     assert!(n.missing.is_empty(), "{:?}", n.missing);
     assert_eq!(n.node_version.as_deref(), Some("v24.1.0"));
     assert_eq!(n.npx, Some(new.join("npx").display().to_string()));
-    if !Path::new("/opt/google/chrome/chrome").is_file() {
+    if !chrome.iter().any(|p| Path::new(p).is_file()) {
         assert_eq!((n.browser.clone(), n.browser_name.as_deref()), (Some(chromium.display().to_string()), Some("Chromium")));
     }
 
@@ -190,7 +209,10 @@ fn node_versions_the_pinned_server_takes() {
 }
 
 // ---- Stop and the time cap end the browser ----
+// Linux and macOS only: Python and shell scripts as fake programs, Unix process groups and signals.
 
+/// A process's state letter and process group from /proc (None once it is gone).
+#[cfg(target_os = "linux")]
 fn stat(pid: u32) -> Option<(char, u32)> {
     let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = &s[s.rfind(')')? + 1..];
@@ -198,14 +220,26 @@ fn stat(pid: u32) -> Option<(char, u32)> {
     Some((f.first()?.chars().next()?, f.get(2)?.parse().ok()?))
 }
 
+/// macOS, which has no /proc: the same from `ps`.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn stat(pid: u32) -> Option<(char, u32)> {
+    let out = std::process::Command::new("ps").args(["-o", "stat=,pgid=", "-p", &pid.to_string()]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut f = text.split_whitespace();
+    Some((f.next()?.chars().next()?, f.next()?.parse().ok()?))
+}
+
+#[cfg(unix)]
 fn ended(pid: u32) -> bool {
     stat(pid).is_none_or(|(state, _)| state == 'Z' || state == 'X')
 }
 
 /// (claude, server, browser) as the fakes wrote them; on drop, any still running (and ours by its command line) gets
 /// SIGKILL, so a failing test leaves nothing behind.
+#[cfg(unix)]
 struct Pids([u32; 3]);
 
+#[cfg(unix)]
 impl Drop for Pids {
     fn drop(&mut self) {
         for pid in self.0 {
@@ -218,6 +252,7 @@ impl Drop for Pids {
     }
 }
 
+#[cfg(unix)]
 async fn read_pids(dir: &Path) -> Pids {
     let t0 = Instant::now();
     let read = |n: &str| std::fs::read_to_string(dir.join(n)).ok().and_then(|s| s.trim().parse::<u32>().ok());
@@ -230,6 +265,7 @@ async fn read_pids(dir: &Path) -> Pids {
     }
 }
 
+#[cfg(unix)]
 async fn drain(h: &mut RunHandle) -> Vec<RunEvent> {
     let mut evs = vec![];
     while let Some(e) = h.events.recv().await {
@@ -240,6 +276,7 @@ async fn drain(h: &mut RunHandle) -> Vec<RunEvent> {
 
 /// Starts the fake claude with the browser's server in its MCP config, as a run gets it, and checks where each process is:
 /// the server in the run's process group, the browser in one of its own.
+#[cfg(unix)]
 async fn start(tmp: &Path, mode: &str, max_time: Duration) -> (RunHandle, Pids) {
     let pids_dir = tmp.join("pids");
     let config = tmp.join("run.mcp.json");
@@ -267,6 +304,7 @@ async fn start(tmp: &Path, mode: &str, max_time: Duration) -> (RunHandle, Pids) 
     (h, pids)
 }
 
+#[cfg(unix)]
 async fn all_ended(p: &Pids) -> bool {
     let t0 = Instant::now();
     while !p.0.iter().all(|x| ended(*x)) {
@@ -278,10 +316,12 @@ async fn all_ended(p: &Pids) -> bool {
     true
 }
 
+#[cfg(unix)]
 fn alive(p: &Pids) -> Vec<(&'static str, u32)> {
     ["claude", "server", "browser"].into_iter().zip(p.0).filter(|(_, x)| !ended(*x)).collect()
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn stop_ends_claude_the_browsers_server_and_the_browser_it_started_in_its_own_process_group() {
     let tmp = tempfile::tempdir().unwrap();
@@ -293,6 +333,7 @@ async fn stop_ends_claude_the_browsers_server_and_the_browser_it_started_in_its_
     assert!(log.contains("ended helper on INT"), "the server closed its browser on SIGINT: {log:?}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn stop_ends_the_browser_of_a_server_that_closes_it_only_on_sigterm() {
     let tmp = tempfile::tempdir().unwrap();
@@ -304,6 +345,7 @@ async fn stop_ends_the_browser_of_a_server_that_closes_it_only_on_sigterm() {
     assert!(log.contains("ended helper on TERM"), "{log:?}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn the_time_cap_ends_claude_the_browsers_server_and_the_browser() {
     let tmp = tempfile::tempdir().unwrap();
@@ -313,6 +355,7 @@ async fn the_time_cap_ends_claude_the_browsers_server_and_the_browser() {
     assert!(all_ended(&pids).await, "still running after the time cap: {:?}", alive(&pids));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn the_time_cap_ends_the_browser_of_a_server_that_closes_it_only_on_sigterm() {
     let tmp = tempfile::tempdir().unwrap();

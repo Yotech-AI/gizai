@@ -320,6 +320,8 @@ fn budget(a: &Args, cur: Option<i64>) -> Result<Option<i64>, String> {
 
 fn agent_result(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
     cx.changed("actors");
+    // A new name, or joining or leaving a shared memory folder (GA-96), moves notes.
+    cx.changed("docs");
     let m = team::agent(cx.db(), id).map_err(err)?;
     let columns = gizai_core::columns::of_agent(cx.db(), &m.actor_id).unwrap_or_default();
     Ok(json!({"ok": true, "done": what, "agent": {"id": m.actor_id, "name": m.name, "role": m.role_key, "status": m.status, "columns": columns},

@@ -338,6 +338,8 @@ pub fn add_team(app: AppHandle, st: State<AppState>, name: String) -> R<String> 
 pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: AgentInput) -> R<String> {
     let id = team::add_agent(&st.db, &st.you_id, &team_id, input).map_err(e)?;
     changed(&app, "actors");
+    // Its memory folder, or the one it shares (GA-96).
+    changed(&app, "docs");
     // It landed on its role's usual columns: it may take their waiting cards.
     changed(&app, "workflow_states");
     pull_soon(&st);
@@ -347,6 +349,8 @@ pub fn add_agent(app: AppHandle, st: State<AppState>, team_id: String, input: Ag
 pub fn update_agent(app: AppHandle, st: State<AppState>, actor_id: String, input: AgentInput) -> R<()> {
     team::update_agent(&st.db, &st.you_id, &actor_id, input).map_err(e)?;
     changed(&app, "actors");
+    // A new name moves its memory folder, and joining or leaving a shared folder moves notes (GA-96).
+    changed(&app, "docs");
     resume(&st, &actor_id);
     Ok(())
 }

@@ -140,3 +140,23 @@ pub fn merged(db: &Db, by: &str, task_id: &str, url: &str) -> Result<Option<Stri
 pub fn note_cleanup(db: &Db, task_id: &str, sentence: &str) -> Result<()> {
     db.write(None, |w| w.update("tasks", task_id, json!({"cleanup": sentence})))
 }
+
+/// Notes in the card's activity that `actor` (the Team Lead's merge_pull_request, GA-86) merged its pull request `url`,
+/// with `head` as its latest commit. The card itself changes only when the PR check sees the merge (`merged`), as when
+/// you merge.
+pub fn note_merged_by(db: &Db, actor: &str, task_id: &str, url: &str, head: &str) -> Result<()> {
+    db.write(Some(actor), |w| w.update("tasks", task_id, json!({"pullRequest": url, "merged": true, "head": head})))
+}
+
+/// A release under way in the project (GA-86): one of its cards in a Deploy column, assigned to an agent with role
+/// devops (a release card, like "Release Gizai v0.6.0"). Main mustn't move under it, so the Team Lead doesn't merge
+/// then. The card's identifier and the agent's name.
+pub fn release_under_way(db: &Db, project_id: &str) -> Result<Option<(String, String)>> {
+    db.read(|c| Ok(c.query_row(
+        "SELECT t.identifier, a.name FROM tasks t
+         JOIN actors a ON a.id = t.assignee_actor_id AND a.kind = 'agent' AND a.deleted_at IS NULL
+         WHERE t.project_id = ?1 AND t.deleted_at IS NULL AND t.state_category = 'deploy'
+           AND EXISTS (SELECT 1 FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL AND m.role_key = 'devops')
+         ORDER BY t.sort_key, t.created_at LIMIT 1",
+        [project_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?))
+}

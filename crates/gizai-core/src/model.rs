@@ -109,6 +109,10 @@ pub struct Project {
     pub worktree_install: bool,
     /// …and this command runs in it.
     pub worktree_setup: Option<String>,
+    /// Team Lead may merge (GA-86): the Team Lead's merge_pull_request may merge a pull request QA passed, once its checks
+    /// are green. Off by default; only a person sets it, in the app.
+    #[serde(default)]
+    pub lead_may_merge: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -132,6 +136,9 @@ pub struct ProjectInput {
     pub worktree_install: Option<bool>,
     /// The command a new worktree runs after the install ("" removes it); None keeps it.
     pub worktree_setup: Option<String>,
+    /// Team Lead may merge; None keeps it (off for a new project). Only a person may give it (`projects::create`/`update`
+    /// refuse it from an agent).
+    pub lead_may_merge: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

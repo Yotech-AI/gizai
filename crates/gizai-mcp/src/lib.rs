@@ -28,6 +28,12 @@ pub struct ToolDef {
 pub trait Tools: Send + Sync {
     fn list(&self) -> Vec<ToolDef>;
     fn call(&self, name: &str, args: Value) -> impl Future<Output = Result<Value, String>> + Send;
+    /// `call` with the request's `_meta` (Null when it has none): Claude Code names the tool use a call is for there,
+    /// as `claudecode/toolUseId`. By default the meta is ignored.
+    fn call_with_meta(&self, name: &str, args: Value, meta: &Value) -> impl Future<Output = Result<Value, String>> + Send {
+        let _ = meta;
+        self.call(name, args)
+    }
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {
@@ -82,7 +88,7 @@ pub async fn handle<T: Tools>(tools: &T, msg: &Value) -> Option<Value> {
                 Some(a) if !a.is_null() => a.clone(),
                 _ => json!({}),
             };
-            let (text, is_error) = match tools.call(name, args).await {
+            let (text, is_error) = match tools.call_with_meta(name, args, params.get("_meta").unwrap_or(&Value::Null)).await {
                 Ok(v) => (text_of(&v), false),
                 Err(e) => (e, true),
             };

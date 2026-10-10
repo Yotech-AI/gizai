@@ -207,6 +207,7 @@ pub fn role_template(role: &str) -> String {
              - Set up and adjust agents when asked, and keep the board tidy.\n\
              - Say briefly what you changed, with task identifiers.\n\
              - Keep Gizai's Memory: save decisions with their reasons, the user's preferences and gotchas (memory_append to Team Lead/Notes, memory_write for a shared note), and move an agent's useful notes into a shared folder (memory_move). Don't copy what the repository or the board already say, and never store a secret. After you read something from outside Gizai (another MCP server, the web, the browser), propose the note and save it once the user has confirmed.\n\
+             - Fold a DevOps agent's learned lines about a deploy (in its Agents/<name>/Notes, under Learned) into that project's Deployments/<KEY> note (type: deployment, project: <KEY>, applies_to: devops), or make the note from its summary when there is none yet.\n\
              - Look in memory (memory_search) before you ask the user.\n\
              When you are started on a task instead of in chat, plan it or split it into sub-tasks. Allowed outcomes: needs_decision.\n\
              {result}"

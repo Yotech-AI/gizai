@@ -5,6 +5,7 @@ import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs,
 import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { resetAppearance } from "./lib/appearance";
+import { graphProbe } from "./components/memory/GraphCanvas";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -1440,6 +1441,8 @@ const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(
  *  note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
  *  prefs are put back at the end. */
 export async function memoryProbe(noteId: string, agentId: string) {
+  // GA-69: MODE=memory:graph-a|graph-b|graph-c <agent id> <note id> runs the graph's probe on prep_graph's notes instead.
+  if (agentId.startsWith("graph-")) return memoryGraphProbe(agentId);
   const prefs = Object.fromEntries(MEMORY_PREFS.map((k) => [k, localStorage.getItem(k)]));
   const out: Record<string, unknown> = {};
   try {
@@ -1719,4 +1722,614 @@ export async function memoryProbe(noteId: string, agentId: string) {
   } finally {
     for (const [k, v] of Object.entries(prefs)) { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }
   }
+}
+
+// ---- GA-69: the memory graph --------------------------------------------------------------------------------------------
+
+let graphStage = "";
+type GDot = { id: string; kind: string; label: string; x: number; y: number; r: number };
+const GRAPH_PREFS = ["gizai.memory.graph", "gizai.memory.local", "gizai.memory.panel", "gizai.memory.mode"];
+const globalCanvas = () => q<HTMLCanvasElement>(".graph-wrap:not(.local) > canvas.graph-canvas");
+const localCanvas = () => q<HTMLCanvasElement>(".mem-local canvas.graph-canvas");
+const gdots = (c: HTMLCanvasElement | null): GDot[] => graphProbe(c)?.dots ?? [];
+const dotNamed = (c: HTMLCanvasElement | null, label: string) => gdots(c).find((d) => d.label === label) ?? null;
+const noteIndex = (label: string) => (/^Note (\d+)$/.exec(label) ? Number(/^Note (\d+)$/.exec(label)![1]) : -1);
+const hexRgb = (hex: string): [number, number, number] => { const n = parseInt(hex.trim().replace("#", ""), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const cssVar = (k: string) => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const nearRgb = (a: readonly number[], b: readonly number[], tol = 40) => Math.abs(a[0]! - b[0]!) + Math.abs(a[1]! - b[1]!) + Math.abs(a[2]! - b[2]!) <= tol;
+const frames = async (n: number) => { for (let i = 0; i < n; i++) await nextFrame(); };
+
+/** A canvas pixel at a point on screen: [r, g, b, a] (the canvas is see-through where nothing is drawn). */
+function pixel(c: HTMLCanvasElement, x: number, y: number): number[] {
+  const r = c.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  return [...c.getContext("2d")!.getImageData(Math.round((x - r.left) * dpr), Math.round((y - r.top) * dpr), 1, 1).data];
+}
+function hsv(r: number, g: number, b: number) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  const h = d === 0 ? 0 : max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { hue: (h * 60 + 360) % 360, sat: max ? d / max : 0, val: max / 255 };
+}
+/** How many drawn pixels of the canvas are the teal (--live) or magenta (--needs) of this theme: near the token's colour
+ *  (within 120 of its RGB and 18° of its hue). Pixels only of that hue (where two dots' edges blend) are listed apart. */
+const huePixels: { at: number[]; rgba: number[] }[] = [];
+function reservedPixels(c: HTMLCanvasElement): number {
+  const tokens = ["--live", "--needs"].map((k) => hexRgb(cssVar(k)));
+  const hues = tokens.map((rgb) => hsv(...rgb).hue);
+  const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < 60) continue;
+    const p = hsv(d[i]!, d[i + 1]!, d[i + 2]!);
+    if (p.sat < 0.35 || p.val < 0.25) continue;
+    const k = hues.findIndex((h) => Math.min(Math.abs(p.hue - h), 360 - Math.abs(p.hue - h)) < 18);
+    if (k < 0) continue;
+    if (nearRgb([d[i]!, d[i + 1]!, d[i + 2]!], tokens[k]!, 120)) n++;
+    else if (huePixels.length < 40) huePixels.push({ at: [(i / 4) % c.width, Math.floor(i / 4 / c.width)], rgba: [d[i]!, d[i + 1]!, d[i + 2]!, d[i + 3]!] });
+  }
+  return n;
+}
+/** Every colour the canvas is given to draw with (fillStyle and strokeStyle) while `f` runs. */
+async function coloursDrawn(f: () => Promise<void>): Promise<string[]> {
+  const proto = CanvasRenderingContext2D.prototype;
+  const fd = Object.getOwnPropertyDescriptor(proto, "fillStyle")!, sd = Object.getOwnPropertyDescriptor(proto, "strokeStyle")!;
+  const seen = new Set<string>();
+  Object.defineProperty(proto, "fillStyle", { configurable: true, get: fd.get, set(this: CanvasRenderingContext2D, v: string) { seen.add(String(v)); fd.set!.call(this, v); } });
+  Object.defineProperty(proto, "strokeStyle", { configurable: true, get: sd.get, set(this: CanvasRenderingContext2D, v: string) { seen.add(String(v)); sd.set!.call(this, v); } });
+  try { await f(); } finally { Object.defineProperty(proto, "fillStyle", fd); Object.defineProperty(proto, "strokeStyle", sd); }
+  return [...seen];
+}
+/** The colours that are teal or magenta: within 18° of --live's or --needs's hue and colourful (any theme's tokens). */
+const reservedColours = (colours: string[], tokens: string[]) => {
+  const hues = tokens.map((t) => hsv(...hexRgb(t)).hue);
+  return colours.filter((c) => /^#[0-9a-f]{6}$/i.test(c)).filter((c) => { const p = hsv(...hexRgb(c)); return p.sat >= 0.35 && hues.some((h) => Math.min(Math.abs(p.hue - h), 360 - Math.abs(p.hue - h)) < 18); });
+};
+async function fps(ms: number) {
+  let n = 0;
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { await nextFrame(); n++; }
+  return Math.round((n * 1000) / (performance.now() - t0));
+}
+const settledIn = async (c: () => HTMLCanvasElement | null, ms: number) => {
+  const t0 = performance.now();
+  const ok = await waitFor(() => (graphProbe(c())?.settled ? true : null), ms);
+  return ok ? Math.round(performance.now() - t0) : -1;
+};
+const wheel = (c: HTMLCanvasElement, x: number, y: number, deltaY: number) =>
+  c.dispatchEvent(new WheelEvent("wheel", { deltaY, deltaMode: 0, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+/** A spot on the canvas at least 25 px from every dot, for panning and moving away. */
+function emptySpot(c: HTMLCanvasElement): { x: number; y: number } | null {
+  const r = c.getBoundingClientRect();
+  const ds = gdots(c);
+  for (let y = r.bottom - 30; y > r.top + 60; y -= 20) for (let x = r.right - 30; x > r.left + 30; x -= 20) {
+    if (ds.every((d) => Math.hypot(d.x - x, d.y - y) > 25)) return { x, y };
+  }
+  return null;
+}
+/** Each label drawn per frame: fillText and clearRect (once a frame) counted while `f` runs. */
+async function labelsPerFrame(f: () => Promise<void>) {
+  const proto = CanvasRenderingContext2D.prototype;
+  const fill = proto.fillText, clear = proto.clearRect;
+  let texts = 0, draws = 0;
+  proto.fillText = function (this: CanvasRenderingContext2D, ...a: Parameters<typeof fill>) { texts++; return fill.apply(this, a); };
+  proto.clearRect = function (this: CanvasRenderingContext2D, ...a: Parameters<typeof clear>) { draws++; return clear.apply(this, a); };
+  try { await f(); } finally { proto.fillText = fill; proto.clearRect = clear; }
+  return draws ? Math.round(texts / draws) : -1;
+}
+const checkbox = (root: ParentNode, label: string) =>
+  [...root.querySelectorAll("label.graph-check")].find((l) => textOf(l) === label)?.querySelector("input") as HTMLInputElement | null;
+const slider = (root: ParentNode, label: string) => {
+  const l = [...root.querySelectorAll(".graph-slider label")].find((x) => textOf(x) === label) as HTMLLabelElement | undefined;
+  return l ? (document.getElementById(l.htmlFor) as HTMLInputElement | null) : null;
+};
+const accessibleName = (el: Element) => el.getAttribute("aria-label") || textOf(el) || ((el as HTMLInputElement).labels?.length ? textOf((el as HTMLInputElement).labels![0]) : "");
+
+/** GA-69, against prep_graph's 500 notes (`args`: "graph-a|graph-b|graph-c <Backend Agent's id> <Note 0's id>"). Each part
+ *  is one start (smoke-cage gives a start 40 s). a: #/memory/graph loads every note and lays out quickly and smoothly; a
+ *  dot's size follows its links (Note 0, the hub, is the biggest), a link to a missing note ends at a dim dot; pointing at
+ *  the hub lights it and its lines in the accent and dims the rest; a click opens it; Graph shows it in the accent and
+ *  Notes goes back to it, as does the browser's Back; dragging a dot moves it, the layout follows and nothing opens; the
+ *  wheel zooms around the pointer and labels show only once zoomed in; dragging the background pans; the zoom buttons
+ *  and the + - 0 keys; the arrow keys pick a dot and list its connections; no teal or magenta pixel, in dark and light. b:
+ *  the settings panel's Filters, Groups (a colour per top folder), Display and Forces each do what they say and are kept
+ *  when the page opens again; Animate grows the graph in the order the notes were made; Restore puts the defaults back.
+ *  c: the local graph beside Note 0 lists its connections, follows depth, incoming and outgoing, and follows the note
+ *  that is opened; an agent's page and the shared page show only their notes and what those name; reduced motion gives a
+ *  layout that doesn't move. The graph's prefs are put back at the end. */
+async function memoryGraphProbe(args: string) {
+  const [part = "", agentId = "", hubId = ""] = args.split(" ");
+  const prefs = Object.fromEntries(GRAPH_PREFS.map((k) => [k, localStorage.getItem(k)]));
+  try {
+    if (part === "graph-a") return await graphPartA(hubId);
+    if (part === "graph-b") return await graphPartB();
+    return await graphPartC(agentId, hubId);
+  } catch (e) {
+    return { ok: false, part, stage: graphStage, error: String(e) };
+  } finally {
+    for (const [k, v] of Object.entries(prefs)) { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }
+  }
+}
+
+async function graphPartA(hubId: string) {
+  const out: Record<string, unknown> = {};
+  const t0 = performance.now();
+  if (location.hash !== "#/memory/graph") location.hash = "#/memory/graph";
+  const loaded = await waitFor(() => (gdots(globalCanvas()).filter((d) => d.kind === "note").length >= 500 ? true : null), 10000);
+  if (!loaded) return { ok: false, error: "the graph did not load 500 notes", dots: gdots(globalCanvas()).length, page: textOf(q(".main")).slice(0, 300) };
+  out.load_ms = Math.round(performance.now() - t0);
+  out.since_start_ms = Math.round(performance.now());
+  out.fps_layout = await fps(1000);
+  out.settle_ms = await settledIn(globalCanvas, 10000);
+  const c = globalCanvas()!;
+  out.frame_ms = Math.round((graphProbe(c)?.frameMs ?? -1) * 10) / 10;
+  const all = gdots(c);
+  const notes = all.filter((d) => d.kind === "note");
+  out.count = textOf(q(".graph-count"));
+  out.kinds = [...new Set(all.map((d) => d.kind))].sort();
+  // Responsive: loaded within 4 s, a frame's work under 16 ms, at least 30 frames a second while it lays out, settled within 6 s.
+  const fast = (out.load_ms as number) < 4000 && (out.frame_ms as number) < 16 && (out.fps_layout as number) >= 30 && (out.settle_ms as number) >= 0 && (out.settle_ms as number) < 6000;
+  const countOk = (out.count as string).startsWith(`${notes.length} notes · `) && notes.length >= 500;
+  // Kinds: notes, dim dots for the missing notes, the card, the agent (tags are off by default).
+  const kindsOk = JSON.stringify(out.kinds) === JSON.stringify(["agent", "card", "missing", "note"]);
+
+  // A dot's size follows its links: Note 0 is the hub and the biggest note; a note linked twice is smaller.
+  const hub = notes.find((d) => d.label === "Note 0")!;
+  const bySize = [...notes].sort((a, b) => b.r - a.r);
+  const small = notes.find((d) => d.label === "Note 479")!;
+  out.sizes = { hub: Math.round(hub.r * 10) / 10, biggest: bySize[0]?.label, small: Math.round(small.r * 10) / 10 };
+  const sizeOk = bySize[0]?.label === "Note 0" && hub.r > small.r * 1.5;
+
+  // Dim dots: a missing note's dot is drawn see-through, a note's solid.
+  const missing = all.filter((d) => d.kind === "missing");
+  const alpha = (d: GDot) => pixel(c, d.x, d.y)[3]!;
+  out.alpha = { missing: missing.map(alpha), notes: notes.slice(0, 8).map(alpha) };
+  // 12 links to Missing <n> from the 480, 20 to Not here <n> from the agent's notes, and the Team Lead's own.
+  const dimOk = missing.length >= 32 && missing.every((d) => alpha(d) < 200) && notes.slice(0, 40).filter((d) => alpha(d) >= 250).length >= 35;
+
+  // Pointing at the hub: it turns the accent, its lines too, and the rest dims.
+  const accent = hexRgb(cssVar("--accent"));
+  const others = notes.filter((d) => d.label !== "Note 0");
+  const solidBefore = others.filter((d) => alpha(d) >= 250).length;
+  c.dispatchEvent(pe("pointermove", hub.x, hub.y));
+  await frames(3);
+  // The dot's middle and four points around it (a neighbour's label can cover one).
+  const hubPxs = [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([dx, dy]) => pixel(c, hub.x + dx! * hub.r * 0.5, hub.y + dy! * hub.r * 0.5));
+  const hubPx = hubPxs.find((p) => nearRgb(p, accent) && p[3]! >= 250) ?? hubPxs[0]!;
+  const dimmed = others.filter((d) => alpha(d) < 120).length;
+  // A lit line: the middle of a line from the hub to a dot that stayed solid is the accent.
+  const litLines = others.filter((d) => alpha(d) >= 250).filter((d) => { const p = pixel(c, (hub.x + d.x) / 2, (hub.y + d.y) / 2); return p[3]! > 100 && nearRgb(p, accent, 90); }).length;
+  out.hover = { hub: hubPx, solid_before: solidBefore, dimmed, lit_lines: litLines, cursor: c.style.cursor };
+  out.reserved_hover = reservedPixels(c);
+  const hoverOk = hubPxs.filter((p) => nearRgb(p, accent) && p[3]! >= 250).length >= 3 && dimmed >= others.length * 0.7 && solidBefore >= others.length * 0.8 && litLines >= 5 && c.style.cursor === "pointer";
+  const away = emptySpot(c);
+  if (away) c.dispatchEvent(pe("pointermove", away.x, away.y));
+  await frames(3);
+  const undimmed = others.filter((d) => alpha(d) >= 250).length >= others.length * 0.8;
+
+  // A click opens the note.
+  const tClick = performance.now();
+  const h = dotNamed(c, "Note 0")!;
+  c.dispatchEvent(pe("pointerdown", h.x, h.y));
+  c.dispatchEvent(pe("pointerup", h.x, h.y));
+  const opened = !!(await waitFor(() => (location.hash === `#/memory/${hubId}` && noteTitle() === "Note 0" ? true : null), 5000));
+  out.click_ms = Math.round(performance.now() - tClick);
+
+  // Notes | Graph: Graph shows the note open last in the accent; Notes goes back to it; so does the browser's Back.
+  const views = () => [...document.querySelectorAll(".mem-views button")] as HTMLButtonElement[];
+  out.views = views().map((b) => `${textOf(b)}:${b.getAttribute("aria-pressed")}`);
+  views().find((b) => textOf(b) === "Graph")?.click();
+  await waitFor(() => (location.hash === "#/memory/graph" && gdots(globalCanvas()).length > 500 ? true : null), 5000);
+  out.crumbs = textOf(q(".topbar .crumbs"));
+  await settledIn(globalCanvas, 8000);
+  const c2 = globalCanvas()!;
+  const focus = dotNamed(c2, "Note 0")!;
+  const focusPx = pixel(c2, focus.x, focus.y);
+  out.focus_px = focusPx;
+  out.reserved_open = reservedPixels(c2);
+  views().find((b) => textOf(b) === "Notes")?.click();
+  const notesBack = !!(await waitFor(() => (location.hash === `#/memory/${hubId}` && noteTitle() === "Note 0" ? true : null), 5000));
+  history.back();
+  const backOk = !!(await waitFor(() => (location.hash === "#/memory/graph" && gdots(globalCanvas()).length > 500 ? true : null), 5000));
+  const switchOk = (out.crumbs as string).endsWith("/Graph") && nearRgb(focusPx, accent) && notesBack && backOk
+    && JSON.stringify(out.views) === JSON.stringify(["Notes:true", "Graph:false"]);
+  await settledIn(globalCanvas, 8000);
+
+  // Dragging a dot: it follows the pointer, the layout follows it, nothing opens.
+  const c3 = globalCanvas()!;
+  const before = new Map(gdots(c3).map((d) => [d.id, d]));
+  const target = gdots(c3).find((d) => d.label === "Note 7")!;
+  c3.dispatchEvent(pe("pointerdown", target.x, target.y));
+  for (let i = 1; i <= 10; i++) { c3.dispatchEvent(pe("pointermove", target.x + i * 9, target.y + i * 6)); await nextFrame(); }
+  await frames(5);
+  const held = gdots(c3).find((d) => d.id === target.id)!;
+  const follows = Math.hypot(held.x - (target.x + 90), held.y - (target.y + 60)) < 4;
+  c3.dispatchEvent(pe("pointerup", target.x + 90, target.y + 60));
+  await sleep(500);
+  const moved = gdots(c3).filter((d) => d.id !== target.id && Math.hypot(d.x - before.get(d.id)!.x, d.y - before.get(d.id)!.y) > 1).length;
+  out.drag = { follows, moved, hash: location.hash };
+  const dragOk = follows && moved >= 3 && location.hash === "#/memory/graph";
+  await settledIn(globalCanvas, 8000);
+
+  // The wheel zooms around the pointer; labels show only once zoomed in; dragging the background pans.
+  const pair = () => { const ds = gdots(c3); const a = ds.find((d) => d.label === "Note 0")!, b = ds.find((d) => d.label === "Note 240")!; return { a, b, dist: Math.hypot(a.x - b.x, a.y - b.y) }; };
+  const rect = c3.getBoundingClientRect();
+  const mid = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  // The pointer still rests on the dragged dot, which shows its and its neighbours' labels: move it away first.
+  const off = emptySpot(c3);
+  if (off) c3.dispatchEvent(pe("pointermove", off.x, off.y));
+  await frames(2);
+  const labelsFit = await labelsPerFrame(async () => { wheel(c3, mid.x, mid.y, -1); await frames(3); });
+  const z0 = pair();
+  const anchor = z0.a;
+  wheel(c3, anchor.x, anchor.y, -400);
+  await frames(2);
+  const z1 = pair();
+  const zoomOk = z1.dist / z0.dist > 1.8 && Math.hypot(z1.a.x - anchor.x, z1.a.y - anchor.y) < 2;
+  const labelsZoomed = await labelsPerFrame(async () => { wheel(c3, anchor.x, anchor.y, -400); await frames(3); });
+  out.zoom = { ratio: Math.round((z1.dist / z0.dist) * 100) / 100, labels_fit: labelsFit, labels_zoomed: labelsZoomed };
+  const labelsOk = labelsFit <= 2 && labelsZoomed >= 8;
+  const spot = emptySpot(c3) ?? { x: rect.right - 20, y: rect.bottom - 20 };
+  const p0 = pair().a;
+  c3.dispatchEvent(pe("pointerdown", spot.x, spot.y));
+  for (let i = 1; i <= 8; i++) { c3.dispatchEvent(pe("pointermove", spot.x - i * 10, spot.y - i * 5)); await nextFrame(); }
+  c3.dispatchEvent(pe("pointerup", spot.x - 80, spot.y - 40));
+  await frames(2);
+  const p1 = pair().a;
+  const panOk = Math.abs(p1.x - p0.x + 80) < 2 && Math.abs(p1.y - p0.y + 40) < 2 && location.hash === "#/memory/graph";
+  out.pan = { dx: Math.round(p1.x - p0.x), dy: Math.round(p1.y - p0.y) };
+
+  // The fit button puts every dot in view; Zoom out and the keys.
+  q<HTMLButtonElement>('button[aria-label="Fit the graph in view"]')?.click();
+  await sleep(1200);
+  const inView = gdots(c3).every((d) => d.x >= rect.left - 1 && d.x <= rect.right + 1 && d.y >= rect.top - 1 && d.y <= rect.bottom + 1);
+  const f0 = pair().dist;
+  q<HTMLButtonElement>('button[aria-label="Zoom out"]')?.click();
+  await frames(2);
+  const f1 = pair().dist;
+  c3.focus();
+  keyOn(c3, "+");
+  await frames(2);
+  const f2 = pair().dist;
+  keyOn(c3, "0");
+  await sleep(1200);
+  const f3 = pair().dist;
+  out.zoom_tools = { fit: inView, out: Math.round((f1 / f0) * 100) / 100, plus: Math.round((f2 / f1) * 100) / 100, zero: Math.round((f3 / f0) * 100) / 100 };
+  const toolsOk = inView && f1 / f0 < 0.85 && f2 / f1 > 1.15 && Math.abs(f3 / f0 - 1) < 0.05;
+
+  // The keyboard: an arrow key picks a dot and lists its connections; the list's buttons can be reached; Escape closes it.
+  keyOn(c3, "ArrowRight");
+  const conn = await waitFor(() => q(".graph-connections"), 3000);
+  const connName = conn?.getAttribute("aria-label") ?? "";
+  const connButtons = [...(conn?.querySelectorAll(".graph-conn-list button") ?? [])] as HTMLButtonElement[];
+  connButtons[0]?.focus();
+  const reachable = !!connButtons[0] && document.activeElement === connButtons[0];
+  c3.focus();
+  keyOn(c3, "ArrowDown");
+  await frames(2);
+  const connName2 = q(".graph-connections")?.getAttribute("aria-label") ?? "";
+  out.keyboard = { first: connName, then: connName2, buttons: connButtons.length, reachable, canvas_label: c3.getAttribute("aria-label"), tab: c3.tabIndex };
+  keyOn(c3, "Escape");
+  await frames(2);
+  const keyboardOk = connName === "Connections of Note 0" && connButtons.length >= 10 && reachable && connName2.startsWith("Connections of ") && connName2 !== connName
+    && !q(".graph-connections") && c3.tabIndex === 0 && (c3.getAttribute("aria-label") ?? "").startsWith("Graph of ");
+
+  // No teal or magenta anywhere, also in the light theme (where the accent is the light one): no pixel of those colours in
+  // the dark theme, and no colour drawn with in either theme (light dots' edges blend, so its pixels are only counted).
+  out.reserved_settled = reservedPixels(c3);
+  const tokens = [cssVar("--live"), cssVar("--needs")];
+  const dark = await coloursDrawn(async () => { c3.dispatchEvent(pe("pointermove", dotNamed(c3, "Note 0")!.x, dotNamed(c3, "Note 0")!.y)); await frames(3); const o = emptySpot(c3); if (o) c3.dispatchEvent(pe("pointermove", o.x, o.y)); await frames(3); });
+  const theme0 = document.documentElement.dataset.theme;
+  document.documentElement.dataset.theme = "light";
+  const lightTokens = [cssVar("--live"), cssVar("--needs")];
+  const light = await coloursDrawn(async () => { wheel(c3, mid.x, mid.y, -1); await frames(3); c3.dispatchEvent(pe("pointermove", dotNamed(c3, "Note 0")!.x, dotNamed(c3, "Note 0")!.y)); await frames(3); const o = emptySpot(c3); if (o) c3.dispatchEvent(pe("pointermove", o.x, o.y)); await frames(3); });
+  out.colours = { dark, light, reserved: reservedColours([...dark, ...light], [...tokens, ...lightTokens]) };
+  const lightFocus = dotNamed(c3, "Note 0")!;
+  out.light = { blended_px: reservedPixels(c3), focus: pixel(c3, lightFocus.x, lightFocus.y), accent: cssVar("--accent") };
+  const lightOk = (out.colours as { reserved: string[] }).reserved.length === 0 && dark.length >= 5 && light.length >= 5 && nearRgb(pixel(c3, lightFocus.x, lightFocus.y), hexRgb(cssVar("--accent")));
+  if (theme0 === undefined) delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme0;
+  out.hue_only = huePixels.slice(0, 12);
+  out.hue_only_count = huePixels.length;
+  const noReserved = out.reserved_hover === 0 && out.reserved_open === 0 && out.reserved_settled === 0 && lightOk;
+
+  const ok = fast && countOk && kindsOk && sizeOk && dimOk && hoverOk && undimmed && opened && switchOk && dragOk && zoomOk && labelsOk && panOk && toolsOk && keyboardOk && noReserved;
+  return { ok, part: "a", fast, count_ok: countOk, kinds_ok: kindsOk, size_ok: sizeOk, dim_ok: dimOk, hover_ok: hoverOk, undimmed, opened, switch_ok: switchOk, drag_ok: dragOk,
+    zoom_ok: zoomOk, labels_ok: labelsOk, pan_ok: panOk, tools_ok: toolsOk, keyboard_ok: keyboardOk, no_reserved: noReserved, ...out };
+}
+
+async function graphPartB() {
+  const out: Record<string, unknown> = {};
+  if (location.hash !== "#/memory/graph") location.hash = "#/memory/graph";
+  if (!(await waitFor(() => (gdots(globalCanvas()).length > 500 ? true : null), 10000))) return { ok: false, error: "the graph did not load" };
+  await settledIn(globalCanvas, 8000);
+  const c = () => globalCanvas()!;
+  const kinds = () => [...new Set(gdots(c()).map((d) => d.kind))].sort().join(",");
+  const notesShown = () => gdots(c()).filter((d) => d.kind === "note");
+
+  // Groups to start with: a colour per top folder, so a Lessons note and a Decisions note differ, and neither is grey.
+  const grey = hexRgb(cssVar("--text-3"));
+  const at = (label: string) => { const d = dotNamed(c(), label)!; return pixel(c(), d.x, d.y); };
+  const lessons = at("Note 3"), decisions = at("Note 0"), lessons2 = at("Note 12");
+  out.group_px = { lessons, lessons2, decisions };
+  const groupColoursOk = !nearRgb(lessons, decisions, 30) && nearRgb(lessons, lessons2, 6) && !nearRgb(lessons, grey, 30) && !nearRgb(decisions, grey, 30);
+
+  // The panel and its four sections, every one opened.
+  q<HTMLButtonElement>("button.graph-panel-open")?.click();
+  const panel = await waitFor(() => q(".graph-panel"), 3000);
+  if (!panel) return { ok: false, error: "no settings panel" };
+  for (let i = 0; i < 4; i++) { const h = q<HTMLButtonElement>('.graph-panel .graph-section-head[aria-expanded="false"]'); if (!h) break; h.click(); await frames(2); }
+  const P = () => q(".graph-panel") ?? document;
+  const p = P();
+  out.sections = textsOf(".graph-section-head", p);
+  out.checks = textsOf("label.graph-check", p);
+  out.sliders = textsOf(".graph-slider label", p);
+  out.groups = [...p.querySelectorAll<HTMLInputElement>(".graph-group input.input")].map((i) => i.value);
+  const swatches = [...p.querySelectorAll<HTMLElement>(".graph-swatch")].map((s) => s.style.background);
+  const unnamed = [...p.querySelectorAll("input, button")].filter((e) => !accessibleName(e)).length;
+  const panelOk = JSON.stringify(out.sections) === JSON.stringify(["Filters", "Groups", "Display", "Forces"])
+    && JSON.stringify(out.checks) === JSON.stringify(["Tags", "Orphans", "Existing notes only", "Cards", "Projects", "Clients", "Agents", "People", "Arrows"])
+    && JSON.stringify(out.sliders) === JSON.stringify(["Text fade threshold", "Node size", "Link thickness", "Centre force", "Repel force", "Link force", "Link distance"])
+    && !!buttonByText(p, "Animate") && !!p.querySelector('input[aria-label="Search the graph"]') && unnamed === 0;
+  // One group per top folder that has notes: the Team Lead's first, Agents last; each its own colour.
+  const groupsOk = JSON.stringify(out.groups) === JSON.stringify(['path:"Team Lead/"', "path:Clients/", "path:Decisions/", "path:Dependencies/", "path:Deployments/",
+    "path:Lessons/", "path:Projects/", "path:Standards/", "path:Workflows/", "path:Agents/"]) && new Set(swatches).size === swatches.length;
+
+  // Filters.
+  graphStage = "filters";
+  const click = async (el: HTMLElement | null) => { el?.click(); await frames(2); };
+  const before = gdots(c()).length;
+  await click(checkbox(P(), "Tags"));
+  const withTags = kinds();
+  await click(checkbox(P(), "Tags"));
+  await click(checkbox(P(), "Cards"));
+  await click(checkbox(P(), "Agents"));
+  const withoutExtras = kinds();
+  await click(checkbox(P(), "Cards"));
+  await click(checkbox(P(), "Agents"));
+  await click(checkbox(P(), "Existing notes only"));
+  const existing = kinds();
+  await click(checkbox(P(), "Existing notes only"));
+  graphStage = "search";
+  const search = q<HTMLInputElement>('input[aria-label="Search the graph"]')!;
+  typeInto(search, "path:Lessons/");
+  await frames(2);
+  const lessonsOnly = notesShown().map((d) => noteIndex(d.label));
+  const countLessons = textOf(q(".graph-count"));
+  typeInto(search, "tag:topic1");
+  await frames(2);
+  const tagged = notesShown().map((d) => noteIndex(d.label));
+  typeInto(search, "zzqq");
+  await frames(2);
+  const noneText = textOf(q(".graph-empty"));
+  typeInto(search, "");
+  await frames(2);
+  out.filters = { before, with_tags: withTags, without_extras: withoutExtras, existing, lessons: lessonsOnly.length, count_lessons: countLessons, tagged, none: noneText };
+  const filtersOk = withTags === "agent,card,missing,note,tag" && withoutExtras === "missing,note" && existing === "agent,card,note"
+    && lessonsOnly.length === 53 && lessonsOnly.every((i) => i % 9 === 3) && countLessons.startsWith("53 notes")
+    && tagged.length > 0 && tagged.every((i) => i % 8 === 0 && i % 3 === 1) && noneText === "No dot matches these filters." && gdots(c()).length === before;
+
+  // A group colours what its query matches: the first group's query made tag:topic1 gives those notes its colour.
+  await settledIn(globalCanvas, 8000);
+  const recolour = tagged.filter((i) => i % 9 !== 8).slice(0, 4).map((i) => `Note ${i}`);
+  const was = recolour.map(at);
+  graphStage = "group query";
+  const firstQuery = q<HTMLInputElement>(".graph-panel .graph-group input.input")!;
+  typeInto(firstQuery, "tag:topic1");
+  await frames(3);
+  const now = recolour.map(at);
+  out.recoloured = { notes: recolour, was, now };
+  const groupQueryOk = now.length > 0 && now.every((px, i) => !nearRgb(px, was[i]!, 20) && nearRgb(px, now[0]!, 6) && !nearRgb(px, grey, 30));
+
+  // Display and Forces change the drawing and the layout; arrows on.
+  graphStage = "display";
+  await click(checkbox(P(), "Arrows"));
+  const setSlider = async (label: string, v: number) => { const s = slider(P(), label); if (s) typeInto(s, String(v)); await frames(2); };
+  const nudge = async () => { const r = c().getBoundingClientRect(); wheel(c(), r.left + r.width / 2, r.top + r.height / 2, -1); await frames(3); };
+  const labelsDefault = await labelsPerFrame(nudge);
+  await setSlider("Text fade threshold", -3);
+  const labelsLow = await labelsPerFrame(nudge);
+  q<HTMLButtonElement>('button[aria-label="Fit the graph in view"]')?.click();
+  await sleep(1200);
+  const hub0 = dotNamed(c(), "Note 0")!.r;
+  await setSlider("Node size", 3);
+  await settledIn(globalCanvas, 8000);
+  await sleep(800);
+  const hub1 = dotNamed(c(), "Note 0")!.r;
+  await setSlider("Link thickness", 2);
+  await setSlider("Repel force", 20);
+  const moving = graphProbe(c())?.settled === false;
+  await setSlider("Link distance", 200);
+  await setSlider("Link force", 0.5);
+  await setSlider("Centre force", 0.2);
+  const resettled = await settledIn(globalCanvas, 8000);
+  out.display = { hub_r: [Math.round(hub0 * 10) / 10, Math.round(hub1 * 10) / 10], labels_default: labelsDefault, labels_low_fade: labelsLow, moving, resettled };
+  const displayOk = hub1 > hub0 * 1.5 && labelsLow >= labelsDefault + 8 && moving && resettled >= 0;
+
+  // Kept: the page opened again shows the same settings.
+  graphStage = "kept";
+  const kept = JSON.parse(localStorage.getItem("gizai.memory.graph") ?? "{}").global ?? {};
+  out.kept = { arrows: kept.arrows, nodeSize: kept.nodeSize, repel: kept.repel, linkDistance: kept.linkDistance, linkForce: kept.linkForce, centre: kept.centre, textFade: kept.textFade,
+    linkThickness: kept.linkThickness, panel: kept.panel, groups: kept.groups?.[0] };
+  location.hash = "#/tasks";
+  await waitFor(() => (!globalCanvas() ? true : null), 3000);
+  await sleep(300);
+  location.hash = "#/memory/graph";
+  const again = await waitFor(() => q(".graph-panel"), 5000);
+  const output = (label: string) => textOf(slider(again ?? document, label)?.parentElement?.querySelector("output"));
+  out.reopened = { panel: !!again, arrows: checkbox(again ?? document, "Arrows")?.checked, node: output("Node size"), repel: output("Repel force"), dist: output("Link distance"),
+    group: q<HTMLInputElement>(".graph-group input.input", again ?? document)?.value };
+  const keptOk = kept.arrows === true && kept.nodeSize === 3 && kept.repel === 20 && kept.linkDistance === 200 && kept.linkForce === 0.5 && kept.centre === 0.2 && kept.textFade === -3
+    && kept.linkThickness === 2 && kept.panel === true && kept.groups?.[0]?.query === "tag:topic1"
+    && !!again && checkbox(again, "Arrows")?.checked === true && output("Node size") === "3.00" && output("Repel force") === "20.0" && output("Link distance") === "200"
+    && q<HTMLInputElement>(".graph-group input.input", again)?.value === "tag:topic1";
+  await waitFor(() => (gdots(globalCanvas()).length > 500 ? true : null), 5000);
+  await settledIn(globalCanvas, 8000);
+
+  graphStage = "animate";
+  // Animate: the graph grows again in the order the notes were made.
+  const total = gdots(c()).length;
+  buttonByText(q(".graph-panel")!, "Animate")?.click();
+  const samples: { n: number; maxNote: number; agentNotes: number }[] = [];
+  for (let i = 0; i < 40; i++) {
+    await sleep(100);
+    const ds = gdots(c());
+    samples.push({ n: ds.length, maxNote: Math.max(-1, ...ds.map((d) => noteIndex(d.label))), agentNotes: ds.filter((d) => d.label.startsWith("Agent note")).length });
+    if (ds.length === total && i > 3 && graphProbe(c())?.settled) break;
+  }
+  const grows = samples.every((s, i) => i === 0 || s.n >= samples[i - 1]!.n);
+  const half = samples.find((s) => s.n >= total * 0.4 && s.n <= total * 0.7);
+  out.animate = { total, first: samples[0], half, last: samples[samples.length - 1], samples: samples.length };
+  const animateOk = !!samples[0] && samples[0].n < total * 0.3 && grows && !!half && half.maxNote < 400 && half.agentNotes === 0 && samples[samples.length - 1]!.n === total;
+
+  // Restore puts the defaults back (the panel stays open).
+  q<HTMLButtonElement>('button[aria-label="Restore the default settings"]')?.click();
+  await frames(2);
+  const reset = JSON.parse(localStorage.getItem("gizai.memory.graph") ?? "{}").global ?? {};
+  const resetOk = reset.arrows === false && reset.nodeSize === 1 && reset.repel === 10 && reset.groups === null && reset.panel === true;
+  q<HTMLButtonElement>('button[aria-label="Close the settings"]')?.click();
+  await frames(2);
+  const closed = !q(".graph-panel") && JSON.parse(localStorage.getItem("gizai.memory.graph") ?? "{}").global?.panel === false;
+
+  const ok = groupColoursOk && panelOk && groupsOk && filtersOk && groupQueryOk && displayOk && keptOk && animateOk && resetOk && closed;
+  return { ok, part: "b", group_colours_ok: groupColoursOk, panel_ok: panelOk, groups_ok: groupsOk, filters_ok: filtersOk, group_query_ok: groupQueryOk, display_ok: displayOk,
+    kept_ok: keptOk, animate_ok: animateOk, reset_ok: resetOk, closed, unnamed, ...out };
+}
+
+async function graphPartC(agentId: string, hubId: string) {
+  const out: Record<string, unknown> = {};
+  location.hash = `#/memory/${hubId}`;
+  if (!(await waitFor(() => (noteTitle() === "Note 0" ? true : null), 8000))) return { ok: false, error: "Note 0 did not open" };
+  // Open local graph (from the top bar), next to the note.
+  const openBtn = q<HTMLButtonElement>('button[aria-label="Open local graph"]');
+  out.open_button = !!openBtn;
+  openBtn?.click();
+  await waitFor(() => (gdots(localCanvas()).length > 1 ? true : null), 5000);
+  await settledIn(localCanvas, 6000);
+  const listed = () => [...document.querySelectorAll(".mem-local-list .graph-conn-list button")] as HTMLButtonElement[];
+  const local = () => gdots(localCanvas());
+  const d1 = local().length;
+  const centre = local().find((d) => d.label === "Note 0");
+  const accent = hexRgb(cssVar("--accent"));
+  const centrePx = centre ? pixel(localCanvas()!, centre.x, centre.y) : [];
+  out.local = { dots: d1, listed: listed().length, head: textOf(q(".mem-local-head .faint")), count: textOf(q(".mem-local-list .mem-sub .faint")), centre: centrePx };
+  const localOk = !!openBtn && d1 > 20 && listed().length === d1 - 1 && textOf(q(".mem-local-list .mem-sub .faint")) === String(d1 - 1)
+    && textOf(q(".mem-local-head .faint")) === "Note 0" && nearRgb(centrePx, accent) && localStorage.getItem("gizai.memory.local") === "on";
+  listed()[0]?.focus();
+  const reachable = document.activeElement === listed()[0];
+
+  // Depth, incoming and outgoing.
+  q<HTMLButtonElement>('button[aria-label="Local graph settings"]')?.click();
+  const lp = await waitFor(() => q(".mem-local .graph-panel"), 3000);
+  if (!lp) return { ok: false, error: "no local settings", ...out };
+  const depth = slider(lp, "Depth");
+  if (depth) typeInto(depth, "2");
+  await frames(2);
+  const d2 = local().length;
+  checkbox(lp, "Incoming links")?.click();
+  await frames(2);
+  const outOnly = local().length;
+  checkbox(lp, "Outgoing links")?.click();
+  await frames(2);
+  const neither = local().length;
+  const neitherText = textOf(q(".mem-local-list > p"));
+  checkbox(lp, "Incoming links")?.click();
+  await frames(2);
+  const inOnly = local().length;
+  checkbox(lp, "Outgoing links")?.click();
+  if (depth) typeInto(depth, "1");
+  await frames(2);
+  const back1 = local().length;
+  out.depth = { d1, d2, out_only: outOnly, in_only: inOnly, neither, neither_text: neitherText, back1, labels: textsOf(".mem-local .graph-panel label.graph-check", document).slice(0, 2) };
+  const depthOk = d2 > d1 && outOnly < d2 && inOnly < d2 && neither === 1 && neitherText === "Incoming and outgoing links are both off." && back1 === d1;
+  q<HTMLButtonElement>('.mem-local .graph-panel button[aria-label="Close the settings"]')?.click();
+
+  // It follows the note that is opened: a connection opens its note, and the local graph centres on it.
+  const next = listed().find((b) => /\/Note \d+$/.test(b.title));
+  const nextTitle = next ? next.title.slice(next.title.lastIndexOf("/") + 1) : "";
+  next?.click();
+  const followed = !!(await waitFor(() => (noteTitle() === nextTitle && textOf(q(".mem-local-head .faint")) === nextTitle
+    && local().some((d) => d.label === nextTitle) ? true : null), 5000));
+  await settledIn(localCanvas, 6000);
+  const newCentre = local().find((d) => d.label === nextTitle);
+  out.follow = { to: nextTitle, head: textOf(q(".mem-local-head .faint")), dots: local().length, listed: listed().length,
+    centre_px: newCentre ? pixel(localCanvas()!, newCentre.x, newCentre.y) : null };
+  const followOk = !!next && followed && !!newCentre && nearRgb(pixel(localCanvas()!, newCentre.x, newCentre.y), accent) && listed().length === local().length - 1;
+  q<HTMLButtonElement>('button[aria-label="Close the local graph"]')?.click();
+  await frames(2);
+  const closedOk = !q(".mem-local") && localStorage.getItem("gizai.memory.local") === "off";
+
+  // An agent's page: only its folder's 20 notes and what they name (KADE-2 and their own missing notes).
+  location.hash = `#/memory/agent/${agentId}/graph`;
+  await waitFor(() => (gdots(globalCanvas()).some((d) => d.label.startsWith("Agent note")) ? true : null), 6000);
+  await frames(3);
+  const agentDots = gdots(globalCanvas());
+  // Its notes: the 20 and the agent's own Notes; what they name: KADE-2 and Not here <n>.
+  const own = (d: GDot) => (d.kind === "note" && (d.label.startsWith("Agent note") || d.label === "Notes")) || d.label === "KADE-2" || d.label.startsWith("Not here");
+  const foreign = agentDots.filter((d) => !own(d)).map((d) => `${d.kind}:${d.label}`);
+  out.agent_page = { notes: agentDots.filter((d) => d.kind === "note").length, dots: agentDots.length, count: textOf(q(".graph-count")), crumbs: textOf(q(".topbar .crumbs")),
+    foreign: foreign.slice(0, 12), foreign_count: foreign.length };
+  const agentOk = agentDots.filter((d) => d.kind === "note").length === 21 && textOf(q(".graph-count")).startsWith("21 notes") && foreign.length === 0
+    && textOf(q(".topbar .crumbs")) === "Memory/Backend Agent/Graph";
+
+  // The shared page: no Team Lead's or agent's note.
+  location.hash = "#/memory/shared/graph";
+  await waitFor(() => (location.hash === "#/memory/shared/graph" && gdots(globalCanvas()).filter((d) => d.kind === "note").length > 300 ? true : null), 6000);
+  await frames(3);
+  const shared = gdots(globalCanvas()).filter((d) => d.kind === "note");
+  out.shared_page = { notes: shared.length, count: textOf(q(".graph-count")) };
+  const sharedOk = shared.length === 427 && shared.every((d) => noteIndex(d.label) >= 0 && noteIndex(d.label) % 9 !== 8);
+
+  // Reduced motion: the layout is worked out at once and doesn't move.
+  const mm = window.matchMedia;
+  window.matchMedia = ((query: string) => ({ matches: query.includes("prefers-reduced-motion: reduce"), media: query, onchange: null,
+    addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false })) as unknown as typeof window.matchMedia;
+  let still = false, quick = -1, drift = -1;
+  try {
+    location.hash = "#/tasks";
+    await waitFor(() => (!globalCanvas() ? true : null), 3000);
+    await sleep(200);
+    location.hash = "#/memory/graph";
+    const t0 = performance.now();
+    // Settled at once, with every kind of dot there (the cards and agents load a moment after the notes).
+    await waitFor(() => (gdots(globalCanvas()).length > 500 && gdots(globalCanvas()).some((d) => d.kind === "card") && gdots(globalCanvas()).some((d) => d.kind === "agent")
+      && graphProbe(globalCanvas())?.settled ? true : null), 6000);
+    quick = Math.round(performance.now() - t0);
+    const a = new Map(gdots(globalCanvas()).map((d) => [d.id, d]));
+    const moved = (d: GDot) => { const o = a.get(d.id); return o ? Math.hypot(d.x - o.x, d.y - o.y) : Infinity; };
+    // Every 100 ms for 1.5 s: how far the dots went since the last look, and whether the view only moved or scaled.
+    const steps: { at: number; n: number; max: number; ratio: number; settled: boolean | undefined; w: number }[] = [];
+    const pairDist = (ds: GDot[]) => { const x = ds.find((d) => d.label === "Note 0"), y = ds.find((d) => d.label === "Note 240"); return x && y ? Math.hypot(x.x - y.x, x.y - y.y) : 0; };
+    let prev = gdots(globalCanvas());
+    for (let i = 1; i <= 15; i++) {
+      await sleep(100);
+      const cur = gdots(globalCanvas());
+      const pm = new Map(prev.map((d) => [d.id, d]));
+      steps.push({ at: i * 100, n: cur.length, max: Math.round(Math.max(0, ...cur.map((d) => { const o = pm.get(d.id); return o ? Math.hypot(d.x - o.x, d.y - o.y) : 999; })) * 10) / 10,
+        ratio: Math.round((pairDist(cur) / (pairDist(prev) || 1)) * 1000) / 1000, settled: graphProbe(globalCanvas())?.settled, w: Math.round(globalCanvas()?.getBoundingClientRect().width ?? 0) });
+      prev = cur;
+    }
+    // No movement from then on (one re-fit of the view once everything has loaded is a jump, not motion).
+    out.reduced_steps = steps.filter((s) => s.max > 0 || s.ratio !== 1);
+    const b = gdots(globalCanvas());
+    drift = Math.max(...b.map(moved));
+    still = b.length === a.size && steps.every((s) => s.at < 300 || (s.max < 0.5 && s.ratio === 1));
+    const last = new Map(b.map((d) => [d.id, d]));
+    // A drag moves only the dot.
+    const t = b.find((d) => d.label === "Note 7")!;
+    const c = globalCanvas()!;
+    c.dispatchEvent(pe("pointerdown", t.x, t.y));
+    for (let i = 1; i <= 6; i++) { c.dispatchEvent(pe("pointermove", t.x + i * 10, t.y)); await nextFrame(); }
+    c.dispatchEvent(pe("pointerup", t.x + 60, t.y));
+    await frames(3);
+    const after = gdots(globalCanvas());
+    const othersMoved = after.filter((d) => { const o = last.get(d.id); return d.id !== t.id && (!o || Math.hypot(d.x - o.x, d.y - o.y) > 0.5); }).length;
+    out.reduced = { quick, drift: Math.round(drift * 100) / 100, others_moved: othersMoved, dragged: Math.round(after.find((d) => d.id === t.id)!.x - t.x) };
+    still = still && othersMoved === 0;
+  } finally {
+    window.matchMedia = mm;
+    location.hash = "#/tasks";
+  }
+  const reducedOk = still && quick >= 0 && quick < 3000;
+
+  const ok = localOk && reachable && depthOk && followOk && closedOk && agentOk && sharedOk && reducedOk;
+  return { ok, part: "c", local_ok: localOk, reachable, depth_ok: depthOk, follow_ok: followOk, closed_ok: closedOk, agent_ok: agentOk, shared_ok: sharedOk, reduced_ok: reducedOk, ...out };
 }

@@ -460,7 +460,7 @@ export type CliTools = {
   insecureCerts: boolean;
   /** The CLI's other tools switched on, by name. */
   builtin: string[];
-  /** Slash commands and skills (Claude Code's SlashCommand and Skill, one switch): its task runs keep your slash commands. */
+  /** Slash commands and skills (Claude Code's SlashCommand and Skill, one switch): on, its task runs may use them. */
   slashCommands: boolean;
 };
 /** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | slash | switch | always | elsewhere | off. */

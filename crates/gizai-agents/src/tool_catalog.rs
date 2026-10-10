@@ -207,8 +207,8 @@ pub fn valid_name(n: &str) -> bool {
 /// Whether an entry of an agent's allowed commands (Claude Code style: `Bash(git status:*)`, `WebFetch(domain:docs.rs)`)
 /// names a tool only the agent form's Tools switches give: web search, fetching pages, slash commands and skills, a
 /// built-in tool with a switch of its own (one the catalog doesn't know) or one Gizai keeps off. A run leaves such an
-/// entry out, so with its switch off the tool is absent whatever the list says. MCP tools stay: a server that's off isn't in the run's config, and a tool
-/// switched off is refused.
+/// entry out, so with its switch off the tool is absent whatever the list says. MCP tools stay: a server that's off isn't
+/// in the run's config, and a tool switched off is refused.
 pub fn only_by_switch(entry: &str) -> bool {
     let name = entry.split('(').next().unwrap_or_default().trim();
     match find(Kind::ClaudeCode, name) {

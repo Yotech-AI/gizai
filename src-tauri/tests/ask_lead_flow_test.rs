@@ -45,14 +45,15 @@ case "$prompt" in
   *LEAD_SILENT*) say 'I looked in memory and found nothing.'; exit 0 ;;
   *LEAD_LOOP*)
     trap 'exit 130' INT TERM
-    echo "$init"
+    lines=("$init")
     n=0
     while [ $n -lt 70 ]; do
-      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%s","name":"Grep","input":{"pattern":"csv"}}]},"session_id":"L1"}\n' "$n"
+      printf -v line '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%s","name":"Grep","input":{"pattern":"csv"}}]},"session_id":"L1"}' "$n"
+      lines+=("$line")
       n=$((n+1))
     done
-    sleep 30 &
-    wait $!
+    # its lines come from the foreground child that then waits, perl, as in fake-claude.sh's print_and_wait (GA-89)
+    perl -e '$| = 1; print map { "$_\n" } @ARGV; sleep 30' -- "${lines[@]}"
     exit 0 ;;
   *LEAD_ESCALATE*) say 'This is about money.\nGIZAI_RESULT: {\"outcome\":\"escalated\",\"reason\":\"the client pays per export, so it is about money\",\"options\":[\"CSV for every invoice\",\"one JSON file a month\"],\"advice\":\"CSV: the accountant uses Excel\"}'; exit 0 ;;
   *LEAD_AGAIN*) say 'Memory has it.\nGIZAI_RESULT: {\"outcome\":\"answered\",\"answer\":\"Use CSV. FAKE_ASKS\"}'; exit 0 ;;

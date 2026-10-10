@@ -95,7 +95,7 @@ export function AgentPage({ id }: { id: string }) {
               <p>{roleLabel(agent.roleKey)}{agent.chatEnabled ? " · answers on the Chat page" : ""}{agent.chatEnabled && agent.boardCheckMinutes ? ` · checks the board every ${agent.boardCheckMinutes} min` : ""} · {cliName(agent.adapter, clis)}{agent.model ? ` (${agent.model})` : ""}{onColumns}</p></div>
             <div className="actions">
               {agent.chatEnabled && <a className="btn" href={href({ page: "chat" })}><MessagesSquare className="icon" />Open chat</a>}
-              {notes && <a className="btn" href={href({ page: "doc", id: notes.id })} title={`Memory: ${notes.path}`}><NotebookText className="icon" />Notes</a>}
+              {notes && <a className="btn" href={href({ page: "memory", scope: notes.path.startsWith("Agents/") ? id : undefined, id: notes.id })} title={`Memory: ${notes.path}`}><NotebookText className="icon" />Notes</a>}
               <button className="btn" onClick={() => open({ kind: "task", assigneeId: id })}><Plus className="icon" />Assign task</button>
               <BusyButton className="btn" pending={pending} name="run" busyLabel="Starting…" icon={<Play className="icon" />} onClick={runNext} disabled={state !== "idle"}>Run</BusyButton>
               <button className="btn" onClick={() => setAgentStatus(id, agent.status === "active" ? "paused" : "active").catch((e) => setMsg(String(e)))}>

@@ -293,8 +293,8 @@ function insertWiki(view: EditorView, row: WikiRow): boolean {
 const newLine = (v: EditorView) => insertNewlineContinueMarkup(v) || insertNewlineAndIndent(v);
 
 /** What a parent can do with the editor (the chat composer): focus it, empty it after sending, and start a link (+ → Link an
- *  item types @ at the cursor, which opens the picker). */
-export type EditorHandle = { focus: () => void; clear: () => void; startLink: () => void };
+ *  item types @ at the cursor, which opens the picker); and (a memory note's outline) put the cursor at a place, in sight. */
+export type EditorHandle = { focus: () => void; clear: () => void; startLink: () => void; goto: (pos: number) => void };
 
 type Pick = { from: number; query: string; at: PickerAt | null };
 
@@ -522,6 +522,13 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
     if (!handle) return;
     handle.current = {
       focus: () => viewRef.current?.focus(),
+      goto: (pos) => {
+        const v = viewRef.current;
+        if (!v) return;
+        const at = Math.min(pos, v.state.doc.length);
+        v.focus();
+        v.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "start", yMargin: 24 }) });
+      },
       clear: () => {
         const v = viewRef.current;
         if (v && v.state.doc.length) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: "" } });

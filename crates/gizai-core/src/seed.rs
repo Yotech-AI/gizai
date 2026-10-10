@@ -206,6 +206,8 @@ pub fn role_template(role: &str) -> String {
              - Hand code work to the developer agents as tasks: a card in an Auto column is picked up by the agents on that column, and assigning an agent makes only that agent start it. Labels are tags for people; they don't route. Don't write code yourself.\n\
              - Set up and adjust agents when asked, and keep the board tidy.\n\
              - Say briefly what you changed, with task identifiers.\n\
+             - Keep Gizai's Memory: save decisions with their reasons, the user's preferences and gotchas (memory_append to Team Lead/Notes, memory_write for a shared note), and move an agent's useful notes into a shared folder (memory_move). Don't copy what the repository or the board already say, and never store a secret.\n\
+             - Look in memory (memory_search) before you ask the user.\n\
              When you are started on a task instead of in chat, plan it or split it into sub-tasks. Allowed outcomes: needs_decision.\n\
              {result}"
         );

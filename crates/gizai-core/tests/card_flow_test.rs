@@ -566,9 +566,11 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     };
     // Step back to schema 6 as it was: none of 0011's columns, agents on columns or branches, routing rules on a label and
     // on a column, no Deploy column (the seed's has no place in schema 6), workflow_states and runs with 0001's CHECKs,
-    // no Testing switch, none of 0008's board check columns, no agent folders (0009) and no chat Runs on or queue (0012).
+    // no Testing switch, none of 0008's board check columns, no agent folders (0009), no chat Runs on or queue (0012) and
+    // no memory (0014).
     let c = rusqlite::Connection::open(&path).unwrap();
-    let mut sql = String::from("PRAGMA foreign_keys=OFF; BEGIN; DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;
+    let mut sql = format!("PRAGMA foreign_keys=OFF; BEGIN; {} DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;", undo_0014());
+    sql.push_str("
         DELETE FROM workflow_states WHERE category='deploy';
         ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;
         ALTER TABLE agent_configs DROP COLUMN board_check_minutes; ALTER TABLE agent_configs DROP COLUMN board_checked_at;
@@ -634,4 +636,18 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     workflow::apply_outcome(&db, &r, Some(&o)).unwrap();
     assert_eq!(tasks::get(&db, &card).unwrap().state_name, "Done");
     assert_eq!(runs::get(&db, &r).unwrap().outcome.as_deref(), Some("deployed"));
+}
+
+/// Undoes GA-19's 0014: docs rebuilt as 0001 made them (owner_actor_id has a foreign key, so it can't be dropped), its
+/// memory notes and their versions and links gone, no use_memory or memory_json. Runs inside an open transaction.
+fn undo_0014() -> String {
+    let m1 = include_str!("../migrations/0001_init.sql");
+    let start = m1.find("CREATE TABLE docs (").unwrap();
+    let docs = m1[start..start + m1[start..].find(") STRICT;").unwrap() + ") STRICT;".len()].replacen("CREATE TABLE docs (", "CREATE TABLE docs_v13 (", 1);
+    format!("DELETE FROM doc_links WHERE source_type = 'doc' AND source_id IN (SELECT id FROM docs WHERE kind = 'memory');
+        DELETE FROM doc_versions WHERE doc_id IN (SELECT id FROM docs WHERE kind = 'memory');
+        {docs}; INSERT INTO docs_v13 SELECT id, created_at, updated_at, deleted_at, version, created_by, updated_by, org_id, project_id, client_id,
+        parent_id, title, body_md, mirror_path, current_version, sort_key FROM docs WHERE kind = 'doc';
+        DROP TABLE docs; ALTER TABLE docs_v13 RENAME TO docs;
+        ALTER TABLE agent_configs DROP COLUMN use_memory; ALTER TABLE runs DROP COLUMN memory_json;")
 }

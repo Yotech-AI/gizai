@@ -907,11 +907,17 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     // CLI that searches the web in every run (Gemini) gets it in every run.
     let untrusted = mcp_config.is_some() || web.search || web.fetch || gizai_agents::tool_catalog::web_in_every_run(spec.kind);
     let note = resume.as_ref().and_then(|r| r.note.as_ref()).map(|n| prompt::Note { from: n.by_name.clone(), text: n.text.clone() });
+    // Memory (GA-19): the agent's own notes and the shared notes for this card, as a section after the task; the Runs tab
+    // lists them. A continued run has them in its session already.
+    let memory = if resume.is_none() { crate::memory::run_block(st, &agent, &role, &project) } else { Default::default() };
+    if !memory.given.is_empty() && let Err(e) = gizai_core::memory::record_given(&st.db, &run_id, &memory.given) {
+        eprintln!("gizai: saving which notes run {run_id} was given failed: {e}");
+    }
     let base_prompt = prompt::with_rules(&match &resume {
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
         Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt_with(a, note.as_ref(), Some(limits)),
         Some(r) => prompt::continue_prompt_with(&r.reason, note.as_ref(), Some(limits)),
-        None => prompt::build_from(&ctx, &instructions, fetched_from(&project)),
+        None => prompt::with_memory(&prompt::build_from(&ctx, &instructions, fetched_from(&project)), &memory.text),
     }, &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
@@ -1158,6 +1164,8 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
         _ => (0, 0, 0, String::new(), false),
     };
     let parsed = outcome::parse(&text);
+    // Memory (GA-19): what the agent wants kept for its next runs, saved below once the run has ended.
+    let learned = outcome::learned(&text);
     // "Run this for me" (GA-31): the commands a `needs_decision` asks you to run, kept with its verdict below.
     let run_for_me: Vec<String> = parsed.as_ref().filter(|o| o.outcome == "needs_decision").map(|o| o.run_for_me.clone()).unwrap_or_default();
     let verdict: Option<Outcome> = parsed.map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
@@ -1198,6 +1206,12 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
         eprintln!("gizai: saving what run {run_id} was refused failed: {e}");
     }
     let _ = core_runs::finish(&st.db, run_id, status, verdict.as_ref(), cost, input, output, error.as_deref());
+    if verdict.is_some() && !learned.is_empty() {
+        let card = gizai_core::tasks::get(&st.db, task_id).map(|t| t.identifier).unwrap_or_default();
+        for text in crate::memory::save_learned(st, run_id, &agent, &card, &learned) {
+            note_run(st, run_id, &text);
+        }
+    }
     let mut moved = false;
     let mut nudge = None;
     // Only a run that finished has a verdict for the gates, and only then do its commands to run count.

@@ -261,8 +261,10 @@ function PropertiesForm({ text, onChange }: { text: string; onChange: (md: strin
   const props = properties(text);
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
+  // A list (tags, aliases, applies_to, or one that has more than one value) is written comma-separated.
+  const isList = (k: string) => LIST_PROPERTIES.includes(k) || (props.find(([x]) => x === k)?.[1].length ?? 0) > 1;
   const set = (k: string, raw: string | null) => {
-    const vals = raw === null ? null : LIST_PROPERTIES.includes(k) ? raw.split(",").map((x) => x.trim()).filter(Boolean) : [raw.trim()];
+    const vals = raw === null ? null : isList(k) ? raw.split(",").map((x) => x.trim()).filter(Boolean) : [raw.trim()];
     const md = setProperty(text, k, vals);
     if (md !== text) onChange(md);
   };

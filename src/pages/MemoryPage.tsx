@@ -139,13 +139,13 @@ export function MemoryPage({ route, youId }: { route: Route; youId: string }) {
         </div>
         <div className="actions">
           {route.id && !graphOn && <>
-            <button className={`btn ghost icon-only mem-toggle${local ? " on" : ""}`} aria-pressed={local} aria-label={local ? "Close the local graph" : "Open local graph"}
-              title={local ? "Close the local graph" : "Open local graph: this note and its neighbours"} onClick={() => showLocal(!local)}>
-              <Waypoints className="icon" />
-            </button>
             <button className={`btn ghost icon-only mem-toggle${sidePanel ? " on" : ""}`} aria-pressed={sidePanel} aria-label={sidePanel ? "Hide the note's panel" : "Show the note's panel"}
               title={sidePanel ? "Hide the note's panel" : "Show the note's panel"} onClick={togglePanel}>
               <PanelRight className="icon" />
+            </button>
+            <button className={`btn ghost icon-only mem-toggle${local ? " on" : ""}`} aria-pressed={local} aria-label={local ? "Close the local graph" : "Open local graph"}
+              title={local ? "Close the local graph" : "Open local graph: this note and its neighbours"} onClick={() => showLocal(!local)}>
+              <Waypoints className="icon" />
             </button>
           </>}
           <div className="seg mem-views" role="group" aria-label="Show">

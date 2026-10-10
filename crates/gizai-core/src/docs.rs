@@ -1,5 +1,6 @@
-//! Project documents: Markdown with an append-only version history.
-use crate::db::Db;
+//! Project documents: Markdown with an append-only version history. Memory notes are docs too (kind `memory`, see
+//! `memory`): a save keeps their links and refuses secrets, and a project's list never shows them.
+use crate::db::{Db, Writer};
 use crate::model::{Doc, DocVersion};
 use crate::{Error, Result, ids, util};
 
@@ -11,15 +12,17 @@ fn doc_from(r: &rusqlite::Row, with_body: bool) -> rusqlite::Result<Doc> {
         body_md: if with_body { r.get(3)? } else { String::new() },
         current_version: r.get(4)?,
         updated_at: r.get(5)?,
+        kind: r.get(6)?,
+        path: r.get(7)?,
     })
 }
 
-const COLS: &str = "id, project_id, title, body_md, current_version, updated_at";
+const COLS: &str = "id, project_id, title, body_md, current_version, updated_at, kind, path";
 
 pub fn list(db: &Db, project_id: &str) -> Result<Vec<Doc>> {
     db.read(|c| {
         let mut st = c.prepare(&format!(
-            "SELECT {COLS} FROM docs WHERE project_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC, title"
+            "SELECT {COLS} FROM docs WHERE project_id = ?1 AND kind = 'doc' AND deleted_at IS NULL ORDER BY updated_at DESC, title"
         ))?;
         let rows = st.query_map([project_id], |r| doc_from(r, false))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -68,35 +71,55 @@ pub fn create(db: &Db, actor: &str, project_id: &str, title: &str) -> Result<Str
 /// Saves a new version. `base_version` is the version the editor started from; if someone saved in
 /// between, nothing is written and the caller gets an error. Returns the new version number.
 pub fn save(db: &Db, actor: &str, id: &str, body_md: &str, base_version: i64) -> Result<i64> {
-    db.write(Some(actor), |w| {
-        let c = w.conn();
-        let current: i64 = c
-            .query_row("SELECT current_version FROM docs WHERE id = ?1 AND deleted_at IS NULL", [id], |r| r.get(0))
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Error::NotFound(format!("doc {id}")),
-                e => e.into(),
-            })?;
-        if current != base_version {
-            return Err(Error::Invalid("doc changed since you opened it".into()));
-        }
-        let next = current + 1;
-        let now = ids::now_ms();
-        c.execute(
-            "UPDATE docs SET body_md = ?2, current_version = ?3, updated_at = ?4, updated_by = ?5, version = version + 1 WHERE id = ?1",
-            rusqlite::params![id, body_md, next, now, actor],
-        )?;
-        c.execute(
-            "INSERT INTO doc_versions(id, created_at, doc_id, version, body_md, author_actor_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![ids::new_id(), now, id, next, body_md, actor],
-        )?;
-        w.update("docs", id, serde_json::json!({"version": next, "chars": body_md.chars().count()}))?;
-        Ok(next)
-    })
+    db.write(Some(actor), |w| save_in(w, actor, id, body_md, base_version, None))
 }
 
+/// `save` inside a write that is open. `run_id`: the agent run that wrote it, kept on the version. Every save rebuilds
+/// the doc's links (`doc_links`); a memory note with a secret in it is refused.
+pub(crate) fn save_in(w: &Writer, actor: &str, id: &str, body_md: &str, base_version: i64, run_id: Option<&str>) -> Result<i64> {
+    let c = w.conn();
+    let (current, kind, path): (i64, String, Option<String>) = c
+        .query_row("SELECT current_version, kind, path FROM docs WHERE id = ?1 AND deleted_at IS NULL", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Error::NotFound(format!("doc {id}")),
+            e => e.into(),
+        })?;
+    let memory = kind == "memory";
+    if current != base_version {
+        return Err(Error::Invalid(if memory {
+            format!("{} changed since it was read (it is at version {current} now, not {base_version}): read it again and save your change \
+                     on top of that version", path.unwrap_or_default())
+        } else {
+            "doc changed since you opened it".into()
+        }));
+    }
+    if memory {
+        crate::memory::refuse_secrets(body_md)?;
+    }
+    let next = current + 1;
+    let now = ids::now_ms();
+    c.execute(
+        "UPDATE docs SET body_md = ?2, current_version = ?3, updated_at = ?4, updated_by = ?5, version = version + 1 WHERE id = ?1",
+        rusqlite::params![id, body_md, next, now, actor],
+    )?;
+    c.execute(
+        "INSERT INTO doc_versions(id, created_at, doc_id, version, body_md, author_actor_id, run_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![ids::new_id(), now, id, next, body_md, actor, run_id],
+    )?;
+    crate::memory::index_links(w, id, body_md)?;
+    w.update("docs", id, serde_json::json!({"version": next, "chars": body_md.chars().count()}))?;
+    Ok(next)
+}
+
+/// A new title. A memory note keeps its folder and moves (`memory`): the links to it follow.
 pub fn rename(db: &Db, actor: &str, id: &str, title: &str) -> Result<()> {
     let title = clean_title(title)?;
     db.write(Some(actor), |w| {
+        let kind: Option<String> = w.conn().query_row("SELECT kind FROM docs WHERE id = ?1 AND deleted_at IS NULL", [id], |r| r.get(0))
+            .map(Some).or_else(|e| if matches!(e, rusqlite::Error::QueryReturnedNoRows) { Ok(None) } else { Err(e) })?;
+        if kind.as_deref() == Some("memory") {
+            return crate::memory::retitle_in(w, actor, id, &title);
+        }
         let n = w.conn().execute(
             "UPDATE docs SET title = ?2, updated_at = ?3, updated_by = ?4, version = version + 1 WHERE id = ?1 AND deleted_at IS NULL",
             rusqlite::params![id, title, ids::now_ms(), actor],

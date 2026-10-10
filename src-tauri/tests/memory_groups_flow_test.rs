@@ -225,3 +225,28 @@ async fn a_backend_agent_2_run_gets_the_backend_agents_notes_saves_what_it_learn
     assert!(section.contains(&format!("({id}, Backend Agent 2): Excel NL needs semicolons in a CSV.")), "{section}");
     assert!(!section.contains("Globex"), "{section}");
 }
+
+#[tokio::test]
+async fn when_gizai_starts_a_group_whose_owner_was_removed_goes_on_with_its_next_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (be, be2) = {
+        let st = gizai_lib::test_state(tmp.path());
+        let team_id = team::list(&st.db).unwrap()[0].id.clone();
+        let be = team::add_agent(&st.db, &st.you_id, &team_id, AgentInput { name: "Backend Agent".into(), role_key: "backend".into(), ..Default::default() }).unwrap();
+        let be2 = team::add_agent(&st.db, &st.you_id, &team_id, AgentInput { name: "Backend Agent 2".into(), role_key: "backend".into(),
+            shares_memory_with: Some(be.clone()), ..Default::default() }).unwrap();
+        memory::learned(&st.db, &be2, "KADE-1", &["Kept for the group.".into()], None, &today()).unwrap();
+        // removed (as another device's sync or an older Gizai might leave it)
+        st.db.write(None, |w| { w.conn().execute("UPDATE actors SET deleted_at = 5 WHERE id = ?1", [&be])?; Ok(()) }).unwrap();
+        assert_eq!(team::agent(&st.db, &be2).unwrap().shares_memory_with.as_deref(), Some(be.as_str()));
+        (be, be2)
+    };
+    let st = gizai_lib::test_state(tmp.path());
+    assert_eq!(team::agent(&st.db, &be2).unwrap().shares_memory_with, None, "the Backend Agent 2 owns the folder now");
+    assert_eq!(Who::of(&st.db, &be2).unwrap(), Who::Agent(be2.clone()));
+    let n = memory::find(&st.db, "Agents/Backend Agent 2/Notes").unwrap().expect("the group's notes, in a folder with its name");
+    assert_eq!(n.owner_id.as_deref(), Some(be2.as_str()));
+    assert!(n.body_md.contains("(KADE-1, Backend Agent 2): Kept for the group."), "{}", n.body_md);
+    assert!(memory::find(&st.db, "Agents/Backend Agent/Notes").unwrap().is_none());
+    assert_ne!(be, be2);
+}

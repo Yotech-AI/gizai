@@ -538,6 +538,30 @@ fn an_owner_taken_off_the_team_or_made_the_team_lead_hands_its_group_on_too() {
     assert!(f.body("Agents/Backend Agent 2/Notes").contains("(GA-12, Backend Agent 2): Kept too."));
 }
 
+#[test]
+fn picking_a_member_of_a_group_whose_owner_is_gone_hands_the_group_on_first_and_an_agent_that_became_the_team_lead_stops_sharing() {
+    // before a restart: the Backend Agent is removed while the Backend Agent 2 shares its folder; the QA Agent picks the
+    // Backend Agent 2, so the group goes on with it and the QA Agent joins it
+    let f = setup();
+    f.save(&f.be2, None, Some(&f.be)).unwrap();
+    f.learned(&f.be2, "GA-12", &["From the group."]);
+    f.exec("UPDATE actors SET deleted_at = 5 WHERE id = ?1", &f.be);
+    f.save(&f.qa, None, Some(&f.be2)).unwrap();
+    assert_eq!((f.shares(&f.be2), f.shares(&f.qa)), (None, Some(f.be2.clone())));
+    let body = f.body("Agents/Backend Agent 2/Notes");
+    assert!(body.contains("(GA-12, Backend Agent 2): From the group."), "{body}");
+    assert!(f.note("Agents/QA Agent/Notes").is_none(), "the QA Agent's template-only Notes went into the group's");
+    assert!(f.agent_paths().iter().all(|p| p.starts_with("Agents/Backend Agent 2/")), "{:?}", f.agent_paths());
+
+    // an agent that shares and has Chat on (the Team Lead as memory sees it) stops sharing at start-up
+    let f = setup();
+    f.save(&f.be2, None, Some(&f.be)).unwrap();
+    f.exec("UPDATE agent_configs SET chat_enabled = 1 WHERE actor_id = ?1", &f.be2);
+    memory::ensure_groups(&f.db, &f.you).unwrap();
+    assert_eq!(f.shares(&f.be2), None);
+    assert!(f.note("Agents/Backend Agent/Notes").is_some(), "the group's notes stay");
+}
+
 // ---- Client isolation ----
 
 #[test]

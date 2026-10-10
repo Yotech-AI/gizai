@@ -5,7 +5,7 @@ members = ["crates/gizai-core", "crates/gizai-agents", "crates/gizai-mcp", "src-
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.7.0"
+version = "0.7.1"
 
 [workspace.dependencies]
 rusqlite = { version = "0.40", features = ["bundled", "serde_json"] }

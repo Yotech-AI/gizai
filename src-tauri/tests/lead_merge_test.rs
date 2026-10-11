@@ -231,7 +231,7 @@ async fn a_pull_request_that_meets_every_rule_is_merged_with_a_merge_commit_and_
     // gh: the card's pull request, read, then merged with a merge commit at the commit QA passed; nothing else
     let calls = t.gh_calls();
     assert_eq!(calls[..3], [
-        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits", t.branch),
+        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits,mergeCommit", t.branch),
         format!("pr view 7 --repo acme/shop --json {}", gizai_agents::github::DETAIL_FIELDS),
         format!("pr merge 7 --repo acme/shop --merge --match-head-commit {}", t.head),
     ], "{calls:?}");

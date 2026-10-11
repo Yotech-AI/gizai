@@ -15,9 +15,13 @@
 .tab .diffstat { margin-left: 2px; }
 
 /* ---------- the view: file list | diffs, under the tabs, full width (Properties closes) ---------- */
-.chg { display: grid; grid-template-columns: 260px minmax(0, 1fr); flex: 1; min-height: 0; outline: none; }
-.chg.list-folded { grid-template-columns: minmax(0, 1fr); }
+.chg { display: grid; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; outline: none; }
+.chg [hidden] { display: none !important; }
+/* folded ([ or the list's own button): a 36px rail on side, like a folded board column, brings it back */
+.chg-rail { display: none; }
+.chg.list-folded { grid-template-columns: 36px minmax(0, 1fr); }
 .chg.list-folded > .chg-files { display: none; }
+.chg.list-folded > .chg-rail { display: flex; flex-direction: column; align-items: center; padding-top: 10px; border-right: 1px solid var(--line); background: var(--side); }
 
 /* the file list: the Memory page's explorer, on the dimmest surface */
 .chg-files { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--side); }
@@ -60,6 +64,12 @@
 .chg-nomatch .link { display: inline; color: var(--accent); }
 .chg-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 9px 14px 11px; border-top: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-xs); }
 .chg-keys .kbd { min-width: 16px; height: 16px; }
+
+/* the Runs tab: a run with commits gets Show changes beside the button that opens it */
+.run-line { gap: 8px; padding-right: 14px; }
+.run-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; align-self: stretch; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.run-open .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-open .chev { flex: none; color: var(--text-3); }
 
 /* one run: who and when, its commits, and back to all changes */
 .chg-run { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }

@@ -28,6 +28,7 @@
   // Frames are drawn at the app's size (1440 wide) and scaled down to fit a narrower window.
   function fit() {
     for (const wrap of $$(".frame-fit")) {
+      if (!wrap.clientWidth) continue; // hidden (the other theme): fitted when it shows
       const frame = wrap.firstElementChild;
       const w = parseFloat(frame.style.width) + 2;
       const zoom = Math.min(1, wrap.clientWidth / w);
@@ -45,6 +46,7 @@
   }
   function goTo(row) {
     const chg = row.closest(".chg");
+    if (!chg) return;
     const box = $$(".chg-box", chg).find((b) => b.dataset.path === row.title.split(" → ").pop());
     if (!box) return;
     current(chg, row);
@@ -73,6 +75,7 @@
       box.classList.toggle("folded", folded);
       el.setAttribute("aria-expanded", String(!folded));
       el.title = (folded ? "Show" : "Fold") + " this file";
+      if (!folded) for (const later of $(".chg-later", box)) later.hidden = false;
       return;
     }
     if (el.matches("[data-show]")) {
@@ -91,6 +94,7 @@
       return;
     }
     if (el.matches("[data-foldlist]")) { el.closest(".chg").classList.add("list-folded"); return; }
+    if (el.matches("[data-unfoldlist]")) { el.closest(".chg").classList.remove("list-folded"); return; }
     if (el.matches("[data-clear]")) {
       const input = el.closest(".chg-files").querySelector(".chg-filter input");
       input.value = "";

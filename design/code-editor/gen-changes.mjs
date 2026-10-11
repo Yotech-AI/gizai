@@ -797,7 +797,8 @@ const G = [
     { path: "src/assets/editor-empty.png", status: "M", add: null, del: 0, stat: `<span class="diffstat"><span class="bin">Binary</span></span>`,
       body: note("binary", `Binary file changed: 12 KB ${ic("arrow-right", "arrow")} 14 KB.`) },
     { path: "src/assets/lang-map.json", status: "A", add: 3214, del: 0, folded: true, why: "Big diff, folded",
-      body: note("fold-vertical", "A big diff: 3,214 added lines. It stays folded until you ask, so the page stays quick.", `<button class="btn sm" data-show>Show diff</button>`) },
+      body: note("fold-vertical", "A big diff: 3,214 added lines. It stays folded until you ask, so the page stays quick.", `<button class="btn sm" data-show>Show diff</button>`)
+        + `<div class="chg-later" hidden><div class="chg-note faint">The 3,214 lines would show here, as any diff; this design leaves them out.</div></div>` },
   ] },
   { dir: "src/components", files: [
     { path: "src/components/Sidebar.tsx", status: "M", ...D.sidebarTsx, body: code(D.sidebarTsx) },
@@ -835,6 +836,7 @@ function fileList(groups, { head, on = "f5" } = {}) {
   <div class="chg-keys"><span><span class="kbd">n</span> <span class="kbd">p</span> next, previous file</span><span><span class="kbd">Alt ↓</span> <span class="kbd">Alt ↑</span> next, previous change</span><span><span class="kbd">[</span> fold this list</span><span><span class="kbd">Esc</span> back to Card</span></div>
 </aside>`;
 }
+const RAIL = `<div class="chg-rail"><button class="btn ghost sm icon-only" data-unfoldlist title="Show the file list ([)" aria-label="Show the file list">${ic("panel-left-open")}</button></div>`;
 const foldListBtn = `<button class="btn ghost sm icon-only" data-foldlist title="Fold the file list ([)" aria-label="Fold the file list">${ic("panel-left-close")}</button>`;
 const sumHead = (src, { stat = DS(TOTAL.add, TOTAL.del), files = TOTAL.files, unc = UNCOMMITTED } = {}) =>
   `<div class="src"><span>${src}</span>${foldListBtn}</div><div class="tot">${stat} · ${files} files</div>`
@@ -884,7 +886,7 @@ const props = `<aside class="props" aria-label="Properties"><div class="props-he
   <div class="prop-row"><span class="k">Branch</span><span class="v mono ellipsis" style="font-size:var(--fs-sm)">gizai/ga-118-editor-the-folding-section</span></div>
   <div class="prop-row"><span class="k">Changes</span><span class="v">${DS(TOTAL.add, TOTAL.del)}<span class="faint" style="font-size:var(--fs-sm)">${TOTAL.files} files</span></span></div>
 </div></aside>`;
-const runRow = (badge, id, who, rest, commits, when, show = true) => `<div class="run-row run-line"><button class="panel-row">${ic("chevron-right", "sm chev")}${badge}<span class="chip-id">${id}</span><span class="grow">${who} <span class="faint">· ${rest}${commits ? ` · ${commits}` : ""}</span></span>${show ? `<button class="btn ghost sm" title="Only what this run committed">${ic("file-diff")}Show changes</button>` : ""}<span class="faint">${when}</span></button></div>`;
+const runRow = (badge, id, who, rest, commits, when, show = true) => `<div class="run-row"><div class="panel-row run-line"><button class="run-open" aria-expanded="false">${ic("chevron-right", "sm chev")}${badge}<span class="chip-id">${id}</span><span class="grow">${who} <span class="faint">· ${rest}${commits ? ` · ${commits}` : ""}</span></span></button>${show ? `<button class="btn ghost sm" title="Only what this run committed">${ic("file-diff")}Show changes</button>` : ""}<span class="faint">${when}</span></div></div>`;
 const SCREEN1 = `${topbar("GA-118", "Gizai", { props: true })}${tabs("card", TAB_LABEL)}
 <div class="split"><div class="doc"><div class="doc-in">
   <div class="task-head">${GLYPH.review}<span class="pri medium"><i></i><i></i><i></i></span><span class="id">GA-118</span><a class="proj"><span class="dot" style="width:8px;height:8px;border-radius:50%;background:var(--c-blue)"></span>Gizai</a></div>
@@ -903,7 +905,7 @@ const SCREEN1 = `${topbar("GA-118", "Gizai", { props: true })}${tabs("card", TAB
 
 /* ---------- Screen 2: Changes ---------- */
 const SCREEN2 = `${topbar("GA-118", "Gizai")}${tabs("changes", TAB_LABEL)}
-<div class="chg" tabindex="-1">${fileList(G, { head: sumHead(`Since <span class="mono">origin/main</span>`) })}
+<div class="chg" tabindex="-1">${RAIL}${fileList(G, { head: sumHead(`Since <span class="mono">origin/main</span>`) })}
 <div class="chg-diffs">${FILES.map(fileBox).join("\n")}</div></div>`;
 
 /* ---------- Screen 3: one run's changes (KADE-41, a Laravel card) ---------- */
@@ -924,7 +926,7 @@ const runHead = `<div class="chg-run"><div class="src"><span>${ic("server", "sm"
   <ul class="chg-commits"><li><span class="mono">4e1c9a2</span>Export invoices as CSV from the invoices page</li><li><span class="mono">b73f0d8</span>Invoices: the empty text reads better</li></ul>
   <button class="btn sm chg-back">${ic("arrow-left")}All changes</button></div>`;
 const SCREEN3 = `${topbar("KADE-41", "Kade portal")}${tabs("changes", ` ${DS(1186, 240)}`)}
-<div class="chg" tabindex="-1">${fileList(RG, { head: runHead, on: "k1" })}<div class="chg-diffs">${RFILES.map(fileBox).join("\n")}</div></div>`;
+<div class="chg" tabindex="-1">${RAIL}${fileList(RG, { head: runHead, on: "k1" })}<div class="chg-diffs">${RFILES.map(fileBox).join("\n")}</div></div>`;
 
 /* ---------- states ---------- */
 const emptyState = (icon, title, text, action = "") => `<div class="chg-empty"><div class="empty">${ic(icon, "lg")}<b>${title}</b><span>${text}</span>${action}</div></div>`;

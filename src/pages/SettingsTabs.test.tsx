@@ -55,7 +55,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 const SETTINGS: Settings = {
   claudeBin: "/usr/bin/claude", dataDir: "/home/you/.local/share/gizai", maxConcurrentRuns: 4, agentsPaused: false, maxRunUsd: null,
-  maxRunMinutes: 45, maxRunToolCalls: 400, pushOver: "ssh",
+  maxRunMinutes: 45, maxRunToolCalls: 400, maxChatMinutes: 15, maxChatToolCalls: 60, pushOver: "ssh",
   notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true },
 };
 const states = (s: Settings = SETTINGS, budget = "") => [s, budget, null, false, 0, []];
@@ -234,6 +234,47 @@ describe("saving across tabs", () => {
     await settle();
     expect(calls.filter(([k]) => k === "setMemoryEnabled").map(([, a]) => a)).toEqual([[false]]);
     expect(calls.filter(([k]) => k === "saveSettings")).toEqual([]);
+  });
+});
+
+// GA-94: a Team Lead's answer has limits of its own, Minutes and Tool calls per chat answer, in Runs after the run limits.
+describe("Chat answers in Runs (GA-94)", () => {
+  it("Runs has Minutes and Tool calls per chat answer after the run limits, with their ranges, on Agents and runs only", () => {
+    const html = render("agents", { ...SETTINGS, maxChatMinutes: 120, maxChatToolCalls: 300 });
+    const agents = panels(html).find((p) => p.label === "Agents and runs")?.html ?? "";
+    const runs = agents.slice(agents.indexOf("<h3>Runs</h3>"));
+    expect(runs).toMatch(/<label for="s-chat-min">Minutes per chat answer<\/label><input id="s-chat-min" class="input" type="number" min="5" max="240" value="120"\/>/);
+    expect(runs).toMatch(/<label for="s-chat-calls">Tool calls per chat answer<\/label><input id="s-chat-calls" class="input" type="number" min="20" max="500" value="300"\/>/);
+    const t = text(runs);
+    expect(t).toContain("Minutes per chat answer 5 to 240. The Team Lead's board check and its look at an agent's question too.");
+    expect(t).toContain("Tool calls per chat answer 20 to 500");
+    const at = (s: string) => t.indexOf(s);
+    expect(at("Tool calls per run")).toBeLessThan(at("Minutes per chat answer"));
+    expect(at("Minutes per chat answer")).toBeLessThan(at("Tool calls per chat answer"));
+    expect(at("Tool calls per chat answer")).toBeLessThan(at("Pause all agents"));
+    for (const p of panels(html).filter((p) => p.label !== "Agents and runs")) expect(p.html).not.toContain("per chat answer");
+  });
+  it("shows 15 and 60 when Settings has today's values", () => {
+    const agents = panels(render("agents")).find((p) => p.label === "Agents and runs")?.html ?? "";
+    expect(agents).toMatch(/id="s-chat-min"[^>]*value="15"/);
+    expect(agents).toMatch(/id="s-chat-calls"[^>]*value="60"/);
+  });
+  it("Save settings saves both with the rest, as numbers", async () => {
+    const first = tree("agents");
+    (findAll(first.t, (p) => p.id === "s-chat-min")[0] as { onChange: (e: unknown) => void }).onChange({ target: { value: "120" } });
+    const withMinutes = first.got[0]?.[0] as Settings;
+    expect(withMinutes.maxChatMinutes).toBe(120);
+    const second = tree("agents", withMinutes);
+    (findAll(second.t, (p) => p.id === "s-chat-calls")[0] as { onChange: (e: unknown) => void }).onChange({ target: { value: "300" } });
+    const edited = second.got[0]?.[0] as Settings;
+    expect(edited).toEqual({ ...SETTINGS, maxChatMinutes: 120, maxChatToolCalls: 300 });
+    const third = tree("agents", edited);
+    const save = findAll(third.t, (p) => p.className === "btn primary" && typeof p.onClick === "function")[0] as { onClick: () => void; children: unknown };
+    expect(save.children).toBe("Save settings");
+    save.onClick();
+    await settle();
+    const saved = calls.filter(([k]) => k === "saveSettings").map(([, a]) => a[0] as Settings);
+    expect(saved).toEqual([{ ...SETTINGS, maxChatMinutes: 120, maxChatToolCalls: 300, maxRunUsd: null }]);
   });
 });
 

@@ -48,11 +48,21 @@ case "$prompt" in *FAKE_LEARNED*) fixture="$here/fixtures/run-learned.jsonl" ;; 
 if [ -n "${FAKE_NO_RESULT:-}" ]; then fixture="$here/fixtures/run-no-result.jsonl"; fi
 case "$prompt" in *FAKE_HANG*) prompt=hang ;; *FAKE_STUBBORN*) prompt=stubborn ;; *FAKE_CRASH*) prompt=crash ;; *FAKE_NOT_LOGGED_IN*) prompt=nologin ;; esac
 case "$prompt" in *FAKE_REFUSED_THEN_HANG*) prompt=refusedhang ;; esac
+# Prints its arguments, one line each, and waits until it is ended (GA-89). A test stops the run as soon as it reads those
+# lines, so the lines and the wait are one foreground child, perl, which leaves SIGINT at its default: Stop's SIGINT ends
+# it wherever it is, and bash then runs its trap ("stubborn" ignores SIGINT, and so does perl). Not `sleep 600 & wait $!`:
+# bash 3.2 (macOS) doesn't look for a trap still to run as `wait` starts, so a SIGINT that came just before waited for
+# Stop's SIGTERM. Nor a bash subshell that prints and `exec`s a sleep: it catches SIGINT like its parent, and one that
+# comes as it `exec`s is lost.
+print_and_wait() {
+  perl -e '$| = 1; print map { "$_\n" } @ARGV; sleep 600' -- "$@"
+}
 if [ "$prompt" = "refusedhang" ]; then
   trap 'exit 130' INT
-  sed '$d' "$here/fixtures/run-refused.jsonl"
-  sleep 600 &
-  wait $!
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done < "$here/fixtures/run-refused.jsonl"
+  unset 'lines[${#lines[@]}-1]'   # up to its result line
+  print_and_wait "${lines[@]}"
   exit 0
 fi
 if [ "$prompt" = "nologin" ]; then
@@ -67,12 +77,8 @@ if [ "$prompt" = "crash" ]; then
 fi
 if [ "$prompt" = "hang" ] || [ "$prompt" = "stubborn" ]; then
   if [ "$prompt" = "hang" ]; then trap 'exit 130' INT; else trap '' INT; fi
-  # The first line with builtins, not `head -n1`: a test stops the run as soon as it reads that line, and bash 3.2
-  # (macOS) drops a SIGINT that comes while it waits for a command that then exits normally, so it would miss its trap.
   IFS= read -r first < "$here/fixtures/run-ok.jsonl"
-  printf '%s\n' "$first"
-  sleep 600 &
-  wait $!
+  print_and_wait "$first"
   exit 0
 fi
 case "$prompt" in *FAKE_COMMIT_TWICE*)

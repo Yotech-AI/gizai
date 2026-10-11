@@ -190,7 +190,7 @@ async fn settle(st: &AppState, asked: &str, lead_id: &str) -> Settled {
     if ran.status != "succeeded" {
         let error = ran.error.clone().unwrap_or_default();
         let (why, mine) = match ran.status.as_str() {
-            // "it stopped at the limit (15 min or 60 tool calls)"
+            // "it stopped at the time limit (15 min or 60 tool calls per chat answer, Settings → Runs)"
             "timed_out" => {
                 let what = error.strip_prefix("it ").unwrap_or(&error);
                 (format!("its look at the question {what}"), format!("my look at {}'s question {what}", q.agent_name))

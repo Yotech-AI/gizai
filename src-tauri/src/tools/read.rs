@@ -213,6 +213,7 @@ pub(crate) fn get_agent(cx: &Cx, a: &Args) -> Result<Value, String> {
     v["fetch_domains"] = json!(c.fetch_domains);
     v["browser"] = json!(m.tools.browser_on());
     v["builtin_tools_on"] = json!(c.builtin);
+    v["slash_commands"] = json!(c.slash_commands);
     // Memory: its switch, and the folder its notes are in (GA-96): its own, or the one it shares with another agent.
     let agents: Vec<team::Member> = team::all_agents(cx.db()).map_err(err)?.into_iter().map(|(_, x)| x).collect();
     let owner = m.shares_memory_with.as_ref().map(|id| agents.iter().find(|x| x.actor_id == *id).map(|x| x.name.clone()).unwrap_or_else(|| id.clone()));

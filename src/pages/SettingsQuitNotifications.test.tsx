@@ -56,7 +56,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 const SETTINGS: Settings = {
   claudeBin: "/usr/bin/claude", dataDir: "/home/you/.local/share/gizai", maxConcurrentRuns: 4, agentsPaused: false, maxRunUsd: null,
-  maxRunMinutes: 45, maxRunToolCalls: 400, pushOver: "ssh",
+  maxRunMinutes: 45, maxRunToolCalls: 400, maxChatMinutes: 15, maxChatToolCalls: 60, pushOver: "ssh",
   notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true },
 };
 const AGENTS: CardAgent[] = [{ name: "Backend Agent", cardsAtOnce: 3 }, { name: "QA Agent", cardsAtOnce: 1 }, { name: "Frontend Agent", cardsAtOnce: 2 }];

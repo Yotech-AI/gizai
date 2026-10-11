@@ -29,9 +29,27 @@ use serde_json::json;
 use crate::AppState;
 use crate::runs::Note;
 
-/// Per-turn limits: a chat answer is short work.
-pub const CAPS: Caps = Caps { max_time: std::time::Duration::from_secs(15 * 60), max_tool_calls: 60 };
-const TOKEN_TTL_MS: i64 = 30 * 60 * 1000;
+/// The limits of an answer of the Team Lead that starts now (Settings → Runs, Minutes and Tool calls per chat answer): a
+/// chat answer, a board check, its look at an agent's question. Each answer reads them once as it starts and keeps them
+/// until it ends.
+pub fn caps(st: &AppState) -> Caps {
+    let s = crate::runs::get_settings(st);
+    Caps { max_time: Duration::from_secs(s.max_chat_minutes.saturating_mul(60)), max_tool_calls: s.max_chat_tool_calls }
+}
+
+/// How long an answer's token for Gizai's tools lives: its time limit and a quarter of an hour (30 minutes at the default
+/// 15), so the tools work until the limit stops the answer.
+fn token_ttl_ms(caps: Caps) -> i64 {
+    i64::try_from(caps.max_time.as_millis()).unwrap_or(i64::MAX).min(i64::MAX / 2) + 15 * 60 * 1000
+}
+
+/// Why an answer stopped at its limits: `marker` is the first `cap_exceeded:…` its stream had (time or tools), `caps`
+/// the limits it ran with.
+fn limit_error(marker: &str, caps: Caps) -> String {
+    let which = if marker.ends_with(":time") { "time limit" } else { "tool-call limit" };
+    format!("it stopped at the {which} ({} min or {} tool calls per chat answer, Settings → Runs)", caps.max_time.as_secs() / 60, caps.max_tool_calls)
+}
+
 const MAX_TOOL_RESULT: usize = 4000;
 
 /// What the Chat page hears while a turn runs.
@@ -780,6 +798,8 @@ fn next_turn(st: &AppState, thread_id: &str, summary: &TurnSummary, bin_override
 /// conversation. A session that can't be resumed for another reason gets one more try in a new session with the same
 /// hand-over. The thread's session is only replaced by one that started.
 async fn turn(st: &AppState, thread_id: &str, plan: &Plan, new: &NewTurn) -> TurnSummary {
+    // The answer's limits as Settings has them now: a change made while it runs is for the next answer.
+    let caps = caps(st);
     // A new message: Gizai's tools that act work again until this answer uses an outside tool.
     st.chat.outside.lock().unwrap().remove(thread_id);
     let Ok(thread) = chat::get_thread(&st.db, thread_id) else {
@@ -808,7 +828,7 @@ async fn turn(st: &AppState, thread_id: &str, plan: &Plan, new: &NewTurn) -> Tur
     let mut prompt = with_line(if !resumable && history { handover_prompt(st, thread_id, &earlier, &new.text, &why) } else { new.text.clone() });
     for attempt in 0..2 {
         let fresh = attempt == 1 || !resumable;
-        let a = attempt_once(st, &thread, plan, &prompt, fresh, &code.dirs).await;
+        let a = attempt_once(st, &thread, plan, &prompt, fresh, &code.dirs, caps).await;
         if !fresh && !a.saw_init && a.summary.status == "failed" {
             // The session can't be resumed (its file is gone, or Claude Code refused to start): try once in a new
             // session that knows the conversation. The old session stays recorded until a new one starts.
@@ -1075,7 +1095,8 @@ fn lead_dirs(st: &AppState, agent: &Member, copies: &[String]) -> Vec<String> {
 
 /// One `claude -p` run for a turn on the plan's CLI: resuming the thread's session, or `fresh` in a new one. `add_dirs`:
 /// the folders the Team Lead may read (its copies of the code); its own folders from the agent form are added here.
-async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &str, fresh: bool, add_dirs: &[String]) -> Attempt {
+/// `caps`: the limits the answer started with.
+async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &str, fresh: bool, add_dirs: &[String], caps: Caps) -> Attempt {
     let (agent, bin, shim) = (&plan.agent, &plan.bin, plan.shim.as_path());
     let fail = |run_id: &str, msg: String| Attempt { summary: TurnSummary { run_id: run_id.into(), status: "failed".into(), error: Some(msg) },
                                                      saw_init: false, limit: None };
@@ -1095,7 +1116,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         Ok(r) => r,
         Err(e) => return fail("", e.to_string()),
     };
-    let token = match tokens::mint(&st.db, &agent.actor_id, json!({"chat": thread.id, "run": run_id}), TOKEN_TTL_MS) {
+    let token = match tokens::mint(&st.db, &agent.actor_id, json!({"chat": thread.id, "run": run_id}), token_ttl_ms(caps)) {
         Ok(t) => t,
         Err(e) => { let _ = core_runs::finish_chat(&st.db, &run_id, "failed", 0, 0, 0, Some(&e.to_string())); return fail(&run_id, e.to_string()); }
     };
@@ -1103,7 +1124,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     // The Team Lead's own MCP servers (agent form → Tools) next to Gizai's; one it can't use is left out, and the chat says why.
     let (servers, left_out) = {
         let (st2, a2) = (st.clone(), agent.clone());
-        tokio::task::spawn_blocking(move || crate::mcp_servers::for_run(&st2, &a2, CAPS.max_time)).await.unwrap_or_default()
+        tokio::task::spawn_blocking(move || crate::mcp_servers::for_run(&st2, &a2, caps.max_time)).await.unwrap_or_default()
     };
     for n in &left_out {
         system(st, &thread.id, n);
@@ -1141,7 +1162,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
     let showing = Showing::open(st, &run_id);
-    let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
+    let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, caps) {
         Ok(h) => h,
         Err(e) => {
             cleanup(&token);
@@ -1163,7 +1184,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     let mut saw_init = false;
     let mut session_seen = session.clone();
     let mut result: Option<ChatEvent> = None;
-    let mut capped = false;
+    let mut capped: Option<String> = None;
     let mut exit = String::new();
     let mut draft = String::new();
     let mut tool_msgs: HashMap<String, String> = HashMap::new();
@@ -1222,7 +1243,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
             ChatEvent::Result { .. } => result = Some(ev),
             // What Claude Code heard of the account's limits: kept for the CLI this turn ran on (Usage → Subscription).
             ChatEvent::Limits { info } => crate::limits::from_claude(st, &run_id, &info),
-            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") => capped = true,
+            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type),
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             ChatEvent::Other { .. } => {}
         }
@@ -1252,10 +1273,10 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     // While Gizai quits, an answer that didn't finish was stopped by the quit, also when Claude Code ended first:
     // logging out sends SIGTERM to the agents as well as to Gizai. It isn't retried in a new session either.
     let quit = crate::runs::is_closing(st) && !finished;
-    let status = if finished && !capped { "succeeded" } else if stopped || quit { "cancelled" } else if capped { "timed_out" } else { "failed" };
+    let status = if finished && capped.is_none() { "succeeded" } else if stopped || quit { "cancelled" } else if capped.is_some() { "timed_out" } else { "failed" };
     let error = match status {
         "cancelled" => Some(if quit { crate::runs::STOPPED_BY_QUIT } else { "stopped" }.to_string()),
-        "timed_out" => Some(format!("it stopped at the limit ({} min or {} tool calls)", CAPS.max_time.as_secs() / 60, CAPS.max_tool_calls)),
+        "timed_out" => capped.as_deref().map(|c| limit_error(c, caps)),
         "failed" => Some(match &result {
             Some(ChatEvent::Result { text, .. }) if !text.trim().is_empty() => format!("Claude Code: {}", cut(text.trim(), 300)),
             Some(ChatEvent::Result { subtype, .. }) => format!("Claude Code ended with {subtype}"),
@@ -1324,8 +1345,8 @@ fn check_system_prompt(st: &AppState, agent: &Member) -> String {
 
 /// Starts a board check of the Team Lead (`board::tick`) with `prompt` (its new findings) in a fresh session: like a
 /// chat turn (the gizai tools with a token of its own, `manual` permissions, Read, Glob and Grep in its copies of the
-/// code and its own folders, a chat turn's limits), recorded as a `board_check` run with no card and no chat that remembers
-/// `saw`. It takes no "Runs at once" slot and doesn't block chat. One check at a time.
+/// code and its own folders, a chat answer's limits from Settings), recorded as a `board_check` run with no card and no
+/// chat that remembers `saw`. It takes no "Runs at once" slot and doesn't block chat. One check at a time.
 pub fn start_check(st: &AppState, agent: Member, prompt: String, saw: Vec<gizai_core::board::Seen>)
     -> Result<tokio::task::JoinHandle<CheckSummary>, String> {
     if crate::runs::is_closing(st) {
@@ -1354,6 +1375,8 @@ pub fn start_check(st: &AppState, agent: Member, prompt: String, saw: Vec<gizai_
 }
 
 async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_core::board::Seen], bin: &CliSpec, shim: &Path) -> CheckSummary {
+    // A chat answer's limits, as Settings has them when the check starts.
+    let caps = caps(st);
     let chat_dir = st.data_dir.join("chat");
     let cwd = st.data_dir.join("lead");
     if let Err(e) = std::fs::create_dir_all(&chat_dir).and_then(|_| std::fs::create_dir_all(&cwd)) {
@@ -1372,7 +1395,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
                                                    error.as_deref(), summary.as_deref()).unwrap_or_else(|e| { eprintln!("gizai: recording a board check failed: {e}"); None });
         CheckSummary { run_id: run_id.clone(), status: status.into(), error, summary, paused }
     };
-    let token = match tokens::mint(&st.db, &agent.actor_id, json!({"check": run_id, "run": run_id}), TOKEN_TTL_MS) {
+    let token = match tokens::mint(&st.db, &agent.actor_id, json!({"check": run_id, "run": run_id}), token_ttl_ms(caps)) {
         Ok(t) => t,
         Err(e) => return end("failed", Totals::default(), Some(e.to_string()), None),
     };
@@ -1406,7 +1429,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         cleanup(&token);
         return end("cancelled", Totals::default(), Some(crate::runs::STOPPED_BY_QUIT.into()), None);
     }
-    let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, CAPS) {
+    let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, caps) {
         Ok(h) => h,
         Err(e) => {
             cleanup(&token);
@@ -1420,7 +1443,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         handle.stop.stop();
     }
     (st.notify)(Note::RowsChanged("runs"));
-    let (mut result, mut capped, mut exit, mut last_text, mut draft) = (None, false, String::new(), String::new(), String::new());
+    let (mut result, mut capped, mut exit, mut last_text, mut draft) = (None, None, String::new(), String::new(), String::new());
     while let Some(ev) = handle.events.recv().await {
         match ev {
             ChatEvent::BlockStart => draft.clear(),
@@ -1433,7 +1456,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
             }
             ChatEvent::Result { .. } => result = Some(ev),
             ChatEvent::Limits { info } => crate::limits::from_claude(st, &run_id, &info),
-            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") => capped = true,
+            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type),
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             _ => {}
         }
@@ -1450,10 +1473,10 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
     };
     let finished = ok && exit == "exit:0";
     let quit = crate::runs::is_closing(st) && !finished;
-    let status = if quit { "cancelled" } else if capped { "timed_out" } else if finished { "succeeded" } else { "failed" };
+    let status = if quit { "cancelled" } else if capped.is_some() { "timed_out" } else if finished { "succeeded" } else { "failed" };
     let error = match status {
         "cancelled" => Some(crate::runs::STOPPED_BY_QUIT.to_string()),
-        "timed_out" => Some(format!("it stopped at the limit ({} min or {} tool calls)", CAPS.max_time.as_secs() / 60, CAPS.max_tool_calls)),
+        "timed_out" => capped.as_deref().map(|c| limit_error(c, caps)),
         "failed" => Some(match &result {
             Some(ChatEvent::Result { text, .. }) if !text.trim().is_empty() => format!("Claude Code: {}", cut(text.trim(), 300)),
             Some(ChatEvent::Result { subtype, .. }) => format!("Claude Code ended with {subtype}"),
@@ -1524,7 +1547,8 @@ pub fn question_ready(st: &AppState, agent: &Member) -> Result<(), String> {
 
 /// The Team Lead's run on the question the run `asked_run_id` ended with (GA-70), with `prompt` (the question and its
 /// card) in a fresh session: like a board check (the gizai tools with a token of its own, here only the ones that read,
-/// `manual` permissions, Read, Glob and Grep in its copies of the code and its own folders, a chat turn's limits),
+/// `manual` permissions, Read, Glob and Grep in its copies of the code and its own folders, a chat answer's limits from
+/// Settings),
 /// recorded as a run of trigger `question` without a card that names the question. It takes no "Runs at once" slot.
 /// Waits until it has ended.
 pub async fn question_once(st: &AppState, agent: &Member, asked_run_id: &str, prompt: &str) -> QuestionRun {
@@ -1574,7 +1598,9 @@ pub async fn question_once(st: &AppState, agent: &Member, asked_run_id: &str, pr
 async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, prompt: &str, run_id: &str, session: &str, cwd: &Path, log_path: &Path,
                           bin: &CliSpec, shim: &Path) -> (String, Totals, Option<String>, String) {
     let failed = |e: String| ("failed".to_string(), Totals::default(), Some(e), String::new());
-    let token = match tokens::mint(&st.db, &agent.actor_id, json!({"question": asked_run_id, "run": run_id}), TOKEN_TTL_MS) {
+    // A chat answer's limits, as Settings has them when the look starts.
+    let caps = caps(st);
+    let token = match tokens::mint(&st.db, &agent.actor_id, json!({"question": asked_run_id, "run": run_id}), token_ttl_ms(caps)) {
         Ok(t) => t,
         Err(e) => return failed(e.to_string()),
     };
@@ -1605,7 +1631,7 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
         cleanup(&token);
         return ("cancelled".into(), Totals::default(), Some(crate::runs::STOPPED_BY_QUIT.into()), String::new());
     }
-    let mut handle = match process::spawn::<ChatEvent>(&args, cwd, log_path, CAPS) {
+    let mut handle = match process::spawn::<ChatEvent>(&args, cwd, log_path, caps) {
         Ok(h) => h,
         Err(e) => {
             cleanup(&token);
@@ -1621,7 +1647,7 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
         handle.stop.stop();
     }
     (st.notify)(Note::RowsChanged("runs"));
-    let (mut result, mut capped, mut exit, mut last_text, mut draft) = (None, false, String::new(), String::new(), String::new());
+    let (mut result, mut capped, mut exit, mut last_text, mut draft) = (None, None, String::new(), String::new(), String::new());
     while let Some(ev) = handle.events.recv().await {
         match ev {
             ChatEvent::BlockStart => draft.clear(),
@@ -1634,7 +1660,7 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
             }
             ChatEvent::Result { .. } => result = Some(ev),
             ChatEvent::Limits { info } => crate::limits::from_claude(st, run_id, &info),
-            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") => capped = true,
+            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type),
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             _ => {}
         }
@@ -1653,10 +1679,10 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
     let text = if final_text.contains("GIZAI_RESULT:") { final_text } else { last_text };
     let finished = ok && exit == "exit:0";
     let quit = crate::runs::is_closing(st) && !finished;
-    let status = if quit { "cancelled" } else if capped { "timed_out" } else if finished { "succeeded" } else { "failed" };
+    let status = if quit { "cancelled" } else if capped.is_some() { "timed_out" } else if finished { "succeeded" } else { "failed" };
     let error = match status {
         "cancelled" => Some(crate::runs::STOPPED_BY_QUIT.to_string()),
-        "timed_out" => Some(format!("it stopped at the limit ({} min or {} tool calls)", CAPS.max_time.as_secs() / 60, CAPS.max_tool_calls)),
+        "timed_out" => capped.as_deref().map(|c| limit_error(c, caps)),
         "failed" => Some(match &result {
             Some(ChatEvent::Result { text, .. }) if !text.trim().is_empty() => format!("Claude Code: {}", cut(text.trim(), 300)),
             Some(ChatEvent::Result { subtype, .. }) => format!("Claude Code ended with {subtype}"),

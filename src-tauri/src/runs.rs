@@ -22,6 +22,10 @@ use crate::AppState;
 /// Per-run limits Gizai enforces itself (Claude Code has no turn cap in print mode); Settings → Runs changes them.
 pub const DEFAULT_MAX_RUN_MINUTES: u64 = 90;
 pub const DEFAULT_MAX_RUN_TOOL_CALLS: u32 = 200;
+/// The same per answer of the Team Lead (a chat answer, a board check, its look at an agent's question), which is short
+/// work; Settings → Runs changes them too (Minutes and Tool calls per chat answer).
+pub const DEFAULT_MAX_CHAT_MINUTES: u64 = 15;
+pub const DEFAULT_MAX_CHAT_TOOL_CALLS: u32 = 60;
 pub const DEFAULT_MAX_CONCURRENT: u32 = 3;
 const BUFFER: usize = 500;
 /// Why a run or chat answer ended when Gizai quit (logging out and SIGTERM included), and the note a chat shows.
@@ -175,6 +179,13 @@ pub struct Settings {
     /// …or after this many tool calls.
     #[serde(default = "default_tool_calls")]
     pub max_run_tool_calls: u32,
+    /// Gizai stops an answer of the Team Lead (a chat answer, a board check, its look at an agent's question) after this
+    /// long…
+    #[serde(default = "default_chat_minutes")]
+    pub max_chat_minutes: u64,
+    /// …or after this many tool calls.
+    #[serde(default = "default_chat_tool_calls")]
+    pub max_chat_tool_calls: u32,
     /// The GitHub CLI (gh) that opens and follows pull requests with your GitHub login; None = found when needed.
     #[serde(default)]
     pub gh_bin: Option<String>,
@@ -188,6 +199,8 @@ pub struct Settings {
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
 fn default_tool_calls() -> u32 { DEFAULT_MAX_RUN_TOOL_CALLS }
+fn default_chat_minutes() -> u64 { DEFAULT_MAX_CHAT_MINUTES }
+fn default_chat_tool_calls() -> u32 { DEFAULT_MAX_CHAT_TOOL_CALLS }
 fn default_push_over() -> String { "ssh".into() }
 
 pub fn get_settings(st: &AppState) -> Settings {
@@ -199,6 +212,8 @@ pub fn get_settings(st: &AppState) -> Settings {
         max_run_usd: settings::get(&st.db, "max_run_usd").ok().flatten(),
         max_run_minutes: settings::get(&st.db, "max_run_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_MINUTES),
         max_run_tool_calls: settings::get(&st.db, "max_run_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_TOOL_CALLS),
+        max_chat_minutes: settings::get(&st.db, "max_chat_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_CHAT_MINUTES),
+        max_chat_tool_calls: settings::get(&st.db, "max_chat_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_CHAT_TOOL_CALLS),
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
         push_over: crate::github::push_over_name(st),
         notifications: crate::notifications::switches(&st.db),
@@ -218,6 +233,12 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !(20..=2000).contains(&s.max_run_tool_calls) {
         return Err("a run may make between 20 and 2000 tool calls".into());
     }
+    if !(5..=240).contains(&s.max_chat_minutes) {
+        return Err("a chat answer may last between 5 and 240 minutes".into());
+    }
+    if !(20..=500).contains(&s.max_chat_tool_calls) {
+        return Err("a chat answer may make between 20 and 500 tool calls".into());
+    }
     if !crate::github::PUSH_OVER_NAMES.contains(&s.push_over.as_str()) {
         return Err("pushes go over ssh or https".into());
     }
@@ -230,6 +251,8 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_run_usd", &s.max_run_usd).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_minutes", &s.max_run_minutes).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_tool_calls", &s.max_run_tool_calls).map_err(|e| e.to_string())?;
+    settings::set(&st.db, "max_chat_minutes", &s.max_chat_minutes).map_err(|e| e.to_string())?;
+    settings::set(&st.db, "max_chat_tool_calls", &s.max_chat_tool_calls).map_err(|e| e.to_string())?;
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
     Ok(())

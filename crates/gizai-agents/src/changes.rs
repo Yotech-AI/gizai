@@ -20,8 +20,9 @@ use serde::Serialize;
 use crate::AgentError;
 use crate::worktree::TEMP_DIR;
 
-/// The most of a file's text a side `file_diff` sends (1 MB): a bigger file comes without its texts and hunks.
-pub const MAX_TEXT: u64 = 1 << 20;
+/// The most of a file's text a side `file_diff` sends (1 MB, 1,000,000 bytes): a bigger file comes without its texts and
+/// hunks.
+pub const MAX_TEXT: u64 = 1_000_000;
 /// git's own test for a binary file: a NUL byte in its first 8,000 bytes.
 const BINARY_PEEK: usize = 8000;
 /// Bigger files are binary to git's diff (the default of `core.bigFileThreshold`, 512 MB).

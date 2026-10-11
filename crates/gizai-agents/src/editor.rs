@@ -611,7 +611,9 @@ fn same_entry(a: &Path, b: &Path) -> bool {
         matches!((fs::symlink_metadata(a), fs::symlink_metadata(b)), (Ok(x), Ok(y)) if x.dev() == y.dev() && x.ino() == y.ino())
     }
     #[cfg(not(unix))]
-    matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+    {
+        matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y)
+    }
 }
 
 /// The current version of each of `paths` in the folder at `dir`: "" for a file that is gone (or refused by now).
@@ -632,7 +634,9 @@ fn version_of(m: &Metadata) -> String {
         format!("{:x}-{modified:x}-{changed:x}-{:x}", m.len(), m.ino())
     }
     #[cfg(not(unix))]
-    format!("{:x}-{modified:x}", m.len())
+    {
+        format!("{:x}-{modified:x}", m.len())
+    }
 }
 
 /// git's own test for a binary file: a NUL byte in its first 8,000 bytes.

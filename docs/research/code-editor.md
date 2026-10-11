@@ -427,7 +427,7 @@ No new Tauri plugin and no change to the security policy or the window's permiss
 | `src/components/changes/` (new), `src/lib/changes.ts` (new), `src/pages/TaskPage.tsx`, `src/router.ts`, `src/components/RunHistory.tsx`, `src/components/PullPanel.tsx` | the Changes view, the Card \| Changes tabs, `#/task/<id>/changes`, Show changes per run | F1 |
 | `crates/gizai-core/src/editor.rs` (new), `settings` | which folders the Editor may open: projects' folders, roots (`editor_roots`, default `~/Herd`), card worktrees; the refusals of `folders.rs` | B2 |
 | `crates/gizai-agents/src/editor.rs` (new) | list, read, write (atomic, keeps line endings), new, rename, delete, search (`git grep`), files (`git ls-files`), git status, file versions; the path guard; the external editors found | B2 |
-| `src-tauri/src/editor.rs` (new), `lib.rs`, `runs.rs` (`Settings`) | the Editor's commands; polling open folders and the `editor-changed` event | B2 |
+| `src-tauri/src/editor.rs` (new), `lib.rs`, `runs.rs` (`Settings`) | the Editor's commands, including the file versions and git status the screen polls; `editorRoots` in Settings | B2 |
 | `src/pages/EditorPage.tsx`, `src/components/editor/` (new), `src/lib/editor.ts` (new), `src/components/Sidebar.tsx`, `src/lib/sidebar.ts`, `src/pages/SettingsPage.tsx` | the Editor page, its tree, tabs, search and status bar; the sidebar section; Settings → General → Editor folders; Open in | F2 |
 | `src-tauri/src/editor.rs`, `code.rs` | Fetch on open and every 10 minutes, Update with `checkout::plan` and `update`, under `folder_lock` | B3 |
 | `src/components/editor/` | the behind bar, Update, the sidebar's "3 behind" | F3 |
@@ -436,7 +436,7 @@ No new Tauri plugin and no change to the security policy or the window's permiss
 | `crates/gizai-core/examples/prep_changes.rs` (new), `src/selftest.ts`, `scripts/ui-test.sh` | demo data with a repository, a card worktree and a merged card; UI probes | F1, F2 |
 | `docs/PAID-FEATURES.md`, `README.md` | the editor stays free; the features list | F2 |
 
-How outside changes reach the screen [I]: no file watcher in the first version. While the Editor shows a folder, the screen asks every 3 seconds for the versions (size and modification time) of the open files, and for the folder's git status every 10 seconds and when the window gets the focus; the tree reloads the folders that are open when the window gets the focus. That is simple, the same on Linux, macOS and Windows, and can't run into Linux's limit on watched folders in a Laravel project with a full `vendor/`. If it feels slow, a later card adds the `notify` crate (Rust, cross-platform watching) for the open folders only, sent to the screen as the same `editor-changed` event. [I; the `notify` crate's version and licence couldn't be checked today]
+How outside changes reach the screen [I]: no file watcher in the first version. While the Editor shows a folder, the screen asks every 3 seconds for the versions (size and modification time) of the open files, and for the folder's git status every 10 seconds and when the window gets the focus; the tree reloads the folders that are open when the window gets the focus. That is simple, the same on Linux, macOS and Windows, and can't run into Linux's limit on watched folders in a Laravel project with a full `vendor/`. If it feels slow, a later card adds the `notify` crate (Rust, cross-platform watching) for the open folders only, sent to the screen as a Tauri event (`editor-changed`). [I; the `notify` crate's version and licence couldn't be checked today]
 
 ### 5.4 Security and privacy
 
@@ -459,3 +459,387 @@ How outside changes reach the screen [I]: no file watcher in the first version. 
 Language servers, a terminal, formatting, side-by-side diffs, comments on lines (Q4), git blame, staging single lines, resolving merge conflicts, image previews, several folders in one window, Commit and Push for folders that aren't a person's card (use a terminal or your own editor), and a file watcher (polling first, §5.3).
 
 ---
+
+## 6. Proposed cards
+
+Eleven cards, each one pull request that fits in one agent run. "Builds on" names the cards that must be merged first. The contracts between a backend card and its frontend card are below the list, word for word.
+
+| # | Card | Starts in | Role | Builds on |
+|---|---|---|---|---|
+| D1 | Design: the Changes view, and colours for code and diffs | Design | design | – |
+| D2 | Design: the Editor | Design | design | D1's token names (can run at the same time) |
+| B1 | A card's changes, in the backend | To do | backend | – |
+| B2 | The Editor's folders and files, in the backend | To do | backend | – |
+| F0 | Code colours and languages, Blade included | To do | frontend | D1 |
+| F1 | The Changes view on a card | To do | frontend | D1, B1, F0 |
+| F2 | The Editor page and its sidebar section | To do | frontend | D2, B2, F0 |
+| B3 | Behind main, Fetch and Update for Editor folders | To do | backend | B2 |
+| F3 | Behind main in the Editor | To do | frontend | F2, B3 |
+| B4 | A person's card, in the backend | To do | backend | B2 |
+| F4 | A person's card in the Editor and on the board | To do | frontend | D2, F2, B4 |
+
+At the same time: **D1, D2, B1 and B2** first (designs and backends need nothing else); then **F0, B3 and B4**; then **F1 and F2**; then **F3 and F4**. The Changes cards (B1, F0, F1) don't wait for any Editor card, so a card's changes can ship first.
+
+### D1. Design: the Changes view, and colours for code and diffs
+
+- **Column, role:** Design, design.
+- **Builds:** the design of §5.1 as a page in the repository, for Jefsev's review: the Card | Changes tabs, the Changes view (file list, diffs below each other, folds, big, binary and lock files, one run's changes, every empty and error state), in dark and light; and the values of the new `diff-*` and `syn-*` tokens (§5.1, §5.2) for both themes, with the rules for `design/README.md`.
+- **Acceptance criteria:**
+  - [ ] Every screen and state of §5.1 in dark and light, with the app's own components and type styles.
+  - [ ] `diff-*` and `syn-*` values for dark and light; each text colour at least 4.5:1 on `--bg` and `--raised` (the numbers are listed); no teal or magenta hues.
+  - [ ] A PHP, a Blade, a TSX and a Rust sample shown with the syntax colours.
+  - [ ] The rules for the new colours written for `design/README.md`.
+  - [ ] Jefsev approved it on the card.
+
+### D2. Design: the Editor
+
+- **Column, role:** Design, design.
+- **Builds:** the design of §5.2 as a page in the repository: the sidebar's Editor section (open and folded), the folder picker, the Editor page (tree, tabs, editor, status bar), search in the folder, the behind bar and Update with its refusals, the person's card bar and the board's "By hand" mark, the changed-on-disk bar, Settings → General → Editor folders; dark and light.
+- **Acceptance criteria:**
+  - [ ] Every screen of §5.2 in dark and light, with D1's syntax colours and the app's components.
+  - [ ] The tree's rows, the tabs and the status bar specified (sizes in tokens, states: hover, selected, focus, unsaved, read-only, ignored).
+  - [ ] The texts of every bar, button and refusal written out, in sentence case.
+  - [ ] Jefsev approved it on the card.
+
+### B1. A card's changes, in the backend
+
+- **Column, role:** To do, backend.
+- **Builds:** `crates/gizai-agents/src/changes.rs` (the sources of §3.2 Q1 in that order; numstat and name-status parsing, renames, binaries, untracked files; each file's texts, at most 1 MB a side); `mergeCommit` in `github::FIELDS` and Bitbucket's `merge_commit`; migration `0017_merge_commit.sql` with `tasks.merge_sha`, saved by `pulls::merged`, and looked up once for older merged cards; `src-tauri/src/changes.rs` with the three commands of contract C1, registered in `lib.rs`; `src/api.ts` and `src/types.ts` as in C1.
+- **Acceptance criteria:**
+  - [ ] Tests on temporary repositories: a worktree with commits, uncommitted and untracked files, a rename and a binary; a card with only its branch; a merge commit; a squash merge; a run's range; a card without a branch.
+  - [ ] Against the merge base with main as last fetched: commits main got since the card started don't show.
+  - [ ] A merged card whose worktree and branch are gone still shows its changes, from `merge_sha`, offline.
+  - [ ] `.gizai-tmp/` never shows; a file over 1 MB comes with `tooLarge` and no text.
+  - [ ] `SCHEMA_VERSION` 17 and the upgrade tests updated; `cargo test --workspace`, `npm test` and `npm run build` pass.
+
+### B2. The Editor's folders and files, in the backend
+
+- **Column, role:** To do, backend.
+- **Builds:** `crates/gizai-core/src/editor.rs` (the folders the Editor may open, §3.2 Q5, with `folders.rs`'s refusals; `editor_roots`, default `~/Herd`); `crates/gizai-agents/src/editor.rs` (list, read, write, new, rename, delete, files, search with `git grep`, git status, versions, the path gate, the editors found on PATH); `src-tauri/src/editor.rs` with the commands of contract C2; `editorRoots` in `runs::Settings`.
+- **Acceptance criteria:**
+  - [ ] The path gate refuses `..`, any `.git` part, links that lead out of the folder, and folders the Editor may not open, each with a plain sentence; tested on Linux, and on Windows paths.
+  - [ ] Save writes atomically, keeps CRLF and a byte order mark, and refuses with "changed on disk" when the version differs.
+  - [ ] A worktree of a card an agent is working on is read-only (`readOnlyWhy` says so); ignored folders and files over 1 MB are read-only; binaries and files over 5 MB come without text.
+  - [ ] Search stops at 2,000 hits (`truncated`) and 10 seconds; files lists tracked and untracked files that git doesn't ignore.
+  - [ ] `editor_apps` lists only the editors found (`code`, `zed`, `phpstorm`, also `.cmd` shims on Windows); `open_in_app` starts them with `os::command`.
+  - [ ] `cargo test --workspace`, `npm test` and `npm run build` pass.
+
+### F0. Code colours and languages, Blade included
+
+- **Column, role:** To do, frontend.
+- **Builds:** D1's `diff-*` and `syn-*` tokens in `design/tokens.json` and `src/styles/tokens.css` (with `scripts/tokens-css.ts`) and their rules in `design/README.md`; `src/lib/codeTheme.ts` (a `HighlightStyle` on the `syn-*` tokens and an editor theme in the mono font); `src/lib/codeLanguages.ts` (file name → language, loaded on first use: PHP with HTML, Blade, TS, TSX, JS, JSX, Rust, CSS, SCSS, JSON, YAML, Markdown, SQL, HTML, `.env`, TOML, shell); `src/lib/blade.ts`; the packages of §4.1 option A.
+- **Acceptance criteria:**
+  - [ ] Blade: `{{ }}`, `{!! !!}` and `@php … @endphp` coloured as PHP, `@if(…)` and other directives as keywords with their arguments as PHP, `{{-- --}}` as comments, the rest as HTML; vitest tests on sample templates.
+  - [ ] Each listed file type gets its language (tested); an unknown one shows as plain text.
+  - [ ] The colours follow the `t` key and Settings → Appearance at once, in dark and light.
+  - [ ] Nothing else in the app looks different; `npm test` and `npm run build` pass.
+
+### F1. The Changes view on a card
+
+- **Column, role:** To do, frontend.
+- **Builds:** the Card | Changes tabs on the task page with the counts; the Changes view of §5.1 with `@codemirror/merge` (`unifiedMergeView`, read-only, `collapseUnchanged`), files mounted only near the screen; `#/task/<id>/changes`; Show changes per run in the Runs tab and in the Pull request panel; `crates/gizai-core/examples/prep_changes.rs` and UI probes.
+- **Acceptance criteria:**
+  - [ ] The view as D1 designed it, in dark and light, for a card in each column (no branch, worktree, branch only, merged).
+  - [ ] Unchanged code folds with 3 lines around changes; the fold's arrows show 20 more lines, a click shows all.
+  - [ ] Speed, measured by a UI probe in `cage`: a 2,000-line diff and a 15,000-line, 245-file diff show their first screen within 300 ms and scroll without stalls; if not, the fallback of §4.2.
+  - [ ] Show changes on a run shows only that run's commits.
+  - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### F2. The Editor page and its sidebar section
+
+- **Column, role:** To do, frontend.
+- **Builds:** the Editor section in the sidebar above Agents (it folds, `"editor"` in `Fold`), the folder picker, the Editor page of §5.2 (tree, tabs, CodeMirror with F0's languages and `@codemirror/search`, go to file, search in the folder, Ctrl+S, git status, the changed-on-disk bar, the status bar), polling as in §5.3, Open in, Settings → General → Editor folders; "the code editor and a card's changes" in `docs/PAID-FEATURES.md`'s free list and in README.md.
+- **Acceptance criteria:**
+  - [ ] Open `~/Herd/<folder>` (in the test, a folder under a test root), open a file, type, Ctrl+S: the file on disk has the text, the tab loses its dot, the tree shows M.
+  - [ ] A file changed outside shows within 3 seconds: an untouched tab reloads, a tab with unsaved edits offers Reload and Keep mine.
+  - [ ] Search in the folder finds a word and opens the file at its line; go to file finds a file.
+  - [ ] Read-only files and folders can't be edited and say why.
+  - [ ] The Editor section folds like Agents and Memory and remembers it; `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### B3. Behind main, Fetch and Update for Editor folders
+
+- **Column, role:** To do, backend.
+- **Builds:** the commands of contract C3: how a folder stands against main (local), Fetch (`git::start_point` for a project's folder, its `origin` default branch for another; not twice within a minute), Update in the background with `checkout::plan` (never switching branch) and `checkout::update` under `code::folder_lock`, and its `editor-updated` event.
+- **Acceptance criteria:**
+  - [ ] Behind, ahead and uncommitted counted right in tests (a folder behind, ahead, both, with uncommitted changes).
+  - [ ] Update refuses with the plan's sentence when tracked files have uncommitted changes, during a merge, off the default branch, or when the branch has its own commits; nothing changes then.
+  - [ ] Update fast-forwards and runs `composer install` or `npm ci` only for a lock file that changed; never the setup command; never during a card's preparation from the same folder.
+  - [ ] `cargo test --workspace` passes.
+
+### F3. Behind main in the Editor
+
+- **Column, role:** To do, frontend.
+- **Builds:** the status in the Editor's top bar, the behind bar with Update and Fetch, "3 behind" on the sidebar row, Fetch on open and every 10 minutes while the Editor shows the folder; the update's progress and end.
+- **Acceptance criteria:**
+  - [ ] A folder behind main shows "3 commits behind origin/main" with when it was fetched; Update is offered and says what it will do.
+  - [ ] A refused Update says why, in the bar, and changes nothing.
+  - [ ] After Update the bar and the sidebar show the new state without a reload.
+  - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### B4. A person's card, in the backend
+
+- **Column, role:** To do, backend.
+- **Builds:** the commands of contract C4: start by hand (the card's worktree made and prepared as for an agent, pinned to you, you its implementer, moved on from To do as you), commit, push (as after a run), hand over (refuses uncommitted changes; pushes; moves the card as a builder's `ready_for_testing`; takes the pin off; a comment); `qa_fail` pins a card whose implementer is a person to them again; `byHand` on `Task`.
+- **Acceptance criteria:**
+  - [ ] An Auto column's agents never take a card started by hand (tested with the queue).
+  - [ ] Hand over moves it to Testing, or to Review with the Testing switch off; QA then takes it; a QA fail brings it back to the person, still not taken by agents.
+  - [ ] Push goes where Open pull request pushes, the same way (tested with a bare repository); hand over with uncommitted changes is refused with a plain sentence.
+  - [ ] Refused for a card assigned to an agent or to nobody, an archived card, or while an agent works on it.
+  - [ ] `cargo test --workspace` passes.
+
+### F4. A person's card in the Editor and on the board
+
+- **Column, role:** To do, frontend.
+- **Builds:** Open in editor on a card assigned to you (top bar), the card bar in the Editor (Commit… with its message box, Push, Hand over), "By hand" on the board card, the card's worktree in the sidebar's Editor section.
+- **Acceptance criteria:**
+  - [ ] Open in editor opens the card's worktree in the Editor, and the card shows In progress, By hand.
+  - [ ] Commit, Push and Hand over work from the bar and say what they did; Hand over moves the card to Testing (Review with Testing off).
+  - [ ] The card's Changes tab shows the person's uncommitted changes too.
+  - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### Contract C1: B1 → F1 (a card's changes)
+
+Rust (`src-tauri/src/changes.rs`, registered in `lib.rs`; types with `#[serde(rename_all = "camelCase")]`, enums in lower case):
+
+```rust
+#[tauri::command] pub async fn card_changes(st: State<'_, AppState>, task_id: String) -> Result<CardChanges, String>
+#[tauri::command] pub async fn card_file_diff(st: State<'_, AppState>, task_id: String, path: String, old_path: Option<String>,
+                                              from: String, to: Option<String>) -> Result<FileDiff, String>
+#[tauri::command] pub async fn run_changes(st: State<'_, AppState>, run_id: String) -> Result<CardChanges, String>
+```
+
+`src/api.ts`:
+
+```ts
+/** A card's changed files with their counts: its worktree (uncommitted changes included) against its merge base with main,
+ *  else its branch, else its merge commit on main, else the pull request's diff. Each file's texts come from cardFileDiff. */
+export const cardChanges = (taskId: string) => invoke<T.CardChanges>("card_changes", { taskId });
+/** One changed file: its text at `from` and at `to` (null: the worktree as it is on disk). */
+export const cardFileDiff = (taskId: string, path: string, oldPath: string | null, from: string, to: string | null) =>
+  invoke<T.FileDiff>("card_file_diff", { taskId, path, oldPath, from, to });
+/** The changes one run committed: from the commit it started at to the one it ended at. */
+export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes", { runId });
+```
+
+`src/types.ts`:
+
+```ts
+/** Where a card's changes come from (§3.2 Q1). "pull": GitHub's or Bitbucket's diff, without the files' texts. */
+export type ChangeSource = "worktree" | "branch" | "merge" | "pull" | "run" | "none";
+export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange";
+export type FileChange = {
+  path: string;
+  oldPath: string | null;     // renamed or copied from
+  status: FileStatus;
+  additions: number | null;   // null for a binary file
+  deletions: number | null;
+  binary: boolean;
+  uncommitted: boolean;       // not committed yet (worktree only); an untracked file is "added" and uncommitted
+};
+export type CardChanges = {
+  source: ChangeSource;
+  from: string | null;        // the commit the changes are measured from: the merge base, or the merge commit's first parent
+  to: string | null;          // the commit they end at; null for the worktree as it is on disk
+  baseLabel: string;          // "origin/main", or "main" for a project without a link
+  additions: number;
+  deletions: number;
+  files: FileChange[];        // in path order
+  note: string | null;        // why there is nothing to show, or where the changes come from when not the worktree
+};
+export type FileDiff = {
+  path: string;
+  oldText: string | null;     // null when added, binary or too large
+  newText: string | null;     // null when deleted, binary or too large
+  patch: string | null;       // only for source "pull": this file's part of the diff
+  binary: boolean;
+  tooLarge: boolean;          // over 1 MB on a side
+  oldSize: number;
+  newSize: number;
+  crlf: boolean;
+};
+```
+
+Errors are plain sentences, like the rest of the app ("GA-12's merge commit isn't on this computer: fetch main, or log gh in (Settings → GitHub)").
+
+### Contract C2: B2 → F2 (the Editor's folders and files)
+
+Rust: `src-tauri/src/editor.rs`, one `#[tauri::command]` per function below, with the same names in snake case and the arguments in snake case (`case_sensitive`, `whole_word`); types with `#[serde(rename_all = "camelCase")]`. `folder` is always an `EditorFolder.id`, `path` always relative to it, with `/`.
+
+`src/api.ts`:
+
+```ts
+/** The folders the Editor may open: projects' linked folders, the folders under Settings → Editor folders, card worktrees. */
+export const editorFolders = () => invoke<T.EditorFolder[]>("editor_folders");
+/** One folder level, folders first; `dir` "" for the top. */
+export const editorList = (folder: string, dir: string) => invoke<T.DirEntry[]>("editor_list", { folder, dir });
+export const editorRead = (folder: string, path: string) => invoke<T.OpenedFile>("editor_read", { folder, path });
+/** Saves; refuses with "changed on disk" when the file's version isn't `version` any more. Resolves with the new version. */
+export const editorWrite = (folder: string, path: string, text: string, version: string) =>
+  invoke<string>("editor_write", { folder, path, text, version });
+export const editorCreate = (folder: string, path: string, dir: boolean) => invoke<void>("editor_create", { folder, path, dir });
+export const editorRename = (folder: string, from: string, to: string) => invoke<void>("editor_rename", { folder, from, to });
+export const editorDelete = (folder: string, path: string) => invoke<void>("editor_delete", { folder, path });
+/** Go to file: tracked and untracked files git doesn't ignore. */
+export const editorFiles = (folder: string) => invoke<string[]>("editor_files", { folder });
+export const editorSearch = (folder: string, query: string, caseSensitive: boolean, wholeWord: boolean, regex: boolean) =>
+  invoke<T.SearchResult>("editor_search", { folder, query, caseSensitive, wholeWord, regex });
+/** The branch and each changed file's git status (local, no fetch). */
+export const editorGit = (folder: string) => invoke<T.FolderGit>("editor_git", { folder });
+/** The current version of each path ("" for a file that is gone), to notice outside changes. */
+export const editorVersions = (folder: string, paths: string[]) => invoke<string[]>("editor_versions", { folder, paths });
+/** VS Code, Zed and PhpStorm, those found on this computer. */
+export const editorApps = () => invoke<T.EditorApp[]>("editor_apps");
+/** Opens the folder, or a file in it, in that editor. */
+export const openInApp = (app: T.EditorApp["id"], folder: string, path: string | null) =>
+  invoke<void>("open_in_app", { app, folder, path });
+```
+
+`src/types.ts`:
+
+```ts
+export type EditorFolder = {
+  id: string;                 // the folder's canonical path
+  path: string;               // as shown, ~ for the home folder
+  name: string;               // its own name, or the card's identifier
+  kind: "project" | "root" | "card";
+  projectId: string | null;
+  taskId: string | null;
+  readOnly: boolean;          // a card an agent is working on now
+  readOnlyWhy: string | null;
+};
+export type GitMark = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+export type DirEntry = {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+  ignored: boolean;           // git ignores it: greyed and read-only
+  git: GitMark | null;        // for a folder: whether something inside it changed ("modified")
+};
+export type OpenedFile = {
+  path: string;
+  text: string | null;        // null when binary or too large
+  binary: boolean;
+  tooLarge: boolean;          // over 5 MB
+  readOnly: boolean;
+  readOnlyWhy: string | null; // "Over 1 MB", "Ignored by git", "Backend Agent is working on GA-12"
+  crlf: boolean;
+  bom: boolean;
+  version: string;            // what editorWrite checks
+};
+export type SearchHit = { path: string; line: number; column: number; text: string };
+export type SearchResult = { hits: SearchHit[]; truncated: boolean };
+export type FolderGit = { branch: string | null; files: Record<string, GitMark>; uncommitted: number };
+export type EditorApp = { id: "vscode" | "zed" | "phpstorm"; name: string };
+// in Settings:
+//   editorRoots: string[];   // Settings → General → Editor folders; default ["~/Herd"]
+```
+
+### Contract C3: B3 → F3 (behind main)
+
+Rust: `src-tauri/src/editor.rs`, commands `editor_main`, `editor_fetch`, `editor_update`; the event `editor-updated` emitted from the update's end.
+
+`src/api.ts`:
+
+```ts
+/** How the folder stands against main as last fetched (local only). */
+export const editorMain = (folder: string) => invoke<T.FolderMain>("editor_main", { folder });
+/** Fetches main first (at most 60 s; not again within a minute), then as editorMain. */
+export const editorFetch = (folder: string) => invoke<T.FolderMain>("editor_fetch", { folder });
+/** Starts Update in the background: resolves with what it will do, or rejects with why not (nothing changed). */
+export const editorUpdate = (folder: string) => invoke<string>("editor_update", { folder });
+export const onEditorUpdated = (cb: (e: T.EditorUpdated) => void): Promise<UnlistenFn> =>
+  listen<T.EditorUpdated>("editor-updated", (m) => cb(m.payload));
+```
+
+`src/types.ts`:
+
+```ts
+export type FolderMain = {
+  mainLabel: string;          // "origin/main"
+  fetchedAt: number | null;   // ms since 1970; null: never fetched
+  fetchError: string | null;
+  branch: string | null;
+  onDefault: boolean;         // on the default branch
+  behind: number;
+  ahead: number;
+  uncommitted: number;
+  canUpdate: boolean;
+  updateSays: string;         // what Update will do (the plan's sentence), or why it can't
+  updating: boolean;
+};
+export type EditorUpdated = { folder: string; ok: boolean; said: string };   // "Moved main 3 commits to 319bf0b and ran npm ci."
+```
+
+### Contract C4: B4 → F4 (a person's card)
+
+Rust: `src-tauri/src/editor.rs` (or `runs.rs` for the start), commands `start_by_hand`, `hand_card`, `hand_commit`, `hand_push`, `hand_over`; `Task` gains `by_hand` (`byHand`).
+
+`src/api.ts`:
+
+```ts
+/** Open in editor, on a card assigned to you: makes and prepares its worktree as for an agent, pins the card to you and moves
+ *  it on from To do. Resolves with where it is (its folder is an EditorFolder id). */
+export const startByHand = (taskId: string) => invoke<T.HandCard>("start_by_hand", { taskId });
+export const handCard = (taskId: string) => invoke<T.HandCard>("hand_card", { taskId });
+/** Commits every change in the card's worktree with this message. */
+export const handCommit = (taskId: string, message: string) => invoke<T.Commit>("hand_commit", { taskId, message });
+/** Pushes the card's branch like Gizai's push after a run; resolves with what it did ("Pushed gizai/ga-123-… (2 commits)."). */
+export const handPush = (taskId: string) => invoke<string>("hand_push", { taskId });
+/** Refuses uncommitted changes; pushes, moves the card to Testing (Review with its Testing switch off) and takes the pin off.
+ *  Resolves with the column's name. */
+export const handOver = (taskId: string) => invoke<string>("hand_over", { taskId });
+```
+
+`src/types.ts`:
+
+```ts
+export type HandCard = { taskId: string; folder: string; branch: string; changed: number; unpushed: number };
+// Task gains:
+//   byHand: boolean;         // pinned to a person: agents leave it alone
+```
+
+---
+
+## 7. Open questions for Jefsev
+
+1. **Where do a card's changes go?** Recommended: a Changes tab at the top of the card, next to Card, full width (§3.2 Q2). The other way is a panel beside the card like Zed's, which leaves each half about 430 px at the usual window width.
+2. **Which folders may the Editor open?** Recommended: the projects' linked folders, the folders under `~/Herd` (more roots in Settings), and card worktrees. Should Browse… also open any other folder once, without adding it as a root? Recommended: no, add it as a root instead, so the list stays clear.
+3. **Editing an agent's worktree when no agent works on it.** Recommended: read-only, with "Edit anyway" (your changes stay uncommitted in the card for its next run). Or always read-only outside a person's card?
+4. **Where does a person's Hand over go?** Recommended: like an agent's work, to Testing for the QA Agent when the card's Testing switch is on, else to Review. Or always straight to Review?
+5. **Who is "a person" for Open in editor?** Recommended: only you (the person using this Gizai); a card assigned to another person shows who has it, without Open in editor.
+6. **Blade in the first version.** Recommended: our own small Blade language (about a day of F0). The cheaper start colours `.blade.php` as HTML with PHP, leaving `{{ }}` and `@directives` plain.
+7. **Remember the merge commit in the database.** Recommended: yes, `tasks.merge_sha` (migration 0017, so the release with B1 is 0.8.0), so merged cards show their changes offline. Or ask GitHub or Bitbucket every time a merged card's changes open?
+8. **Which external editors first?** Recommended: VS Code, Zed and PhpStorm; others (Cursor, Sublime Text) when asked.
+9. **Outside changes.** Recommended: polling first (open files every 3 seconds, git status every 10), a file watcher later if it feels slow. Or a watcher from the start?
+10. **Comments on a line.** Recommended: later, as a small card after F1, with no database change (§3.2 Q4).
+11. **Order.** Recommended: a card's changes first (B1, F0, F1: useful at once in Review), then the Editor (B2, F2, B3, F3), then a person's card (B4, F4).
+
+---
+
+## 8. Sources
+
+Read on 2026-10-11 unless noted. Registry and GitHub facts were read with `npm view` and `gh` from this worktree; web pages could not be fetched in this run.
+
+The npm registry (`npm view <package>`; the package pages are `https://www.npmjs.com/package/<package>`):
+
+- `@codemirror/merge` 6.12.2 (licence, size, dependencies, release dates, README) https://www.npmjs.com/package/@codemirror/merge ; repository https://code.haverbeke.berlin/codemirror/merge
+- `@codemirror/search` 6.7.2, `@codemirror/lang-php` 6.0.2, `@codemirror/lang-rust` 6.0.2, `@codemirror/lang-json` 6.0.2, `@codemirror/lang-yaml` 6.1.3, `@codemirror/lang-sql` 6.10.0, `@codemirror/legacy-modes` 6.5.5, `@codemirror/language-data` 6.5.2, `@codemirror/lsp-client` 6.3.0 (README) https://www.npmjs.com/package/@codemirror/lsp-client
+- `@lezer/php` 1.0.6, `@lezer/rust` 1.0.3, `@lezer/json`, `@lezer/yaml` (sizes)
+- `@pierre/diffs` 1.5.2 (licence, size, files, dependencies, exports, maintainers, 107 versions since 2025-12-10; no README, homepage or repository in the registry) https://www.npmjs.com/package/@pierre/diffs
+- `@git-diff-view/react` 0.1.7 (README), `@git-diff-view/core` 0.1.7, `@git-diff-view/shiki` 0.1.7 https://www.npmjs.com/package/@git-diff-view/react ; repository https://github.com/MrWangJustToDo/git-diff-view ; demo https://mrwangjusttodo.github.io/git-diff-view (not opened)
+- `shiki` 4.5.0, `@shikijs/langs` 4.5.0 (exports `./blade`) https://www.npmjs.com/package/@shikijs/langs
+- `highlight.js` 11.12.0 (BSD-3-Clause; no Blade in its exports)
+- `monaco-editor` 0.57.0, `@monaco-editor/react` 4.7.0 https://www.npmjs.com/package/monaco-editor
+- `codemirror-shiki` 0.3.0; no `codemirror-lang-blade` or `codemirror-blade` package exists (404)
+
+GitHub, through `gh`, for this repository (Yotech-AI/gizai):
+
+- `gh pr list --state merged --limit 100 --json number,headRefName,additions,deletions,changedFiles`: the sizes of the 70 merged card pull requests (§1.3)
+- `gh pr view 81 --json …`: the field list (`mergeCommit`, `baseRefOid`, `headRefOid`, `files`, …) and PR #81's merge commit and counts
+- `gh pr diff 81 --name-only`, `gh pr diff 81`, `gh pr diff --help`
+
+The code, at `f3541f0`: every file and line named in this document; `git diff --shortstat f3541f0^1 f3541f0` and `git diff --shortstat 4d03026...e3b1d2c`; `wc -c node_modules/@codemirror/*/dist/index.js node_modules/@lezer/*/dist/index.js`; `ls node_modules/lucide-react/dist/esm/icons/`.
+
+Not read in this run (web search and page fetches refused): the CodeMirror reference manual for `@codemirror/merge` (`unifiedMergeView`, `collapseUnchanged`, `diffConfig`) https://codemirror.net/docs/ref/#merge ; the `@pierre/diffs` documentation; Zed's documentation of its Changes panel; the `notify` crate https://crates.io/crates/notify ; GitHub's limits on pull request diffs; Bitbucket's pull request diff API https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/ ; the editors' command line documentation (VS Code, Zed, PhpStorm). Claims that rest on them are marked [I].
+

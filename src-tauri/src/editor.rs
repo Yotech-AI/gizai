@@ -31,12 +31,12 @@ fn working(st: &AppState) -> HashMap<String, String> {
 
 /// The folders the Editor may open now: projects' linked folders, the folders in the Editor folders, card worktrees.
 pub fn folders(st: &AppState) -> R<Vec<EditorFolder>> {
-    core_editor::folders(&st.db, &Places::of(&st.db), &st.data_dir.join("worktrees"), &working(st)).map_err(|e| e.to_string())
+    core_editor::folders(&st.db, &Places::without_checkouts(&st.db), &st.data_dir.join("worktrees"), &working(st)).map_err(|e| e.to_string())
 }
 
 /// The folder `id` (an `EditorFolder::id`), when the Editor may open it now; else why not.
 pub fn folder(st: &AppState, id: &str) -> R<EditorFolder> {
-    core_editor::find(&st.db, &Places::of(&st.db), &st.data_dir.join("worktrees"), &working(st), id)
+    core_editor::find(&st.db, &Places::without_checkouts(&st.db), &st.data_dir.join("worktrees"), &working(st), id)
 }
 
 /// The folder as `gizai_agents::editor` takes it: where it is, and why nothing in it may change now.
@@ -96,7 +96,7 @@ pub fn versions(st: &AppState, folder: &str, paths: &[String]) -> R<Vec<String>>
 /// VS Code, Zed and PhpStorm, those found on this computer under any of their names: on the PATH the coding CLIs get
 /// (`runs::command_path`), in JetBrains Toolbox's scripts folder, and on macOS in /Applications.
 pub fn apps(st: &AppState) -> Vec<EditorApp> {
-    inside::apps(&crate::runs::command_path(), &Places::of(&st.db).home)
+    inside::apps(&crate::runs::command_path(), &Places::without_checkouts(&st.db).home)
 }
 
 /// Opens `folder` in the editor `app` ("vscode", "zed" or "phpstorm"), or the file `path` in it, at `line` when given.
@@ -108,7 +108,7 @@ pub fn open_in(st: &AppState, app: &str, folder: &str, path: Option<&str>, line:
     let dir = Path::new(&f.id);
     let file = path.filter(|p| !p.trim().is_empty()).map(|p| inside::joined(dir, p)).transpose()?;
     let search = crate::runs::command_path();
-    let program = inside::find_app(id, &search, &Places::of(&st.db).home)
+    let program = inside::find_app(id, &search, &Places::without_checkouts(&st.db).home)
         .ok_or_else(|| format!("Gizai can't find {} on this computer: it looks for {} on PATH", id.name(), id.programs().join(", ")))?;
     if id == AppId::PhpStorm && f.kind == Kind::Card {
         inside::keep_idea_out(dir)?;

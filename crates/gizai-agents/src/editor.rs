@@ -383,9 +383,13 @@ pub fn list(dir: &Path, sub: &str) -> Result<Vec<DirEntry>, String> {
     let rel = split_path(sub, cfg!(windows))?.join("/");
     let real = gate(dir, sub)?;
     if !real.is_dir() {
-        return Err(if real.exists() { format!("{rel} is a file, not a folder") } else { format!("{} isn't there any more", shown(&rel)) });
+        return Err(match (rel.is_empty(), real.exists()) {
+            (true, _) => "The folder isn't there any more".into(),
+            (false, true) => format!("{rel} is a file, not a folder"),
+            (false, false) => format!("{rel} isn't there any more"),
+        });
     }
-    let entries = fs::read_dir(&real).map_err(|e| format!("Gizai can't read {}: {e}", shown(&rel)))?;
+    let entries = fs::read_dir(&real).map_err(|e| format!("Gizai can't read {}: {e}", if rel.is_empty() { "the folder" } else { &rel }))?;
     let mut out = vec![];
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
@@ -691,11 +695,6 @@ fn replace(target: &Path, bytes: &[u8], permissions: Option<fs::Permissions>) ->
     written
 }
 
-/// "the folder" for "", else the path.
-fn shown(rel: &str) -> &str {
-    if rel.is_empty() { "The folder" } else { rel }
-}
-
 /// Why a file couldn't be read, in a sentence.
 fn unreadable(rel: &str, e: std::io::Error) -> String {
     match e.kind() {
@@ -988,7 +987,9 @@ enum Grep {
 /// One `git grep` (`kind`: `-F` for plain text, `-P` or `-E` for a regular expression), read as it goes, until
 /// `max_hits` or `until`.
 fn grep(dir: &Path, query: &str, how: Find, repo: bool, kind: &str, max_hits: usize, until: Instant) -> Result<SearchResult, Grep> {
-    let mut args = vec!["grep", "-z", "-n", "--column", "-I", "--no-color", if repo { "--untracked" } else { "--no-index" }];
+    let mut args = vec!["grep", "-z", "-n", "--column", "-I", "--no-color"];
+    // outside a repository the .gitignore files there still count
+    args.extend(if repo { &["--untracked"][..] } else { &["--no-index", "--exclude-standard"][..] });
     if !how.case_sensitive {
         args.push("-i");
     }
@@ -1032,7 +1033,8 @@ fn grep(dir: &Path, query: &str, how: Find, repo: bool, kind: &str, max_hits: us
     let said = String::from_utf8_lossy(&err.join().unwrap_or_default()).trim().to_string();
     // exit code 1: nothing found
     if !found.truncated && !status.success() && status.code() != Some(1) {
-        if kind == "-P" && said.to_ascii_uppercase().contains("PCRE") {
+        // "cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE" (the build flag's name isn't translated)
+        if kind == "-P" && said.contains("USE_LIBPCRE") {
             return Err(Grep::NoPcre);
         }
         return Err(Grep::Said(last_line(&said)));

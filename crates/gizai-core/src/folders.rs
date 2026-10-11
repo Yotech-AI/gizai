@@ -88,6 +88,15 @@ impl Places {
     /// folder, and where the installed Gizai keeps its data: `$XDG_DATA_HOME/gizai` or `~/.local/share/gizai`, on macOS
     /// also `~/Library/Application Support/Gizai`, on Windows `%APPDATA%\Gizai`) and the projects' main checkouts.
     pub fn of(db: &Db) -> Places {
+        let checkouts = crate::projects::list(db).unwrap_or_default().into_iter()
+            .filter_map(|p| Some((p.name, PathBuf::from(p.repo_path.filter(|r| !r.trim().is_empty())?))))
+            .collect();
+        Places { checkouts, ..Places::without_checkouts(db) }
+    }
+
+    /// `of` without the projects' main checkouts, which only the agent form's warnings need: the Editor checks its
+    /// folders against the rest on every call (`editor`).
+    pub fn without_checkouts(db: &Db) -> Places {
         let home = if cfg!(windows) { std::env::home_dir() } else { std::env::var_os("HOME").map(PathBuf::from) };
         let home = home.filter(|h| h.is_absolute()).unwrap_or_default();
         let mut data: Vec<PathBuf> = db.dir().map(Path::to_path_buf).into_iter().collect();
@@ -103,10 +112,7 @@ impl Places {
         if cfg!(windows) {
             data.extend(std::env::var_os("APPDATA").map(PathBuf::from).filter(|a| a.is_absolute()).map(|a| a.join("Gizai")));
         }
-        let checkouts = crate::projects::list(db).unwrap_or_default().into_iter()
-            .filter_map(|p| Some((p.name, PathBuf::from(p.repo_path.filter(|r| !r.trim().is_empty())?))))
-            .collect();
-        Places { home, data, checkouts }
+        Places { home, data, checkouts: vec![] }
     }
 
     /// `~/…` (on Windows `~\…`) for a path in your home folder, else the path.

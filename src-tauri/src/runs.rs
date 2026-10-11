@@ -248,7 +248,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !crate::github::PUSH_OVER_NAMES.contains(&s.push_over.as_str()) {
         return Err("pushes go over ssh or https".into());
     }
-    let editor_roots = gizai_core::editor::clean_roots(&s.editor_roots, &gizai_core::folders::Places::of(&st.db)).map_err(|e| e.to_string())?;
+    let editor_roots = gizai_core::editor::clean_roots(&s.editor_roots, &gizai_core::folders::Places::without_checkouts(&st.db)).map_err(|e| e.to_string())?;
     let bin = s.claude_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
     settings::set(&st.db, "claude_bin", &bin).map_err(|e| e.to_string())?;
     let gh = s.gh_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());

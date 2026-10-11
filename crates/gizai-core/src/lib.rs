@@ -28,6 +28,7 @@ pub mod repo_url;
 pub mod pulls;
 pub mod worktrees;
 pub mod folders;
+pub mod editor;
 pub mod columns;
 pub mod labels;
 pub mod mcp_servers;

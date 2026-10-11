@@ -177,7 +177,7 @@ fn fold(p: &Path) -> Cow<'_, Path> {
 
 /// The folder as it is on disk (links followed), or None when it isn't there. On Windows written as `normalize` writes
 /// it, without the `\\?\` that `canonicalize` puts before it, as the coding CLIs take it.
-fn on_disk(p: &Path) -> Option<PathBuf> {
+pub fn on_disk(p: &Path) -> Option<PathBuf> {
     let real = p.canonicalize().ok()?;
     if cfg!(windows) {
         return normalize(&real.to_string_lossy(), Path::new(""));
@@ -187,16 +187,22 @@ fn on_disk(p: &Path) -> Option<PathBuf> {
 
 /// Why the folder `p` (absolute, normalized) can't be an agent's, or None.
 pub fn refusal(p: &Path, places: &Places) -> Option<String> {
+    refusal_in(p, places, "the folder the agent needs")
+}
+
+/// `refusal` with the same rules for another use of a folder (the Editor's, `editor`): `wanted` is what to pick instead
+/// of the whole disk or your home folder ("the folder the agent needs").
+pub fn refusal_in(p: &Path, places: &Places, wanted: &str) -> Option<String> {
     let (said, p, home) = (p, &*fold(p), &*fold(&places.home));
     let has_home = !home.as_os_str().is_empty();
     if p.parent().is_none() {
-        return Some(format!("that's the whole disk ({}): pick the folder the agent needs", said.display()));
+        return Some(format!("that's the whole disk ({}): pick {wanted}", said.display()));
     }
     if has_home && p == home {
-        return Some("that's your home folder: pick the folder the agent needs inside it".into());
+        return Some(format!("that's your home folder: pick {wanted} inside it"));
     }
     if has_home && home.starts_with(p) {
-        return Some(format!("it holds your home folder ({}): pick the folder the agent needs", places.home.display()));
+        return Some(format!("it holds your home folder ({}): pick {wanted}", places.home.display()));
     }
     for d in &places.data {
         let folded = fold(d);

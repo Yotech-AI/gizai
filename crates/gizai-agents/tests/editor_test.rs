@@ -357,6 +357,123 @@ fn what_git_ignores_is_greyed_in_the_tree_but_never_a_tracked_file() {
     assert!(!editor::list(&dir, "vendor").unwrap()[0].ignored);
 }
 
+/// A linked folder that is a folder of a repository (repo/app): its own .gitignore and the repository's both count.
+#[test]
+fn in_a_folder_of_a_repository_what_git_ignores_there_is_greyed_and_read_only_inside() {
+    let tmp = real_tempdir();
+    let site = repo(tmp.path(), "site", &[(".gitignore", "/app/dist/\n"), ("README.md", "# Site\n"), ("app/.gitignore", "node_modules/\n"),
+                                           ("app/main.js", "main\n")]);
+    let dir = site.join("app");
+    put(&dir, "node_modules/x.js", b"x\n");
+    put(&dir, "dist/bundle.js", b"bundle\n");
+    let top = editor::list(&dir, "").unwrap();
+    assert_eq!(top.iter().map(|e| (e.name.as_str(), e.ignored)).collect::<Vec<_>>(),
+               [("dist", true), ("node_modules", true), (".gitignore", false), ("main.js", false)]);
+    assert!(editor::list(&dir, "node_modules").unwrap()[0].ignored);
+    let f = open(&dir);
+    let says = |why: String, rel: &str| assert_eq!(why, format!("{rel} is in a folder git ignores, so the Editor keeps it read-only"));
+    for (rel, text) in [("node_modules/x.js", "x\n"), ("dist/bundle.js", "bundle\n")] {
+        let opened = editor::read(f, rel).unwrap();
+        assert_eq!((opened.text.as_deref(), opened.read_only, opened.read_only_why.as_deref()), (Some(text), true, Some("Ignored by git")));
+        says(err(editor::write(f, rel, "changed\n", &opened.version)), rel);
+        says(err(editor::rename(f, rel, "moved.js")), rel);
+        says(err(editor::delete(f, rel)), rel);
+        assert_eq!(fs::read_to_string(dir.join(rel)).unwrap(), text);
+    }
+    says(err(editor::create(f, "node_modules/new.js", false)), "node_modules/new.js");
+    says(err(editor::create(f, "dist/sub", true)), "dist/sub");
+    says(err(editor::rename(f, "main.js", "node_modules/main.js")), "node_modules/main.js");
+    assert!(!dir.join("moved.js").exists() && !dir.join("node_modules/new.js").exists() && !dir.join("dist/sub").exists());
+    // the rest of the folder saves as usual
+    let main = editor::read(f, "main.js").unwrap();
+    assert_eq!((main.read_only, main.read_only_why), (false, None));
+    editor::write(f, "main.js", "main2\n", &main.version).unwrap();
+    assert_eq!(fs::read_to_string(dir.join("main.js")).unwrap(), "main2\n");
+}
+
+/// git check-ignore reads pathspec magic in a name that starts with a colon: such a name is still checked as itself,
+/// and doesn't stop the check of the names after it. Names with a colon don't exist on Windows.
+#[cfg(unix)]
+#[test]
+fn names_that_start_with_a_colon_are_checked_as_themselves() {
+    let tmp = real_tempdir();
+    let dir = repo(tmp.path(), "shop", &[(".gitignore", "*.log\n"), ("a.txt", "a\n")]);
+    for name in [":a.log", ":!b", ":(top)c", ":^e.log", "c.log", "z.log", "zz.txt"] {
+        put(&dir, name, b"x\n");
+    }
+    let top = editor::list(&dir, "").unwrap();
+    let ignored: Vec<&str> = top.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
+    assert_eq!(ignored, [":^e.log", ":a.log", "c.log", "z.log"], "{top:?}");
+    // a folder named so: what is in it is read-only
+    put(&dir, ":x.log/in.txt", b"in\n");
+    let inner = editor::read(open(&dir), ":x.log/in.txt").unwrap();
+    assert_eq!(inner.read_only_why.as_deref(), Some("Ignored by git"));
+    let plain = editor::read(open(&dir), ":!b").unwrap();
+    assert_eq!((plain.read_only, plain.read_only_why), (false, None));
+}
+
+/// Outside a repository nothing is ignored, also with a .gitignore, and every change goes through.
+#[test]
+fn outside_git_nothing_is_ignored_and_every_change_goes_through() {
+    let tmp = real_tempdir();
+    if !outside_git(tmp.path()) {
+        return;
+    }
+    let dir = tmp.path().join("plain");
+    put(&dir, ".gitignore", b"node_modules/\n*.log\n");
+    put(&dir, "node_modules/x.js", b"x\n");
+    put(&dir, "debug.log", b"log\n");
+    let top = editor::list(&dir, "").unwrap();
+    assert_eq!(top.iter().map(|e| (e.name.as_str(), e.ignored, e.git)).collect::<Vec<_>>(),
+               [("node_modules", false, None), (".gitignore", false, None), ("debug.log", false, None)]);
+    let f = open(&dir);
+    let x = editor::read(f, "node_modules/x.js").unwrap();
+    assert_eq!((x.read_only, x.read_only_why), (false, None));
+    editor::write(f, "node_modules/x.js", "y\n", &x.version).unwrap();
+    editor::create(f, "node_modules/new.js", false).unwrap();
+    editor::rename(f, "node_modules/new.js", "node_modules/renamed.js").unwrap();
+    editor::delete(f, "node_modules/x.js").unwrap();
+    assert_eq!(editor::list(&dir, "node_modules").unwrap().iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["renamed.js"]);
+}
+
+/// Every git call but check-ignore keeps literal pathspecs: in a folder named like a glob (app/[id]), git status, Go to
+/// file and search see that folder only, never app/i.
+#[test]
+fn in_a_folder_named_like_a_glob_git_status_go_to_file_and_search_see_only_that_folder() {
+    let tmp = real_tempdir();
+    let site = repo(tmp.path(), "site", &[("app/[id]/page.tsx", "needle\n"), ("app/i/page.tsx", "needle\n"), ("app/d/page.tsx", "needle\n")]);
+    put(&site, "app/[id]/page.tsx", b"needle two\n");
+    put(&site, "app/i/page.tsx", b"needle three\n");
+    put(&site, "app/[id]/new.tsx", b"needle\n");
+    put(&site, "app/d/new.tsx", b"needle\n");
+    let dir = site.join("app").join("[id]");
+    let st = editor::status(&dir);
+    assert_eq!(st.files.iter().map(|(p, m)| (p.as_str(), *m)).collect::<Vec<_>>(), [("new.tsx", GitMark::Untracked), ("page.tsx", GitMark::Modified)]);
+    assert_eq!(st.uncommitted, 2);
+    assert_eq!(editor::files(&dir).unwrap(), ["new.tsx", "page.tsx"]);
+    let found = editor::search(&dir, "needle", Find::default()).unwrap();
+    assert_eq!(found.hits.iter().map(|h| h.path.as_str()).collect::<Vec<_>>(), ["new.tsx", "page.tsx"]);
+    assert_eq!(editor::list(&dir, "").unwrap().iter().map(|e| (e.name.as_str(), e.git, e.ignored)).collect::<Vec<_>>(),
+               [("new.tsx", Some(GitMark::Untracked), false), ("page.tsx", Some(GitMark::Modified), false)]);
+}
+
+/// check-ignore runs without literal pathspecs, so a name that reads as a glob mustn't take the place of another one.
+/// Known limit (GA-107 QA): check-ignore leaves out every path whose pathspec matches a tracked file, and `[ab].log`
+/// as a glob matches the tracked `a.log`, so `[ab].log` isn't greyed.
+#[test]
+#[ignore = "known limit: git check-ignore matches a name like [ab].log as a glob against tracked files"]
+fn a_name_with_glob_characters_is_ignored_as_itself() {
+    let tmp = real_tempdir();
+    let dir = repo(tmp.path(), "shop", &[(".gitignore", "*.log\n"), ("a.txt", "a\n")]);
+    put(&dir, "a.log", b"kept\n");
+    git(&dir, &["add", "-f", "a.log"]);
+    put(&dir, "[ab].log", b"x\n");
+    let top = editor::list(&dir, "").unwrap();
+    let ignored = |name: &str| top.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("{name} in {top:?}")).ignored;
+    assert!(!ignored("a.log"), "a tracked file is never ignored");
+    assert!(ignored("[ab].log"), "{top:?}");
+}
+
 // ---- saving ----
 
 #[test]

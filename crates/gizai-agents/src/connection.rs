@@ -2,6 +2,8 @@
 //! - A push to GitHub goes over SSH with your keys (the default) or over HTTPS with the GitHub CLI's login; a push to
 //!   Bitbucket over SSH with your keys. Either is set for that one git command only (`PushOver`). A failure says what
 //!   to check, in plain words and in the terms of the place it went to (`push_problem`).
+//! - An agent's own push in a task run goes the same way, to the project's own repository only: git settings in the
+//!   run's environment (`PushOver::run_config`, `git_env`).
 //! - The checks: gh's version and the account it is logged in as, ssh to git@github.com and git@bitbucket.org in batch
 //!   mode, and gh's own login in the browser (`GhLogin`).
 //!
@@ -70,6 +72,61 @@ impl PushOver {
         c
     }
 
+    /// The git settings of a task run of a project on GitHub or Bitbucket, so that the agent's own `git push` to the
+    /// project's repository goes the way Gizai's own push does (`git_config_for`). Nothing else changes: other
+    /// addresses, fetches, and `git remote get-url` without --push. As (key, value) pairs for `git_env`.
+    /// - `full_name`: the repository, "acme/shop".
+    /// - `addresses`: the addresses it goes by, as written: the project's link, and the URL of each remote of its
+    ///   repository that is the same repository.
+    /// - `own`: the starts of the addresses your own git config rewrites (`worktree::own_rewrites`).
+    ///
+    /// Each address Gizai's push would send elsewhere (an https one over SSH and to Bitbucket, an SSH one over HTTPS) gets
+    /// a `pushInsteadOf` rule to the repository's address (`push_address`), as written, without and with .git. git takes
+    /// a rule for every address that starts with it, and a `pushInsteadOf` beats every `insteadOf`; so an address that a
+    /// rewrite of your own touches (one that starts it, or one for an address that starts with it: a mirror, a test's
+    /// local repository) gets none, and yours decides, as it does for Gizai's own push. Over HTTPS, gh's login is the
+    /// only credential helper for github.com (an empty one first, as `git_config` does).
+    pub fn run_config(&self, full_name: &str, addresses: &[String], own: &[String]) -> Vec<(String, String)> {
+        let key = format!("url.{}.pushInsteadOf", self.push_address(full_name));
+        let mut c: Vec<(String, String)> = vec![];
+        for address in addresses.iter().map(|a| a.trim()).filter(|a| self.rewrites(a)) {
+            let stem = address.trim_end_matches('/');
+            let stem = stem.strip_suffix(".git").unwrap_or(stem);
+            if own.iter().any(|start| stem.starts_with(start.as_str()) || start.starts_with(stem)) {
+                continue;
+            }
+            for from in [address.to_string(), stem.to_string(), format!("{stem}.git")] {
+                let rule = (key.clone(), from);
+                if !c.contains(&rule) {
+                    c.push(rule);
+                }
+            }
+        }
+        if let PushOver::Https { gh } = self {
+            let helper = "credential.https://github.com.helper".to_string();
+            c.push((helper.clone(), String::new()));
+            c.push((helper, format!("!{} auth git-credential", sh_quote(&gh.to_string_lossy()))));
+        }
+        c
+    }
+
+    /// Where a push of the repository `full_name` ("acme/shop") goes: git@github.com:acme/shop.git over SSH,
+    /// https://github.com/acme/shop.git over HTTPS, git@bitbucket.org:acme/shop.git to Bitbucket.
+    fn push_address(&self, full_name: &str) -> String {
+        match self {
+            PushOver::Ssh => format!("git@github.com:{full_name}.git"),
+            PushOver::Https { .. } => format!("https://github.com/{full_name}.git"),
+            PushOver::Bitbucket => format!("git@bitbucket.org:{full_name}.git"),
+        }
+    }
+
+    /// Whether Gizai's own push (`git_config_for`) sends `address` somewhere else.
+    fn rewrites(&self, address: &str) -> bool {
+        self.git_config_for(&[address.to_string()]).iter()
+            .filter_map(|rule| rule.split_once(".insteadOf=").map(|(_, from)| from))
+            .any(|from| address.starts_with(from))
+    }
+
     /// The place a push goes to, for the words a problem is said in.
     fn host(&self) -> Host {
         match self {
@@ -77,6 +134,21 @@ impl PushOver {
             _ => Host::GitHub,
         }
     }
+}
+
+/// git settings ((key, value) pairs) as a program's environment, for every git it starts: GIT_CONFIG_COUNT,
+/// GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n> (git 2.31+). They change no git config file, and take the place of any
+/// such settings the environment had. Nothing for no settings.
+pub fn git_env(settings: &[(String, String)]) -> Vec<(String, String)> {
+    if settings.is_empty() {
+        return vec![];
+    }
+    let mut env = vec![("GIT_CONFIG_COUNT".to_string(), settings.len().to_string())];
+    for (n, (key, value)) in settings.iter().enumerate() {
+        env.push((format!("GIT_CONFIG_KEY_{n}"), key.clone()));
+        env.push((format!("GIT_CONFIG_VALUE_{n}"), value.clone()));
+    }
+    env
 }
 
 /// "https://jefsev@bitbucket.org/" for https://jefsev@bitbucket.org/acme/shop.git; None for any other address.

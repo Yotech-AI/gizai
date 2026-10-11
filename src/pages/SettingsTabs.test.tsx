@@ -276,6 +276,23 @@ describe("Chat answers in Runs (GA-94)", () => {
     const saved = calls.filter(([k]) => k === "saveSettings").map(([, a]) => a[0] as Settings);
     expect(saved).toEqual([{ ...SETTINGS, maxChatMinutes: 120, maxChatToolCalls: 300, maxRunUsd: null }]);
   });
+  // GA-99: the run limits and the chat answer limits, all four edited, go in one save
+  it("Save settings sends edited run limits and chat answer limits together", async () => {
+    const edit = (s: Settings, id: string, value: string) => {
+      const r = tree("agents", s);
+      (findAll(r.t, (p) => p.id === id)[0] as { onChange: (e: unknown) => void }).onChange({ target: { value } });
+      return r.got[0]?.[0] as Settings;
+    };
+    let s = SETTINGS;
+    for (const [id, value] of [["s-min", "30"], ["s-chat-min", "200"], ["s-calls", "150"], ["s-chat-calls", "450"]]) s = edit(s, id, value);
+    const both = { ...SETTINGS, maxRunMinutes: 30, maxRunToolCalls: 150, maxChatMinutes: 200, maxChatToolCalls: 450 };
+    expect(s).toEqual(both);
+    const save = findAll(tree("agents", s).t, (p) => p.className === "btn primary" && typeof p.onClick === "function")[0] as { onClick: () => void };
+    save.onClick();
+    await settle();
+    const saved = calls.filter(([k]) => k === "saveSettings").map(([, a]) => a[0] as Settings);
+    expect(saved).toEqual([{ ...both, maxRunUsd: null }]);
+  });
 });
 
 /** The checkbox inside the `label.check` whose text is `label`. */

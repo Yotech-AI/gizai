@@ -115,12 +115,89 @@ fn another_cli_gets_nothing_from_the_web_switches() {
     assert_eq!(args_of(Kind::Other, web(true, true, &["docs.rs"])), args_of(Kind::Other, WebTools::default()));
 }
 
+// ---- Slash commands and skills on the command line (GA-93) ----
+
+fn slash_args(kind: Kind, on: bool, resume: bool) -> Vec<String> {
+    cli::task_exec(&spec(kind), &TaskRun { prompt: "Do the card".into(), session_id: "S-1".into(), resume,
+                                          allowed_tools: vec!["Bash(git status:*)".into()], slash_commands: on, ..Default::default() }).args
+}
+
+#[test]
+fn a_claude_code_run_with_slash_commands_and_skills_on_goes_without_disable_slash_commands_and_allows_slashcommand_and_skill() {
+    for resume in [false, true] {
+        let a = slash_args(Kind::ClaudeCode, true, resume);
+        assert!(!a.iter().any(|x| x == "--disable-slash-commands"), "resume {resume}: {a:?}");
+        assert_eq!(values(&a, "--allowedTools"), ["Bash(git status:*)", "SlashCommand", "Skill"], "resume {resume}: {a:?}");
+        // hooks stay off, settings come only from the user's
+        assert_eq!(values(&a, "--settings"), [r#"{"disableAllHooks":true}"#], "{a:?}");
+        assert_eq!(values(&a, "--setting-sources"), ["user"], "{a:?}");
+        assert!(!a.iter().any(|x| x == "--restricted" || x == "--tools"), "{a:?}");
+        assert_eq!(a.iter().any(|x| x == "--resume"), resume, "{a:?}");
+        no_chrome(&a);
+    }
+    // with the Web switches on too, each gives its own tools once
+    let a = cli::task_exec(&spec(Kind::ClaudeCode), &TaskRun { prompt: "p".into(), session_id: "S-1".into(), web: web(true, false, &[]),
+                                                                slash_commands: true, ..Default::default() }).args;
+    assert_eq!(values(&a, "--allowedTools"), ["WebSearch", "SlashCommand", "Skill"], "{a:?}");
+}
+
+#[test]
+fn a_claude_code_run_with_slash_commands_and_skills_off_has_the_same_command_line_as_before() {
+    for resume in [false, true] {
+        let a = slash_args(Kind::ClaudeCode, false, resume);
+        let start = if resume { "--resume" } else { "--session-id" };
+        // the command line a task run had before GA-93, word for word
+        let before = ["-p", "--output-format", "stream-json", "--verbose", start, "S-1", "--permission-mode", "acceptEdits", "--setting-sources", "user",
+                      "--strict-mcp-config", "--settings", r#"{"disableAllHooks":true}"#, "--disable-slash-commands", "--allowedTools", "Bash(git status:*)"];
+        assert_eq!(a, before, "resume {resume}");
+        // on, it differs only in those three
+        let on = slash_args(Kind::ClaudeCode, true, resume);
+        let mut back: Vec<String> = on.into_iter().filter(|x| x != "SlashCommand" && x != "Skill").collect();
+        let at = back.iter().position(|x| x == "--settings").unwrap() + 2;
+        back.insert(at, "--disable-slash-commands".into());
+        assert_eq!(back, a, "resume {resume}");
+    }
+    assert!(tool_catalog::claude_slash_tools(false).is_empty());
+    assert_eq!(tool_catalog::claude_slash_tools(true), ["SlashCommand", "Skill"]);
+}
+
+#[test]
+fn codex_gemini_and_other_clis_get_nothing_from_the_slash_commands_and_skills_switch() {
+    for kind in [Kind::Codex, Kind::Gemini, Kind::Other] {
+        for resume in [false, true] {
+            let (off, on) = (slash_args(kind, false, resume), slash_args(kind, true, resume));
+            assert_eq!(on, off, "{kind:?} resume {resume}");
+            assert!(!on.iter().any(|x| x.contains("SlashCommand") || x.contains("Skill") || x.contains("activate_skill")), "{kind:?}: {on:?}");
+        }
+    }
+}
+
+#[test]
+fn only_claude_code_can_have_slash_commands_and_skills_and_the_others_say_why() {
+    assert_eq!(tool_catalog::slash_support(Kind::ClaudeCode), None);
+    for (kind, name) in [(Kind::Codex, "Codex"), (Kind::Gemini, "Gemini")] {
+        let why = tool_catalog::slash_support(kind).unwrap_or_else(|| panic!("{kind:?} has no reason"));
+        assert!(why.contains(name) && why.contains("stay off") && !why.contains('\n'), "{kind:?}: {why}");
+    }
+    assert!(tool_catalog::slash_support(Kind::Other).is_some_and(|w| !w.is_empty()));
+    // a built-in tool switch can't give them: only Slash commands and skills does
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini] {
+        for id in ["SlashCommand", "Skill"] {
+            assert!(!tool_catalog::switchable(kind, id), "{kind:?} {id}");
+        }
+    }
+    // in the allowed commands, in any form, they are left out of a run
+    for t in ["SlashCommand", "Skill", "SlashCommand(/design)", "Skill(frontend-design)", " Skill "] {
+        assert!(tool_catalog::only_by_switch(t), "{t}");
+    }
+}
+
 // ---- the catalog ----
 
 #[test]
 fn every_catalog_tool_says_in_one_line_what_it_allows_and_how_risky_it_is() {
     let groups = ["web", "browser", "files", "commands", "agents", "planning", "other"];
-    let hows = [how::WEB, how::SWITCH, how::ALWAYS, how::ELSEWHERE, how::OFF];
+    let hows = [how::WEB, how::SLASH, how::SWITCH, how::ALWAYS, how::ELSEWHERE, how::OFF];
     for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini] {
         let c = tool_catalog::catalog(kind);
         assert!(!c.is_empty(), "{kind:?}");
@@ -144,7 +221,7 @@ fn every_catalog_tool_says_in_one_line_what_it_allows_and_how_risky_it_is() {
 }
 
 #[test]
-fn the_claude_code_catalog_has_the_cards_tools_with_skills_and_slash_commands_off() {
+fn the_claude_code_catalog_has_the_cards_tools_with_slash_commands_and_skills_as_one_switch() {
     let c = tool_catalog::catalog(Kind::ClaudeCode);
     for id in ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "Bash", "BashOutput", "KillShell", "WebSearch", "WebFetch", "Task", "Agent",
                "TodoWrite", "ExitPlanMode", "AskUserQuestion", "Skill", "SlashCommand"] {
@@ -155,10 +232,19 @@ fn the_claude_code_catalog_has_the_cards_tools_with_skills_and_slash_commands_of
         assert_eq!((get(id).group.as_str(), get(id).how.as_str()), ("web", how::WEB), "{id}");
     }
     assert_eq!(get("WebFetch").risk, "high");
-    for id in ["Skill", "SlashCommand", "AskUserQuestion"] {
-        assert_eq!(get(id).how, how::OFF, "{id}");
+    // GA-93: SlashCommand and Skill are one switch, Slash commands and skills, medium risk, with the card's line
+    let line = "Lets the agent run your slash commands and skills, like /design, including those from plugins; they can steer the run.";
+    for id in ["SlashCommand", "Skill"] {
+        let t = get(id);
+        assert_eq!((t.label.as_str(), t.group.as_str(), t.risk.as_str(), t.how.as_str(), t.description.as_str()),
+                   ("Slash commands and skills", "other", "medium", how::SLASH, line), "{id}");
     }
-    assert!(get("Skill").note.contains("--disable-slash-commands"));
+    let slash: Vec<String> = tool_catalog::catalog(Kind::ClaudeCode).into_iter().filter(|t| t.how == how::SLASH).map(|t| t.id).collect();
+    assert_eq!(slash, ["SlashCommand", "Skill"], "only these two take the switch");
+    for kind in [Kind::Codex, Kind::Gemini, Kind::Other] {
+        assert!(!tool_catalog::catalog(kind).iter().any(|t| t.how == how::SLASH), "{kind:?}");
+    }
+    assert_eq!(get("AskUserQuestion").how, how::OFF);
     assert_eq!(get("Bash").risk, "high");
     assert!(tool_catalog::source_note(Kind::ClaudeCode).is_none(), "Claude Code's list is read from Claude Code");
 }

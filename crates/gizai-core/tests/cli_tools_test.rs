@@ -42,10 +42,11 @@ fn the_web_and_built_in_switches_are_saved_cleaned_next_to_the_mcp_switches_and_
     let saved = m::set_cli_tools(&db, &you, &id, CliTools {
         web_search: true, web_fetch: true, insecure_certs: true,
         fetch_domains: strs(&[" https://Docs.rs/ ", "docs.rs", "*.laravel.com", "", "http://kade.test"]),
-        builtin: strs(&["FancyNewTool", " FancyNewTool ", "AnotherTool", ""]),
+        builtin: strs(&["FancyNewTool", " FancyNewTool ", "AnotherTool", ""]), slash_commands: true,
     }).unwrap();
     assert_eq!(saved.fetch_domains, ["docs.rs", "*.laravel.com", "kade.test"], "lower case, no scheme or slash, each once");
     assert_eq!(saved.builtin, ["AnotherTool", "FancyNewTool"]);
+    assert!(saved.slash_commands, "Slash commands and skills is saved with the rest");
     assert!(saved.web_on());
     assert_eq!(m::agent_cli_tools(&db, &id).unwrap(), saved);
     assert_eq!(team::agent(&db, &id).unwrap().cli_tools, saved);
@@ -60,6 +61,31 @@ fn the_web_and_built_in_switches_are_saved_cleaned_next_to_the_mcp_switches_and_
     // and everything off again
     assert_eq!(m::set_cli_tools(&db, &you, &id, CliTools::default()).unwrap(), CliTools::default());
     assert_eq!(team::agent(&db, &id).unwrap().cli_tools, CliTools::default());
+}
+
+/// GA-93: Slash commands and skills is off for every agent, those saved before it existed too, and saved on its own.
+#[test]
+fn slash_commands_and_skills_is_off_for_existing_and_new_agents_until_switched_on() {
+    let (db, you, _, id) = setup();
+    assert!(!CliTools::default().slash_commands);
+    assert!(!m::agent_cli_tools(&db, &id).unwrap().slash_commands, "a new agent");
+    // an agent's switches as saved before GA-93: no slashCommands key
+    let old = r#"{"mcp":[],"cli":{"webSearch":true,"webFetch":false,"fetchDomains":[],"insecureCerts":false,"builtin":["FancyNewTool"]}}"#;
+    let parsed = m::parse_cli_tools(Some(old));
+    assert!(parsed.web_search && !parsed.slash_commands, "{parsed:?}");
+    db.write(None, |w| {
+        w.conn().execute("UPDATE agent_configs SET mcp_extra_json=?2 WHERE actor_id=?1", rusqlite::params![id, old])?;
+        Ok(())
+    }).unwrap();
+    assert!(!m::agent_cli_tools(&db, &id).unwrap().slash_commands, "an existing agent");
+    assert!(!team::agent(&db, &id).unwrap().cli_tools.slash_commands);
+    // switched on, kept with the other switches as they were; and off again
+    let on = m::set_cli_tools(&db, &you, &id, CliTools { slash_commands: true, ..parsed.clone() }).unwrap();
+    assert!(on.slash_commands && on.web_search && on.builtin == ["FancyNewTool"], "{on:?}");
+    assert_eq!(m::agent_cli_tools(&db, &id).unwrap(), on);
+    assert_eq!(m::parse_cli_tools(Some(r#"{"cli":{"slashCommands":true}}"#)), CliTools { slash_commands: true, ..Default::default() });
+    assert_eq!(m::set_cli_tools(&db, &you, &id, parsed.clone()).unwrap(), parsed);
+    assert!(!team::agent(&db, &id).unwrap().cli_tools.slash_commands);
 }
 
 #[test]

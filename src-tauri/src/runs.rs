@@ -929,6 +929,13 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if spec.kind == Kind::ClaudeCode {
         allowed_tools.extend(agent.cli_tools.builtin.iter().filter(|t| gizai_agents::tool_catalog::switchable(spec.kind, t)).cloned());
     }
+    // Slash commands and skills (agent form → Tools → Built-in tools): on Claude Code only, new, continued and nudged runs
+    // alike. On another CLI the run goes without them, and its log says why.
+    let no_slash = gizai_agents::tool_catalog::slash_support(spec.kind);
+    if agent.cli_tools.slash_commands && let Some(why) = no_slash {
+        notes.push(format!("{} runs on {}, so this run goes without slash commands and skills: {why}", agent.name, cli.name));
+    }
+    let slash_commands = agent.cli_tools.slash_commands && no_slash.is_none();
     // Content from outside (an MCP server's answers, web pages, search results, the browser) is data: the prompt says so. A
     // CLI that searches the web in every run (Gemini) gets it in every run.
     let untrusted = mcp_config.is_some() || web.search || web.fetch || gizai_agents::tool_catalog::web_in_every_run(spec.kind);
@@ -948,7 +955,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
         prompt: if untrusted { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
-        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web,
+        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web, slash_commands,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },

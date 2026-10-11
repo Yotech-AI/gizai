@@ -77,3 +77,166 @@ Gizai is a local desktop app for one developer and a team of coding agents (READ
 What the work must not touch: the Team Lead's copies (`<data>/code/<KEY>`), which Gizai resets at will (`crates/gizai-agents/src/copies.rs:37-43`), and Gizai's own data folder apart from card worktrees. [V]
 
 ---
+
+## 3. The feature
+
+### 3.1 What it should do
+
+From the card (Jefsev, 10 and 11 October 2026):
+
+1. **A card's changes.** On a card, see at a glance which files it changed and the changed lines, like Zed's Changes panel: a Changes tab and a tab per open file beside the conversation; "Since origin/main +6 −4" on top; each changed file under its path, removed lines red and added lines green, with line numbers; unchanged code folded, with arrows to open it. Easy to use comes first.
+2. **An Editor in the sidebar, above Agents.** Open a local folder (a project in `~/Herd/*`) in a basic code editor with syntax colours. It shows when the folder is behind main on GitHub. A small card can then go to a person who does it quicker by hand.
+3. It may be built before the website and offered there as a free feature, so Gizai suits every developer, also one who codes by hand next to the agents.
+
+What "a person's card" means here [I]: a card assigned to a person, which that person builds in the card's own worktree with the Editor (or their own editor), then hands over to QA or to Review like an agent would.
+
+### 3.2 The ten questions
+
+#### A card's changes
+
+**Q1. Where does the diff come from, in each column?**
+
+Answer: always from local git, in this order. [V for the commands' sources; I for the order]
+
+| Card | Changes come from | How (git as a command, like the rest of Gizai) | What they include |
+|---|---|---|---|
+| No branch yet (Backlog, To do before its first run) | nothing | `tasks.branch` is set by the first run (`crates/gizai-core/src/runs.rs:113`) [V] | "No changes yet: the first run makes this card's branch." |
+| Its worktree is there (In progress, Testing, Review, a person's card) | the worktree against its **merge base** with main as last fetched | `git merge-base HEAD <main>`, then `git diff --numstat -z -M <base>` and `git ls-files --others --exclude-standard -z` for new files | commits **and** uncommitted changes; untracked files count as added |
+| Worktree gone, branch still there (removed in Settings → Data, or kept after a merge) | the branch against its merge base | `git diff --numstat -z -M <base> refs/heads/<branch>` | commits only |
+| Merged (Deploy, Done) | the **merge commit against its first parent** | `git diff -M <merge>^1 <merge>` | exactly what the pull request brought into main |
+| Merged, but the merge commit is unknown or not on this disk | fetch main (as a card start does), else ask GitHub or Bitbucket | `gh pr diff <n>`; Bitbucket `GET /2.0/repositories/<ws>/<repo>/pullrequests/<id>/diff` [I] | a patch only, without the files' full text |
+| One run | the commits it made | `git diff <base_sha> <head_sha>` (`model.rs:383-388`) | that run's commits only |
+
+Notes:
+
+- `<main>` is the ref card starts use: `refs/remotes/<remote>/<branch>` when the repository has a remote for the project's link, `refs/gizai/base/<branch>` when it hasn't, the local default branch without a link (`src-tauri/src/git.rs:65-72`, `worktree.rs:302-307`). On screen it reads **"Since origin/main"** (or "Since main"). [V]
+- Against the merge base, not main's tip: otherwise every commit main got since the card started would show as removed lines. [I]
+- `.gizai-tmp/` never shows: Gizai keeps it out of git status through `info/exclude` (`worktree.rs:204-247`). [V]
+- **After a merge** the worktree and, when the pull request has its latest commit, the branch are gone (`pulls.rs:408-420`). This repository merges with merge commits (`f3541f0` has the parents `4d03026` and `e3b1d2c`), and the Team Lead's `merge_pull_request` always does (`github.rs:158-164`), so the card's commits stay reachable from main, and the merge commit against its first parent is the card's diff for good. For PR #81, `git diff f3541f0^1 f3541f0` and `git diff 4d03026...e3b1d2c` both give 34 files, +1923 −112, exactly GitHub's numbers (`gh pr view 81 --json additions,deletions,changedFiles`). [V] A squash merge has one parent, so the same "first parent → merge commit" works for it. [I]
+- Gizai therefore needs **the merge commit's id**. `gh` gives it as `mergeCommit` (in `gh pr view --json`'s field list, together with `baseRefOid`, `headRefOid` and `files`). [V `gh`] Bitbucket gives `merge_commit.hash` on the pull request. [I] Save it on the card when the PR check sees the merge (`pulls.rs:386-398`, `crates/gizai-core/src/pulls.rs:122`), in a new column `tasks.merge_sha` (migration 0017; a MINOR release). Cards merged earlier get it looked up once, when their Changes view opens.
+- `gh pr diff` is only the last resort: it needs the network and gh's login, works for GitHub only, gives a patch without the files around it (so no "show more lines"), and GitHub refuses very large diffs. [V `gh pr diff --help`; I for the size limit]
+- **Per run: yes.** It is cheap (the two ids are saved already, `runs.rs:878-880`, `:1142-1149`) and answers "what did this run do?". It shows commits only; a run's own note already says how many uncommitted changes it left (README.md:181). [V]
+
+Recommendation: one Rust function that picks the source in this order (worktree, branch, merge commit, GitHub or Bitbucket), returns the file list with counts at once, and each file's text before and after only when the screen asks for it (§5.3).
+
+**Q2. The UX: a tab next to Comments, a panel beside the card, or a full-width view?**
+
+Answer:
+
+- *A tab next to Comments* puts the diff at the bottom of a long page, under the description, criteria, attachments and the Run and Pull request panels (`TaskPage.tsx:161-178`), in a column at most 920 px wide (`app.css:67`). Cramped, and far down. [V layout; I judgement]
+- *A resizable panel beside the card, like Zed:* with the window at its usual 1440 px (`tauri.conf.json:15`), the sidebar (248 px) and Properties (320 px, `tokens.css:109-110`) leave about 870 px; split in two, each half gets about 430 px, which shows about 55 characters of code. Too narrow. [I, computed]
+- *A full-width view* gives the code room: about 870 px with Properties open, about 1,190 px with it closed; minus a 260 px file list that leaves roughly 120 characters of code. [I, computed]
+
+Recommendation: the full-width view, reached as a **tab at the top of the card**: **Card** and **Changes +964 −112**, the counts on the tab, so you see at a glance whether a card changed anything and how much. The address is `#/task/GA-91/changes`, so Back and links work.
+
+- Opening Changes hides Properties (`]` still toggles it).
+- Left, a **file list** (260 px, it can fold): each file under its folder with a status letter (A, M, D, R; with the word in its tooltip), +/− counts, and a dot for uncommitted changes. A filter box on top, "Since origin/main +964 −112 · 20 files" above it.
+- Right, **all files below each other**, unified (one column), in the list's order; a click in the list scrolls there. Each file has a sticky header: path (old → new for a rename), +/−, a fold caret, and Open in editor while the worktree is there.
+- **Unchanged code folds** to 3 lines around each change; the fold bar "⋯ 37 unchanged lines" has arrows to show 20 more lines above or below, and a click shows them all.
+- **Big and odd files:** a binary file says "Binary file changed (12 KB → 14 KB)"; a file over 1 MB, or a diff over 3,000 lines, comes folded with Show; lock files (`package-lock.json`, `composer.lock`, `Cargo.lock`) and built files come folded; a rename without changes is one line; a deleted file is red and folded when long.
+- Split side by side is left out of the first version: it needs about 1,400 px of room. [I]
+- The Runs tab gets **Show changes** on each run, and the Pull request panel shows "+964 −112 · Show changes".
+
+Screen by screen, with sketches: §5.1.
+
+**Q3. Which component: CodeMirror's merge view, `@pierre/diffs` or `@git-diff-view/react`?**
+
+Answer: compared in §4.2 on size, licence, upkeep, colours for PHP, Blade, TSX and Rust, Gizai's light and dark themes, speed on a 2,000-line diff and fit with the app's content security policy.
+
+Recommendation: **`@codemirror/merge`**, its `unifiedMergeView`, read-only, with `collapseUnchanged`. [I]
+
+- One highlighting system and one theme for the whole app: the same languages (and the same Blade work) and the same tokens as the Editor and the Markdown editor.
+- MIT, small (183 KB unpacked), by CodeMirror's own maintainer, 37 releases in the 6.x line, the latest on 2026-06-09. [V `npm view`]
+- No WebAssembly and no workers, so the content security policy stays as it is. [V CSP; I for what merge needs]
+- Its costs: deleted lines show no old line number in the unified view [I]; every file needs both texts, which the backend sends; and every file is its own editor, so files mount only when they scroll near the screen.
+- Speed: CodeMirror draws only the lines in sight [I], so a 2,000-line diff costs one diff computation and one screen. Not measured in this run; card F1 measures it in WebKitGTK and has a fallback if it is slow (§6).
+
+**Q4. Comments on a line that land on the card: later or not?**
+
+Answer: later, as its own small card after the Changes view (not planned in §6). It needs no database change: a comment on a line posts an ordinary card comment that starts with the place (`src/lib/pulls.ts:42 at 3f5c1a2`) and quotes the lines. QA and the next run read it, because every run gets the card's 10 latest comments (`runs.rs:882-887`). [V] The Changes view can later find these comments and show them at their line. [I]
+
+Recommendation: later; keep the Changes view's line positions stable (path, side, line, commit) so it can be added without rework.
+
+#### The Editor
+
+**Q5. What may it open, and what does it hide or show read-only?**
+
+Answer and recommendation: [I, with the refusals V]
+
+- **May open:**
+  - the projects' linked folders (`projects.repo_path`, `model.rs:87`);
+  - any folder directly under the roots set in Settings → General → Editor folders (default `~/Herd`), so `~/Herd/kade-portal` opens without being a project first;
+  - a card's worktree (`<data>/worktrees/<KEY>/<identifier>`), from the card.
+- **Never:** `/`, the home folder itself, the folders that hold keys or logins and Gizai's data folder apart from card worktrees, with the refusals agent folders already use (`crates/gizai-core/src/folders.rs:46-56`, `:189`). Not the Team Lead's copies either (`<data>/code/`): Gizai throws away anything changed in them (`copies.rs:37-43`). A link that leads out of the opened folder is refused.
+- **Card worktrees** are **read-only while an agent works on the card**, and editable when the card is yours (a person's card, Q8). On any other card's worktree the Editor says so and offers "Edit anyway" (your changes become part of the card, uncommitted, for its next run).
+- **Hidden:** `.git/` (never shown or written).
+- **Shown greyed, folded and read-only until you open them:** what git ignores, such as `node_modules/`, `vendor/`, `target/`, `dist/` and `storage/`; left out of search.
+- **Big and binary files:** over 1 MB opens read-only, over 5 MB doesn't open ("Too big to show here: Open in VS Code"), a binary file (a NUL byte in its first 8 KB, git's own test) doesn't open. A file that isn't UTF-8 opens read-only.
+- **`.env`** opens and saves like any file: it stays on this computer; it is ignored by git, so search leaves it out unless you ask.
+
+**Q6. What does a first version need, and what waits?**
+
+Answer and recommendation: [I]
+
+| First version | How |
+|---|---|
+| File tree | One folder level per request, in the backend; folders open on click; git status letters and colours per file and on folders that hold changes |
+| Tabs | Several files open, a dot for unsaved changes, middle click and Ctrl+W close, the open tabs kept per folder on this computer |
+| Syntax colours | PHP, Blade, TypeScript/TSX, JavaScript, Rust, CSS, JSON, YAML, Markdown, SQL, HTML and `.env`, loaded on first use (§5.3) |
+| Find and replace in a file | `@codemirror/search` (Ctrl+F, Ctrl+H, F3) |
+| Search in the folder | Ctrl+Shift+F: `git grep` over tracked and untracked files that git doesn't ignore; at most 2,000 hits; a click opens the file at its line |
+| Go to file | Ctrl+P over `git ls-files --cached --others --exclude-standard` |
+| Save | Ctrl+S, as the Markdown editor (`MarkdownEditor.tsx:447`); keeps the file's line endings; refuses when the file changed on disk since you opened it, with Reload and Keep mine |
+| Git status | per file in the tree and on tabs; the branch and behind, ahead and uncommitted in the status bar (Q7) |
+| Outside changes | an agent, a terminal or another editor changed a file: an untouched tab reloads, a tab with your unsaved changes shows "Changed on disk: Reload · Keep mine"; the tree and git status follow |
+| New file, rename, delete | in the tree's menu; delete asks first |
+| Open in VS Code, Zed or PhpStorm | Q9 |
+
+Waits for later: language servers (`@codemirror/lsp-client` exists, MIT, 6.3.0 [V `npm view`], but each server needs installing and running per language); a terminal; formatting (Prettier, Pint, rustfmt); git blame, staging and merge conflicts; image previews; settings for tab size and wrapping beyond the file's own `.editorconfig`.
+
+**Q7. Behind main: how often to fetch, what to show, and an Update button.**
+
+Answer and recommendation: [V for the reused functions; I for the timings]
+
+- **Fetch** when a folder opens in the Editor, every 10 minutes while the Editor shows it, and on Fetch now; with the same code as a card start (`git::start_point` with a 60-second limit, `src-tauri/src/git.rs:57-72`, into the same ref, so card starts and the Editor agree). A folder that isn't a project's is fetched from its `origin` remote's default branch. A fetch never asks for a password (`worktree.rs:309-325`, `:624-643`).
+- **Show** in the status bar, and in short on the folder's row in the sidebar: the branch; **behind** (commits main has that the folder doesn't), **ahead** (the folder's own commits), **uncommitted** files; and when the last fetch was. Words with the numbers ("3 behind main", "1 ahead", "2 changed"), arrows only as a short form in the sidebar.
+- **Update** is shown when the folder is behind, and works only by `update_checkout`'s rules, through the same functions (`checkout::plan`, then `checkout::update`, `crates/gizai-agents/src/checkout.rs:144-258`): a fast-forward only; never over uncommitted changes in tracked files, nor during a merge or rebase; never a merge commit, reset or force; on the default branch only (no switching from the Editor); then `composer install` or `npm ci` when a lock file changed; never the setup command; and never at the same time as a card's worktree is prepared from that folder (`code.rs:346-351`). When the plan refuses, the button stays and says why (the plan's own sentence), so nothing happens by surprise.
+
+**Q8. A person's card: Open in editor, then Commit, Push and Hand over.**
+
+Answer: [V for today's rules; I for the design]
+
+- Today a card can be assigned to a person (Properties → Assignee), but in an Auto column the agents on it **still take it**: "a person as assignee doesn't block" (`workflow.rs:161-163`, the query at `:184-189`). That is on purpose, so a card dragged back from Review is picked up again (docs/HANDOFF-2026-10-07.md:113). A card **pinned** to someone else, though, is left alone by every agent (`workflow.rs:185-188`). [V]
+- **Open in editor** shows on a card assigned to you that no agent is working on. It:
+  1. makes or takes over the card's worktree and prepares it exactly as for an agent (`runs.rs:693-717`, `:722-733`);
+  2. pins the card to you (`tasks.pinned_actor_id`), so no agent takes it, and makes you its implementer;
+  3. moves it from To do to In progress, as you;
+  4. opens the worktree in the Editor, with a card bar on top.
+- The card bar has:
+  - **Commit…** (a message box, "GA-123: <title>" filled in; commits every change, as git sees it);
+  - **Push** (the same push as after a run: `push_new_commits` to the project's remote, the same way, `worktree.rs:392-417`, `pulls.rs:146-160`);
+  - **Hand over to Testing** (to Review when the card's Testing switch is off). It refuses uncommitted changes, pushes, then moves the card on as a builder's `ready_for_testing` does (`workflow.rs:433-447`), takes the pin off so QA takes it, and posts "Handed over by Jeffrey: 2 commits".
+- **QA fails it:** `qa_fail` already gives the card back to its implementer (`workflow.rs:469`), but with the pin gone In progress's agents could take it. New rule: when the implementer is a person, `qa_fail` pins the card to them again.
+- **On the board:** the card shows its person's avatar as now, plus a small "By hand" mark (Lucide `keyboard`) while it is pinned to a person; it is never shown as waiting for an agent. **No database change:** `pinned_actor_id`, `implementer_actor_id` and the activity log exist (`workflow.rs:71-80`). [V]
+- The Changes view works on such a card as on any other: it shows your uncommitted changes too.
+
+Recommendation: build it last (cards B4 and F4), on top of the Editor; it needs the Editor's folders, saving and git status.
+
+**Q9. An alternative: Open in VS Code, Zed or PhpStorm.**
+
+Answer: cheap and worth having next to a small built-in editor, not instead of it. [I]
+
+- Gizai already has `tauri-plugin-opener` (`commands.rs:318-328`), and finds programs on PATH with `os::find_in` (`crates/gizai-agents/src/os.rs:67`), which handles Windows' `.cmd` shims; Gizai starts programs only through `os::command` (CLAUDE.md:49). [V]
+- The editors' own command line tools take a folder: `code <folder>`, `zed <folder>`, `phpstorm <folder>`; on macOS also `open -a "<App>" <folder>`. [I]
+- Show only the ones found, in a small **Open in** menu on the Editor's top bar, on a folder's row in the sidebar, and on a card with a worktree.
+- The built-in editor is for a quick look and a small fix without leaving Gizai, and for reading an agent's worktree; a big piece of work is better in the developer's own editor, which Gizai then still follows (Changes, behind main, Hand over).
+
+Recommendation: yes, in the first Editor cards (B2 and F2).
+
+**Q10. Free on the website: what changes in the paid plans?**
+
+Answer: nothing. `docs/PAID-FEATURES.md` keeps the whole desktop app free and sells only hosted services: encrypted backup, sync, team workspaces and a runner relay (`PAID-FEATURES.md:7-12`, `:30-38`). The editor and a card's changes run entirely on the user's computer, so they belong in the free app, like the rest. [V]
+
+Recommendation: add "the code editor and a card's changes" to the list under "What stays free, forever" (`PAID-FEATURES.md:30-36`) and to "The desktop app, agents, chat" row of the plans table (`:45`), in the card that ships the Editor. For later, not now: in Team, line comments (Q4) and a person's cards would sync between teammates with the rest of the card. [I]
+
+---

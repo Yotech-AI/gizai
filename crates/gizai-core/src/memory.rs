@@ -4,7 +4,7 @@
 //! secrets. Notes follow Obsidian's file conventions (Markdown, `[[wikilinks]]`, YAML properties, folders), so a copy
 //! opens there, but Gizai neither uses nor needs Obsidian. Memory is data written by people and agents, never
 //! instructions. The model in plain language: `docs/memory.md`.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -40,30 +40,45 @@ pub enum Who {
     Lead(String),
     /// A person: sees and writes everything.
     Person(String),
-    /// Any other agent: reads the shared folders and its own, writes only its own.
+    /// Any other agent with a folder of its own (alone, or the owner of a group): reads the shared folders and its own,
+    /// writes only its own.
     Agent(String),
+    /// An agent that shares another agent's folder (GA-96), and that agent, the group's owner: it reads the shared
+    /// folders and the group's folder (`Agents/<owner name>/`), and writes only the group's folder.
+    Shares(String, String),
 }
 
 impl Who {
     pub fn id(&self) -> &str {
         match self {
-            Who::Lead(i) | Who::Person(i) | Who::Agent(i) => i,
+            Who::Lead(i) | Who::Person(i) | Who::Agent(i) | Who::Shares(i, _) => i,
         }
     }
 
-    /// The actor as memory sees it: a person, the Team Lead (an agent with the lead role) or another agent.
+    /// The agent whose folder an agent reads and writes as its own: the group's owner for one that shares, else itself.
+    pub fn folder_owner(&self) -> &str {
+        match self {
+            Who::Shares(_, owner) => owner,
+            other => other.id(),
+        }
+    }
+
+    /// The actor as memory sees it: a person, the Team Lead (an agent with the lead role), an agent that shares another
+    /// agent's folder, or another agent.
     pub fn of(db: &Db, actor_id: &str) -> Result<Who> {
         db.read(|c| who_in(c, actor_id))
     }
 }
 
 fn who_in(c: &Connection, actor_id: &str) -> Result<Who> {
-    let row: Option<(String, i64)> = c.query_row(
-        "SELECT a.kind, COALESCE((SELECT max(m.is_lead) FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL), 0)
-         FROM actors a WHERE a.id = ?1", [actor_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let row: Option<(String, i64, Option<String>)> = c.query_row(
+        "SELECT a.kind, COALESCE((SELECT max(m.is_lead) FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL), 0),
+                (SELECT g.shares_memory_with FROM agent_configs g WHERE g.actor_id = a.id)
+         FROM actors a WHERE a.id = ?1", [actor_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
     match row {
-        Some((kind, _)) if kind == "person" => Ok(Who::Person(actor_id.into())),
-        Some((_, lead)) if lead != 0 => Ok(Who::Lead(actor_id.into())),
+        Some((kind, _, _)) if kind == "person" => Ok(Who::Person(actor_id.into())),
+        Some((_, lead, _)) if lead != 0 => Ok(Who::Lead(actor_id.into())),
+        Some((_, _, Some(owner))) if owner != actor_id => Ok(Who::Shares(actor_id.into(), owner)),
         Some(_) => Ok(Who::Agent(actor_id.into())),
         None => Err(Error::NotFound(format!("actor {actor_id}"))),
     }
@@ -102,20 +117,20 @@ impl Note {
 }
 
 /// The rule, once: may `who` read `note`? The Team Lead and people read everything; an agent reads the shared folders
-/// and its own folder, never another agent's (or the Team Lead's).
+/// and its own folder (for an agent in a group: the group's), never another agent's (or the Team Lead's).
 pub fn can_read(who: &Who, note: &Note) -> bool {
     match who {
         Who::Lead(_) | Who::Person(_) => true,
-        Who::Agent(id) => note.scope == "shared" || note.owner_id.as_deref() == Some(id.as_str()),
+        Who::Agent(_) | Who::Shares(..) => note.scope == "shared" || note.owner_id.as_deref() == Some(who.folder_owner()),
     }
 }
 
 /// The rule, once: may `who` write `note` (or a new note at its path)? The Team Lead and people write everything; an
-/// agent writes only in its own folder.
+/// agent writes only in its own folder (for an agent in a group: the group's).
 pub fn can_write(who: &Who, note: &Note) -> bool {
     match who {
         Who::Lead(_) | Who::Person(_) => true,
-        Who::Agent(id) => note.scope == "agent" && note.owner_id.as_deref() == Some(id.as_str()),
+        Who::Agent(_) | Who::Shares(..) => note.scope == "agent" && note.owner_id.as_deref() == Some(who.folder_owner()),
     }
 }
 
@@ -179,8 +194,13 @@ fn clean_path_in(c: &Connection, raw: &str) -> Result<String> {
             return Err(Error::Invalid(format!("a note in {AGENTS}/ goes in an agent's folder: {AGENTS}/<agent name>/Title")));
         }
         parts[0] = AGENTS.into();
-        let (_, name) = agent_by_folder(c, &parts[1])?
+        let (id, name) = agent_by_folder(c, &parts[1])?
             .ok_or_else(|| Error::Invalid(format!("no agent is called {}: {AGENTS}/ has a folder per agent, by its name", parts[1])))?;
+        // An agent that shares another agent's folder (GA-96) has none of its own: its notes are the group's.
+        if let Some(owner) = shares_of(c, &id)? {
+            let owner = name_of(c, &owner)?;
+            return Err(Error::Invalid(format!("{name} shares {owner}'s memory folder: its notes go in {AGENTS}/{}/", folder_name(&owner))));
+        }
         parts[1] = folder_name(&name);
     } else if let Some(f) = SHARED_FOLDERS.iter().find(|f| f.eq_ignore_ascii_case(&top)) {
         parts[0] = f.to_string();
@@ -361,6 +381,8 @@ fn refused(who: &Who, path: &str) -> Error {
     match who {
         Who::Agent(_) => Error::Invalid(format!("you can't write {path}: an agent writes only in its own folder ({AGENTS}/<its name>/). \
                                                  The Team Lead moves useful notes into the shared folders")),
+        Who::Shares(..) => Error::Invalid(format!("you can't write {path}: an agent writes only in its own folder, and yours is the one \
+                                                    you share ({AGENTS}/<its owner's name>/). The Team Lead moves useful notes into the shared folders")),
         _ => Error::Invalid(format!("you can't write {path}")),
     }
 }
@@ -635,19 +657,9 @@ fn rewrite_links(body: &str, notes: &[Note], folder: &str, id: &str, dest: &str,
         if notes[i].id != id {
             continue;
         }
-        let target = if !l.target.contains('/') && short_ok { by_title.to_string() } else { dest.to_string() };
-        let mut link = format!("{}[[{target}", if l.embed { "!" } else { "" });
-        if let Some(h) = &l.heading {
-            link.push('#');
-            link.push_str(h);
-        }
-        if let Some(a) = &l.alias {
-            link.push('|');
-            link.push_str(a);
-        }
-        link.push_str("]]");
+        let target = if !l.target.contains('/') && short_ok { by_title } else { dest };
         out.push_str(&body[at..l.start]);
-        out.push_str(&link);
+        out.push_str(&link_to(&l, target));
         at = l.end;
     }
     out.push_str(&body[at..]);
@@ -1156,8 +1168,9 @@ pub(crate) fn ensure_agent_notes_in(w: &Writer, agent_id: &str) -> Result<()> {
         "SELECT a.name, COALESCE((SELECT max(m.is_lead) FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL), 0)
          FROM actors a WHERE a.id = ?1 AND a.kind = 'agent' AND a.deleted_at IS NULL", [agent_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
     let Some((name, lead)) = row else { return Ok(()) };
-    // The Team Lead keeps its notes in Team Lead/ (made on first use).
-    if lead != 0 {
+    // The Team Lead keeps its notes in Team Lead/ (made on first use); an agent that shares another agent's folder (GA-96)
+    // keeps them there.
+    if lead != 0 || shares_of(c, agent_id)?.is_some() {
         return Ok(());
     }
     let path = agent_notes_path(&name);
@@ -1172,12 +1185,14 @@ pub(crate) fn ensure_agent_notes_in(w: &Writer, agent_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Gives every agent that has none its `Agents/<name>/Notes` (agents made before memory). Returns how many were made.
+/// Gives every agent that has none its `Agents/<name>/Notes` (agents made before memory), except the agents that share
+/// another agent's folder (GA-96). Returns how many were made.
 pub fn ensure_agent_folders(db: &Db) -> Result<usize> {
     let agents: Vec<String> = db.read(|c| {
         let mut st = c.prepare(
             "SELECT a.id FROM actors a JOIN team_members m ON m.actor_id = a.id
              WHERE a.kind = 'agent' AND a.deleted_at IS NULL AND m.deleted_at IS NULL AND m.is_lead = 0
+               AND NOT EXISTS (SELECT 1 FROM agent_configs g WHERE g.actor_id = a.id AND g.shares_memory_with IS NOT NULL)
                AND NOT EXISTS (SELECT 1 FROM docs d WHERE d.kind = 'memory' AND d.deleted_at IS NULL AND d.owner_actor_id = a.id)
              GROUP BY a.id ORDER BY a.created_at")?;
         Ok(st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1191,11 +1206,12 @@ pub fn ensure_agent_folders(db: &Db) -> Result<usize> {
 }
 
 /// Saves a run's `learned` lines in its agent's own notes: one dated bullet each, with the card, under `## Learned`,
-/// written by the agent with the run on the note's version. A line with a secret in it is left out (and named in the
-/// result). Returns the version saved, or None when nothing was added.
+/// written by the agent with the run on the note's version. An agent in a group (GA-96) writes them in the group's
+/// `Notes`, with its name after the card: `- 2026-10-11 (GA-12, Backend Agent 2): …`. A line with a secret in it is left
+/// out (and named in the result). Returns the version saved, or None when nothing was added.
 pub fn learned(db: &Db, agent_id: &str, card: &str, lines: &[String], run_id: Option<&str>, day: &str) -> Result<(Option<i64>, Vec<String>)> {
     let mut left_out = vec![];
-    let mut bullets = vec![];
+    let mut kept = vec![];
     for l in lines {
         let l = l.split_whitespace().collect::<Vec<_>>().join(" ");
         let l = l.trim_start_matches(['-', '*']).trim().to_string();
@@ -1206,9 +1222,9 @@ pub fn learned(db: &Db, agent_id: &str, card: &str, lines: &[String], run_id: Op
             left_out.push(format!("a learned line with {what} was not saved"));
             continue;
         }
-        bullets.push(format!("- {day} ({card}): {}", cut(&l, LEARNED_MAX)));
+        kept.push(cut(&l, LEARNED_MAX));
     }
-    if bullets.is_empty() {
+    if kept.is_empty() {
         return Ok((None, left_out));
     }
     let v = db.write(Some(agent_id), |w| {
@@ -1216,19 +1232,495 @@ pub fn learned(db: &Db, agent_id: &str, card: &str, lines: &[String], run_id: Op
             w.set_run(r);
         }
         let c = w.conn();
-        let name: String = c.query_row("SELECT name FROM actors WHERE id = ?1", [agent_id], |r| r.get(0))
-            .optional()?.ok_or_else(|| Error::NotFound(format!("agent {agent_id}")))?;
+        let name = name_of(c, agent_id)?;
         let who = who_in(c, agent_id)?;
-        // The Team Lead's go in Team Lead/Notes; an agent's in its own Notes (made now when it has none yet).
+        let owner = who.folder_owner().to_string();
+        // In a shared folder each line says who learned it.
+        let by = if !matches!(who, Who::Lead(_)) && (owner != agent_id || !sharers_in(c, agent_id)?.is_empty()) { format!(", {name}") } else { String::new() };
+        let bullets: Vec<String> = kept.iter().map(|l| format!("- {day} ({card}{by}): {l}")).collect();
+        // The Team Lead's go in Team Lead/Notes; an agent's in its own Notes, or its group's (made now when there is none yet).
         let target = match who {
             Who::Lead(_) => lead_notes_path(),
-            _ => all_in(c, false)?.into_iter().find(|n| n.owner_id.as_deref() == Some(agent_id) && n.title().eq_ignore_ascii_case(NOTES))
-                .map(|n| n.path).unwrap_or_else(|| agent_notes_path(&name)),
+            _ => notes_of_in(c, &owner)?.map(|n| n.path).unwrap_or_else(|| agent_notes_path(&name_of(c, &owner).unwrap_or(name))),
         };
         let s = append_in(w, &who, &target, Some("Learned"), &bullets.join("\n"), run_id)?;
         Ok(s.version)
     })?;
     Ok((Some(v), left_out))
+}
+
+/// The `Notes` in agent `owner_id`'s folder: the one right in `Agents/<name>/`, else another of its notes called so.
+fn notes_of_in(c: &Connection, owner_id: &str) -> Result<Option<Note>> {
+    let mine: Vec<Note> = all_in(c, false)?.into_iter()
+        .filter(|n| n.owner_id.as_deref() == Some(owner_id) && n.path.starts_with(&format!("{AGENTS}/")) && n.title().eq_ignore_ascii_case(NOTES))
+        .collect();
+    Ok(mine.iter().find(|n| n.path.split('/').count() == 3).or(mine.first()).cloned())
+}
+
+/// An actor's name (also of one that was removed).
+fn name_of(c: &Connection, actor_id: &str) -> Result<String> {
+    c.query_row("SELECT name FROM actors WHERE id = ?1", [actor_id], |r| r.get(0)).optional()?
+        .ok_or_else(|| Error::NotFound(format!("agent {actor_id}")))
+}
+
+// ---- Groups: agents that share one folder (GA-96) ------------------------------------------------------------------
+
+/// The agent whose folder agent `agent_id` shares (agent form → Memory → Shares memory with); None: its own folder.
+fn shares_of(c: &Connection, agent_id: &str) -> Result<Option<String>> {
+    Ok(c.query_row("SELECT shares_memory_with FROM agent_configs WHERE actor_id = ?1", [agent_id], |r| r.get::<_, Option<String>>(0))
+        .optional()?.flatten().filter(|o| o != agent_id))
+}
+
+/// The agent whose memory folder agent `agent_id` uses as its own: its group's owner when it shares one, else itself.
+pub fn folder_owner(db: &Db, agent_id: &str) -> Result<String> {
+    db.read(|c| Ok(shares_of(c, agent_id)?.unwrap_or_else(|| agent_id.to_string())))
+}
+
+/// The agents that share agent `owner_id`'s folder, oldest first: (id, name). Agents that are gone (removed, archived or
+/// on no team) don't count.
+fn sharers_in(c: &Connection, owner_id: &str) -> Result<Vec<(String, String)>> {
+    let mut st = c.prepare(
+        "SELECT a.id, a.name FROM agent_configs g JOIN actors a ON a.id = g.actor_id
+         WHERE g.shares_memory_with = ?1 AND a.id <> ?1 AND a.kind = 'agent' AND a.deleted_at IS NULL AND a.status <> 'archived'
+           AND EXISTS (SELECT 1 FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL)
+         ORDER BY a.created_at, a.id")?;
+    Ok(st.query_map([owner_id], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// Whether agent `agent_id` is still there: not removed or archived, and on a team.
+fn present_in(c: &Connection, agent_id: &str) -> Result<bool> {
+    Ok(c.query_row(
+        "SELECT count(*) FROM actors a WHERE a.id = ?1 AND a.kind = 'agent' AND a.deleted_at IS NULL AND a.status <> 'archived'
+           AND EXISTS (SELECT 1 FROM team_members m WHERE m.actor_id = a.id AND m.deleted_at IS NULL)", [agent_id], |r| r.get::<_, i64>(0))? > 0)
+}
+
+/// Whether agent `agent_id` is the Team Lead as memory sees it: the lead role, or Chat on. The Team Lead keeps its notes in
+/// `Team Lead/` and shares no agent's folder.
+fn lead_role_in(c: &Connection, agent_id: &str) -> Result<bool> {
+    Ok(c.query_row(
+        "SELECT COALESCE((SELECT max(m.is_lead) FROM team_members m WHERE m.actor_id = ?1 AND m.deleted_at IS NULL), 0)
+              + COALESCE((SELECT g.chat_enabled FROM agent_configs g WHERE g.actor_id = ?1), 0)", [agent_id], |r| r.get::<_, i64>(0))? > 0)
+}
+
+fn set_shares(w: &Writer, agent_id: &str, owner: Option<&str>) -> Result<()> {
+    w.conn().execute("UPDATE agent_configs SET shares_memory_with = ?2, updated_at = ?3 WHERE actor_id = ?1", rusqlite::params![agent_id, owner, ids::now_ms()])?;
+    w.update("agent_configs", agent_id, serde_json::json!({"shares_memory_with": owner}))
+}
+
+/// Points every agent that shares `from`'s folder at `to`'s (no chains: one owner per group).
+fn repoint_sharers(w: &Writer, from: &str, to: &str) -> Result<()> {
+    let ids: Vec<String> = {
+        let mut st = w.conn().prepare("SELECT actor_id FROM agent_configs WHERE shares_memory_with = ?1 AND actor_id <> ?2")?;
+        st.query_map([from, to], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for id in ids {
+        set_shares(w, &id, Some(to))?;
+    }
+    Ok(())
+}
+
+/// Sets agent `agent_id`'s *Shares memory with* as `actor` (agent form → Memory; the Team Lead's create_agent and
+/// update_agent): `with` the agent whose folder it is to share, or None for its own folder. An agent that shares a folder
+/// stands for that folder's owner (no chains: one owner per group). The Team Lead is never picked and never picks.
+/// - Joining: its notes move into the owner's folder (`fold_in`), and the agents that shared its folder come along.
+/// - Leaving: it gets a fresh `Agents/<name>/Notes`; the group's notes stay where they are.
+/// - From one group to another: its notes are the old group's, and stay there.
+pub(crate) fn set_shares_in(w: &Writer, actor: &str, agent_id: &str, with: Option<&str>) -> Result<()> {
+    let c = w.conn();
+    let name = name_of(c, agent_id)?;
+    let owner = match with {
+        None => None,
+        Some(t) if t == agent_id => return Err(Error::Invalid(format!("{name} can't share memory with itself: pick another agent, or its own folder"))),
+        Some(t) => {
+            if lead_role_in(c, agent_id)? {
+                return Err(Error::Invalid(format!("{name} is the Team Lead, which keeps its own notes in {LEAD}/: it can't share an agent's memory folder")));
+            }
+            if !present_in(c, t)? {
+                return Err(Error::NotFound(format!("agent {t}")));
+            }
+            if lead_role_in(c, t)? {
+                return Err(Error::Invalid(format!("{} is the Team Lead, which keeps its own notes in {LEAD}/: an agent can't share its memory folder",
+                                                  name_of(c, t)?)));
+            }
+            // An agent that shares a folder stands for that folder's owner; an owner that is gone hands its group on first.
+            let mut owner = shares_of(c, t)?.unwrap_or_else(|| t.to_string());
+            if owner != t && (!present_in(c, &owner)? || lead_role_in(c, &owner)?) {
+                hand_over_in(w, actor, &owner)?;
+                owner = shares_of(c, t)?.unwrap_or_else(|| t.to_string());
+            }
+            // Its own group's owner already: that is its own folder.
+            (owner != agent_id).then_some(owner)
+        }
+    };
+    let now = shares_of(c, agent_id)?;
+    match (now, owner) {
+        (now, owner) if now == owner => {}
+        (Some(_), None) => {
+            set_shares(w, agent_id, None)?;
+            ensure_agent_notes_in(w, agent_id)?;
+        }
+        (Some(_), Some(owner)) => set_shares(w, agent_id, Some(&owner))?,
+        (None, Some(owner)) => {
+            repoint_sharers(w, agent_id, &owner)?;
+            fold_in(w, &Who::Lead(actor.to_string()), agent_id, &owner)?;
+            set_shares(w, agent_id, Some(&owner))?;
+        }
+        (None, None) => {}
+    }
+    Ok(())
+}
+
+/// Agent `owner_id`'s group goes on without it (it was removed, or is the Team Lead now), as `actor`: the group's next
+/// agent (the oldest of the others) becomes the owner, the others share its folder, and the group's notes stay, in a folder
+/// renamed to that agent's name (`fold_in`). Returns the new owner; None when nobody else is in the group.
+pub(crate) fn hand_over_in(w: &Writer, actor: &str, owner_id: &str) -> Result<Option<String>> {
+    let Some((next, _)) = sharers_in(w.conn(), owner_id)?.into_iter().next() else { return Ok(None) };
+    set_shares(w, &next, None)?;
+    repoint_sharers(w, owner_id, &next)?;
+    fold_in(w, &Who::Lead(actor.to_string()), owner_id, &next)?;
+    Ok(Some(next))
+}
+
+/// The Team Lead keeps its notes in `Team Lead/`: an agent that became it (the lead role, or Chat on) stops sharing,
+/// without a folder of its own, and a group it owned goes on with its next agent (`hand_over_in`).
+pub(crate) fn lead_leaves_in(w: &Writer, actor: &str, agent_id: &str) -> Result<()> {
+    let c = w.conn();
+    if !lead_role_in(c, agent_id)? {
+        return Ok(());
+    }
+    if shares_of(c, agent_id)?.is_some() {
+        set_shares(w, agent_id, None)?;
+    }
+    if !sharers_in(c, agent_id)?.is_empty() {
+        hand_over_in(w, actor, agent_id)?;
+    }
+    Ok(())
+}
+
+/// When Gizai starts, as `actor` (you): a group whose owner is gone (removed, archived or on no team) or is the Team Lead
+/// now goes on with its next agent (`hand_over_in`), and an agent that shares while it is the Team Lead stops. Returns how
+/// many groups got a new owner.
+pub fn ensure_groups(db: &Db, actor: &str) -> Result<usize> {
+    let owners: Vec<String> = db.read(|c| {
+        let mut st = c.prepare("SELECT DISTINCT shares_memory_with FROM agent_configs WHERE shares_memory_with IS NOT NULL ORDER BY 1")?;
+        Ok(st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
+    })?;
+    let mut handed = 0;
+    for owner in owners {
+        let gone = db.read(|c| Ok(!present_in(c, &owner)? || lead_role_in(c, &owner)?))?;
+        if gone && db.write(Some(actor), |w| hand_over_in(w, actor, &owner))?.is_some() {
+            handed += 1;
+        }
+    }
+    let sharing: Vec<String> = db.read(|c| {
+        let mut st = c.prepare("SELECT actor_id FROM agent_configs WHERE shares_memory_with IS NOT NULL ORDER BY 1")?;
+        Ok(st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
+    })?;
+    for id in sharing {
+        if db.read(|c| lead_role_in(c, &id))? {
+            db.write(Some(actor), |w| lead_leaves_in(w, actor, &id))?;
+        }
+    }
+    Ok(handed)
+}
+
+/// Moves the notes in agent `from_id`'s folder into agent `to_id`'s (`Agents/<to name>/`) as `who`, the links to them
+/// following as `memory_move` does. Its `Notes`: the bullets under `## Learned` go under `## Learned` in the other's
+/// `Notes`, except those it has already; then the note goes when the rest of it is its template, else the rest moves
+/// as `Notes (<from name>)`. A `Notes` about another client or project than the other's moves whole, so its lines keep
+/// reaching only those runs. Its other notes keep their place in the folder; a title that is taken gets " (<from name>)".
+fn fold_in(w: &Writer, who: &Who, from_id: &str, to_id: &str) -> Result<()> {
+    let c = w.conn();
+    let from_name = name_of(c, from_id)?;
+    let to_dir = format!("{AGENTS}/{}", folder_name(&name_of(c, to_id)?));
+    let notes = all_in(c, true)?;
+    let mine: Vec<&Note> = notes.iter().filter(|n| n.owner_id.as_deref() == Some(from_id) && n.path.starts_with(&format!("{AGENTS}/"))).collect();
+    if mine.is_empty() {
+        return Ok(());
+    }
+    // The note's path inside its agent's folder: `Notes`, `Gotchas/Cargo`.
+    let inside = |n: &Note| n.path.splitn(3, '/').nth(2).unwrap_or(n.title()).to_string();
+    let mut plan = Plan::default();
+    let ours = mine.iter().copied().find(|n| inside(n).eq_ignore_ascii_case(NOTES));
+    let theirs = notes.iter().find(|n| n.path.eq_ignore_ascii_case(&format!("{to_dir}/{NOTES}")) && n.owner_id.as_deref() != Some(from_id));
+    if let (Some(ours), Some(theirs)) = (ours, theirs) && same_place(&ours.body_md, &theirs.body_md) {
+        let have: Vec<String> = learned_items(&theirs.body_md).iter().map(|i| squash(i)).collect();
+        let mut add: Vec<String> = vec![];
+        for item in learned_items(&ours.body_md) {
+            let key = squash(&item);
+            if !have.contains(&key) && !add.iter().any(|a| squash(a) == key) {
+                add.push(item);
+            }
+        }
+        if !add.is_empty() {
+            plan.adds.push((theirs.id.clone(), add.join("\n"), ours.folder().to_string()));
+        }
+        let rest = without_learned(&ours.body_md);
+        if only_template(&rest) {
+            plan.gone.push((ours.id.clone(), theirs.id.clone()));
+        } else if rest != ours.body_md {
+            plan.texts.push((ours.id.clone(), rest));
+        }
+    }
+    let moving: HashSet<&str> = mine.iter().map(|n| n.id.as_str()).collect();
+    let mut taken: HashSet<String> = notes.iter().filter(|n| !moving.contains(n.id.as_str())).map(|n| n.path.to_lowercase()).collect();
+    for n in mine.iter().filter(|n| !plan.gone.iter().any(|(g, _)| *g == n.id)) {
+        let rest = inside(n);
+        let (dir, title) = match rest.rsplit_once('/') {
+            Some((sub, title)) => (format!("{to_dir}/{sub}"), title.to_string()),
+            None => (to_dir.clone(), rest.clone()),
+        };
+        let dest = free_path(&dir, &title, &folder_name(&from_name), &taken);
+        taken.insert(dest.to_lowercase());
+        plan.moves.push((n.id.clone(), dest));
+    }
+    relocate_in(w, who, &plan)
+}
+
+/// `dir/title`, or when another note has that path (case ignored, in `taken`) `dir/title (by)`, `dir/title (by 2)` …, the
+/// title cut so the path stays within 200 characters.
+fn free_path(dir: &str, title: &str, by: &str, taken: &HashSet<String>) -> String {
+    let fit = |tag: &str| -> String {
+        let room = 200usize.saturating_sub(dir.chars().count() + 1 + tag.chars().count());
+        format!("{dir}/{}{tag}", title.chars().take(room).collect::<String>().trim_end())
+    };
+    let plain = fit("");
+    if !taken.contains(&plain.to_lowercase()) {
+        return plain;
+    }
+    let mut n = 1;
+    loop {
+        let path = fit(&if n == 1 { format!(" ({by})") } else { format!(" ({by} {n})") });
+        if !taken.contains(&path.to_lowercase()) {
+            return path;
+        }
+        n += 1;
+    }
+}
+
+/// Whether two notes are about the same clients and projects (their `client:` and `project:` properties), so the lines of
+/// one may go in the other without reaching other runs.
+fn same_place(a: &str, b: &str) -> bool {
+    let (pa, pb) = (properties(a), properties(b));
+    let of = |p: &BTreeMap<String, Vec<String>>, k: &str| -> Vec<String> {
+        let mut v: Vec<String> = p.get(k).into_iter().flatten().map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    ["client", "project"].iter().all(|k| of(&pa, k) == of(&pb, k))
+}
+
+fn squash(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Where the section under heading `h` is in `lines` (case ignored, outside code blocks, as `appended` finds it): its
+/// heading's line and the line after its end (the next heading of the same or a higher level).
+fn section_at(lines: &[&str], h: &str) -> Option<(usize, usize)> {
+    let mut in_code = false;
+    let mut start: Option<(usize, usize)> = None;
+    for (i, l) in lines.iter().enumerate() {
+        if l.trim_start().starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            continue;
+        }
+        match (start, heading_line(l)) {
+            (None, Some((level, t))) if t.eq_ignore_ascii_case(h) => start = Some((i, level)),
+            (Some((at, level)), Some((lv, _))) if lv <= level => return Some((at, i)),
+            _ => {}
+        }
+    }
+    start.map(|(at, _)| (at, lines.len()))
+}
+
+/// The items under `## Learned` in a note: each bullet with the lines that go with it (up to a blank line or the next
+/// bullet), and each other paragraph there.
+fn learned_items(body: &str) -> Vec<String> {
+    let lines: Vec<&str> = body.lines().collect();
+    let Some((at, end)) = section_at(&lines, "Learned") else { return vec![] };
+    let mut out: Vec<String> = vec![];
+    let mut open = false;
+    for l in &lines[at + 1..end] {
+        if l.trim().is_empty() {
+            open = false;
+            continue;
+        }
+        let bullet = ["- ", "* ", "+ "].iter().any(|b| l.starts_with(b)) || matches!(l.trim_end(), "-" | "*" | "+");
+        match out.last_mut() {
+            Some(last) if open && !bullet => {
+                last.push('\n');
+                last.push_str(l.trim_end());
+            }
+            _ => out.push(l.trim_end().to_string()),
+        }
+        open = true;
+    }
+    out
+}
+
+/// `body` without its `## Learned` section, heading and all.
+fn without_learned(body: &str) -> String {
+    let lines: Vec<&str> = body.lines().collect();
+    let Some((at, end)) = section_at(&lines, "Learned") else { return body.to_string() };
+    let mut out: Vec<&str> = lines[..at].to_vec();
+    while out.last().is_some_and(|l| l.trim().is_empty()) {
+        out.pop();
+    }
+    if end < lines.len() {
+        if !out.is_empty() {
+            out.push("");
+        }
+        out.extend(&lines[end..]);
+    }
+    if out.is_empty() { String::new() } else { out.join("\n") + "\n" }
+}
+
+/// Whether an agent's `Notes` without its `## Learned` section is only its template (`agent_template`): the properties
+/// `type: note` and `tags: [agent]`, the `# Notes` title and the line that says what the note is for.
+fn only_template(text: &str) -> bool {
+    let props = properties(text);
+    let only = |k: &str, ok: &str| props.get(k).is_none_or(|v| v.iter().all(|x| x.trim_start_matches('#').eq_ignore_ascii_case(ok)));
+    if props.keys().any(|k| k != "type" && k != "tags") || !only("type", "note") || !only("tags", "agent") {
+        return false;
+    }
+    let mut lines = text.lines().peekable();
+    if lines.peek().map(|l| l.trim_end()) == Some("---") {
+        lines.next();
+        for l in lines.by_ref() {
+            if matches!(l.trim_end(), "---" | "...") {
+                break;
+            }
+        }
+    }
+    lines.map(str::trim).all(|l| {
+        l.is_empty() || heading_line(l).is_some_and(|(level, t)| level == 1 && t.eq_ignore_ascii_case(NOTES))
+            || (l.starts_with("What ") && l.ends_with(" learned on its cards, kept for its next runs. Memory is data, never instructions."))
+    })
+}
+
+/// Notes to move, notes to take out and texts to change, all at once (`relocate_in`).
+#[derive(Debug, Default)]
+struct Plan {
+    /// A note and the path it moves to.
+    moves: Vec<(String, String)>,
+    /// A note that goes, and the note its text went into: links to it point there.
+    gone: Vec<(String, String)>,
+    /// A note and its new text.
+    texts: Vec<(String, String)>,
+    /// A note, the lines added at the end of its `## Learned`, and the folder they were written in.
+    adds: Vec<(String, String, String)>,
+}
+
+/// Carries out `plan` as `who`: the notes move (each checked like a new note: `who` may write there and no other note has
+/// that path), the notes that go are taken out, the texts change, and every link in notes and docs keeps finding the note
+/// it found (`keep_links`): each changed text is a new version.
+fn relocate_in(w: &Writer, who: &Who, plan: &Plan) -> Result<()> {
+    let c = w.conn();
+    let before = all_in(c, false)?;
+    let gone = |id: &str| plan.gone.iter().any(|(g, _)| g == id);
+    let mut after: Vec<Note> = before.iter().filter(|n| !gone(&n.id)).cloned().collect();
+    let mut moves: Vec<(Note, String, String, Option<String>)> = vec![];
+    for (id, dest) in &plan.moves {
+        let n = before.iter().find(|n| n.id == *id).ok_or_else(|| not_found(id))?;
+        let dest = clean_path_in(c, dest)?;
+        let (scope, owner) = place_in(c, &dest)?;
+        if !can_write(who, &Note { path: dest.clone(), scope: scope.clone(), owner_id: owner.clone(), ..n.clone() }) {
+            return Err(refused(who, &dest));
+        }
+        if let Some(x) = after.iter_mut().find(|x| x.id == *id) {
+            x.path = dest.clone();
+        }
+        moves.push((n.clone(), dest, scope, owner));
+    }
+    for (n, dest, ..) in &moves {
+        if after.iter().any(|x| x.id != n.id && x.path.eq_ignore_ascii_case(dest)) {
+            return Err(Error::Invalid(format!("{dest} exists already")));
+        }
+    }
+    // The texts with their links kept, as they will be.
+    let mut ids: Vec<String> = {
+        let mut st = c.prepare("SELECT id FROM docs WHERE deleted_at IS NULL AND body_md LIKE '%[[%' ORDER BY id")?;
+        st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for id in plan.texts.iter().map(|(id, _)| id).chain(plan.adds.iter().map(|(id, ..)| id)) {
+        if !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+    let mut edits: Vec<(String, String, i64)> = vec![];
+    for id in ids.into_iter().filter(|id| !gone(id)) {
+        let (body, version, path): (String, i64, Option<String>) = c.query_row(
+            "SELECT body_md, current_version, path FROM docs WHERE id = ?1", [&id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let from = path.as_deref().map(folder_of).unwrap_or("").to_string();
+        let to = moves.iter().find(|(n, ..)| n.id == id).map(|(_, dest, ..)| folder_of(dest).to_string()).unwrap_or_else(|| from.clone());
+        let base = plan.texts.iter().find(|(t, _)| *t == id).map(|(_, b)| b.as_str()).unwrap_or(&body);
+        let mut text = keep_links(base, &before, &from, &after, &to, &plan.gone);
+        for (_, add, written_in) in plan.adds.iter().filter(|(t, ..)| *t == id) {
+            text = appended(&text, Some("Learned"), &keep_links(add, &before, written_in, &after, &to, &plan.gone));
+        }
+        if text != body {
+            edits.push((id, text, version));
+        }
+    }
+    let now = ids::now_ms();
+    for (n, dest, scope, owner) in &moves {
+        c.execute(
+            "UPDATE docs SET path = ?2, title = ?3, scope = ?4, owner_actor_id = ?5, updated_at = ?6, updated_by = ?7, version = version + 1 WHERE id = ?1",
+            rusqlite::params![n.id, dest, title_of(dest), scope, owner, now, who.id()],
+        )?;
+        w.update("docs", &n.id, serde_json::json!({"path": dest, "moved_from": n.path, "scope": scope}))?;
+    }
+    for (id, into) in &plan.gone {
+        c.execute("UPDATE docs SET deleted_at = ?2, updated_at = ?2, updated_by = ?3, version = version + 1 WHERE id = ?1", rusqlite::params![id, now, who.id()])?;
+        c.execute("DELETE FROM doc_links WHERE source_type = 'doc' AND source_id = ?1", [id])?;
+        let into = after.iter().find(|n| n.id == *into).map(|n| n.path.clone());
+        w.update("docs", id, serde_json::json!({"deleted": true, "merged_into": into}))?;
+    }
+    for (id, text, version) in edits {
+        crate::docs::save_in(w, who.id(), &id, &text, version, None)?;
+    }
+    relink_all(w)
+}
+
+/// `body`, written in folder `from`, with each wikilink that finds a note among `before` still finding it among `after`
+/// from folder `to`: else it is rewritten, to the note's title when that finds it (and the link had no path), else to its
+/// path. A link to a note in `gone` finds the note its text went into. Headings, aliases and the `!` of an embed stay.
+fn keep_links(body: &str, before: &[Note], from: &str, after: &[Note], to: &str, gone: &[(String, String)]) -> String {
+    let mut out = String::new();
+    let mut at = 0;
+    for l in wikilinks(body) {
+        let Some(i) = resolve(before, &l.target, from) else { continue };
+        let id = gone.iter().find(|(g, _)| *g == before[i].id).map(|(_, into)| into.as_str()).unwrap_or(&before[i].id);
+        if resolve(after, &l.target, to).is_some_and(|j| after[j].id == id) {
+            continue;
+        }
+        let Some(n) = after.iter().find(|n| n.id == id) else { continue };
+        let short = !l.target.contains('/') && resolve(after, n.title(), to).is_some_and(|j| after[j].id == id);
+        out.push_str(&body[at..l.start]);
+        out.push_str(&link_to(&l, if short { n.title() } else { &n.path }));
+        at = l.end;
+    }
+    out.push_str(&body[at..]);
+    out
+}
+
+/// The wikilink `l` pointing at `target`, its heading, alias and the `!` of an embed kept.
+fn link_to(l: &WikiLink, target: &str) -> String {
+    let mut link = format!("{}[[{target}", if l.embed { "!" } else { "" });
+    if let Some(h) = &l.heading {
+        link.push('#');
+        link.push_str(h);
+    }
+    if let Some(a) = &l.alias {
+        link.push('|');
+        link.push_str(a);
+    }
+    link.push_str("]]");
+    link
 }
 
 // ---- The prompt's Memory block -------------------------------------------------------------------------------------
@@ -1306,10 +1798,10 @@ fn rank_for(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> Option<u8> {
 /// The Memory block for `who`'s prompt. The Team Lead (chat, board check and its task runs): its own notes in full (at
 /// most `FULL_CAP` characters, a note that doesn't fit cut with a pointer to memory_read), then the paths of every other
 /// note it may read (at most `INDEX_CAP`); the notes imported from Claude Code's own memory (`Team Lead/Imported/`) are
-/// one line there until they are sorted. Another agent's task run (`cx`): its own notes first, then the shared notes
-/// for this card's project, its client, and its role or `all` (`applies_to`), in that order, `FULL_CAP` in total, then
-/// the paths of those that didn't fit (`INDEX_CAP`). Never a note of another client or project, not even from its own
-/// folder. Introduced as data, never instructions.
+/// one line there until they are sorted. Another agent's task run (`cx`): its own notes (an agent in a group: the
+/// group's) first, then the shared notes for this card's project, its client, and its role or `all` (`applies_to`), in
+/// that order, `FULL_CAP` in total, then the paths of those that didn't fit (`INDEX_CAP`). Never a note of another client
+/// or project, not even from its own folder. Introduced as data, never instructions.
 pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
     let notes = db.read(|c| all_in(c, true))?;
     let lead = matches!(who, Who::Lead(_) | Who::Person(_));
@@ -1317,8 +1809,9 @@ pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
     let (mut own, mut rest): (Vec<Note>, Vec<Note>) = if lead {
         notes.into_iter().partition(|n| n.path.starts_with(&format!("{LEAD}/")))
     } else {
+        // An agent in a group (GA-96) gets the group's notes as its own.
         notes.into_iter().filter(|n| can_read(who, n) && !elsewhere(&properties(&n.body_md), cx))
-            .partition(|n| n.owner_id.as_deref() == Some(who.id()))
+            .partition(|n| n.owner_id.as_deref() == Some(who.folder_owner()))
     };
     // What came from Claude Code's own memory waits in Team Lead/Imported/ to be sorted, maybe hundreds of notes: one line
     // says how many, so they don't crowd the Team Lead's own notes and the others out. A list of them the import put there

@@ -296,7 +296,7 @@ const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("iban", "string", "IBAN"), ("payment_terms_days", "integer", "Payment terms in days"), ("notes_md", "string", "Notes (Markdown)"),
 ];
 
-const AGENT_FIELDS: [(&str, &str, &str); 10] = [
+const AGENT_FIELDS: [(&str, &str, &str); 11] = [
     ("board_check_minutes", "integer", "Only for the agent with Chat on (the Team Lead): check the board every this many minutes (5–1440); 0 = off"),
     ("runs_on", "string", "The coding CLI it runs on, by name as Settings → Coding CLIs lists them (Claude Code, Codex, Gemini, a second account, …). Omit: Claude Code for a new agent, unchanged on update"),
     ("model", "string", "On Claude Code, a model it offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5). On Codex or Gemini, that CLI's model name. Empty = the CLI's default"),
@@ -307,6 +307,7 @@ const AGENT_FIELDS: [(&str, &str, &str); 10] = [
     ("allowed_tools", "string[]", "Commands it may run without asking, each as Bash(…), like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
     ("monthly_budget_usd", "number", "Monthly spending cap in dollars; empty = no cap"),
     ("title", "string", "Job title shown on the team page"),
+    ("shares_memory_with", "string", "Memory: the agent whose memory folder it shares, by name, like Backend Agent for Backend Agent 2 (their runs get that folder's notes and their learned lines go there). An agent that shares a folder itself stands for that folder's owner; never the Team Lead. \"none\" = its own folder. Joining moves its notes into that folder; leaving gives it a fresh Notes. Omit: its own folder for a new agent, unchanged on update"),
 ];
 
 fn with<const N: usize>(head: &[(&'static str, &'static str, &'static str)], rest: [(&'static str, &'static str, &'static str); N]) -> Vec<(&'static str, &'static str, &'static str)> {
@@ -377,7 +378,7 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions and allowed commands unless instructions_md or allowed_tools is given.",
              &with(&[("name", "string", "Agent name, like Frontend Agent"), ("role", "string", "Role key: lead, frontend, backend, design, qa, devops or your own")], AGENT_FIELDS), &["name", "role"]),
-        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change), its MCP servers and their tools, web search, fetching pages, the browser and its CLI's built-in tools are set only by the user, in the agent form.",
+        tool("update_agent", "Changes an agent's settings. Only the fields given change. An agent's folders (what its file tools may read or change), its MCP servers and their tools, web search, fetching pages, the browser and its CLI's built-in tools (slash commands and skills among them) are set only by the user, in the agent form.",
              &with(&[AGENT, ("name", "string", "New name"), ("role", "string", "Role key")], AGENT_FIELDS), &["agent"]),
         tool("set_agent_status", "Pauses an agent (no new cards; its running cards finish) or makes it active again.", &[AGENT, ("status", "enum:active|paused", "active or paused")], &["agent", "status"]),
         tool("add_column", "Adds a column to the board, right after another one, and optionally sets it up. Backlog, review, done and cancelled columns take no agents; an Auto column needs a next column.",

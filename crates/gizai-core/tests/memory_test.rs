@@ -97,13 +97,13 @@ fn migration_0014_keeps_existing_docs_as_they_were_and_a_projects_doc_list_never
     let dir = tempfile::tempdir().unwrap();
     let path = v13_db(dir.path());
     let db = Db::open(&path).unwrap();
-    // 0014, and GA-86's 0015 (Team Lead may merge) after it in the same step
-    assert_eq!(db::SCHEMA_VERSION, 15);
+    // 0014, and GA-86's 0015 (Team Lead may merge) and GA-96's 0016 (agents share a memory folder) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 16);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (15, 0), "schema 15, foreign keys intact");
+    assert_eq!((v, broken), (16, 0), "schema 16, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v15-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v16-"), "{snaps:?}");
 
     // the old doc is unchanged: a doc of kind doc, no path, scope or owner, its text and versions as they were
     let row: (String, Option<String>, Option<String>, Option<String>, String, i64, i64) = db.read(|c| Ok(c.query_row(

@@ -22,6 +22,10 @@ use crate::AppState;
 /// Per-run limits Gizai enforces itself (Claude Code has no turn cap in print mode); Settings → Runs changes them.
 pub const DEFAULT_MAX_RUN_MINUTES: u64 = 90;
 pub const DEFAULT_MAX_RUN_TOOL_CALLS: u32 = 200;
+/// The same per answer of the Team Lead (a chat answer, a board check, its look at an agent's question), which is short
+/// work; Settings → Runs changes them too (Minutes and Tool calls per chat answer).
+pub const DEFAULT_MAX_CHAT_MINUTES: u64 = 15;
+pub const DEFAULT_MAX_CHAT_TOOL_CALLS: u32 = 60;
 pub const DEFAULT_MAX_CONCURRENT: u32 = 3;
 const BUFFER: usize = 500;
 /// Why a run or chat answer ended when Gizai quit (logging out and SIGTERM included), and the note a chat shows.
@@ -175,6 +179,13 @@ pub struct Settings {
     /// …or after this many tool calls.
     #[serde(default = "default_tool_calls")]
     pub max_run_tool_calls: u32,
+    /// Gizai stops an answer of the Team Lead (a chat answer, a board check, its look at an agent's question) after this
+    /// long…
+    #[serde(default = "default_chat_minutes")]
+    pub max_chat_minutes: u64,
+    /// …or after this many tool calls.
+    #[serde(default = "default_chat_tool_calls")]
+    pub max_chat_tool_calls: u32,
     /// The GitHub CLI (gh) that opens and follows pull requests with your GitHub login; None = found when needed.
     #[serde(default)]
     pub gh_bin: Option<String>,
@@ -188,6 +199,8 @@ pub struct Settings {
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
 fn default_tool_calls() -> u32 { DEFAULT_MAX_RUN_TOOL_CALLS }
+fn default_chat_minutes() -> u64 { DEFAULT_MAX_CHAT_MINUTES }
+fn default_chat_tool_calls() -> u32 { DEFAULT_MAX_CHAT_TOOL_CALLS }
 fn default_push_over() -> String { "ssh".into() }
 
 pub fn get_settings(st: &AppState) -> Settings {
@@ -199,6 +212,8 @@ pub fn get_settings(st: &AppState) -> Settings {
         max_run_usd: settings::get(&st.db, "max_run_usd").ok().flatten(),
         max_run_minutes: settings::get(&st.db, "max_run_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_MINUTES),
         max_run_tool_calls: settings::get(&st.db, "max_run_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_TOOL_CALLS),
+        max_chat_minutes: settings::get(&st.db, "max_chat_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_CHAT_MINUTES),
+        max_chat_tool_calls: settings::get(&st.db, "max_chat_tool_calls").ok().flatten().unwrap_or(DEFAULT_MAX_CHAT_TOOL_CALLS),
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
         push_over: crate::github::push_over_name(st),
         notifications: crate::notifications::switches(&st.db),
@@ -218,6 +233,12 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !(20..=2000).contains(&s.max_run_tool_calls) {
         return Err("a run may make between 20 and 2000 tool calls".into());
     }
+    if !(5..=240).contains(&s.max_chat_minutes) {
+        return Err("a chat answer may last between 5 and 240 minutes".into());
+    }
+    if !(20..=500).contains(&s.max_chat_tool_calls) {
+        return Err("a chat answer may make between 20 and 500 tool calls".into());
+    }
     if !crate::github::PUSH_OVER_NAMES.contains(&s.push_over.as_str()) {
         return Err("pushes go over ssh or https".into());
     }
@@ -230,6 +251,8 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_run_usd", &s.max_run_usd).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_minutes", &s.max_run_minutes).map_err(|e| e.to_string())?;
     settings::set(&st.db, "max_run_tool_calls", &s.max_run_tool_calls).map_err(|e| e.to_string())?;
+    settings::set(&st.db, "max_chat_minutes", &s.max_chat_minutes).map_err(|e| e.to_string())?;
+    settings::set(&st.db, "max_chat_tool_calls", &s.max_chat_tool_calls).map_err(|e| e.to_string())?;
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
     Ok(())
@@ -881,6 +904,22 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             None
         }
     };
+    // GA-92: the agent's own `git push` to the project's repository goes the way Gizai's push after the run goes, through
+    // git settings in the run's environment only (every CLI, new and continued runs). Over HTTPS without gh the run
+    // starts without them, and its log says why.
+    let (st2, p2, dir) = (st.clone(), project.clone(), wt.path.clone());
+    let git_config = match tokio::task::spawn_blocking(move || crate::pulls::run_git_config(&st2, &p2, &dir)).await {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            notes.push(format!("Couldn't set up this run's own git push over HTTPS with gh's login (Settings → GitHub): {e}. A git \
+                                push in this run goes as the repository's remote says."));
+            vec![]
+        }
+        Err(e) => {
+            eprintln!("gizai: setting up the own git push of run {run_id} failed: {e}");
+            vec![]
+        }
+    };
     let allowed_tools: Vec<String> =
         if agent.allowed_tools.is_empty() { DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() };
     // Web search, fetching pages and the CLI's other tools come only from their switches (agent form → Tools), never from the
@@ -929,6 +968,13 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if spec.kind == Kind::ClaudeCode {
         allowed_tools.extend(agent.cli_tools.builtin.iter().filter(|t| gizai_agents::tool_catalog::switchable(spec.kind, t)).cloned());
     }
+    // Slash commands and skills (agent form → Tools → Built-in tools): on Claude Code only, new, continued and nudged runs
+    // alike. On another CLI the run goes without them, and its log says why.
+    let no_slash = gizai_agents::tool_catalog::slash_support(spec.kind);
+    if agent.cli_tools.slash_commands && let Some(why) = no_slash {
+        notes.push(format!("{} runs on {}, so this run goes without slash commands and skills: {why}", agent.name, cli.name));
+    }
+    let slash_commands = agent.cli_tools.slash_commands && no_slash.is_none();
     // Content from outside (an MCP server's answers, web pages, search results, the browser) is data: the prompt says so. A
     // CLI that searches the web in every run (Gemini) gets it in every run.
     let untrusted = mcp_config.is_some() || web.search || web.fetch || gizai_agents::tool_catalog::web_in_every_run(spec.kind);
@@ -948,11 +994,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
         prompt: if untrusted { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
-        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web,
+        permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web, slash_commands,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
-        folders, temp_dir,
+        folders, temp_dir, git_config,
     };
     let exec = agent_cli::task_exec(&spec, &run);
     // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then

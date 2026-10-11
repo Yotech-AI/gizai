@@ -21,7 +21,7 @@ fn v14_db(dir: &std::path::Path) -> std::path::PathBuf {
         include_str!("../migrations/0012_chat_runs_on.sql"), include_str!("../migrations/0013_bitbucket.sql"),
         include_str!("../migrations/0014_memory.sql"),
     ];
-    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
+    assert_eq!(all.len(), 14, "schema 14");
     Migrations::new(all.iter().map(|sql| M::up(sql)).collect()).to_latest(&mut c).unwrap();
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     c.execute_batch("
@@ -40,12 +40,13 @@ fn migration_0015_adds_the_switch_off_for_every_existing_project_after_a_backup(
     let dir = tempfile::tempdir().unwrap();
     let path = v14_db(dir.path());
     let db = Db::open(&path).unwrap();
-    assert_eq!(db::SCHEMA_VERSION, 15);
+    // 0015, and GA-96's 0016 (agents share a memory folder) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 16);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (15, 0), "schema 15, foreign keys intact");
+    assert_eq!((v, broken), (16, 0), "schema 16, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v15-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v16-"), "{snaps:?}");
     // the column: NOT NULL, 0 by default, 0 for both old projects
     let (notnull, default): (i64, Option<String>) = db.read(|c| Ok(c.query_row(
         "SELECT \"notnull\", dflt_value FROM pragma_table_info('projects') WHERE name = 'lead_may_merge'", [], |r| Ok((r.get(0)?, r.get(1)?)))?)).unwrap();

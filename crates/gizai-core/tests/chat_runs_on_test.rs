@@ -326,9 +326,9 @@ fn schema_10_gives_existing_sessions_the_cli_of_their_last_turn() {
         say(&db, &id, "user", "Hi");
         (id, fresh)
     };
-    // One schema step back: 0012 hadn't run (nor GA-19's 0014 and GA-86's 0015, which come after it).
+    // One schema step back: 0012 hadn't run (nor GA-19's 0014, GA-86's 0015 and GA-96's 0016, which come after it).
     let c = rusqlite::Connection::open(&path).unwrap();
-    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; ALTER TABLE projects DROP COLUMN lead_may_merge; {} COMMIT;", undo_0014())).unwrap();
+    c.execute_batch(&format!("PRAGMA foreign_keys=OFF; BEGIN; {} ALTER TABLE projects DROP COLUMN lead_may_merge; {} COMMIT;", undo_0016(&c), undo_0014())).unwrap();
     c.execute_batch("DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json;
                      ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli; PRAGMA user_version = 11;").unwrap();
     drop(c);
@@ -339,6 +339,25 @@ fn schema_10_gives_existing_sessions_the_cli_of_their_last_turn() {
     assert_eq!(chat::get_thread(&db, &fresh).unwrap().session_cli, None);
     assert_eq!(chat::messages(&db, &id).unwrap()[0].meta, None);
     assert!(chat::queue(&db, &id).unwrap().is_empty());
+}
+
+/// Undoes GA-96's 0016: agent_configs rebuilt without shares_memory_with (it has a foreign key, so it can't be dropped),
+/// its other columns, rows and indexes as they were. Runs inside an open transaction, before anything else that changes
+/// agent_configs.
+fn undo_0016(c: &rusqlite::Connection) -> String {
+    let create: String = c.query_row("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_configs'", [], |r| r.get(0)).unwrap();
+    let without = create.replacen(", shares_memory_with TEXT REFERENCES actors(id)", "", 1);
+    assert_ne!(without, create, "0016's column: {create}");
+    let table = format!("CREATE TABLE agent_configs_v15 {}", &without[without.find('(').unwrap()..]);
+    let list = |sql: &str| -> Vec<String> {
+        let mut st = c.prepare(sql).unwrap();
+        st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<Vec<String>>>().unwrap()
+    };
+    let columns = list("SELECT name FROM pragma_table_info('agent_configs') WHERE name <> 'shares_memory_with' ORDER BY cid").join(", ");
+    let indexes: String = list("SELECT sql FROM sqlite_master WHERE tbl_name = 'agent_configs' AND type IN ('index', 'trigger') AND sql IS NOT NULL")
+        .into_iter().map(|s| format!("{s}; ")).collect();
+    format!("{table}; INSERT INTO agent_configs_v15 ({columns}) SELECT {columns} FROM agent_configs;
+        DROP TABLE agent_configs; ALTER TABLE agent_configs_v15 RENAME TO agent_configs; {indexes}")
 }
 
 /// Undoes GA-19's 0014: docs rebuilt as 0001 made them (owner_actor_id has a foreign key, so it can't be dropped), its

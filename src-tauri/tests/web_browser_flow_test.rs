@@ -370,9 +370,14 @@ async fn the_tools_a_run_reports_are_shown_as_seen_in_the_last_run_and_one_the_c
     // switched on: allowed in its task runs; a catalog tool with no switch of its own is refused
     app_mcp::save_cli_tools(st, &t.agent, CliTools { builtin: vec!["FancyNewTool".into()], ..Default::default() }).unwrap();
     assert!(t.run().await.allowed().contains(&"FancyNewTool".to_string()));
-    for id in ["Skill", "Bash", "WebSearch", "Read"] {
+    for id in ["Bash", "WebSearch", "Read"] {
         let e = app_mcp::save_cli_tools(st, &t.agent, CliTools { builtin: vec![id.into()], ..Default::default() }).unwrap_err();
         assert!(e.contains("can't be switched on"), "{id}: {e}");
+    }
+    // GA-93: SlashCommand and Skill come only with their own switch, Slash commands and skills
+    for id in ["Skill", "SlashCommand"] {
+        let e = app_mcp::save_cli_tools(st, &t.agent, CliTools { builtin: vec![id.into()], ..Default::default() }).unwrap_err();
+        assert!(e.contains("comes only with Slash commands and skills"), "{id}: {e}");
     }
 }
 

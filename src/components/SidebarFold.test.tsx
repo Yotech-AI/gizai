@@ -338,3 +338,31 @@ describe("nothing else changes (GA-90)", () => {
     expect(page).toMatch(/<div class="side-foot"><div class="nav-section"><div class="nav-label">Company<\/div>/);
   });
 });
+
+// GA-96: an agent that shares another agent's memory folder shows the group's folder and its count, titled so.
+describe("Memory entries for agents that share one folder (GA-96)", () => {
+  const be2 = agent("be2", "Backend Agent 2", "backend", { sharesMemoryWith: "be" });
+  const shop = agent("shop", "Shop Agent", "backend", { sharesMemoryWith: "other" });
+  beforeEach(() => {
+    team([you, lead, backend, be2, qa, shop]);
+    state.data.notes = [
+      note("n1", "Standards/Rust style", "shared"), note("n2", "Agents/Backend Agent/Notes", "agent", "be"),
+      note("n3", "Agents/Backend Agent/Gotchas", "agent", "be"), note("n4", "Agents/QA Agent/Notes", "agent", "qa"),
+      note("n5", "Agents/Other Team Agent/Notes", "agent", "other"),
+    ];
+  });
+
+  it("gives every member of a group the group's folder and its count, titled Shares <owner>'s folder", () => {
+    const memory = section(html(), "Memory");
+    expect(memory).toMatch(/href="#\/memory\/agent\/be2" title="Shares Backend Agent&#x27;s folder">.*?<span>Backend Agent 2<\/span><span class="meta"><span class="count" title="Notes">2<\/span>/);
+    expect(memory).toMatch(/href="#\/memory\/agent\/be" title="Backend Agent: its own folder, shared with Backend Agent 2">.*?<span class="count" title="Notes">2<\/span>/);
+    // an owner on another team: its folder's name from the notes
+    expect(memory).toMatch(/href="#\/memory\/agent\/shop" title="Shares Other Team Agent&#x27;s folder">.*?<span class="count" title="Notes">1<\/span>/);
+  });
+
+  it("leaves an agent that shares with nobody as it was", () => {
+    const memory = section(html(), "Memory");
+    expect(memory).toMatch(/href="#\/memory\/agent\/qa" title="QA Agent: its own folder">.*?<span class="count" title="Notes">1<\/span>/);
+    expect(memory).toMatch(/<span>Team Lead<\/span><span class="meta"><span class="count" title="Notes">5<\/span>/);
+  });
+});

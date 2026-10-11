@@ -45,14 +45,15 @@ case "$prompt" in
   *LEAD_SILENT*) say 'I looked in memory and found nothing.'; exit 0 ;;
   *LEAD_LOOP*)
     trap 'exit 130' INT TERM
-    echo "$init"
+    lines=("$init")
     n=0
     while [ $n -lt 70 ]; do
-      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%s","name":"Grep","input":{"pattern":"csv"}}]},"session_id":"L1"}\n' "$n"
+      printf -v line '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%s","name":"Grep","input":{"pattern":"csv"}}]},"session_id":"L1"}' "$n"
+      lines+=("$line")
       n=$((n+1))
     done
-    sleep 30 &
-    wait $!
+    # its lines come from the foreground child that then waits, perl, as in fake-claude.sh's print_and_wait (GA-89)
+    perl -e '$| = 1; print map { "$_\n" } @ARGV; sleep 30' -- "${lines[@]}"
     exit 0 ;;
   *LEAD_ESCALATE*) say 'This is about money.\nGIZAI_RESULT: {\"outcome\":\"escalated\",\"reason\":\"the client pays per export, so it is about money\",\"options\":[\"CSV for every invoice\",\"one JSON file a month\"],\"advice\":\"CSV: the accountant uses Excel\"}'; exit 0 ;;
   *LEAD_AGAIN*) say 'Memory has it.\nGIZAI_RESULT: {\"outcome\":\"answered\",\"answer\":\"Use CSV. FAKE_ASKS\"}'; exit 0 ;;
@@ -343,7 +344,7 @@ async fn a_failed_a_silent_and_a_timed_out_team_lead_run_send_the_question_to_yo
     for (word, status, reason) in [
         ("LEAD_CRASH", "failed", "its look at the question failed ("),
         ("LEAD_SILENT", "succeeded", "it ended without an answer"),
-        ("LEAD_LOOP", "timed_out", "its look at the question stopped at the limit (15 min or 60 tool calls)"),
+        ("LEAD_LOOP", "timed_out", "its look at the question stopped at the tool-call limit (15 min or 60 tool calls per chat answer, Settings → Runs)"),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let t = setup(tmp.path(), &format!("FAKE_ASKS {word}"));
@@ -361,6 +362,23 @@ async fn a_failed_a_silent_and_a_timed_out_team_lead_run_send_the_question_to_yo
         assert_eq!((lr.trigger.as_str(), lr.status.as_str()), ("question", status), "{word}: {:?}", lr.error);
         assert!(s.continued.is_none(), "{word}");
     }
+}
+
+#[tokio::test]
+async fn the_team_leads_look_at_a_question_stops_at_the_chat_answer_limits_in_settings() {
+    // GA-94: Tool calls per chat answer (Settings → Runs) at 20; LEAD_LOOP makes 70
+    let tmp = tempfile::tempdir().unwrap();
+    let t = setup(tmp.path(), "FAKE_ASKS LEAD_LOOP");
+    let s = gizai_lib::runs::get_settings(&t.st);
+    gizai_lib::runs::save_settings(&t.st, &gizai_lib::runs::Settings { max_chat_minutes: 30, max_chat_tool_calls: 20, ..s }).unwrap();
+    let asked = t.run().await;
+    let s = t.settled(&asked.id).await;
+    let why = "stopped at the tool-call limit (30 min or 20 tool calls per chat answer, Settings → Runs)";
+    assert_eq!((s.state.as_str(), s.reason.as_deref()), ("escalated", Some(format!("its look at the question {why}").as_str())));
+    let lr = t.lead_runs().remove(0);
+    assert_eq!((lr.trigger.as_str(), lr.status.as_str(), lr.error.as_deref()), ("question", "timed_out", Some(format!("it {why}").as_str())));
+    // the asking agent's own run kept the run limits
+    assert_eq!(asked.status, "succeeded", "{:?}", asked.error);
 }
 
 #[tokio::test]

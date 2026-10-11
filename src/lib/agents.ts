@@ -66,7 +66,9 @@ export type AgentDraft = { name: string; role: string; model: string; instructio
   /** Its CLI's own tools: web search, fetching pages, built-in tools (Tools; saved apart from the rest). */
   cliTools: CliTools;
   /** Use memory: its runs get a Memory section and its learned lines are kept. */
-  memory: boolean };
+  memory: boolean;
+  /** Shares memory with (GA-96): the id of the agent whose memory folder it shares, "" for its own folder. */
+  memoryWith: string };
 
 export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
   return {
@@ -79,6 +81,7 @@ export function draftFrom(m?: Member | null, preset?: AgentPreset): AgentDraft {
     mcp: (m?.tools?.mcp ?? []).map((s) => ({ serverId: s.serverId, on: s.on, toolsOff: [...s.toolsOff] })),
     cliTools: cliToolsFrom(m?.cliTools),
     memory: m?.useMemory !== false,
+    memoryWith: m?.sharesMemoryWith ?? "",
   };
 }
 
@@ -98,5 +101,28 @@ export function inputFrom(d: AgentDraft): AgentInput {
     boardCheckMinutes: d.chat && d.boardCheck ? Number(d.boardMinutes) || 0 : 0,
     folders: foldersFrom(d.folders),
     useMemory: d.memory,
+    // The Team Lead (the lead role or Chat) keeps its own notes: it shares no folder.
+    sharesMemoryWith: isLeadDraft(d) ? "" : d.memoryWith,
   };
+}
+
+/** The draft is the Team Lead's: the lead role, or Chat on. */
+export const isLeadDraft = (d: Pick<AgentDraft, "role" | "chat">) => d.role === "lead" || d.chat;
+
+type Sharing = Pick<Member, "actorId" | "name" | "isLead" | "chatEnabled" | "status" | "sharesMemoryWith">;
+
+/** Shares memory with (GA-96): the agents agent `selfId` may share a folder with, by name: every other agent but the Team
+ *  Lead (the lead role or Chat), each with the agent whose folder it shares itself (`owner`, null when it has its own). */
+export function shareChoices<M extends Sharing>(selfId: string | null | undefined, agents: readonly M[]): { agent: M; owner: M | null }[] {
+  return agents.filter((a) => a.actorId !== selfId && !a.isLead && !a.chatEnabled && a.status !== "archived")
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((a) => ({ agent: a, owner: a.sharesMemoryWith && a.sharesMemoryWith !== a.actorId ? agents.find((o) => o.actorId === a.sharesMemoryWith) ?? null : null }));
+}
+
+/** What picking agent `id` under Shares memory with stores: that agent, or when it shares a folder itself that folder's
+ *  owner (no chains); "" (its own folder) when that owner is agent `selfId` itself. */
+export function shareTarget(id: string, selfId: string | null | undefined, agents: readonly Pick<Member, "actorId" | "sharesMemoryWith">[]): string {
+  if (!id) return "";
+  const owner = agents.find((a) => a.actorId === id)?.sharesMemoryWith || id;
+  return owner === selfId ? "" : owner;
 }

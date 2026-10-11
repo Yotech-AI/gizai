@@ -83,12 +83,20 @@ pub struct TaskRun {
     /// The run's temp folder (`<worktree>/.gizai-tmp`, `worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and
     /// TEMP. None when Gizai couldn't make it.
     pub temp_dir: Option<String>,
+    /// The git settings that send the agent's own push to the project's repository the way Gizai pushes
+    /// (`connection::PushOver::run_config`): every CLI gets them as GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and
+    /// GIT_CONFIG_VALUE_<n> (`task_exec`). Empty: none.
+    pub git_config: Vec<(String, String)>,
     /// Claude Code: the run's MCP config file (`mcp_run`), with the agent's MCP servers on.
     pub mcp_config: Option<PathBuf>,
     /// Claude Code: more tools to refuse, like the MCP tools switched off (`mcp_run::permissions`).
     pub disallowed_tools: Vec<String>,
     /// The agent's Web switches (agent form → Tools → Web), in each CLI's own terms (`task_exec`).
     pub web: WebTools,
+    /// Claude Code: the agent's Slash commands and skills switch (agent form → Tools → Built-in tools). On, the run goes
+    /// without `--disable-slash-commands` and gets `SlashCommand` and `Skill` in its allowed tools; hooks stay off and
+    /// settings still come from the user's only. Off by default; other CLIs ignore it.
+    pub slash_commands: bool,
 }
 
 /// The Web switches of a run. Claude Code gets `WebSearch` and `WebFetch` (or one `WebFetch(domain:…)` per domain) in its
@@ -149,12 +157,15 @@ pub fn folders_left_out(kind: Kind, folders: &[RunFolder]) -> Option<String> {
 /// - Gemini: `--include-directories` for each read and change folder; read folders are left out;
 /// - Other: none.
 ///
-/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, after its own environment lines.
+/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, then the git settings of the agent's own push
+/// (`TaskRun::git_config`) as GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n>, after its own environment
+/// lines. Codex gets those also in its shell environment policy (`codex_args`).
 pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
     let mut exec = cli_exec(cli, run);
     if let Some(dir) = &run.temp_dir {
         exec.env.extend(crate::worktree::temp_env(std::path::Path::new(dir)));
     }
+    exec.env.extend(crate::connection::git_env(&run.git_config));
     exec
 }
 
@@ -164,11 +175,13 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             bin: cli.bin.clone(), prompt: run.prompt.clone(), session_id: run.session_id.clone(), resume: run.resume,
             permission_mode: if run.permission_mode.is_empty() { "acceptEdits".into() } else { run.permission_mode.clone() },
             allowed_tools: run.allowed_tools.iter().cloned()
-                .chain(crate::tool_catalog::claude_web_rules(run.web.search, run.web.fetch, &run.web.fetch_domains)).collect(),
+                .chain(crate::tool_catalog::claude_web_rules(run.web.search, run.web.fetch, &run.web.fetch_domains))
+                .chain(crate::tool_catalog::claude_slash_tools(run.slash_commands)).collect(),
             model: run.model.clone(), max_budget_usd: run.max_budget_usd,
-            // Your own hooks (e.g. a SessionStart hook) and plugin skills (e.g. superpowers) are for your sessions, not
-            // for headless agents. Nor is Claude Code's own memory: agents keep their notes in Gizai's.
-            disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: run.effort.clone(), env: cli.env.clone(),
+            // Your own hooks (e.g. a SessionStart hook) are for your sessions, not for headless agents, and so are your
+            // slash commands and plugin skills (e.g. superpowers), unless the agent has Slash commands and skills on. Nor
+            // is Claude Code's own memory: agents keep their notes in Gizai's.
+            disable_hooks: true, disable_skills: !run.slash_commands, disable_auto_memory: true, effort: run.effort.clone(), env: cli.env.clone(),
             add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(),
             disallowed_tools: claude_read_only(&run.folders).into_iter().chain(run.disallowed_tools.iter().cloned()).collect(),
             mcp_config: run.mcp_config.clone(),
@@ -220,6 +233,12 @@ fn codex_args(run: &TaskRun) -> Vec<String> {
                 a.extend(["-c".into(), format!("sandbox_workspace_write.writable_roots=[{}]", roots.join(","))]);
             }
         }
+    }
+    // The git settings of the agent's own push, also in the policy's `set`: a policy that leaves out names with KEY in
+    // them (ignore_default_excludes = false) would keep GIT_CONFIG_COUNT without GIT_CONFIG_KEY_0, and then every git
+    // command fails.
+    for (name, value) in crate::connection::git_env(&run.git_config) {
+        a.extend(["-c".into(), format!("shell_environment_policy.set.{name}={}", toml_str(&value))]);
     }
     if run.resume {
         a.push(run.session_id.clone());

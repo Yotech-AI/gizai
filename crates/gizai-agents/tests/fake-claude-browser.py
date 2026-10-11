@@ -5,9 +5,10 @@ src-tauri/tests/web_browser_flow_test.rs), never the real one. Like Claude Code,
 init line naming them and works until it is interrupted: on SIGINT it exits 130 at once, without ending the servers
 itself, so only Gizai's signals to the run's process group reach them.
 
-Its environment holds FAKE_BROWSER_PIDS=<folder>: claude.pid goes there, and the servers get it too (fake-npx-browser.sh
-writes server.pid and helper.pid there). TOOLCALLS=<n> in the prompt: once the servers are up it makes n browser tool calls
-(assistant tool_use lines), for the cap on tool calls per run."""
+Its environment holds FAKE_BROWSER_PIDS=<folder>: claude.pid goes there once the servers wait (so a test that has all three
+PIDs can Stop the run), and the servers get it too (fake-npx-browser.sh writes server.pid, helper.pid and server.ready
+there). TOOLCALLS=<n> in the prompt: once the servers are up it makes n browser tool calls (assistant tool_use lines), for
+the cap on tool calls per run."""
 import json, os, re, signal, subprocess, sys, time
 
 argv = sys.argv[1:]
@@ -35,13 +36,14 @@ for name, s in servers.items():
     env = dict(os.environ)
     env.update(s.get("env") or {})
     children.append(subprocess.Popen([s["command"]] + list(s.get("args") or []), env=env, stdin=subprocess.PIPE))
+t0 = time.time()
+# server.ready, not server.pid: the server writes it once it waits for Stop's signals (see fake-mcp-server.sh, GA-89)
+while children and not (os.path.exists(os.path.join(pids, "server.ready")) and os.path.exists(os.path.join(pids, "helper.pid"))) \
+        and time.time() - t0 < 10:
+    time.sleep(0.02)
 with open(os.path.join(pids, "claude.pid.tmp"), "w") as f:
     f.write(str(os.getpid()))
 os.rename(os.path.join(pids, "claude.pid.tmp"), os.path.join(pids, "claude.pid"))
-t0 = time.time()
-while children and not (os.path.exists(os.path.join(pids, "server.pid")) and os.path.exists(os.path.join(pids, "helper.pid"))) \
-        and time.time() - t0 < 10:
-    time.sleep(0.02)
 print(json.dumps({"type": "system", "subtype": "init", "session_id": "S", "model": "fake-model",
                   "tools": ["Read", "Bash", "mcp__chrome-devtools__navigate_page", "mcp__chrome-devtools__click"],
                   "mcp_servers": [{"name": n, "status": "connected"} for n in servers]}), flush=True)

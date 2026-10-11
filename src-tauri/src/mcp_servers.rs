@@ -701,6 +701,8 @@ pub struct BuiltinSection {
     pub source: String,
     /// The CLI can be asked for its tools (Claude Code: Ask Claude Code again).
     pub can_ask: bool,
+    /// Why the CLI can't have the Slash commands and skills switch; None when it can (Claude Code).
+    pub slash: Option<String>,
 }
 
 /// The agent form's Tools besides the MCP servers, for the CLI picked in the form (`cli_id`) and the agent, if it exists.
@@ -751,7 +753,8 @@ pub fn tools_view(st: &AppState, agent_id: Option<&str>, cli_id: &str) -> Result
         (gizai_agents::cli::Kind::ClaudeCode, None, None) => (None, "Gizai's catalog: after its first run, or Ask Claude Code again, it shows the tools Claude Code itself reports.".into()),
         (k, _, _) => (None, tool_catalog::source_note(k).unwrap_or_default().to_string()),
     };
-    let builtin = BuiltinSection { tools: tool_catalog::merged(kind, reported.as_deref()), source, can_ask: kind == gizai_agents::cli::Kind::ClaudeCode };
+    let builtin = BuiltinSection { tools: tool_catalog::merged(kind, reported.as_deref()), source, can_ask: kind == gizai_agents::cli::Kind::ClaudeCode,
+                                   slash: tool_catalog::slash_support(kind).map(str::to_string) };
     let saved = match agent_id {
         Some(a) => Some(core_mcp::agent_cli_tools(&st.db, a).map_err(|e| e.to_string())?),
         None => None,
@@ -759,20 +762,24 @@ pub fn tools_view(st: &AppState, agent_id: Option<&str>, cli_id: &str) -> Result
     Ok(ToolsView { kind: cli.kind, web, browser, builtin, saved })
 }
 
-/// Saves the agent's Web and Built-in tool switches and the browser's certificate option. Only you: no Team Lead tool
-/// calls this. A switch its CLI can't take is refused with why.
+/// Saves the agent's Web and Built-in tool switches (Slash commands and skills among them) and the browser's certificate
+/// option. Only you: no Team Lead tool calls this. A switch its CLI can't take is refused with why.
 pub fn save_cli_tools(st: &AppState, agent_id: &str, tools: core_mcp::CliTools) -> Result<core_mcp::CliTools, String> {
     use gizai_agents::tool_catalog;
     let agent = gizai_core::team::agent(&st.db, agent_id).map_err(|e| e.to_string())?;
     let cli = crate::clis::of_agent(st, agent.adapter.as_deref())?;
     let kind = gizai_agents::cli::Kind::parse(&cli.kind).unwrap_or(gizai_agents::cli::Kind::Other);
     let (search, fetch, domains) = tool_catalog::web_support(kind);
-    for (on, why) in [(tools.web_search, search), (tools.web_fetch, fetch), (tools.web_fetch && !tools.fetch_domains.is_empty(), domains)] {
+    for (on, why) in [(tools.web_search, search), (tools.web_fetch, fetch), (tools.web_fetch && !tools.fetch_domains.is_empty(), domains),
+                      (tools.slash_commands, tool_catalog::slash_support(kind))] {
         if let (true, Some(why)) = (on, why) {
             return Err(format!("{} runs on {}: {why}", agent.name, cli.name));
         }
     }
     if let Some(t) = tools.builtin.iter().find(|t| !tool_catalog::switchable(kind, t)) {
+        if tool_catalog::find(kind, t.trim()).is_some_and(|c| c.how == tool_catalog::how::SLASH) {
+            return Err(format!("{t} comes only with Slash commands and skills: switch that on for {} instead", agent.name));
+        }
         return Err(format!("{t} can't be switched on for {}: {} gives it through its own settings, or not at all", agent.name, cli.name));
     }
     core_mcp::set_cli_tools(&st.db, &st.you_id, agent_id, tools).map_err(|e| e.to_string())

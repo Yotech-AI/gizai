@@ -192,7 +192,7 @@ pub(crate) struct Cx<'a> {
     pub thread: Option<&'a str>,
     /// The board check run the call comes from, if any.
     pub check: Option<&'a str>,
-    /// The chat answer's stream the call comes from, if an answer's Claude Code made it.
+    /// The answer's stream a call over MCP comes from; None for a call made directly.
     from: Option<Stream<'a>>,
 }
 

@@ -174,6 +174,26 @@ async fn chat_answer_limits_are_15_minutes_and_60_tool_calls_unless_changed_and_
     assert_eq!((s.max_chat_minutes, s.max_chat_tool_calls), (120, 300), "saved");
 }
 
+/// GA-99: Settings → Runs saves the run limits and the chat answer limits in one save; a later save of either keeps the
+/// other, and all four stay after a restart.
+#[tokio::test]
+async fn one_save_keeps_the_run_limits_and_the_chat_answer_limits_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    {
+        let st = gizai_lib::test_state(tmp.path());
+        let s = runs::get_settings(&st);
+        runs::save_settings(&st, &Settings { max_run_minutes: 30, max_run_tool_calls: 150, max_chat_minutes: 200, max_chat_tool_calls: 450, ..s }).unwrap();
+        let s = runs::get_settings(&st);
+        assert_eq!((s.max_run_minutes, s.max_run_tool_calls, s.max_chat_minutes, s.max_chat_tool_calls), (30, 150, 200, 450));
+        runs::save_settings(&st, &Settings { max_chat_minutes: 10, ..s }).unwrap();
+        runs::save_settings(&st, &Settings { max_run_tool_calls: 1000, ..runs::get_settings(&st) }).unwrap();
+    }
+    // Gizai starts again on the same data folder
+    let st = gizai_lib::test_state(tmp.path());
+    let s = runs::get_settings(&st);
+    assert_eq!((s.max_run_minutes, s.max_run_tool_calls, s.max_chat_minutes, s.max_chat_tool_calls), (30, 1000, 10, 450));
+}
+
 #[tokio::test]
 async fn chat_answer_limits_outside_5_to_240_minutes_or_20_to_500_tool_calls_are_refused_with_the_range_and_nothing_changes() {
     let tmp = tempfile::tempdir().unwrap();

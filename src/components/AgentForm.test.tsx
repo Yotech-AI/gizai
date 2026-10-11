@@ -3,8 +3,9 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentDrawer } from "./AgentForm";
-import { draftFrom, foldersFrom, inputFrom } from "../lib/agents";
+import { draftFrom, foldersFrom, inputFrom, type AgentDraft } from "../lib/agents";
 import { FOLDERS_NOTE } from "../lib/clis";
+import { fitCliTools, NO_CLI_TOOLS, sameCliTools } from "../lib/cliTools";
 import type { Member } from "../types";
 
 describe("Folders in the agent form", () => {
@@ -137,5 +138,40 @@ describe("Shares memory with in the agent form (GA-96)", () => {
       expect(select(html), JSON.stringify(preset)).toMatch(/^<select id="a-shares" class="select" disabled="">/);
       expect(html).toContain("The Team Lead keeps its own notes, in Team Lead/.");
     }
+  });
+});
+
+// GA-99, where GA-93 meets GA-96: Slash commands and skills (Tools, saved with saveAgentCliTools) and Shares memory with
+// (Memory, saved with updateAgent) in one form. A change to either keeps the other in what Save changes sends.
+describe("Slash commands and skills next to Shares memory with (GA-99)", () => {
+  const saved = { actorId: "a2", name: "Backend Agent 2", roleKey: "backend", kind: "agent", isLead: false, allowedTools: [], adapter: "claude_code",
+    sharesMemoryWith: "a1", cliTools: { ...NO_CLI_TOOLS, slashCommands: true } } as unknown as Member;
+  /** What Save changes sends for draft `d` (as AgentDrawer's save): the agent with its Shares memory with, and its Tools
+   *  only when they changed (null: not sent). */
+  const sends = (d: AgentDraft, initial: AgentDraft) => {
+    const tools = fitCliTools(d.cliTools, "claude_code");
+    return { sharesMemoryWith: inputFrom(d).sharesMemoryWith, slashCommands: sameCliTools(tools, initial.cliTools) ? null : tools.slashCommands };
+  };
+
+  it("has both in one form: Shares memory with in Memory, and Tools further down", () => {
+    const html = renderToStaticMarkup(<AgentDrawer teamId="t1" preset={{ role: "backend" }} onClose={() => {}} />);
+    const at = (s: string) => html.indexOf(s);
+    expect(at('<label for="a-shares">Shares memory with</label>')).toBeGreaterThan(at("<h3>Memory</h3>"));
+    expect(at("<h3>Tools</h3>")).toBeGreaterThan(at('<label for="a-shares">Shares memory with</label>'));
+    // the switch shows in Tools once its CLI's tools load (AgentCliTools.test.tsx)
+    expect(html.slice(at("<h3>Tools</h3>"))).toContain("Loading the tools…");
+  });
+
+  it("loads both, and switching slash commands off keeps Shares memory with", () => {
+    const initial = draftFrom(saved);
+    expect([initial.cliTools.slashCommands, initial.memoryWith]).toEqual([true, "a1"]);
+    expect(sends({ ...initial, cliTools: { ...initial.cliTools, slashCommands: false } }, initial)).toEqual({ sharesMemoryWith: "a1", slashCommands: false });
+  });
+
+  it("changing Shares memory with keeps slash commands on and doesn't send the Tools again", () => {
+    const initial = draftFrom(saved);
+    expect(sends({ ...initial, memoryWith: "" }, initial)).toEqual({ sharesMemoryWith: "", slashCommands: null });
+    expect(sends({ ...initial, memoryWith: "a3" }, initial)).toEqual({ sharesMemoryWith: "a3", slashCommands: null });
+    expect(draftFrom({ ...saved, sharesMemoryWith: "a3" } as Member).cliTools.slashCommands).toBe(true);
   });
 });

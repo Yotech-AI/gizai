@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use gizai_agents::stream::RunEvent;
 use gizai_core::clis::Cli;
+use gizai_core::mcp_servers::CliTools;
 use gizai_core::model::{AgentInput, TaskPatch};
 
 const FAKE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/gizai-agents/tests/fake-claude.sh");
@@ -435,4 +436,43 @@ async fn over_https_without_gh_the_run_starts_without_the_settings_and_its_log_s
         && n.contains(&format!("The GitHub CLI isn't at {} any more", missing.display()))), "{said:?}");
     let log = std::fs::read_to_string(&gizai_core::runs::get(&st.db, &s.run_id).unwrap().log_path).unwrap();
     assert!(log.lines().any(|l| l.contains("\"gizai_note\"") && l.contains("Couldn't set up this run's own git push")), "in the run's log: {log}");
+}
+
+/// GA-99, where GA-92 meets GA-93: a Claude Code agent with Slash commands and skills switched on, on a card whose project
+/// is linked to GitHub. One run gets both: the push settings in its environment (its own push reaches GitHub over SSH)
+/// and the command line without --disable-slash-commands, with SlashCommand and Skill allowed.
+#[tokio::test]
+async fn a_claude_code_run_with_slash_commands_on_gets_the_push_settings_and_the_slash_command_line_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tmp.path();
+    let st = gizai_lib::test_state(tmp);
+    let (bare, local) = hosted(tmp, "github", "acme/shop", LINK, LINK);
+    let task = card(&st, &local, Some(LINK));
+    let cli = agent(tmp, "claude-slash", &format!("{LOOK}\n{PUSH}"), FAKE);
+    backend_on_cli(&st, "Claude Code (slash)", "claude_code", &cli, &[]);
+    let (_, backend) = gizai_core::team::all_agents(&st.db).unwrap().into_iter().find(|(_, m)| m.role_key == "backend").unwrap();
+    let saved = gizai_lib::mcp_servers::save_cli_tools(&st, &backend.actor_id, CliTools { slash_commands: true, ..Default::default() }).unwrap();
+    assert!(saved.slash_commands);
+
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    assert_eq!((s.status.as_str(), s.outcome.as_deref()), ("succeeded", Some("ready_for_testing")), "{:?}: {}", s.error, seen(tmp));
+    let (run, wt, branch) = run_of(&st, &s.run_id);
+
+    // GA-92: the run's own push settings, and its push goes over SSH to the project's repository
+    assert_eq!(values(tmp, "push"), ["git@github.com:acme/shop.git"], "{}", seen(tmp));
+    assert_eq!(values(tmp, "fetch"), [LINK]);
+    let env = git_env(tmp);
+    assert!(env.iter().any(|l| l.starts_with("GIT_CONFIG_COUNT=")), "{env:?}");
+    assert!(env.iter().any(|l| l.contains("=url.git@github.com:acme/shop.git.pushInsteadOf")), "{env:?}");
+    assert_pushed_itself(tmp, &bare, &wt, &branch);
+
+    // GA-93: the same run's command line has slash commands and skills
+    let err = stderr_of(&run);
+    let argv: Vec<&str> = err.lines().find_map(|l| l.strip_prefix("argv: ")).unwrap_or_else(|| panic!("no argv in {err}")).split_whitespace().collect();
+    assert!(!argv.contains(&"--disable-slash-commands"), "{argv:?}");
+    let allowed: Vec<&str> = argv.iter().skip_while(|a| **a != "--allowedTools").skip(1).take_while(|a| !a.starts_with("--")).copied().collect();
+    for id in ["SlashCommand", "Skill"] {
+        assert_eq!(allowed.iter().filter(|a| **a == id).count(), 1, "{id} once: {allowed:?}");
+    }
+    assert!(notes(&st, &s.run_id).is_empty(), "{:?}", notes(&st, &s.run_id));
 }

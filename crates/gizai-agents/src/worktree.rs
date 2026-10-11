@@ -227,6 +227,13 @@ pub fn prepare_temp(wt: &Path) -> Result<PathBuf, AgentError> {
 /// Adds `/.gizai-tmp/` to `info/exclude` in the repository's common git folder `common` (shared by the main checkout
 /// and every worktree, so none of them shows the folder), unless a line already says it. `.gitignore` is never touched.
 pub fn exclude_temp(common: &Path) -> Result<(), AgentError> {
+    exclude(common, TEMP_EXCLUDE)
+}
+
+/// Adds the line `line` (`/.gizai-tmp/`, the Editor's `/.idea/`) to `info/exclude` in the repository's common git folder
+/// `common`, unless a line already says it: git status of the main checkout and of every worktree leaves out what it
+/// names. `.gitignore` is never touched.
+pub fn exclude(common: &Path, line: &str) -> Result<(), AgentError> {
     let _one = EXCLUDING.lock().unwrap_or_else(|e| e.into_inner());
     let info = common.join("info");
     std::fs::create_dir_all(&info)?;
@@ -236,13 +243,13 @@ pub fn exclude_temp(common: &Path) -> Result<(), AgentError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e.into()),
     };
-    if text.lines().any(|l| l.trim() == TEMP_EXCLUDE) {
+    if text.lines().any(|l| l.trim() == line) {
         return Ok(());
     }
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&file)?;
     let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
-    write!(f, "{sep}{TEMP_EXCLUDE}\n")?;
+    write!(f, "{sep}{line}\n")?;
     Ok(())
 }
 

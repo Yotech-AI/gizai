@@ -6,6 +6,7 @@
 //!   that hold keys or logins, and Gizai's data folder apart from the card worktrees in it, so not the Team Lead's copies
 //!   either. A folder that leads somewhere else through a link is checked where it leads too.
 //! - A card's worktree is read-only while an agent works on the card.
+//!
 //! The app asks again on every call (`find`), so a folder the Editor may no longer open stops at once. What is inside a
 //! folder (its files, git status, search) is gizai-agents' `editor`.
 use std::collections::{HashMap, HashSet};

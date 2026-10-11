@@ -11,6 +11,7 @@ pub mod claude;
 pub mod cli;
 pub mod connection;
 pub mod copies;
+pub mod editor;
 pub mod github;
 pub mod mcp_client;
 pub mod mcp_import;

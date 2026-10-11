@@ -240,3 +240,222 @@ Answer: nothing. `docs/PAID-FEATURES.md` keeps the whole desktop app free and se
 Recommendation: add "the code editor and a card's changes" to the list under "What stays free, forever" (`PAID-FEATURES.md:30-36`) and to "The desktop app, agents, chat" row of the plans table (`:45`), in the card that ships the Editor. For later, not now: in Team, line comments (Q4) and a person's cards would sync between teammates with the rest of the card. [I]
 
 ---
+
+## 4. Options
+
+### 4.1 Three ways to build it
+
+**A. CodeMirror 6 for both (recommended).** The Changes view shows each file with `@codemirror/merge`'s `unifiedMergeView` (read-only, `collapseUnchanged`); the Editor is CodeMirror with language packages and `@codemirror/search`. One code theme, made from new design tokens, colours both and the Markdown editor's code.
+
+- *What it takes:* the packages below; a shared code theme and language map; a small Blade language; the Rust side (changes, files, status) as in §5.3.
+- *Libraries* (all MIT, all by CodeMirror's maintainer; [V `npm view`, 2026-10-11]): `@codemirror/merge` 6.12.2 (183 KB unpacked, 37 releases of 6.x, latest 2026-06-09); `@codemirror/search` 6.7.2 (138 KB, 2026-08-31); `@codemirror/lang-php` 6.0.2 (13 KB, plus `@lezer/php` 389 KB; it depends on `lang-html`, which the app has); `@codemirror/lang-rust` 6.0.2 (9 KB, plus `@lezer/rust` 381 KB); `@codemirror/lang-json` 6.0.2 (11 KB); `@codemirror/lang-yaml` 6.1.3 (16 KB); `@codemirror/lang-sql` 6.10.0 (146 KB); `@codemirror/legacy-modes` 6.5.5 for `.env`, TOML and shell (1.96 MB unpacked, but each mode is its own small file). TypeScript, TSX, HTML, CSS and Markdown are installed already. Unpacked sizes count every build and the type files; what reaches the bundle is a fraction, and languages load on first use. [I]
+- *Risks:* the Blade language is our own work (about a day, [I]); the unified view gives deleted lines no old line number [I]; one editor per changed file, so files must mount only when they come near the screen (245 files in the largest card); a very large file's diff is cut short by the diff's own limits (`diffConfig`'s `scanLimit` and `timeout`, [I]), which is why such files come folded.
+- *Rough size:* 11 cards (§6), most of them medium.
+
+**B. A ready-made diff view for Changes, CodeMirror for the Editor.** Changes uses `@pierre/diffs` or `@git-diff-view/react`, which both colour code with Shiki (TextMate grammars, as VS Code), fed with `git diff`'s patch.
+
+- *What it takes:* the component, Shiki and its grammars; a Shiki theme written in Gizai's CSS variables; either a content security policy with `'wasm-unsafe-eval'` for Shiki's default regex engine (WebAssembly), or Shiki's JavaScript engine [I]; workers served from the app itself if the component uses them (the policy allows `'self'`, not `blob:`) [I].
+- *Libraries:* `@pierre/diffs` 1.5.2, Apache-2.0, 7.47 MB unpacked in 860 files, depends on `shiki` 3 or 4, `diff` 9 and Pierre's theme packages, 107 versions since 2025-12-10, maintained by Pierre's team (pierre.co) [V `npm view`]; `@git-diff-view/react` 0.1.7, MIT, 1.31 MB unpacked plus `@git-diff-view/core` 1.40 MB, colours with highlight.js through lowlight (BSD-3-Clause) or with Shiki through `@git-diff-view/shiki` 0.1.7, one maintainer, last release 2026-07-13 [V `npm view`, README].
+- *Risks:* two colouring systems in one app (Shiki in diffs, CodeMirror in the Editor), so the same file looks different in the two places unless both themes are kept in step by hand; the security policy change; Shiki's grammars are large (`@shikijs/langs` is 8.65 MB unpacked, [V]); `@pierre/diffs` moves fast (about ten versions a month), `@git-diff-view` is pre-1.0 with one maintainer.
+- *Rough size:* the Changes view itself is a little smaller than in A (the component draws hunks, folds and both line numbers), but the theme, policy and Blade checks make up for it; the Editor still needs all of A's language work.
+
+**C. Monaco for both.** VS Code's editor: a diff editor with "hide unchanged regions" and a full editor.
+
+- *Libraries:* `monaco-editor` 0.57.0, MIT, 101.7 MB unpacked [V `npm view`]; usually wrapped with `@monaco-editor/react` 4.7.0 [V].
+- *Risks:* several MB in the bundle and heavy in WebKitGTK [I]; its own theme engine with fixed colours rather than CSS variables, so light and dark and Settings → Appearance's fonts and sizes need wiring by hand [I]; web workers for its languages and diff [I]; PHP but no Blade [I]; it looks like VS Code, not like Gizai. The CodeMirror code the app ships today (about 1.4 MB of unminified ES modules, `node_modules/@codemirror/*/dist/index.js` and `@lezer/*`, [V `wc -c`]) would stay for Markdown.
+- *Rough size:* like A, plus the integration work; no saving where it counts (Blade, theme).
+
+### 4.2 The diff components compared
+
+| | `@codemirror/merge` | `@pierre/diffs` | `@git-diff-view/react` | Monaco's diff editor |
+|---|---|---|---|---|
+| Version, licence [V] | 6.12.2, MIT | 1.5.2, Apache-2.0 | 0.1.7, MIT (lowlight BSD-3) | 0.57.0, MIT |
+| Size, unpacked [V] | 183 KB; uses the CodeMirror the app has | 7.47 MB, plus Shiki (602 KB) and its grammars | 1.31 MB + core 1.40 MB, plus highlight.js or Shiki | 101.7 MB |
+| Upkeep [V] | 37 releases of 6.x; latest 2026-06-09; CodeMirror's maintainer | 107 versions in 10 months; latest 2026-10-10; a company team | latest 2026-07-13; one maintainer; pre-1.0 | Microsoft; latest 2026-09-24 |
+| Input | both texts of each file (backend sends them) | a patch, or both texts [I] | a patch (`hunks`) and optional texts [V README] | both texts |
+| PHP | `@codemirror/lang-php` [V] | Shiki `php` [I] | highlight.js `php` [I] | built in [I] |
+| **Blade** | **none: our own small language** [V no package] | Shiki `blade` [V `@shikijs/langs` exports `./blade`] | not in highlight.js [V]; Shiki through `@git-diff-view/shiki` [V] | none [I] |
+| TSX | `lang-javascript` with JSX, installed [V] | Shiki `tsx` [I] | highlight.js handles TSX poorly [I]; Shiki ok | built in [I] |
+| Rust | `@codemirror/lang-rust` [V] | Shiki `rust` [I] | highlight.js `rust` [I] | built in [I] |
+| Gizai's light and dark themes | CSS variables in the theme, as `MarkdownEditor.tsx:229-250` already does: follows the `t` key and Appearance at once [V pattern] | a Shiki theme written with CSS variables [I] | its own `light`/`dark` CSS (`diffViewTheme`), restyled by hand [V README] | `defineTheme` with fixed colours, set again on every theme change [I] |
+| Speed, 2,000-line diff | draws only the lines in sight; the diff is computed once per file, bounded by `scanLimit`/`timeout` [I: codemirror.net docs, not re-read] | virtualised, highlighting in a worker pool [I: diffs.com, not re-read] | "High performance with Web Worker support" [V README]; virtual scrolling not stated | draws only the lines in sight; diff in a worker [I] |
+| Content security policy as it is | fits [I] | Shiki's WASM engine needs `'wasm-unsafe-eval'`; JS engine fits [I] | lowlight fits; Shiki as left [I] | workers to set up [I] |
+| Old and new line numbers | new only in the unified view [I] | both [I] | both [V demo, I] | both [I] |
+| Folded unchanged code | `collapseUnchanged` [I] | yes [I] | expand buttons per hunk [I] | "hide unchanged regions" [I] |
+| Line comments later | a widget on a line (our code) [I] | annotations [I] | `renderWidgetLine`, `onAddWidgetClick` [V README] | view zones [I] |
+| Same colours as the Editor | yes | no (Shiki) | no | yes if the Editor is Monaco |
+
+Speed was not measured in this run (no browser or node allowed, web pages refused). Card F1 measures it where it counts, in the app's own WebKitGTK under `cage`: the 75th-percentile card here (2,108 changed lines, §1.3) and the largest one (15,131 lines in 245 files) must show their first screen within 300 ms and scroll without stalls. If CodeMirror misses that, F1 falls back to drawing the patch itself with `@tanstack/react-virtual` (in the app already, `package.json:24`) and CodeMirror's highlighter. [I targets]
+
+### 4.3 Recommendation
+
+**Option A.** It keeps one way of showing code across the Changes view, the Editor and the Markdown editor, with the design system's own colours in light and dark; it adds only small MIT packages from one well-kept source; it needs no change to the security policy; and the Blade language it lacks has to be written once, for both screens. B would draw the diff a little sooner but leaves two colour systems and a policy change; C is far heavier and looks like another app. [I]
+
+---
+
+## 5. The design
+
+All screens use the design system as it is: the top bar with breadcrumbs and actions (`.topbar`, `components.css:129-135`), tabs (`.tab`, `:290-294`), rows like the sidebar's (`.nav-item`, 32 px, `:101-109`), the properties panel (`.props`, `:225`), mono text for machine values (`t-code`, `t-id`), sentence case, Lucide icons at 16 px (`design/README.md:6-23`, `:94-98`). New are the colours for code and diffs, the Changes view, and the Editor's tree, tabs and status bar; cards D1 and D2 design them as pages in the repository for Jefsev to review. [V for the existing parts]
+
+### 5.1 The Changes view
+
+**Screen 1: the card, with its Changes tab.** The task page gets two tabs at the top, under the top bar: **Card** (the page as it is now) and **Changes** with its counts (Lucide `file-diff`). The counts load with the card (`card_changes`, file list only); "No changes" when there are none; nothing when the card has no branch yet.
+
+```
+┌ Tasks / Gizai / GA-91 ─────────────────────────────── [Copy ID] [Open in ▾] [▸] ┐
+│  Card   Changes +964 −112                                                       │
+│  ───────                                                                        │
+│  ◑ ▮▮▮ GA-91  ● Gizai                                                           │
+│  Research for the code editor…                                                  │
+│  (the card as now: description, criteria, attachments, run, pull request,       │
+│   Comments · Activity · Runs)                                                   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Screen 2: Changes.** Full width; Properties closes while it is open (`]` brings it back).
+
+```
+┌ Tasks / Gizai / GA-91 ─────────────────────────────── [Copy ID] [Open in ▾] [▸] ┐
+│  Card   Changes +964 −112                                                       │
+│         ─────────────────                                                       │
+├─────────────────────────┬───────────────────────────────────────────────────────┤
+│ Since origin/main       │ ▾ src/components/Sidebar.tsx         M  +12 −3  [Open]│
+│ +964 −112 · 20 files    │  40   const agents = (team.data?.members ?? [])…      │
+│ [Filter files…        ] │  41   const notes = useData(() => memoryNotes()…      │
+│ ▾ src/components        │ ░ - const lead = leadOf(agents);              (red)   │
+│   M Sidebar.tsx  +12 −3 │ ▓42 + const lead = leadOf(agents, editor);    (green) │
+│   A EditorSection +240 •│  43   const threads = useData(() => …                 │
+│ ▾ crates/gizai-agents   │   ⋯ 37 unchanged lines   [↑ 20] [↓ 20] [All]          │
+│   A changes.rs     +180 │  81   return (                                        │
+│   D old_diff.rs     −80 │ ▾ crates/gizai-agents/src/changes.rs   A  +180        │
+│   R a.rs → b.rs         │   1 + //! A card's changes: …                         │
+│ ▸ package-lock.json  +412│ ▸ package-lock.json   M +412 −20   Lock file: folded │
+└─────────────────────────┴───────────────────────────────────────────────────────┘
+  • = uncommitted   A added · M modified · D deleted · R renamed
+```
+
+- The header line says where the changes come from when it isn't the worktree: "From the merge commit 3f5c1a2 on main", "From branch gizai/ga-12-… (its worktree was removed)". With uncommitted changes: "+964 −112, 3 files not committed yet".
+- The file list scrolls on its own; the diffs scroll on their own; a file's header sticks while its diff is in sight.
+- Keyboard: `n` and `p` go to the next and previous file, Alt+↓ and Alt+↑ to the next and previous change in a file (CodeMirror merge's chunk commands [I]), Escape returns to Card.
+- A wide window (more than 1,400 px for the diffs) could later offer side by side; not in the first version.
+
+**Screen 3: one run's changes.** The Runs tab's row gets **Show changes**; it opens the same view, limited to that run: "Run by Backend Agent, 10 Oct 14:02: 2 commits, +40 −3" with **All changes** to go back.
+
+**States.** No branch yet: "No changes yet: the first run makes this card's branch." No changes: "This card's branch has no changes against origin/main." Merged without a known merge commit and no gh: "Gizai can't find this card's merge commit on main: fetch main, or log gh in (Settings → GitHub)." A failure says what went wrong and how to fix it, in the error banner (`design/README.md:15-17`).
+
+**Colours.** New tokens in `design/tokens.json`, for dark and light, turned into CSS by `scripts/tokens-css.ts` [I values for D1 to set]:
+
+| Token | Use |
+|---|---|
+| `--diff-add`, `--diff-del` | the + and − marks and line numbers of changed lines |
+| `--diff-add-soft`, `--diff-del-soft` | the background of an added or removed line |
+| `--diff-add-strong`, `--diff-del-strong` | the characters that changed inside a line |
+| `--diff-fold` | the "⋯ 37 unchanged lines" bar |
+
+Rules for D1: green and red of their own, near `--success` and `--danger` but separate tokens, because those mean run and form outcomes (`design/README.md:39`); never teal (`--live`) or magenta (`--needs`) (`:36-38`); every changed line also has its + or − mark and status letters have words, so nothing relies on colour alone (`:40-45`).
+
+### 5.2 The Editor
+
+**Screen 1: the sidebar.** A folding **Editor** section between Projects and Agents, folded and opened like Agents and Memory (GA-90: `FoldSection`, `Sidebar.tsx:114-128`; `"editor"` added to `Fold`, `src/lib/sidebar.ts:6`). Its rows are the folders you opened, newest first (at most 8); each with Lucide `folder-code`, the folder's name, and on the right how it stands: "3 behind" in `text-3`, "2 changed", or a card's identifier for a worktree. `+` on the heading opens the folder picker. Folded, the heading shows how many folders are behind.
+
+```
+│ PROJECTS                         + │
+│  ● Gizai                           │
+│  ● Kade portal                     │
+│ EDITOR                         + ⌄ │
+│  ▣ gizai               3 behind    │
+│  ▣ kade-portal         2 changed   │
+│  ▣ GA-123 (by hand)                │
+│ AGENTS                           ⌄ │
+│  ♛ Team Lead                       │
+```
+
+**Screen 2: opening a folder.** A popover (like the item picker) with three groups: **Projects** (their linked folders), **In ~/Herd** (the folders under the roots that aren't projects yet), **Cards** (worktrees of cards that are yours or open). A search box filters all three. Settings → General → **Editor folders** sets the roots (default `~/Herd`); a folder outside them opens only through a project.
+
+**Screen 3: the Editor page** (`#/editor/<folder>`). The top bar holds the breadcrumbs and how the folder stands; below it, the file tree on the left (260 px, can fold), the tabs and the editor on the right, a status bar at the bottom.
+
+```
+┌ Editor / gizai ──────── main · 3 behind · 1 ahead · 2 changed [Fetch] [Update] [Open in ▾] ┐
+├────────────────────────┬────────────────────────────────────────────────────────────────────┤
+│ [Go to file… Ctrl+P  ] │ Sidebar.tsx ● ×  worktree.rs ×  code-editor.md ×                   │
+│ ▾ src                  │   1 // The sidebar (design system: Sidebar): quick actions, …       │
+│   ▾ components       M │   2 // the company pages stay at the bottom, with the update …     │
+│       Sidebar.tsx    M │   3 // data than the usual folder says so there. Agents and …      │
+│       Tabs.tsx         │   4 import {                                                       │
+│   ▸ lib                │   …                                                                │
+│ ▸ crates               │                                                                    │
+│ ▸ node_modules (ignored, read-only)                                                          │
+├────────────────────────┴────────────────────────────────────────────────────────────────────┤
+│ src/components/Sidebar.tsx · TypeScript JSX · LF · Ln 42, Col 7 · Not saved (Ctrl+S)         │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- The tree's rows are the sidebar's rows at 28 px, the git status letter on the right (M, A, D, U for untracked) in its colour and with a tooltip; ignored folders greyed; a right click has New file, New folder, Rename, Delete (asks first), Copy path, Open in.
+- Tabs: the file name (and its folder when two have the same name), a dot while unsaved, × or middle click closes; asks before closing an unsaved tab.
+- The editor: `t-code` in the app's mono font (Settings → Appearance changes it, as everywhere), line numbers, the active line, matching brackets, folding, the search panel (Ctrl+F; Ctrl+H for replace).
+- The status bar: path, language, line endings, the cursor, Saved or Not saved.
+
+**Screen 4: search in the folder.** Ctrl+Shift+F swaps the tree for a search panel: the query, Match case, Words, Regular expression, the results grouped by file with the line and the match highlighted; a click opens the file at that line. "2,000 results shown; narrow the search for more."
+
+**Screen 5: behind main.** When the folder is behind, a bar under the top bar: "3 commits behind origin/main, fetched 2 minutes ago. [Update] [Fetch]". When the plan refuses: "Update can't run: kade-portal has uncommitted changes in app/Models/Invoice.php. Commit or stash them first." (the plan's own sentence, `checkout.rs:161-170`). During the update the bar says what it does, and at the end what it did ("Moved main 3 commits to 319bf0b and ran npm ci").
+
+**Screen 6: a person's card.** A card bar on top of the Editor, in place of the behind bar:
+
+```
+│ ◑ GA-123  Fix the invoice total · gizai/ga-123-fix-the-invoice-total · 2 files changed, 1 commit not pushed │
+│                                             [Commit…] [Push] [Hand over to Testing ▸]                  │
+```
+
+On the card itself, **Open in editor** (Lucide `square-code`) sits in the top bar's actions for a card assigned to you; the board card shows Lucide `keyboard` with "By hand" while the card is pinned to a person.
+
+**Screen 7: changed on disk.** A bar over the editor: "src/Invoice.php changed on disk. [Reload] [Keep mine]". Keep mine saves over it only after a second Ctrl+S.
+
+**Colours for code.** New tokens for syntax, for dark and light, in `design/tokens.json` [I names; D1 sets the values]: `--syn-keyword`, `--syn-string`, `--syn-number`, `--syn-comment`, `--syn-function`, `--syn-type`, `--syn-variable`, `--syn-property`, `--syn-tag`, `--syn-attribute`, `--syn-operator`, `--syn-punctuation`, `--syn-meta` (`<?php`, Blade directives, attributes), `--syn-invalid`. One `HighlightStyle` maps Lezer's tags to them (`src/lib/codeTheme.ts`), as `MarkdownEditor.tsx:30-41` does for Markdown with the existing tokens. Rules: at least 4.5:1 on `--bg` and `--raised` in both themes; no teal or magenta hues (they mean an agent at work and "needs you"); taken from the decorative `c-*` family where possible (`tokens.css:39-46`).
+
+### 5.3 Data, commands and the files that change
+
+No new Tauri plugin and no change to the security policy or the window's permissions: every file and git access is a Rust command behind `src/api.ts`, like the rest of the app (CLAUDE.md:35-38). The commands, names and types are in §6 with the cards that make them, word for word.
+
+| Where | What changes | Card |
+|---|---|---|
+| `crates/gizai-agents/src/changes.rs` (new) | a card's changes from git: the worktree against its merge base, a branch, a range; each file's texts before and after; parsing `--numstat -z` and `--name-status -z` (renames, binaries) | B1 |
+| `crates/gizai-agents/src/github.rs`, `bitbucket.rs` | `mergeCommit` added to `FIELDS` (`github.rs:52`); Bitbucket's `merge_commit` read | B1 |
+| `crates/gizai-core/migrations/0017_merge_commit.sql` (new), `db.rs`, `pulls.rs` | `tasks.merge_sha`, saved by `pulls::merged` | B1 |
+| `src-tauri/src/changes.rs` (new), `lib.rs` | `card_changes`, `card_file_diff`, `run_changes` | B1 |
+| `design/tokens.json`, `src/styles/tokens.css`, `design/README.md` | `diff-*` and `syn-*` tokens and their rules | D1, F0 |
+| `src/lib/codeTheme.ts`, `src/lib/codeLanguages.ts`, `src/lib/blade.ts` (new) | the code theme, the extension → language map (loaded on first use), Blade | F0 |
+| `src/components/changes/` (new), `src/lib/changes.ts` (new), `src/pages/TaskPage.tsx`, `src/router.ts`, `src/components/RunHistory.tsx`, `src/components/PullPanel.tsx` | the Changes view, the Card \| Changes tabs, `#/task/<id>/changes`, Show changes per run | F1 |
+| `crates/gizai-core/src/editor.rs` (new), `settings` | which folders the Editor may open: projects' folders, roots (`editor_roots`, default `~/Herd`), card worktrees; the refusals of `folders.rs` | B2 |
+| `crates/gizai-agents/src/editor.rs` (new) | list, read, write (atomic, keeps line endings), new, rename, delete, search (`git grep`), files (`git ls-files`), git status, file versions; the path guard; the external editors found | B2 |
+| `src-tauri/src/editor.rs` (new), `lib.rs`, `runs.rs` (`Settings`) | the Editor's commands; polling open folders and the `editor-changed` event | B2 |
+| `src/pages/EditorPage.tsx`, `src/components/editor/` (new), `src/lib/editor.ts` (new), `src/components/Sidebar.tsx`, `src/lib/sidebar.ts`, `src/pages/SettingsPage.tsx` | the Editor page, its tree, tabs, search and status bar; the sidebar section; Settings → General → Editor folders; Open in | F2 |
+| `src-tauri/src/editor.rs`, `code.rs` | Fetch on open and every 10 minutes, Update with `checkout::plan` and `update`, under `folder_lock` | B3 |
+| `src/components/editor/` | the behind bar, Update, the sidebar's "3 behind" | F3 |
+| `crates/gizai-core/src/workflow.rs`, `tasks.rs`; `src-tauri/src/runs.rs`, `editor.rs` | a person's card: start by hand (worktree, pin, implementer, move), commit, push, hand over; `qa_fail` pins a person's card again | B4 |
+| `src/pages/TaskPage.tsx`, `src/components/Board.tsx`, `src/components/editor/CardBar.tsx` | Open in editor, the card bar, "By hand" on the board | F4 |
+| `crates/gizai-core/examples/prep_changes.rs` (new), `src/selftest.ts`, `scripts/ui-test.sh` | demo data with a repository, a card worktree and a merged card; UI probes | F1, F2 |
+| `docs/PAID-FEATURES.md`, `README.md` | the editor stays free; the features list | F2 |
+
+How outside changes reach the screen [I]: no file watcher in the first version. While the Editor shows a folder, the screen asks every 3 seconds for the versions (size and modification time) of the open files, and for the folder's git status every 10 seconds and when the window gets the focus; the tree reloads the folders that are open when the window gets the focus. That is simple, the same on Linux, macOS and Windows, and can't run into Linux's limit on watched folders in a Laravel project with a full `vendor/`. If it feels slow, a later card adds the `notify` crate (Rust, cross-platform watching) for the open folders only, sent to the screen as the same `editor-changed` event. [I; the `notify` crate's version and licence couldn't be checked today]
+
+### 5.4 Security and privacy
+
+- **One gate for every path.** The screen sends a folder (one `editor_folders` returned) and a path inside it, never an absolute path. Rust re-checks on every call that the folder is still allowed (§3.2 Q5), makes the path canonical, refuses `..`, any `.git` part and links that lead outside the folder, and refuses writes in read-only places (ignored folders, a live agent's worktree, files over 1 MB). The rules live in the core with tests, as the agent folder rules do (`folders.rs`). [I]
+- **Safe writes.** Save writes a temporary file in the same folder and renames it over the file, keeping its permissions; it refuses when the file changed on disk since it was read. Line endings and a byte order mark stay as they were. [I]
+- **Nothing leaves the computer.** Search, diffs and saving are local; the only network use is `git fetch` from the project's own remote, as card starts do, and `gh` or Bitbucket for a merge commit Gizai can't find. No file contents go to agents, logs or GitHub. [I]
+- **No new rights for the window.** No file system plugin, the same capabilities and content security policy (`capabilities/default.json`, `tauri.conf.json:18`). [V today]
+- **Update** stays as careful as `update_checkout`: fast-forward only, git hooks off (`checkout.rs:230`), never the setup command. A person's Commit runs the repository's own git hooks, as a commit in a terminal would. [V for update; I for commit]
+- **Agents' work is safe:** a worktree is read-only while its agent runs, and a card pinned to a person is never taken by an agent (`workflow.rs:185-188`). [V rule; I design]
+
+### 5.5 How it is tested
+
+- **Rust** (TDD, as CLAUDE.md:39-45 asks): `crates/gizai-agents/tests/changes_test.rs` on temporary repositories (a worktree with commits, uncommitted and untracked files, a rename, a binary; only a branch; a merge commit; a squash; a run's range); `crates/gizai-agents/tests/editor_test.rs` (the path gate: `..`, links out, `.git`, refused folders; saving keeps CRLF and refuses a changed file; search's cap; git status counts); `crates/gizai-core/tests/` for the folders the Editor may open and for the person's card rules (pin, hand over, `qa_fail` pins again); `src-tauri/tests/` flow tests: `card_changes` in each column, a person's card from start to Testing with a push to a bare repository, Update refused with uncommitted changes and done with a fast-forward.
+- **TypeScript** (`npm test`): the language map, Blade's tokens on sample templates, the file list's grouping and labels, the tabs' state, the sidebar's `"editor"` fold.
+- **UI** (`scripts/ui-test.sh`, headless in `cage`, on `prep_changes` data): Changes opens, folds and unfolds, a file list click scrolls, and the 2,000-line and 15,000-line diffs meet the speed targets (§4.2); the Editor opens a folder, types, Ctrl+S writes the file on disk, an outside change reloads an untouched tab, search finds a word; Editor folds in the sidebar. Screenshots with `scripts/shot-cage.sh` for the design review.
+- **Linux, macOS, Windows:** paths with backslashes and any case on Windows, CRLF files, `code.cmd` found through `os::find_in`; CI runs it all on the three (`.github/workflows/ci.yml`).
+
+### 5.6 What is left out
+
+Language servers, a terminal, formatting, side-by-side diffs, comments on lines (Q4), git blame, staging single lines, resolving merge conflicts, image previews, several folders in one window, Commit and Push for folders that aren't a person's card (use a terminal or your own editor), and a file watcher (polling first, §5.3).
+
+---

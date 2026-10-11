@@ -195,9 +195,14 @@ pub struct Settings {
     /// Desktop notifications, a switch per kind (Settings → Notifications); all on by default.
     #[serde(default)]
     pub notifications: crate::notifications::Switches,
+    /// Settings → General → Editor folders (GA-107): the Editor may open every folder in these. `~/Herd` until you set
+    /// your own (`gizai_core::editor::roots`).
+    #[serde(default = "default_editor_roots")]
+    pub editor_roots: Vec<String>,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
+fn default_editor_roots() -> Vec<String> { gizai_core::editor::DEFAULT_ROOTS.map(String::from).to_vec() }
 fn default_tool_calls() -> u32 { DEFAULT_MAX_RUN_TOOL_CALLS }
 fn default_chat_minutes() -> u64 { DEFAULT_MAX_CHAT_MINUTES }
 fn default_chat_tool_calls() -> u32 { DEFAULT_MAX_CHAT_TOOL_CALLS }
@@ -217,6 +222,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
         push_over: crate::github::push_over_name(st),
         notifications: crate::notifications::switches(&st.db),
+        editor_roots: gizai_core::editor::roots(&st.db),
     }
 }
 
@@ -242,6 +248,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !crate::github::PUSH_OVER_NAMES.contains(&s.push_over.as_str()) {
         return Err("pushes go over ssh or https".into());
     }
+    let editor_roots = gizai_core::editor::clean_roots(&s.editor_roots, &gizai_core::folders::Places::of(&st.db)).map_err(|e| e.to_string())?;
     let bin = s.claude_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
     settings::set(&st.db, "claude_bin", &bin).map_err(|e| e.to_string())?;
     let gh = s.gh_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
@@ -255,6 +262,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_chat_tool_calls", &s.max_chat_tool_calls).map_err(|e| e.to_string())?;
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
+    settings::set(&st.db, gizai_core::editor::ROOTS, &editor_roots).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -362,6 +370,11 @@ pub async fn models_for(st: &AppState, cli_id: Option<&str>, refresh: bool) -> R
 /// An agent works on the card now: a live run, or a run still getting its worktree ready.
 pub fn working_on(st: &AppState, task_id: &str) -> bool {
     st.runs.starting.lock().unwrap().contains(task_id) || st.runs.live.lock().unwrap().values().any(|l| l.task_id == task_id)
+}
+
+/// The cards whose run is getting its worktree ready now (with `live`, the cards of `working_on`).
+pub fn starting(st: &AppState) -> Vec<String> {
+    st.runs.starting.lock().unwrap().iter().cloned().collect()
 }
 
 pub fn live(st: &AppState) -> Vec<LiveRun> {

@@ -6,10 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use gizai_core::clis::Cli;
+use gizai_core::mcp_servers::{self as core_mcp, CliTools};
 use gizai_core::memory::{self, Who};
 use gizai_core::model::*;
 use gizai_core::{clients, projects, runs as core_runs, settings, tasks, team};
-use gizai_lib::{AppState, tools};
+use gizai_lib::{AppState, mcp_servers as app_mcp, tools};
 use serde_json::{Value, json};
 
 const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/gizai-agents/tests/fake-claude.sh");
@@ -109,6 +110,52 @@ async fn get_agent_shows_the_setting_and_create_agent_and_update_agent_set_it_by
     t.ok("update_agent", json!({"agent": "Backend Agent 2", "shares_memory_with": "Backend Agent"})).await;
     assert_eq!(t.shares("Backend Agent 2"), Some(t.id("Backend Agent")));
     assert!(memory::find(&t.st.db, "Agents/Backend Agent 2/Notes").unwrap().is_none(), "its template-only Notes went into the owner's");
+}
+
+/// GA-99, where GA-93 meets GA-96: get_agent shows Slash commands and skills and Shares memory with side by side;
+/// update_agent sets shares_memory_with and keeps the switch, and still refuses slash_commands, alone or next to
+/// shares_memory_with, changing neither. The agent form's two saves, the agent (with Shares memory with) and its Tools
+/// (with the switch), each keep the other's field.
+#[tokio::test]
+async fn slash_commands_and_shares_memory_with_side_by_side_in_get_agent_update_agent_and_the_agent_forms_saves() {
+    let t = lead_setup();
+    t.ok("create_agent", json!({"name": "Backend Agent", "role": "backend"})).await;
+    t.ok("create_agent", json!({"name": "Backend Agent 2", "role": "backend"})).await;
+    let (be, be2) = (t.id("Backend Agent"), t.id("Backend Agent 2"));
+    let both = |v: &Value| (v["slash_commands"].clone(), v["shares_memory_with"].clone());
+    let slash = || core_mcp::agent_cli_tools(&t.st.db, &be2).unwrap().slash_commands;
+    assert_eq!(both(&t.agent("Backend Agent 2").await), (json!(false), Value::Null));
+
+    // you switch it on in its form → Tools
+    app_mcp::save_cli_tools(&t.st, &be2, CliTools { slash_commands: true, ..Default::default() }).unwrap();
+    assert_eq!(both(&t.agent("Backend Agent 2").await), (json!(true), Value::Null));
+
+    // update_agent sets Shares memory with by name, and the switch stays on
+    t.ok("update_agent", json!({"agent": "Backend Agent 2", "shares_memory_with": "Backend Agent"})).await;
+    let v = t.agent("Backend Agent 2").await;
+    assert_eq!((both(&v), v["memory_folder"].clone()), ((json!(true), json!("Backend Agent")), json!("Agents/Backend Agent/")), "{v}");
+    assert!(slash());
+
+    // slash_commands is still refused, alone or next to shares_memory_with, and neither changes
+    for args in [json!({"agent": "Backend Agent 2", "slash_commands": false}),
+                 json!({"agent": "Backend Agent 2", "shares_memory_with": "none", "slash_commands": false})] {
+        let e = t.call("update_agent", args.clone()).await.unwrap_err();
+        assert!(e.contains("only the user") && e.contains("Nothing changed"), "{args}: {e}");
+        assert_eq!(both(&t.agent("Backend Agent 2").await), (json!(true), json!("Backend Agent")), "{args}");
+    }
+
+    // the agent form: saving the agent with Shares memory with on its own folder keeps the switch on ...
+    let form = |with: &str| {
+        let m = team::agent(&t.st.db, &be2).unwrap();
+        AgentInput { name: m.name, role_key: m.role_key, adapter: m.adapter.unwrap_or_default(), shares_memory_with: Some(with.into()), ..Default::default() }
+    };
+    team::update_agent(&t.st.db, &t.st.you_id, &be2, form("")).unwrap();
+    assert_eq!((t.shares("Backend Agent 2"), slash()), (None, true));
+    // ... and back in the group, saving its Tools with the switch off keeps Shares memory with
+    team::update_agent(&t.st.db, &t.st.you_id, &be2, form(be.as_str())).unwrap();
+    app_mcp::save_cli_tools(&t.st, &be2, CliTools::default()).unwrap();
+    assert_eq!((t.shares("Backend Agent 2"), slash()), (Some(be.clone()), false));
+    assert_eq!(both(&t.agent("Backend Agent 2").await), (json!(false), json!("Backend Agent")));
 }
 
 // ---- Task runs ----

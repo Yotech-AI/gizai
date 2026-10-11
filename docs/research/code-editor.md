@@ -2,7 +2,7 @@
 
 Status: research only, no code. Written by the R&D Agent for GA-91 on 2026-10-11, against `main` at `f3541f0` (Gizai 0.7.1, database schema 16).
 Legend: **[V]** = verified today, in the code (file and line) or with the command named (`git`, `gh`, `npm view`). **[I]** = my judgement, or a fact I know but could not re-check today.
-Limits of this pass: web search and fetching web pages were refused in this run, and the run may not start node or a browser. So nothing was measured in a browser, outside facts come only from the npm registry (`npm view`) and from GitHub through `gh` (both read on 2026-10-11), and what only the libraries' websites document is marked [I] and listed in §7 and in the card summary as not checked. The speed of the diff components is therefore argued, not measured; card F1 measures it before the Changes view ships (§6).
+Limits of this pass: web search and fetching web pages were refused in this run, and the run may not start node or a browser. So nothing was measured in a browser, outside facts come only from the npm registry (`npm view`) and from GitHub through `gh` (both read on 2026-10-11), and what only the libraries' websites document is marked [I] and listed in §8 and in the card summary as not checked. The speed of the diff components is therefore argued, not measured; card F1 measures it before the Changes view ships (§6).
 
 ---
 
@@ -11,13 +11,13 @@ Limits of this pass: web search and fetching web pages were refused in this run,
 1. Both parts fit how Gizai is built: git runs as a command, every card has its own worktree, CodeMirror 6 is already in the app, and the screens reach Rust only through `src/api.ts`. [V]
 2. **A card's changes can always come from local git**, without GitHub's or Bitbucket's API: the worktree (uncommitted files included) against its merge base with main while it exists; the branch when only that is left; after a merge, the merge commit against its first parent. For PR #81 that gives exactly GitHub's diff (34 files, +1923 −112). `gh pr diff` is only a fallback. [V `git`, `gh`]
 3. **Card diffs here are big.** Of the last 70 merged card pull requests, the median changes 964 lines in 20 files, a quarter change more than 2,108 lines, and the largest 15,131 lines in 245 files. The view must list files first, load each diff as it scrolls into sight, and fold unchanged code and lock files. [V `gh pr list`]
-4. **Recommended: CodeMirror 6 for both** (`@codemirror/merge` for the diff, language packages and `@codemirror/search` for the editor), coloured with new syntax and diff tokens in the design system. Not Shiki-based diff components or Monaco: they bring their own colours and need WASM or workers that the app's content security policy blocks today. [V CSP; I]
+4. **Recommended: CodeMirror 6 for both** (`@codemirror/merge` for the diff, language packages and `@codemirror/search` for the editor), coloured with new syntax and diff tokens in the design system. Not the Shiki-based diff components: they bring a second colour system, and Shiki's usual engine needs WebAssembly, which the app's content security policy blocks today. Not Monaco: far heavier, with a look of its own. [V CSP; I]
 5. **Changes:** a **Changes** tab at the top of the card, next to the card itself (Card | Changes +964 −112), full width: the file list on the left, every file's diff below each other on the right, removed lines red and added lines green, unchanged code folded. Each run in the Runs tab gets "Show changes" too. [I]
 6. **Editor:** a folding **Editor** section in the sidebar above Agents, listing the folders you opened, and an Editor page: file tree, tabs, syntax colours, find and replace, search in the folder, Ctrl+S, each file's git status, outside changes, and a bar with behind, ahead and uncommitted, **Fetch** and **Update** (a fast-forward only, with `update_checkout`'s rules). [I]
 7. **Blade is the one real gap:** no CodeMirror package for it exists, so we write a small Blade language on top of `@codemirror/lang-php`. [V registry; I effort]
 8. **A person's card:** Open in editor makes the card's worktree as for an agent and pins the card to you, so agents leave it alone; Commit, Push and Hand over then move it on as a builder's `ready_for_testing` does. One rule in `qa_fail` changes. [V `workflow.rs:185`; I]
 9. **Also add Open in VS Code, Zed or PhpStorm:** cheap, and better for big edits; the built-in editor stays basic. **Free:** nothing in `docs/PAID-FEATURES.md` changes; add the editor to "What stays free". [I]
-10. **Eleven cards** (§6): two Design cards, then backend and frontend cards that can run two at a time.
+10. **Eleven cards** (§6): two Design cards and nine build cards. Four can start at once (both designs, both first backends), and a card's changes can ship before the Editor.
 
 ---
 
@@ -170,7 +170,7 @@ Answer and recommendation: [I, with the refusals V]
 - **Never:** `/`, the home folder itself, the folders that hold keys or logins and Gizai's data folder apart from card worktrees, with the refusals agent folders already use (`crates/gizai-core/src/folders.rs:46-56`, `:189`). Not the Team Lead's copies either (`<data>/code/`): Gizai throws away anything changed in them (`copies.rs:37-43`). A link that leads out of the opened folder is refused.
 - **Card worktrees** are **read-only while an agent works on the card**, and editable when the card is yours (a person's card, Q8). On any other card's worktree the Editor says so and offers "Edit anyway" (your changes become part of the card, uncommitted, for its next run).
 - **Hidden:** `.git/` (never shown or written).
-- **Shown greyed, folded and read-only until you open them:** what git ignores, such as `node_modules/`, `vendor/`, `target/`, `dist/` and `storage/`; left out of search.
+- **Folders git ignores** (`node_modules/`, `vendor/`, `target/`, `dist/`, `storage/`, …): shown greyed and folded, the files in them read-only, left out of search. An ignored file elsewhere, such as `.env`, opens and saves as usual.
 - **Big and binary files:** over 1 MB opens read-only, over 5 MB doesn't open ("Too big to show here: Open in VS Code"), a binary file (a NUL byte in its first 8 KB, git's own test) doesn't open. A file that isn't UTF-8 opens read-only.
 - **`.env`** opens and saves like any file: it stays on this computer; it is ignored by git, so search leaves it out unless you ask.
 
@@ -183,7 +183,7 @@ Answer and recommendation: [I]
 | File tree | One folder level per request, in the backend; folders open on click; git status letters and colours per file and on folders that hold changes |
 | Tabs | Several files open, a dot for unsaved changes, middle click and Ctrl+W close, the open tabs kept per folder on this computer |
 | Syntax colours | PHP, Blade, TypeScript/TSX, JavaScript, Rust, CSS, JSON, YAML, Markdown, SQL, HTML and `.env`, loaded on first use (§5.3) |
-| Find and replace in a file | `@codemirror/search` (Ctrl+F, Ctrl+H, F3) |
+| Find and replace in a file | `@codemirror/search`: Ctrl+F opens its panel with find and replace, F3 finds the next [I for its keys] |
 | Search in the folder | Ctrl+Shift+F: `git grep` over tracked and untracked files that git doesn't ignore; at most 2,000 hits; a click opens the file at its line |
 | Go to file | Ctrl+P over `git ls-files --cached --others --exclude-standard` |
 | Save | Ctrl+S, as the Markdown editor (`MarkdownEditor.tsx:447`); keeps the file's line endings; refuses when the file changed on disk since you opened it, with Reload and Keep mine |
@@ -192,7 +192,7 @@ Answer and recommendation: [I]
 | New file, rename, delete | in the tree's menu; delete asks first |
 | Open in VS Code, Zed or PhpStorm | Q9 |
 
-Waits for later: language servers (`@codemirror/lsp-client` exists, MIT, 6.3.0 [V `npm view`], but each server needs installing and running per language); a terminal; formatting (Prettier, Pint, rustfmt); git blame, staging and merge conflicts; image previews; settings for tab size and wrapping beyond the file's own `.editorconfig`.
+Waits for later: language servers (`@codemirror/lsp-client` exists, MIT, 6.3.0 [V `npm view`], but each server needs installing and running per language); a terminal; formatting (Prettier, Pint, rustfmt); git blame, staging and merge conflicts; image previews; settings for tab size and wrapping (the first version indents as the file already does).
 
 **Q7. Behind main: how often to fetch, what to show, and an Update button.**
 
@@ -252,7 +252,7 @@ Recommendation: add "the code editor and a card's changes" to the list under "Wh
 - *Risks:* the Blade language is our own work (about a day, [I]); the unified view gives deleted lines no old line number [I]; one editor per changed file, so files must mount only when they come near the screen (245 files in the largest card); a very large file's diff is cut short by the diff's own limits (`diffConfig`'s `scanLimit` and `timeout`, [I]), which is why such files come folded.
 - *Rough size:* 11 cards (§6), most of them medium.
 
-**B. A ready-made diff view for Changes, CodeMirror for the Editor.** Changes uses `@pierre/diffs` or `@git-diff-view/react`, which both colour code with Shiki (TextMate grammars, as VS Code), fed with `git diff`'s patch.
+**B. A ready-made diff view for Changes, CodeMirror for the Editor.** Changes uses `@pierre/diffs` (colours with Shiki: TextMate grammars, as VS Code) or `@git-diff-view/react` (highlight.js, or Shiki through an add-on), fed with `git diff`'s patch; for Blade both need Shiki.
 
 - *What it takes:* the component, Shiki and its grammars; a Shiki theme written in Gizai's CSS variables; either a content security policy with `'wasm-unsafe-eval'` for Shiki's default regex engine (WebAssembly), or Shiki's JavaScript engine [I]; workers served from the app itself if the component uses them (the policy allows `'self'`, not `blob:`) [I].
 - *Libraries:* `@pierre/diffs` 1.5.2, Apache-2.0, 7.47 MB unpacked in 860 files, depends on `shiki` 3 or 4, `diff` 9 and Pierre's theme packages, 107 versions since 2025-12-10, maintained by Pierre's team (pierre.co) [V `npm view`]; `@git-diff-view/react` 0.1.7, MIT, 1.31 MB unpacked plus `@git-diff-view/core` 1.40 MB, colours with highlight.js through lowlight (BSD-3-Clause) or with Shiki through `@git-diff-view/shiki` 0.1.7, one maintainer, last release 2026-07-13 [V `npm view`, README].
@@ -280,12 +280,12 @@ Recommendation: add "the code editor and a card's changes" to the list under "Wh
 | Gizai's light and dark themes | CSS variables in the theme, as `MarkdownEditor.tsx:229-250` already does: follows the `t` key and Appearance at once [V pattern] | a Shiki theme written with CSS variables [I] | its own `light`/`dark` CSS (`diffViewTheme`), restyled by hand [V README] | `defineTheme` with fixed colours, set again on every theme change [I] |
 | Speed, 2,000-line diff | draws only the lines in sight; the diff is computed once per file, bounded by `scanLimit`/`timeout` [I: codemirror.net docs, not re-read] | virtualised, highlighting in a worker pool [I: diffs.com, not re-read] | "High performance with Web Worker support" [V README]; virtual scrolling not stated | draws only the lines in sight; diff in a worker [I] |
 | Content security policy as it is | fits [I] | Shiki's WASM engine needs `'wasm-unsafe-eval'`; JS engine fits [I] | lowlight fits; Shiki as left [I] | workers to set up [I] |
-| Old and new line numbers | new only in the unified view [I] | both [I] | both [V demo, I] | both [I] |
+| Old and new line numbers | new only in the unified view [I] | both [I] | both [I] | both [I] |
 | Folded unchanged code | `collapseUnchanged` [I] | yes [I] | expand buttons per hunk [I] | "hide unchanged regions" [I] |
 | Line comments later | a widget on a line (our code) [I] | annotations [I] | `renderWidgetLine`, `onAddWidgetClick` [V README] | view zones [I] |
 | Same colours as the Editor | yes | no (Shiki) | no | yes if the Editor is Monaco |
 
-Speed was not measured in this run (no browser or node allowed, web pages refused). Card F1 measures it where it counts, in the app's own WebKitGTK under `cage`: the 75th-percentile card here (2,108 changed lines, §1.3) and the largest one (15,131 lines in 245 files) must show their first screen within 300 ms and scroll without stalls. If CodeMirror misses that, F1 falls back to drawing the patch itself with `@tanstack/react-virtual` (in the app already, `package.json:24`) and CodeMirror's highlighter. [I targets]
+Speed was not measured in this run (no browser or node allowed, web pages refused). Card F1 measures it where it counts, in the app's own WebKitGTK under `cage`: the 75th-percentile card here (2,108 changed lines, §1 item 3) and the largest one (15,131 lines in 245 files) must show their first screen within 300 ms and scroll without stalls. If CodeMirror misses that, F1 falls back to drawing the patch itself with `@tanstack/react-virtual` (in the app already, `package.json:24`) and CodeMirror's highlighter. [I targets]
 
 ### 4.3 Recommendation
 
@@ -329,7 +329,7 @@ All screens use the design system as it is: the top bar with breadcrumbs and act
 │   A changes.rs     +180 │  81   return (                                        │
 │   D old_diff.rs     −80 │ ▾ crates/gizai-agents/src/changes.rs   A  +180        │
 │   R a.rs → b.rs         │   1 + //! A card's changes: …                         │
-│ ▸ package-lock.json  +412│ ▸ package-lock.json   M +412 −20   Lock file: folded │
+│ ▸ package-lock.json +412│ ▸ package-lock.json   M +412 −20   Lock file: folded │
 └─────────────────────────┴───────────────────────────────────────────────────────┘
   • = uncommitted   A added · M modified · D deleted · R renamed
 ```
@@ -367,8 +367,10 @@ Rules for D1: green and red of their own, near `--success` and `--danger` but se
 │  ▣ kade-portal         2 changed   │
 │  ▣ GA-123 (by hand)                │
 │ AGENTS                           ⌄ │
-│  ♛ Team Lead                       │
+│  ◆ Team Lead                       │
 ```
+
+(▣ and ◆ stand for the Lucide icons `folder-code` and `crown`.)
 
 **Screen 2: opening a folder.** A popover (like the item picker) with three groups: **Projects** (their linked folders), **In ~/Herd** (the folders under the roots that aren't projects yet), **Cards** (worktrees of cards that are yours or open). A search box filters all three. Settings → General → **Editor folders** sets the roots (default `~/Herd`); a folder outside them opens only through a project.
 
@@ -392,7 +394,7 @@ Rules for D1: green and red of their own, near `--success` and `--danger` but se
 
 - The tree's rows are the sidebar's rows at 28 px, the git status letter on the right (M, A, D, U for untracked) in its colour and with a tooltip; ignored folders greyed; a right click has New file, New folder, Rename, Delete (asks first), Copy path, Open in.
 - Tabs: the file name (and its folder when two have the same name), a dot while unsaved, × or middle click closes; asks before closing an unsaved tab.
-- The editor: `t-code` in the app's mono font (Settings → Appearance changes it, as everywhere), line numbers, the active line, matching brackets, folding, the search panel (Ctrl+F; Ctrl+H for replace).
+- The editor: `t-code` in the app's mono font (Settings → Appearance changes it, as everywhere), line numbers, the active line, matching brackets, folding, the search panel (Ctrl+F, with replace in the same panel).
 - The status bar: path, language, line endings, the cursor, Saved or Not saved.
 
 **Screen 4: search in the folder.** Ctrl+Shift+F swaps the tree for a search panel: the query, Match case, Words, Regular expression, the results grouped by file with the line and the match highlighted; a click opens the file at that line. "2,000 results shown; narrow the search for more."
@@ -496,7 +498,7 @@ At the same time: **D1, D2, B1 and B2** first (designs and backends need nothing
 - **Column, role:** Design, design.
 - **Builds:** the design of §5.2 as a page in the repository: the sidebar's Editor section (open and folded), the folder picker, the Editor page (tree, tabs, editor, status bar), search in the folder, the behind bar and Update with its refusals, the person's card bar and the board's "By hand" mark, the changed-on-disk bar, Settings → General → Editor folders; dark and light.
 - **Acceptance criteria:**
-  - [ ] Every screen of §5.2 in dark and light, with D1's syntax colours and the app's components.
+  - [ ] Every screen of §5.2 in dark and light, with D1's syntax colours (its token names, when D1 isn't approved yet) and the app's components.
   - [ ] The tree's rows, the tabs and the status bar specified (sizes in tokens, states: hover, selected, focus, unsaved, read-only, ignored).
   - [ ] The texts of every bar, button and refusal written out, in sentence case.
   - [ ] Jefsev approved it on the card.
@@ -713,7 +715,7 @@ export type DirEntry = {
   path: string;
   dir: boolean;
   size: number;
-  ignored: boolean;           // git ignores it: greyed and read-only
+  ignored: boolean;           // git ignores it: greyed; read-only inside an ignored folder
   git: GitMark | null;        // for a folder: whether something inside it changed ("modified")
 };
 export type OpenedFile = {
@@ -835,7 +837,7 @@ The npm registry (`npm view <package>`; the package pages are `https://www.npmjs
 
 GitHub, through `gh`, for this repository (Yotech-AI/gizai):
 
-- `gh pr list --state merged --limit 100 --json number,headRefName,additions,deletions,changedFiles`: the sizes of the 70 merged card pull requests (§1.3)
+- `gh pr list --state merged --limit 100 --json number,headRefName,additions,deletions,changedFiles`: the sizes of the 70 merged card pull requests (§1 item 3)
 - `gh pr view 81 --json …`: the field list (`mergeCommit`, `baseRefOid`, `headRefOid`, `files`, …) and PR #81's merge commit and counts
 - `gh pr diff 81 --name-only`, `gh pr diff 81`, `gh pr diff --help`
 

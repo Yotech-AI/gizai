@@ -23,7 +23,7 @@ Limits: the run may not start node or a browser, so nothing was measured in a br
 
 1. **Merged cards (Q1, B1, C1, question 7).** GitHub's docs say that after a rebase merge the "merge commit" is only the last rebased commit, so "the merge commit against its first parent" would quietly show one commit of the card. At the merge, B1 now saves the card's range in two hidden refs, `refs/gizai/merged/<identifier>/base` and `/head`. That works for every merge method, offline, and with no database change: no migration 0017, and no MINOR release just for B1.
 2. **The diff itself (Q3, §4, F1, C1).** The merge view computes its diff on the main thread. For big files it falls back to a rough diff: CodeMirror's maintainer confirms this for two 1,500-line files with scattered changes. So `card_file_diff` now also returns git's hunks, and F1 hands them to the view through `DiffConfig.override` (since 6.12.0). The view, the file list's +/− counts and GitHub then agree. `FileDiff` gains `hunks`.
-3. **Folds and keys (Q2, §5.1, F1).** `collapseUnchanged` only opens a whole folded stretch at once, the package binds no keys, and `mergeControls` (accept and reject buttons) is on by default. F1 turns the buttons off, draws its own fold bar (↑ 20, ↓ 20, All) and binds the keys for `goToNextChunk` and `goToPreviousChunk`. Removed lines get no line numbers in the unified view. F1 adds their old numbers through the gutter's `widgetMarker`.
+3. **Folds and keys (Q2, §5.1, F1).** `collapseUnchanged` only opens a whole folded stretch at once, the package binds no keys, and `mergeControls` (accept and reject buttons) is on by default. F1 turns the buttons off, draws its own fold bar (↑ 20, ↓ 20, All) and binds the keys for `goToNextChunk` and `goToPreviousChunk`. Removed lines get no line numbers in the unified view. F1 puts their old numbers in the same number column through `lineNumberWidgetMarker`, a facet of `@codemirror/view` for exactly that.
 4. **`@pierre/diffs` and the security policy (§4).** Pierre uses Shiki's JavaScript regex engine by default (WebAssembly only on request) and runs workers the app creates itself. So the content security policy is no reason against it, as run 1 said. What is left against it: a second colouring system (Shiki themes, drawn in Shadow DOM), its size and its pace of releases. The recommendation stands.
 5. **Hosts' diff limits (Q1).** Checked. GitHub's web view stops at 20,000 lines, 1 MB or 300 files a diff, and its files API lists at most 3,000 files. Bitbucket's view stops at 2,000 changed lines a file, 8,000 in all and 200 files. `gh pr diff` isn't held to GitHub's web limits: it returned a 27,708-line diff (1.58 MB) here in full. It does neutralise escape sequences unless told not to. Local git has none of these limits.
 6. **Open in (Q9, B2, C2).** Zed's Linux packages may name it `zeditor` or `zedit`, and this computer has only `/usr/bin/zeditor`. PhpStorm is `phpstorm.sh`, `phpstorm` (Toolbox's script) or `phpstorm64.exe`, and it makes a folder that isn't a project yet into one by adding `.idea/`. B2 finds every name, and keeps `.idea/` out of a card's changes.
@@ -150,7 +150,7 @@ Recommendation: the full-width view, reached as a **tab at the top of the card**
 - Left, a **file list** (260 px, it can fold): each file under its folder with a status letter (A, M, D, R; with the word in its tooltip), +/− counts, and a dot for uncommitted changes. A filter box on top, "Since origin/main +964 −112 · 20 files" above it.
 - Right, **all files below each other**, unified (one column), in the list's order; a click in the list scrolls there. Each file has a sticky header: path (old → new for a rename), +/−, a fold caret, and Open in editor while the worktree is there.
 - **Unchanged code folds** to 3 lines around each change; the fold bar "⋯ 37 unchanged lines" has arrows to show 20 more lines above or below, and a click shows them all. F1 draws this bar itself: CodeMirror's own `collapseUnchanged` (3 lines of margin, folds 4 lines or more) opens a whole stretch at a click, with no smaller step. [V package source and types]
-- **Line numbers:** added and unchanged lines carry their number in the file as it is now. Removed lines show their old numbers beside them; F1 adds those through the gutter's `widgetMarker`, because CodeMirror's unified view draws removed lines as one block with a single gutter marker and no numbers. [V `@codemirror/merge` source, `@codemirror/view` types; I approach]
+- **Line numbers:** added and unchanged lines carry their number in the file as it is now. Removed lines show their old numbers, in red, in the same column. CodeMirror's unified view draws removed lines as one block with a single gutter marker and no numbers. F1 adds the numbers through `lineNumberWidgetMarker` ("markers in the line number gutter next to widgets"), counting from where the chunk starts in the old file. [V `@codemirror/merge` source, `@codemirror/view` 6.43 types; I approach]
 - **Big and odd files:** a binary file says "Binary file changed (12 KB → 14 KB)"; a file over 1 MB, or a diff over 3,000 lines, comes folded with Show; lock files (`package-lock.json`, `composer.lock`, `Cargo.lock`) and built files come folded; a rename without changes is one line; a deleted file is red and folded when long.
 - Split side by side (Zed offers both [V]) is left out of the first version: it needs about 1,400 px of room. [I]
 - The Runs tab gets **Show changes** on each run, and the Pull request panel shows "+964 −112 · Show changes".
@@ -273,7 +273,7 @@ Recommendation: add "the code editor and a card's changes" to the list under "Wh
 
 - *What it takes:* the packages below; a shared code theme and language map; a small Blade language; the fold bar and the removed lines' numbers in the Changes view; the Rust side (changes with git's hunks, files, status) as in §5.3.
 - *Libraries* (all MIT, all by CodeMirror's maintainer; [V `npm view`, 2026-10-11]): `@codemirror/merge` 6.12.2 (183 KB unpacked, 37 releases of 6.x, latest 2026-06-09); `@codemirror/search` 6.7.2 (138 KB, 2026-08-31); `@codemirror/lang-php` 6.0.2 (13 KB, plus `@lezer/php` 389 KB; it depends on `lang-html`, which the app has; `php()` treats what is outside `<? … ?>` as HTML, and `plain: true` starts in PHP [V README]); `@codemirror/lang-rust` 6.0.2 (9 KB, plus `@lezer/rust` 381 KB); `@codemirror/lang-json` 6.0.2 (11 KB); `@codemirror/lang-yaml` 6.1.3 (16 KB); `@codemirror/lang-sql` 6.10.0 (146 KB); `@codemirror/legacy-modes` 6.5.5 for `.env`, TOML and shell (1.96 MB unpacked, but each mode is its own small file; latest 2026-10-07). TypeScript, TSX, HTML, CSS and Markdown are installed already. Unpacked sizes count every build and the type files; what reaches the bundle is a fraction, and languages load on first use. [I]
-- *Risks:* the Blade language is our own work. No CodeMirror Blade package exists [V npm, web search], but CodeMirror's own `@codemirror/lang-liquid` 6.3.3 (HTML with `{{ }}` and `{% %}` tags) is the model to follow [V npm]; about a day [I]. Removed lines get no line numbers in the unified view [V]; F1 adds them through the gutter's `widgetMarker`. The package's own diff turns rough in big files [V forum]; git's hunks through `DiffConfig.override` avoid that [V 6.12.0]. There is one editor per changed file, so files must mount only when they come near the screen (245 files in the largest card). Everything runs on the main thread [V source], which is why files over 1 MB, or with a diff over 3,000 lines, come folded.
+- *Risks:* the Blade language is our own work. No CodeMirror Blade package exists [V npm, web search], but CodeMirror's own `@codemirror/lang-liquid` 6.3.3 (HTML with `{{ }}` and `{% %}` tags) is the model to follow [V npm]; about a day [I]. Removed lines get no line numbers in the unified view [V]; F1 adds them through `lineNumberWidgetMarker` [V]. The package's own diff turns rough in big files [V forum]; git's hunks through `DiffConfig.override` avoid that [V 6.12.0]. There is one editor per changed file, so files must mount only when they come near the screen (245 files in the largest card). Everything runs on the main thread [V source], which is why files over 1 MB, or with a diff over 3,000 lines, come folded.
 - *Rough size:* 11 cards (§6), most of them medium.
 
 **B. A ready-made diff view for Changes, CodeMirror for the Editor.** Changes uses `@pierre/diffs` (colours with Shiki: TextMate grammars, as in VS Code) or `@git-diff-view/react` (highlight.js through lowlight by default, or Shiki), fed with `git diff`'s patch or both texts. For Blade, Pierre has Shiki's grammar; `@git-diff-view` needs Shiki, or highlight.js's unmaintained third-party grammar.
@@ -306,7 +306,7 @@ Recommendation: add "the code editor and a card's changes" to the list under "Wh
 | Many files, big files | draws only what is in sight plus a margin [V system guide]; its own diff turns rough in big files [V forum], git's hunks avoid that | one virtualised scroll for many files and diffs (`CodeView`) [V diffs.com] | the README doesn't say [V]; a code index of the repository describes a virtual list [I] | draws only what is in sight [I] |
 | Speed, 2,000-line diff | no published number [V: guide, types, changelog, forum read] | no published number [V diffs.com docs] | no published number [V README] | not looked for |
 | Content security policy as it is | fits: no WebAssembly, no workers [V] | fits, with its default JavaScript engine and a worker file from the app [V diffs.com, MDN] | fits with lowlight [I] | workers to set up [V README; I for the policy] |
-| Old and new line numbers | new only; F1 adds the old ones through the gutter's `widgetMarker` [V] | line numbers, split or stacked [V README]; both columns not checked [I] | both [I] | both [I] |
+| Old and new line numbers | new only; F1 adds the old ones through `lineNumberWidgetMarker` [V] | line numbers, split or stacked [V README]; both columns not checked [I] | both [I] | both [I] |
 | Folded unchanged code | `collapseUnchanged` opens a whole stretch; F1 draws its own bar [V] | folded context, opened 100 lines a click (`expansionLineCount`) [V] | expand buttons per hunk [I] | can hide unchanged regions [I: its type file was too long to read] |
 | Line comments later | a widget on a line (our code) [I] | line annotations (`LineAnnotation`, `DiffLineAnnotation`) [V] | `renderWidgetLine`, `onAddWidgetClick` [V README] | view zones [I] |
 | Same colours as the Editor | yes | no (Shiki) | no | yes if the Editor is Monaco |
@@ -356,7 +356,7 @@ All screens use the design system as it is: the top bar with breadcrumbs and act
 │ Since origin/main       │ ▾ src/components/Sidebar.tsx         M  +12 −3  [Open]│
 │ +964 −112 · 20 files    │  40   const agents = (team.data?.members ?? [])…      │
 │ [Filter files…        ] │  41   const notes = useData(() => memoryNotes()…      │
-│ ▾ src/components        │ ░ - const lead = leadOf(agents);              (red)   │
+│ ▾ src/components        │ ░42 - const lead = leadOf(agents);            (red)   │
 │   M Sidebar.tsx  +12 −3 │ ▓42 + const lead = leadOf(agents, editor);    (green) │
 │   A EditorSection +240 •│  43   const threads = useData(() => …                 │
 │ ▾ crates/gizai-agents   │   ⋯ 37 unchanged lines   [↑ 20] [↓ 20] [All]          │
@@ -366,16 +366,17 @@ All screens use the design system as it is: the top bar with breadcrumbs and act
 │ ▸ package-lock.json +412│ ▸ package-lock.json   M +412 −20   Lock file: folded │
 └─────────────────────────┴───────────────────────────────────────────────────────┘
   • = uncommitted   A added · M modified · D deleted · R renamed
+  A removed line shows its old line number (in red), an added or unchanged line its number now.
 ```
 
-- The header line says where the changes come from when it isn't the worktree: "From the merge commit 3f5c1a2 on main", "From branch gizai/ga-12-… (its worktree was removed)". With uncommitted changes: "+964 −112, 3 files not committed yet".
+- The header line says where the changes come from when it isn't the worktree: "As merged into main on 10 Oct (pull request #81)", "From the merge commit 3f5c1a2 on main", "From branch gizai/ga-12-… (its worktree was removed)", "From GitHub's diff of pull request #12 (no file texts: folds can't open)". With uncommitted changes: "+964 −112, 3 files not committed yet".
 - The file list scrolls on its own; the diffs scroll on their own; a file's header sticks while its diff is in sight.
-- Keyboard: `n` and `p` go to the next and previous file, Alt+↓ and Alt+↑ to the next and previous change in a file (CodeMirror merge's chunk commands [I]), Escape returns to Card.
+- Keyboard: `n` and `p` go to the next and previous file; Alt+↓ and Alt+↑ go to the next and previous change in a file (our key bindings for the package's `goToNextChunk` and `goToPreviousChunk`, which come without keys [V]); Escape returns to Card. The view is read-only, so CodeMirror's own Alt+↑/↓ (move a line) doesn't apply.
 - A wide window (more than 1,400 px for the diffs) could later offer side by side; not in the first version.
 
 **Screen 3: one run's changes.** The Runs tab's row gets **Show changes**; it opens the same view, limited to that run: "Run by Backend Agent, 10 Oct 14:02: 2 commits, +40 −3" with **All changes** to go back.
 
-**States.** No branch yet: "No changes yet: the first run makes this card's branch." No changes: "This card's branch has no changes against origin/main." Merged without a known merge commit and no gh: "Gizai can't find this card's merge commit on main: fetch main, or log gh in (Settings → GitHub)." A failure says what went wrong and how to fix it, in the error banner (`design/README.md:15-17`).
+**States.** No branch yet: "No changes yet: the first run makes this card's branch." No changes: "This card's branch has no changes against origin/main." Merged, nothing saved and no gh: "Gizai can't find what this card changed: fetch main, or log gh in (Settings → GitHub)." A failure says what went wrong and how to fix it, in the error banner (`design/README.md:15-17`).
 
 **Colours.** New tokens in `design/tokens.json`, for dark and light, turned into CSS by `scripts/tokens-css.ts` [I values for D1 to set]:
 
@@ -454,15 +455,15 @@ No new Tauri plugin and no change to the security policy or the window's permiss
 
 | Where | What changes | Card |
 |---|---|---|
-| `crates/gizai-agents/src/changes.rs` (new) | a card's changes from git: the worktree against its merge base, a branch, a range; each file's texts before and after; parsing `--numstat -z` and `--name-status -z` (renames, binaries) | B1 |
-| `crates/gizai-agents/src/github.rs`, `bitbucket.rs` | `mergeCommit` added to `FIELDS` (`github.rs:52`); Bitbucket's `merge_commit` read | B1 |
-| `crates/gizai-core/migrations/0017_merge_commit.sql` (new), `db.rs`, `pulls.rs` | `tasks.merge_sha`, saved by `pulls::merged` | B1 |
+| `crates/gizai-agents/src/changes.rs` (new) | a card's changes from git: the worktree against its merge base, a branch, a saved range, a merge commit, a run's range; each file's texts before and after and git's hunks (`git diff -U0`); parsing `--numstat -z` and `--name-status -z` (renames, binaries); saving a merged card's range (`git update-ref refs/gizai/merged/<identifier>/base` and `/head`) | B1 |
+| `crates/gizai-agents/src/github.rs`, `bitbucket.rs` | `mergeCommit` added to `FIELDS` (`github.rs:52`); Bitbucket's `merge_commit` read; `gh pr diff` with `--color never --allow-escape-sequences` for the last resort | B1 |
+| `src-tauri/src/pulls.rs` | at a merge, before `clean_up` (`:402-405`): fetch main, then save the card's range | B1 |
 | `src-tauri/src/changes.rs` (new), `lib.rs` | `card_changes`, `card_file_diff`, `run_changes` | B1 |
 | `design/tokens.json`, `src/styles/tokens.css`, `design/README.md` | `diff-*` and `syn-*` tokens and their rules | D1, F0 |
 | `src/lib/codeTheme.ts`, `src/lib/codeLanguages.ts`, `src/lib/blade.ts` (new) | the code theme, the extension → language map (loaded on first use), Blade | F0 |
-| `src/components/changes/` (new), `src/lib/changes.ts` (new), `src/pages/TaskPage.tsx`, `src/router.ts`, `src/components/RunHistory.tsx`, `src/components/PullPanel.tsx` | the Changes view, the Card \| Changes tabs, `#/task/<id>/changes`, Show changes per run | F1 |
+| `src/components/changes/` (new), `src/lib/changes.ts` (new), `src/pages/TaskPage.tsx`, `src/router.ts`, `src/components/RunHistory.tsx`, `src/components/PullPanel.tsx` | the Changes view, the Card \| Changes tabs, `#/task/<id>/changes`, Show changes per run; in `changes.ts`, git's hunks turned into the merge view's changes for `DiffConfig.override` (tested), the fold bar and the removed lines' numbers | F1 |
 | `crates/gizai-core/src/editor.rs` (new), `settings` | which folders the Editor may open: projects' folders, roots (`editor_roots`, default `~/Herd`), card worktrees; the refusals of `folders.rs` | B2 |
-| `crates/gizai-agents/src/editor.rs` (new) | list, read, write (atomic, keeps line endings), new, rename, delete, search (`git grep`), files (`git ls-files`), git status, file versions; the path guard; the external editors found | B2 |
+| `crates/gizai-agents/src/editor.rs` (new) | list, read, write (atomic, keeps line endings), new, rename, delete, search (`git grep`), files (`git ls-files`), git status, file versions; the path guard; the external editors found under all their names (`zeditor` too), and `/.idea/` in `info/exclude` before PhpStorm opens a card's worktree | B2 |
 | `src-tauri/src/editor.rs` (new), `lib.rs`, `runs.rs` (`Settings`) | the Editor's commands, including the file versions and git status the screen polls; `editorRoots` in Settings | B2 |
 | `src/pages/EditorPage.tsx`, `src/components/editor/` (new), `src/lib/editor.ts` (new), `src/components/Sidebar.tsx`, `src/lib/sidebar.ts`, `src/pages/SettingsPage.tsx` | the Editor page, its tree, tabs, search and status bar; the sidebar section; Settings → General → Editor folders; Open in | F2 |
 | `src-tauri/src/editor.rs`, `code.rs` | Fetch on open and every 10 minutes, Update with `checkout::plan` and `update`, under `folder_lock` | B3 |
@@ -472,23 +473,32 @@ No new Tauri plugin and no change to the security policy or the window's permiss
 | `crates/gizai-core/examples/prep_changes.rs` (new), `src/selftest.ts`, `scripts/ui-test.sh` | demo data with a repository, a card worktree and a merged card; UI probes | F1, F2 |
 | `docs/PAID-FEATURES.md`, `README.md` | the editor stays free; the features list | F2 |
 
-How outside changes reach the screen [I]: no file watcher in the first version. While the Editor shows a folder, the screen asks every 3 seconds for the versions (size and modification time) of the open files, and for the folder's git status every 10 seconds and when the window gets the focus; the tree reloads the folders that are open when the window gets the focus. That is simple, the same on Linux, macOS and Windows, and can't run into Linux's limit on watched folders in a Laravel project with a full `vendor/`. If it feels slow, a later card adds the `notify` crate (Rust, cross-platform watching) for the open folders only, sent to the screen as a Tauri event (`editor-changed`). [I; the `notify` crate's version and licence couldn't be checked today]
+How outside changes reach the screen [I]: no file watcher in the first version. While the Editor shows a folder, the screen asks every 3 seconds for the versions (size and modification time) of the open files. It asks for the folder's git status every 10 seconds and when the window gets the focus, and the tree reloads its open folders when the window gets the focus. That is simple and the same on Linux, macOS and Windows. It also can't run into Linux's limit on watched folders in a Laravel project with a full `vendor/` and `node_modules/`.
+
+If it feels slow, a later card adds the `notify` crate for the open folders only, sent to the screen as a Tauri event (`editor-changed`). The facts [V crates.io, the crate's README and docs, read 2026-10-11]:
+
+- 8.2.0 is the stable release (2025-08-03, CC0-1.0, Rust 1.77 or newer); 9.0 is in release candidates (rc.5 of 2026-08-30, Rust 1.88).
+- It uses inotify on Linux, FSEvents on macOS (kqueue as an option), ReadDirectoryChangesW on Windows, and polling anywhere.
+- `notify-debouncer-mini` and `-full` (MIT or Apache-2.0) group events.
+- Its docs warn that on Linux a big tree can hit "the max-files watched limits of your user or system" ("No space left on device"), that network folders and WSL may send no events, and that editors save in different ways.
+- It isn't in Gizai's dependencies yet [V `cargo tree -i notify`]; `notify-rust` 4.18.2 is a different crate, for desktop notifications.
 
 ### 5.4 Security and privacy
 
 - **One gate for every path.** The screen sends a folder (one `editor_folders` returned) and a path inside it, never an absolute path. Rust re-checks on every call that the folder is still allowed (§3.2 Q5), makes the path canonical, refuses `..`, any `.git` part and links that lead outside the folder, and refuses writes in read-only places (ignored folders, a live agent's worktree, files over 1 MB). The rules live in the core with tests, as the agent folder rules do (`folders.rs`). [I]
 - **Safe writes.** Save writes a temporary file in the same folder and renames it over the file, keeping its permissions; it refuses when the file changed on disk since it was read. Line endings and a byte order mark stay as they were. [I]
-- **Nothing leaves the computer.** Search, diffs and saving are local; the only network use is `git fetch` from the project's own remote, as card starts do, and `gh` or Bitbucket for a merge commit Gizai can't find. No file contents go to agents, logs or GitHub. [I]
+- **Nothing leaves the computer.** Search, diffs and saving are local. The only network use is `git fetch` from the project's own remote, as card starts do (and once at a merge, to save the card's range), and `gh` or Bitbucket for a merged card with nothing saved. No file contents go to agents, logs or GitHub. [I]
+- **What Gizai writes in your repository.** As now, worktrees and `gizai/…` branches (and `refs/gizai/base/<branch>` without a remote). New are two refs per merged card under `refs/gizai/merged/`, and `/.idea/` in `info/exclude` when PhpStorm opens a card's worktree. Gizai's pushes send only the card's branch (`refs/heads/<branch>:refs/heads/<branch>`, `worktree.rs:398`), so these refs stay on this computer. A pull request's diff from `gh` is shown as text, never run. [V push; I design]
 - **No new rights for the window.** No file system plugin, the same capabilities and content security policy (`capabilities/default.json`, `tauri.conf.json:18`). [V today]
 - **Update** stays as careful as `update_checkout`: fast-forward only, git hooks off (`checkout.rs:230`), never the setup command. A person's Commit runs the repository's own git hooks, as a commit in a terminal would. [V for update; I for commit]
 - **Agents' work is safe:** a worktree is read-only while its agent runs, and a card pinned to a person is never taken by an agent (`workflow.rs:185-188`). [V rule; I design]
 
 ### 5.5 How it is tested
 
-- **Rust** (TDD, as CLAUDE.md:39-45 asks): `crates/gizai-agents/tests/changes_test.rs` on temporary repositories (a worktree with commits, uncommitted and untracked files, a rename, a binary; only a branch; a merge commit; a squash; a run's range); `crates/gizai-agents/tests/editor_test.rs` (the path gate: `..`, links out, `.git`, refused folders; saving keeps CRLF and refuses a changed file; search's cap; git status counts); `crates/gizai-core/tests/` for the folders the Editor may open and for the person's card rules (pin, hand over, `qa_fail` pins again); `src-tauri/tests/` flow tests: `card_changes` in each column, a person's card from start to Testing with a push to a bare repository, Update refused with uncommitted changes and done with a fast-forward.
-- **TypeScript** (`npm test`): the language map, Blade's tokens on sample templates, the file list's grouping and labels, the tabs' state, the sidebar's `"editor"` fold.
+- **Rust** (TDD, as CLAUDE.md:39-45 asks): `crates/gizai-agents/tests/changes_test.rs` on temporary repositories (a worktree with commits, uncommitted and untracked files, a rename, a binary; only a branch; a merge commit, a squash and a rebase merge, each of whose saved range shows the whole card, also after the branch is deleted and offline; a card merged before B1, with a merge commit and no saved range; a run's range; git's hunks agree with `--numstat`); `crates/gizai-agents/tests/editor_test.rs` (the path gate: `..`, links out, `.git`, refused folders; saving keeps CRLF and refuses a changed file; search's cap; git status counts); `crates/gizai-core/tests/` for the folders the Editor may open and for the person's card rules (pin, hand over, `qa_fail` pins again); `src-tauri/tests/` flow tests: `card_changes` in each column, a person's card from start to Testing with a push to a bare repository, Update refused with uncommitted changes and done with a fast-forward.
+- **TypeScript** (`npm test`): the language map, Blade's tokens on sample templates, git's hunks turned into the merge view's changes (with the words that changed), the fold bar's steps, the removed lines' numbers, the file list's grouping and labels, the tabs' state, the sidebar's `"editor"` fold.
 - **UI** (`scripts/ui-test.sh`, headless in `cage`, on `prep_changes` data): Changes opens, folds and unfolds, a file list click scrolls, and the 2,000-line and 15,000-line diffs meet the speed targets (§4.2); the Editor opens a folder, types, Ctrl+S writes the file on disk, an outside change reloads an untouched tab, search finds a word; Editor folds in the sidebar. Screenshots with `scripts/shot-cage.sh` for the design review.
-- **Linux, macOS, Windows:** paths with backslashes and any case on Windows, CRLF files, `code.cmd` found through `os::find_in`; CI runs it all on the three (`.github/workflows/ci.yml`).
+- **Linux, macOS, Windows:** paths with backslashes and any case on Windows, CRLF files, `code.cmd` found through `os::find_in`, `zeditor` and `phpstorm.sh` found on Linux; CI runs it all on the three (`.github/workflows/ci.yml`).
 
 ### 5.6 What is left out
 
@@ -540,13 +550,13 @@ At the same time: **D1, D2, B1 and B2** first (designs and backends need nothing
 ### B1. A card's changes, in the backend
 
 - **Column, role:** To do, backend.
-- **Builds:** `crates/gizai-agents/src/changes.rs` (the sources of §3.2 Q1 in that order; numstat and name-status parsing, renames, binaries, untracked files; each file's texts, at most 1 MB a side); `mergeCommit` in `github::FIELDS` and Bitbucket's `merge_commit`; migration `0017_merge_commit.sql` with `tasks.merge_sha`, saved by `pulls::merged`, and looked up once for older merged cards; `src-tauri/src/changes.rs` with the three commands of contract C1, registered in `lib.rs`; `src/api.ts` and `src/types.ts` as in C1.
+- **Builds:** `crates/gizai-agents/src/changes.rs` (the sources of §3.2 Q1 in that order; numstat and name-status parsing, renames, binaries, untracked files; each file's texts, at most 1 MB a side, and git's hunks from `git diff -U0`). At a merge, in the PR check before `clean_up` (`src-tauri/src/pulls.rs:402-405`): fetch main as a card start does, and save the card's range as `refs/gizai/merged/<identifier>/base` (`git merge-base <tip> <merge commit>^1`) and `/head` (the tip), with the offline rule of Q1. `mergeCommit` in `github::FIELDS` and Bitbucket's `merge_commit`. `gh pr diff --color never --allow-escape-sequences` as the last resort. `src-tauri/src/changes.rs` with the three commands of contract C1, registered in `lib.rs`; `src/api.ts` and `src/types.ts` as in C1. No database change.
 - **Acceptance criteria:**
-  - [ ] Tests on temporary repositories: a worktree with commits, uncommitted and untracked files, a rename and a binary; a card with only its branch; a merge commit; a squash merge; a run's range; a card without a branch.
+  - [ ] Tests on temporary repositories: a worktree with commits, uncommitted and untracked files, a rename and a binary; a card with only its branch; a run's range; a card without a branch.
   - [ ] Against the merge base with main as last fetched: commits main got since the card started don't show.
-  - [ ] A merged card whose worktree and branch are gone still shows its changes, from `merge_sha`, offline.
-  - [ ] `.gizai-tmp/` never shows; a file over 1 MB comes with `tooLarge` and no text.
-  - [ ] `SCHEMA_VERSION` 17 and the upgrade tests updated; `cargo test --workspace`, `npm test` and `npm run build` pass.
+  - [ ] A merge commit, a squash and a rebase merge each save a range that shows the whole card, still after the worktree and branch are gone, offline. A card merged before B1 shows its merge commit against its first parent.
+  - [ ] Each file's `hunks` match `git diff --numstat` for it; `.gizai-tmp/` never shows; a file over 1 MB comes with `tooLarge` and no text.
+  - [ ] The refs are never pushed (tested with a bare remote); `cargo test --workspace`, `npm test` and `npm run build` pass.
 
 ### B2. The Editor's folders and files, in the backend
 
@@ -557,7 +567,8 @@ At the same time: **D1, D2, B1 and B2** first (designs and backends need nothing
   - [ ] Save writes atomically, keeps CRLF and a byte order mark, and refuses with "changed on disk" when the version differs.
   - [ ] A worktree of a card an agent is working on is read-only (`readOnlyWhy` says so); ignored folders and files over 1 MB are read-only; binaries and files over 5 MB come without text.
   - [ ] Search stops at 2,000 hits (`truncated`) and 10 seconds; files lists tracked and untracked files that git doesn't ignore.
-  - [ ] `editor_apps` lists only the editors found (`code`, `zed`, `phpstorm`, also `.cmd` shims on Windows); `open_in_app` starts them with `os::command`.
+  - [ ] `editor_apps` lists only the editors found, under all their names: `code`; `zed`, `zeditor`, `zedit`; `phpstorm`, `phpstorm.sh`, Toolbox's scripts; `.cmd` and `.exe` on Windows. `open_in_app` starts them with `os::command`, at a line when given (`code -g f:l`, `zed f:l`, `phpstorm --line l f`).
+  - [ ] Before PhpStorm opens a card's worktree, `/.idea/` is in the repository's `info/exclude`, so it never shows in the card's changes.
   - [ ] `cargo test --workspace`, `npm test` and `npm run build` pass.
 
 ### F0. Code colours and languages, Blade included
@@ -573,10 +584,11 @@ At the same time: **D1, D2, B1 and B2** first (designs and backends need nothing
 ### F1. The Changes view on a card
 
 - **Column, role:** To do, frontend.
-- **Builds:** the Card | Changes tabs on the task page with the counts; the Changes view of §5.1 with `@codemirror/merge` (`unifiedMergeView`, read-only, `collapseUnchanged`), files mounted only near the screen; `#/task/<id>/changes`; Show changes per run in the Runs tab and in the Pull request panel; `crates/gizai-core/examples/prep_changes.rs` and UI probes.
+- **Builds:** the Card | Changes tabs on the task page with the counts; the Changes view of §5.1 with `@codemirror/merge`: `unifiedMergeView`, read-only, `mergeControls: false`, git's hunks through `diffConfig.override` (refined per hunk with the package's `diff`), its own fold bar instead of `collapseUnchanged`, removed lines' old numbers through `lineNumberWidgetMarker`, Alt+↑/↓ bound to `goToPreviousChunk`/`goToNextChunk`; files mounted only near the screen; `#/task/<id>/changes`; Show changes per run in the Runs tab and in the Pull request panel; `crates/gizai-core/examples/prep_changes.rs` and UI probes.
 - **Acceptance criteria:**
   - [ ] The view as D1 designed it, in dark and light, for a card in each column (no branch, worktree, branch only, merged).
-  - [ ] Unchanged code folds with 3 lines around changes; the fold's arrows show 20 more lines, a click shows all.
+  - [ ] The view's changes are git's: on a 1,500-line file with 40 scattered changed lines it shows those lines, not big changed blocks; its +/− equal the file list's.
+  - [ ] Unchanged code folds with 3 lines around changes; the fold's arrows show 20 more lines, a click shows all; removed lines show their old line numbers.
   - [ ] Speed, measured by a UI probe in `cage`: a 2,000-line diff and a 15,000-line, 245-file diff show their first screen within 300 ms and scroll without stalls; if not, the fallback of §4.2.
   - [ ] Show changes on a run shows only that run's commits.
   - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
@@ -648,9 +660,10 @@ Rust (`src-tauri/src/changes.rs`, registered in `lib.rs`; types with `#[serde(re
 
 ```ts
 /** A card's changed files with their counts: its worktree (uncommitted changes included) against its merge base with main,
- *  else its branch, else its merge commit on main, else the pull request's diff. Each file's texts come from cardFileDiff. */
+ *  else its branch, else the range saved at its merge, else its merge commit on main, else the pull request's diff.
+ *  Each file's texts and hunks come from cardFileDiff. */
 export const cardChanges = (taskId: string) => invoke<T.CardChanges>("card_changes", { taskId });
-/** One changed file: its text at `from` and at `to` (null: the worktree as it is on disk). */
+/** One changed file: its text at `from` and at `to` (null: the worktree as it is on disk), and git's hunks between them. */
 export const cardFileDiff = (taskId: string, path: string, oldPath: string | null, from: string, to: string | null) =>
   invoke<T.FileDiff>("card_file_diff", { taskId, path, oldPath, from, to });
 /** The changes one run committed: from the commit it started at to the one it ended at. */
@@ -660,7 +673,8 @@ export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes"
 `src/types.ts`:
 
 ```ts
-/** Where a card's changes come from (§3.2 Q1). "pull": GitHub's or Bitbucket's diff, without the files' texts. */
+/** Where a card's changes come from (§3.2 Q1). "merge": the range saved at the merge, or the merge commit against its first
+ *  parent. "pull": GitHub's or Bitbucket's diff, without the files' texts. */
 export type ChangeSource = "worktree" | "branch" | "merge" | "pull" | "run" | "none";
 export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange";
 export type FileChange = {
@@ -674,7 +688,7 @@ export type FileChange = {
 };
 export type CardChanges = {
   source: ChangeSource;
-  from: string | null;        // the commit the changes are measured from: the merge base, or the merge commit's first parent
+  from: string | null;        // the commit the changes are measured from: the merge base, the saved base, or the merge commit's first parent
   to: string | null;          // the commit they end at; null for the worktree as it is on disk
   baseLabel: string;          // "origin/main", or "main" for a project without a link
   additions: number;
@@ -682,10 +696,14 @@ export type CardChanges = {
   files: FileChange[];        // in path order
   note: string | null;        // why there is nothing to show, or where the changes come from when not the worktree
 };
+/** One hunk as git prints it with -U0: "@@ -oldStart,oldLines +newStart,newLines @@". Lines count from 1; when a side has
+ *  0 lines, its start is the line before the change (0 at the top), as in git. */
+export type DiffHunk = { oldStart: number; oldLines: number; newStart: number; newLines: number };
 export type FileDiff = {
   path: string;
   oldText: string | null;     // null when added, binary or too large
   newText: string | null;     // null when deleted, binary or too large
+  hunks: DiffHunk[];          // git's hunks between oldText and newText, in order; [] when binary, too large or source "pull"
   patch: string | null;       // only for source "pull": this file's part of the diff
   binary: boolean;
   tooLarge: boolean;          // over 1 MB on a side
@@ -695,7 +713,7 @@ export type FileDiff = {
 };
 ```
 
-Errors are plain sentences, like the rest of the app ("GA-12's merge commit isn't on this computer: fetch main, or log gh in (Settings → GitHub)").
+Errors are plain sentences, like the rest of the app ("Gizai can't find what GA-12 changed: fetch main, or log gh in (Settings → GitHub)").
 
 ### Contract C2: B2 → F2 (the Editor's folders and files)
 
@@ -723,11 +741,11 @@ export const editorSearch = (folder: string, query: string, caseSensitive: boole
 export const editorGit = (folder: string) => invoke<T.FolderGit>("editor_git", { folder });
 /** The current version of each path ("" for a file that is gone), to notice outside changes. */
 export const editorVersions = (folder: string, paths: string[]) => invoke<string[]>("editor_versions", { folder, paths });
-/** VS Code, Zed and PhpStorm, those found on this computer. */
+/** VS Code, Zed and PhpStorm, those found on this computer (under any of their names, such as zeditor). */
 export const editorApps = () => invoke<T.EditorApp[]>("editor_apps");
-/** Opens the folder, or a file in it, in that editor. */
-export const openInApp = (app: T.EditorApp["id"], folder: string, path: string | null) =>
-  invoke<void>("open_in_app", { app, folder, path });
+/** Opens the folder, or a file in it (at a line when given), in that editor. */
+export const openInApp = (app: T.EditorApp["id"], folder: string, path: string | null, line: number | null) =>
+  invoke<void>("open_in_app", { app, folder, path, line });
 ```
 
 `src/types.ts`:
@@ -845,8 +863,8 @@ export type HandCard = { taskId: string; folder: string; branch: string; changed
 4. **Where does a person's Hand over go?** Recommended: like an agent's work, to Testing for the QA Agent when the card's Testing switch is on, else to Review. Or always straight to Review?
 5. **Who is "a person" for Open in editor?** Recommended: only you (the person using this Gizai); a card assigned to another person shows who has it, without Open in editor.
 6. **Blade in the first version.** Recommended: our own small Blade language (about a day of F0). The cheaper start colours `.blade.php` as HTML with PHP, leaving `{{ }}` and `@directives` plain.
-7. **Remember the merge commit in the database.** Recommended: yes, `tasks.merge_sha` (migration 0017, so the release with B1 is 0.8.0), so merged cards show their changes offline. Or ask GitHub or Bitbucket every time a merged card's changes open?
-8. **Which external editors first?** Recommended: VS Code, Zed and PhpStorm; others (Cursor, Sublime Text) when asked.
+7. **Keep a merged card's changes with two hidden refs** (`refs/gizai/merged/<identifier>/base` and `/head`) in the project's repository. Recommended: yes. It works offline after a merge commit, a squash and a rebase alike, and keeps the card's commits from git's clean-up. It needs no database change (so no MINOR release just for B1), and the refs are never pushed. The cost: `git log --all` and some git apps show them. The other ways are a database column with the merge commit, or asking GitHub or Bitbucket each time a merged card's changes open. The column is wrong after a rebase merge, and a squashed card's own commits can be cleaned up. Asking each time needs the network and gets no file texts.
+8. **Which external editors first?** Recommended: VS Code, Zed and PhpStorm, each found under all its names (Zed is `zeditor` on this computer); others (Cursor, Sublime Text) when asked.
 9. **Outside changes.** Recommended: polling first (open files every 3 seconds, git status every 10), a file watcher later if it feels slow. Or a watcher from the start?
 10. **Comments on a line.** Recommended: later, as a small card after F1, with no database change (§3.2 Q4).
 11. **Order.** Recommended: a card's changes first (B1, F0, F1: useful at once in Review), then the Editor (B2, F2, B3, F3), then a person's card (B4, F4).
@@ -855,27 +873,71 @@ export type HandCard = { taskId: string; folder: string; branch: string; changed
 
 ## 8. Sources
 
-Read on 2026-10-11 unless noted. Registry and GitHub facts were read with `npm view` and `gh` from this worktree; web pages could not be fetched in this run.
+All read on 2026-10-11: the registry and GitHub with `npm view` and `gh` in both passes, the web pages in the second pass. A page's own "last updated" date is given where it shows one.
 
-The npm registry (`npm view <package>`; the package pages are `https://www.npmjs.com/package/<package>`):
+**CodeMirror**
 
-- `@codemirror/merge` 6.12.2 (licence, size, dependencies, release dates, README) https://www.npmjs.com/package/@codemirror/merge ; repository https://code.haverbeke.berlin/codemirror/merge
-- `@codemirror/search` 6.7.2, `@codemirror/lang-php` 6.0.2, `@codemirror/lang-rust` 6.0.2, `@codemirror/lang-json` 6.0.2, `@codemirror/lang-yaml` 6.1.3, `@codemirror/lang-sql` 6.10.0, `@codemirror/legacy-modes` 6.5.5, `@codemirror/language-data` 6.5.2, `@codemirror/lsp-client` 6.3.0 (README) https://www.npmjs.com/package/@codemirror/lsp-client
-- `@lezer/php` 1.0.6, `@lezer/rust` 1.0.3, `@lezer/json`, `@lezer/yaml` (sizes)
-- `@pierre/diffs` 1.5.2 (licence, size, files, dependencies, exports, maintainers, 107 versions since 2025-12-10; no README, homepage or repository in the registry) https://www.npmjs.com/package/@pierre/diffs
-- `@git-diff-view/react` 0.1.7 (README), `@git-diff-view/core` 0.1.7, `@git-diff-view/shiki` 0.1.7 https://www.npmjs.com/package/@git-diff-view/react ; repository https://github.com/MrWangJustToDo/git-diff-view ; demo https://mrwangjusttodo.github.io/git-diff-view (not opened)
-- `shiki` 4.5.0, `@shikijs/langs` 4.5.0 (exports `./blade`) https://www.npmjs.com/package/@shikijs/langs
-- `highlight.js` 11.12.0 (BSD-3-Clause; no Blade in its exports)
-- `monaco-editor` 0.57.0, `@monaco-editor/react` 4.7.0 https://www.npmjs.com/package/monaco-editor
-- `codemirror-shiki` 0.3.0; no `codemirror-lang-blade` or `codemirror-blade` package exists (404)
+- `@codemirror/merge` 6.12.2, its type definitions with their doc comments (`unifiedMergeView` and its options, `MergeView`, `collapseUnchanged`'s `margin` and `minSize`, `DiffConfig`'s `scanLimit`, `timeout` and `override`, `goToNextChunk`, `Chunk`, `diff`): https://unpkg.com/@codemirror/merge@6.12.2/dist/index.d.ts
+- its code (the collapsed-lines widget, deleted chunks and their gutter marker, no key bindings, the diff defaults, how `override` is used): https://unpkg.com/@codemirror/merge@6.12.2/dist/index.js
+- its changelog: https://unpkg.com/@codemirror/merge@6.12.2/CHANGELOG.md (the repository's copy, https://code.haverbeke.berlin/codemirror/merge/src/branch/main/CHANGELOG.md, sits behind a bot check)
+- `@codemirror/search` 6.7.2, its type definitions (`searchKeymap`, `SearchConfig`): https://unpkg.com/@codemirror/search@6.7.2/dist/index.d.ts
+- the system guide (the viewport): https://codemirror.net/docs/guide/ ; the huge-document example: https://codemirror.net/examples/million/
+- the forum: "Incorrect diff for large files in merge view" (2023-11-13 to 2025-04-17), https://discuss.codemirror.net/t/incorrect-diff-for-large-files-in-merge-view/7411 ; "CodeMirror Merge Slow Diff" (2023-08-17 and 18), https://discuss.codemirror.net/t/codemirror-merge-slow-diff/7005
+- `@codemirror/view` 6.43.13 as installed: `gutter`'s `widgetMarker` and `lineNumberWidgetMarker` (`node_modules/@codemirror/view/dist/index.d.ts:2325-2327`, `:2387-2390`)
+- The reference manual, https://codemirror.net/docs/ref/#merge , was too long to fetch in one piece; the type files above carry its text.
 
-GitHub, through `gh`, for this repository (Yotech-AI/gizai):
+**The other diff components and highlighters**
 
-- `gh pr list --state merged --limit 100 --json number,headRefName,additions,deletions,changedFiles`: the sizes of the 70 merged card pull requests (§1 item 3)
+- `@pierre/diffs`: its documentation as text for tools, https://diffs.com/llms-full.txt (index https://diffs.com/llms.txt ; https://diffs.com/docs is over 10 MB and couldn't be fetched); its worker types, https://unpkg.com/@pierre/diffs@1.5.2/dist/worker/index.d.ts and https://unpkg.com/@pierre/diffs@1.5.2/dist/worker/types.d.ts ; its README, https://unpkg.com/@pierre/diffs@1.5.2/README.md
+- `@git-diff-view`: https://github.com/MrWangJustToDo/git-diff-view (744 stars) and its README, https://raw.githubusercontent.com/MrWangJustToDo/git-diff-view/main/README.md
+- Shiki: regex engines, https://shiki.style/guide/regex-engines ; the CSS-variables theme, https://shiki.style/guide/theme-colors ; https://shiki.style/languages (its table didn't come through, so the grammars were checked in `@shikijs/langs`' exports)
+- highlight.js's supported languages: https://raw.githubusercontent.com/highlightjs/highlight.js/main/SUPPORTED_LANGUAGES.md
+- Monaco: its language folders, https://github.com/microsoft/monaco-editor/tree/main/src/languages/definitions ; its types, https://unpkg.com/monaco-editor@0.57.0/esm/vs/editor/editor.api.d.ts (cut short: `defineTheme` read, the diff editor's options not reached); its README (`npm view monaco-editor readme`)
+- GitHub's engineering blog, "Rendering huge pull requests in the GitHub Copilot app" (2026-09-23): https://github.blog/engineering/user-experience/rendering-huge-pull-requests-in-the-github-copilot-app
+
+**The web platform, git and the hosts**
+
+- MDN, `worker-src`: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/worker-src ; `script-src` and `'wasm-unsafe-eval'`: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/script-src
+- git, `gc.pruneExpire` and `gc.auto`: https://git-scm.com/docs/git-gc
+- GitHub, "Repository limits" (diff limits): https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits ; the pulls REST API (files limit, `merge_commit_sha`): https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28
+- Bitbucket Cloud, "Limits for viewing content and diffs": https://support.atlassian.com/bitbucket-cloud/docs/limits-for-viewing-content-and-diffs/ . Its API reference, https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/ , and https://api.bitbucket.org/swagger.json were too long to fetch, so `merge_commit.hash` and the diff endpoint stay [I].
+
+**Zed and the other editors**
+
+- Zed: git, https://zed.dev/docs/git ; the agent panel, https://zed.dev/docs/ai/agent-panel ; the CLI, https://zed.dev/docs/reference/cli ; Linux, https://zed.dev/docs/linux ; release notes 1.15.0 (2026-08-12), https://zed.dev/releases/stable/1.15.0 , 1.12.0 (2026-07-15), https://zed.dev/releases/preview/1.12.0 , and 1.22.0 (2026-09-30) on https://zed.dev/releases/preview/0.226.0
+- VS Code's command line (updated 2026-10-07): https://code.visualstudio.com/docs/configure/command-line
+- PhpStorm from the command line (updated 2026-08-17): https://www.jetbrains.com/help/phpstorm/working-with-the-ide-features-from-command-line.html ; opening files (updated 2025-10-31): https://www.jetbrains.com/help/phpstorm/opening-files-from-command-line.html
+- Laravel 12.x's `.gitignore`: https://raw.githubusercontent.com/laravel/laravel/12.x/.gitignore
+
+**The `notify` crate**
+
+- https://crates.io/api/v1/crates/notify and https://crates.io/api/v1/crates/notify/8.2.0 ; its README, https://raw.githubusercontent.com/notify-rs/notify/main/README.md ; its docs and known problems, https://docs.rs/notify/8.2.0/notify/
+
+**The npm registry** (`npm view`, one package per command; pages at `https://www.npmjs.com/package/<package>`)
+
+- `@codemirror/merge` 6.12.2, `@codemirror/search` 6.7.2, `@codemirror/lsp-client` 6.3.0 (README), `@codemirror/lang-php` 6.0.2 (README), `@codemirror/lang-rust` 6.0.2, `@codemirror/lang-json` 6.0.2, `@codemirror/lang-yaml` 6.1.3, `@codemirror/lang-sql` 6.10.0, `@codemirror/legacy-modes` 6.5.5, `@codemirror/language-data` 6.5.2, `@codemirror/lang-liquid` 6.3.3; `@lezer/php` 1.0.6, `@lezer/rust` 1.0.3 (run 1)
+- `@pierre/diffs` 1.5.2 (exports; 107 versions since 2025-12-10); `@git-diff-view/react` 0.1.7 (README), `@git-diff-view/core` and `@git-diff-view/shiki` 0.1.7 (run 1); `@git-diff-view/lezer` (404)
+- `shiki` 4.5.0 and `@shikijs/langs` 4.5.0 (8.65 MB; exports `./blade`, `./dotenv`, `./php`, `./rust`, `./sql`, `./tsx`, `./yaml`); `highlight.js` 11.12.0 (its grammars are exported through a wildcard); `highlightjs-blade` 0.1.0 (2022-05-05)
+- `monaco-editor` 0.57.0 (README), `@monaco-editor/react` 4.7.0; `codemirror-shiki` 0.3.0; no `codemirror-lang-blade` or `codemirror-blade` (404)
+
+**GitHub through `gh`, for this repository (Yotech-AI/gizai)**
+
+- `gh pr list --state merged --limit 200 --json number,headRefName,additions,deletions,changedFiles`: the 71 merged card pull requests' sizes (§1 item 3)
 - `gh pr view 81 --json …`: the field list (`mergeCommit`, `baseRefOid`, `headRefOid`, `files`, …) and PR #81's merge commit and counts
-- `gh pr diff 81 --name-only`, `gh pr diff 81`, `gh pr diff --help`
+- `gh pr diff 81`, `gh pr diff 52 | wc -c -l`, `gh pr diff 33 | wc -c -l`, `gh pr diff --help`
 
-The code, at `f3541f0`: every file and line named in this document; `git diff --shortstat f3541f0^1 f3541f0` and `git diff --shortstat 4d03026...e3b1d2c`; `wc -c node_modules/@codemirror/*/dist/index.js node_modules/@lezer/*/dist/index.js`; `ls node_modules/lucide-react/dist/esm/icons/`.
+**This computer and the code**
 
-Not read in this run (web search and page fetches refused): the CodeMirror reference manual for `@codemirror/merge` (`unifiedMergeView`, `collapseUnchanged`, `diffConfig`) https://codemirror.net/docs/ref/#merge ; the `@pierre/diffs` documentation; Zed's documentation of its Changes panel; the `notify` crate https://crates.io/crates/notify ; GitHub's limits on pull request diffs; Bitbucket's pull request diff API https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/ ; the editors' command line documentation (VS Code, Zed, PhpStorm). Claims that rest on them are marked [I].
+- `cargo tree -i notify --workspace` (not a dependency), `cargo tree -i notify-rust --workspace`; `which code zed zeditor zedit phpstorm phpstorm.sh codium cursor subl` (only `/usr/bin/zeditor`); `npm ls @codemirror/view @codemirror/state @codemirror/language`
+- The code at `f3541f0` (run 1) and at `9c32546` (second pass, with `git show origin/main:<file>`): every file and line named here; `git diff --stat HEAD...origin/main` for what moved; `git diff --shortstat f3541f0^1 f3541f0` and `git diff --shortstat 4d03026...e3b1d2c`; `wc -c node_modules/@codemirror/*/dist/index.js node_modules/@lezer/*/dist/index.js`; `ls node_modules/lucide-react/dist/esm/icons/`
+
+**Still not checked** (and marked [I] where used)
+
+- Bitbucket's `merge_commit.hash` and its pull request diff endpoint: the API reference was too long to fetch.
+- The Changes panel exactly as the card describes it: Zed's docs don't show it.
+- Whether WebKitGTK has the RegExp `v` flag that Shiki's JavaScript engine wants.
+- Monaco's diff editor options: its type file was cut short.
+- Whether `@pierre/diffs` shows old and new line numbers in its stacked view, and whether `@git-diff-view` virtualises long diffs (only a code index says so).
+- The speed of any component on a 2,000-line diff: none publishes a number, so F1 measures it.
+- Whether GitHub's 300-file limit applies to `gh pr diff`: no pull request here has more than 271 files.
 

@@ -165,6 +165,16 @@ export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEve
   listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
+/** A card's changed files with their counts: its worktree (uncommitted changes included) against its merge base with main,
+ *  else its branch, else the range saved at its merge, else its merge commit on main, else the pull request's diff.
+ *  Each file's texts and hunks come from cardFileDiff. */
+export const cardChanges = (taskId: string) => invoke<T.CardChanges>("card_changes", { taskId });
+/** One changed file: its text at `from` and at `to` (null: the worktree as it is on disk), and git's hunks between them. */
+export const cardFileDiff = (taskId: string, path: string, oldPath: string | null, from: string, to: string | null) =>
+  invoke<T.FileDiff>("card_file_diff", { taskId, path, oldPath, from, to });
+/** The changes one run committed: from the commit it started at to the one it ended at. */
+export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes", { runId });
+
 /** Pushes a Review card's branch and opens its pull request: with gh on GitHub, through Bitbucket's API on Bitbucket (keeps an open one). */
 export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
 /** Asks GitHub or Bitbucket about the card's pull request now; a merge moves the card to Done. */

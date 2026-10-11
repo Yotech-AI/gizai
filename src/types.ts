@@ -243,6 +243,44 @@ export type MemoryChange = { note: MemoryNote; version: number; at: number; auth
 export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */
 export type Commit = { sha: string; subject: string };
+/** Where a card's changes come from (§3.2 Q1). "merge": the range saved at the merge, or the merge commit against its first
+ *  parent. "pull": GitHub's or Bitbucket's diff, without the files' texts. */
+export type ChangeSource = "worktree" | "branch" | "merge" | "pull" | "run" | "none";
+export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange";
+export type FileChange = {
+  path: string;
+  oldPath: string | null;     // renamed or copied from
+  status: FileStatus;
+  additions: number | null;   // null for a binary file
+  deletions: number | null;
+  binary: boolean;
+  uncommitted: boolean;       // not committed yet (worktree only); an untracked file is "added" and uncommitted
+};
+export type CardChanges = {
+  source: ChangeSource;
+  from: string | null;        // the commit the changes are measured from: the merge base, the saved base, or the merge commit's first parent
+  to: string | null;          // the commit they end at; null for the worktree as it is on disk
+  baseLabel: string;          // "origin/main", or "main" for a project without a link
+  additions: number;
+  deletions: number;
+  files: FileChange[];        // in path order
+  note: string | null;        // why there is nothing to show, or where the changes come from when not the worktree
+};
+/** One hunk as git prints it with -U0: "@@ -oldStart,oldLines +newStart,newLines @@". Lines count from 1; when a side has
+ *  0 lines, its start is the line before the change (0 at the top), as in git. */
+export type DiffHunk = { oldStart: number; oldLines: number; newStart: number; newLines: number };
+export type FileDiff = {
+  path: string;
+  oldText: string | null;     // null when added, binary or too large
+  newText: string | null;     // null when deleted, binary or too large
+  hunks: DiffHunk[];          // git's hunks between oldText and newText, in order; [] when binary, too large or source "pull"
+  patch: string | null;       // only for source "pull": this file's part of the diff
+  binary: boolean;
+  tooLarge: boolean;          // over 1 MB on a side
+  oldSize: number;
+  newSize: number;
+  crlf: boolean;
+};
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
   /** Settings → Runs: the limits of an answer of the Team Lead (also a board check and its look at a question). */

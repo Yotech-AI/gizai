@@ -11,7 +11,8 @@
 //!   permissions, line endings (CRLF) and byte order mark. It refuses when the file changed on disk since it was read:
 //!   its version (size, times) isn't the one the screen read any more.
 //! - git runs as a command, as everywhere in Gizai, without optional locks: the Editor's look at git status never keeps
-//!   an agent's git in the same worktree from the index. Pathspecs are literal, so `app/[id]` is that folder.
+//!   an agent's git in the same worktree from the index. Pathspecs are literal, so `app/[id]` is that folder, except in
+//!   git check-ignore, which refuses them (`ignored`).
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata};
@@ -710,10 +711,16 @@ fn unreadable(rel: &str, e: std::io::Error) -> String {
 // ---- git ----
 
 /// git in the folder `dir`: without optional locks (an agent's git in the same worktree never finds the index locked by
-/// the Editor) and with literal pathspecs.
+/// the Editor) and with literal pathspecs, but for check-ignore, which refuses them ("pathspec magic not supported by
+/// this command: 'literal'"), also when Gizai itself was started with them.
 fn git_command(dir: &Path, args: &[&str]) -> Command {
     let mut cmd = os::command("git");
-    cmd.arg("-C").arg(dir).args(args).env("GIT_OPTIONAL_LOCKS", "0").env("GIT_LITERAL_PATHSPECS", "1");
+    cmd.arg("-C").arg(dir).args(args).env("GIT_OPTIONAL_LOCKS", "0");
+    if args.first() == Some(&"check-ignore") {
+        cmd.env_remove("GIT_LITERAL_PATHSPECS");
+    } else {
+        cmd.env("GIT_LITERAL_PATHSPECS", "1");
+    }
     cmd
 }
 
@@ -782,12 +789,15 @@ fn ignored(dir: &Path, paths: &[String]) -> HashSet<String> {
     }
     let mut input = vec![];
     for p in paths {
+        // each after ./: without literal pathspecs a name that starts with : would be read as pathspec magic
+        input.extend_from_slice(b"./");
         input.extend_from_slice(p.as_bytes());
         input.push(0);
     }
-    // exit code 1: none of them; past a path git refuses (one beyond a link) what it said so far still counts
+    // exit code 1: none of them; past a path git refuses (one beyond a link) what it said so far still counts. Each path
+    // comes back as it went in, after ./
     match git(dir, &["check-ignore", "-z", "--stdin"], Some(input)) {
-        Ok((_, out, _)) => fields(&out).map(|p| String::from_utf8_lossy(p).into_owned()).collect(),
+        Ok((_, out, _)) => fields(&out).map(|p| String::from_utf8_lossy(p.strip_prefix(b"./").unwrap_or(p)).into_owned()).collect(),
         Err(_) => HashSet::new(),
     }
 }

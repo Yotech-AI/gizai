@@ -296,7 +296,7 @@ const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("iban", "string", "IBAN"), ("payment_terms_days", "integer", "Payment terms in days"), ("notes_md", "string", "Notes (Markdown)"),
 ];
 
-const AGENT_FIELDS: [(&str, &str, &str); 10] = [
+const AGENT_FIELDS: [(&str, &str, &str); 11] = [
     ("board_check_minutes", "integer", "Only for the agent with Chat on (the Team Lead): check the board every this many minutes (5–1440); 0 = off"),
     ("runs_on", "string", "The coding CLI it runs on, by name as Settings → Coding CLIs lists them (Claude Code, Codex, Gemini, a second account, …). Omit: Claude Code for a new agent, unchanged on update"),
     ("model", "string", "On Claude Code, a model it offers: an alias (default, opus, sonnet, haiku, fable) or its full id (claude-opus-5-5). On Codex or Gemini, that CLI's model name. Empty = the CLI's default"),
@@ -307,6 +307,7 @@ const AGENT_FIELDS: [(&str, &str, &str); 10] = [
     ("allowed_tools", "string[]", "Commands it may run without asking, each as Bash(…), like Bash(npm test:*). Omit on create for its role's list (builders: Gizai's default list plus git push, pull and fetch; QA also gh pr; DevOps its release commands); an empty list on update = Gizai's default list"),
     ("monthly_budget_usd", "number", "Monthly spending cap in dollars; empty = no cap"),
     ("title", "string", "Job title shown on the team page"),
+    ("shares_memory_with", "string", "Memory: the agent whose memory folder it shares, by name, like Backend Agent for Backend Agent 2 (their runs get that folder's notes and their learned lines go there). An agent that shares a folder itself stands for that folder's owner; never the Team Lead. \"none\" = its own folder. Joining moves its notes into that folder; leaving gives it a fresh Notes. Omit: its own folder for a new agent, unchanged on update"),
 ];
 
 fn with<const N: usize>(head: &[(&'static str, &'static str, &'static str)], rest: [(&'static str, &'static str, &'static str); N]) -> Vec<(&'static str, &'static str, &'static str)> {

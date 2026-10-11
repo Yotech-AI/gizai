@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
-import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, roleTemplate, roleTools, saveAgentCliTools, saveAgentMcp, updateAgent } from "../api";
+import { addAgent, chatAgent, checkAgentFolders, claudeModels, getAgent, getTeam, listClis, listTeams, roleTemplate, roleTools, saveAgentCliTools, saveAgentMcp, updateAgent } from "../api";
 import { go } from "../router";
-import { DEFAULT_TOOLS, draftFrom, foldersFrom, inputFrom, parseTools, ROLES, roleLabel, type AgentDraft, type AgentPreset } from "../lib/agents";
+import {
+  DEFAULT_TOOLS, draftFrom, foldersFrom, inputFrom, isLeadDraft, parseTools, ROLES, roleLabel, shareChoices, shareTarget, type AgentDraft, type AgentPreset,
+} from "../lib/agents";
+import { agentFolder } from "../lib/memory";
 import { CLAUDE_CODE, EFFORTS_BY_KIND, FOLDERS_NOTE, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
 import { fitCliTools, sameCliTools } from "../lib/cliTools";
 import { modKey } from "../lib/keys";
@@ -97,6 +100,30 @@ function FoldersField({ value, onChange, kind, lead }: { value: AgentFolder[]; o
   );
 }
 
+/** Shares memory with (GA-96): its own folder, or another agent's (never the Team Lead's). An agent that shares a folder
+ *  itself stands for that folder's owner, so picking it picks the owner. */
+function SharesField({ value, onChange, agentId, name, lead, agents }: {
+  value: string; onChange: (v: string) => void; agentId?: string; name: string; lead: boolean; agents: Member[];
+}) {
+  const choices = shareChoices(agentId, agents);
+  const sharers = agents.filter((a) => agentId && a.sharesMemoryWith === agentId && a.actorId !== agentId).map((a) => a.name);
+  const own = `Agents/${agentFolder(name || "Agent")}/`;
+  const hint = lead ? "The Team Lead keeps its own notes, in Team Lead/." : <>
+    Its own folder ({own}), or the folder of an agent it takes turns with, like Backend Agent 2 with Backend Agent: their runs get that folder's notes and what they learn goes there.
+    {" "}Joining moves its notes into that folder; back to its own folder, it starts a fresh Notes.
+    {sharers.length > 0 && ` ${sharers.join(", ")} ${sharers.length === 1 ? "shares" : "share"} this agent's folder.`}
+  </>;
+  return (
+    <Field label="Shares memory with" htmlFor="a-shares" wide hint={hint}>
+      <select id="a-shares" className="select" value={lead ? "" : value} disabled={lead} onChange={(e) => onChange(shareTarget(e.target.value, agentId, agents))}>
+        <option value="">Its own folder</option>
+        {choices.map(({ agent: a, owner }) => <option key={a.actorId} value={a.actorId}>{a.name}{owner ? ` (shares ${owner.name}'s folder)` : ""}</option>)}
+        {!lead && value && !choices.some((c) => c.agent.actorId === value) && <option value={value}>{agents.find((a) => a.actorId === value)?.name ?? "An agent that is gone"}</option>}
+      </select>
+    </Field>
+  );
+}
+
 const TOOL_SUGGESTIONS = ["Bash(pnpm:*)", "Bash(yarn:*)", "Bash(go test:*)", "Bash(make test:*)", "Bash(python -m pytest:*)"];
 export const PERMISSION_HELP: Record<string, string> = PERMISSIONS.claude_code;
 
@@ -137,6 +164,13 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
     getAgent(agentId!).then((m) => { const dr = draftFrom(m); setInitial(dr); setD(dr); }).catch((e) => setErr(String(e)));
   }, [agentId, isNew]);
   useEffect(() => { chatAgent().then(setChatOwner).catch(() => {}); }, []);
+  // Every team's agents, for Shares memory with (GA-96).
+  const [agents, setAgents] = useState<Member[]>([]);
+  useEffect(() => {
+    listTeams().then((ts) => Promise.all(ts.map((t) => getTeam(t.id))))
+      .then((teams) => setAgents([...new Map(teams.flatMap((t) => t.members).filter((m) => m.kind === "agent").map((m) => [m.actorId, m] as const)).values()]))
+      .catch(() => {});
+  }, []);
   const role = d?.role;
   useEffect(() => {
     if (edited.current || role === undefined) return;
@@ -247,11 +281,12 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
             </span>
           </Field>
         </FormSection>
-        <FormSection title="Memory" text="Notes Gizai keeps for its agents: decisions, preferences and gotchas. Each agent has its own folder in Memory.">
+        <FormSection title="Memory" text="Notes Gizai keeps for its agents: decisions, preferences and gotchas. Each agent has its own folder in Memory, or shares another agent's.">
           <Field label="Memory" wide htmlFor="a-memory"
             hint="On: its runs get its own notes and the team's notes on the card's project, client and role, and what it learned on a card is added to its notes. Settings → Runs turns memory off for every agent.">
             <label className="check"><input id="a-memory" type="checkbox" checked={d.memory} onChange={(e) => set("memory", e.target.checked)} /> Use memory</label>
           </Field>
+          <SharesField value={d.memoryWith} onChange={(v) => set("memoryWith", v)} agentId={agentId} name={d.name} lead={isLeadDraft(d)} agents={agents} />
         </FormSection>
         <FormSection title="Work" text={isNew
           ? "The columns it is on decide when it works (Team → Workflow). A new agent goes on its role's usual columns: builders on To do and In progress, QA on Testing, DevOps on Deploy, the Team Lead on none."

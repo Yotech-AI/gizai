@@ -32,7 +32,7 @@ Every note has:
 | Folder | Scope | Who reads | Who writes |
 |---|---|---|---|
 | `Clients/`, `Projects/`, `Standards/`, `Workflows/`, `Deployments/`, `Dependencies/`, `Decisions/`, `Lessons/` | shared | everyone | the Team Lead and people |
-| `Agents/<name>/` | agent | that agent, the Team Lead and people | that agent, the Team Lead and people |
+| `Agents/<name>/` | agent | that agent (and the agents that share its folder), the Team Lead and people | the same |
 | `Team Lead/` | agent | the Team Lead and people | the Team Lead and people |
 
 A note goes in one of these folders; other top folders are refused, with the list. Each agent gets `Agents/<name>/Notes`
@@ -41,8 +41,41 @@ links to its notes follow. The Team Lead's `Team Lead/Notes` is made the first t
 template: the user's preferences, working agreements, open threads, and how to use memory.
 
 The rule is written once, in `gizai_core::memory::can_read` and `can_write`: the Team Lead and people read and write
-everything; an agent reads the shared folders and its own, and writes only its own. The Team Lead moves useful notes from
-an agent's folder into a shared one (`memory_move`).
+everything; an agent reads the shared folders and its own (in a group, the group's), and writes only its own. The Team
+Lead moves useful notes from an agent's folder into a shared one (`memory_move`).
+
+### Agents that share a folder (GA-96)
+
+Agents that take turns on the work, like Backend Agent and Backend Agent 2 on two Claude Code accounts, can share one
+folder, so what one learns reaches the other. An agent's **Shares memory with** (agent form → Memory, under Use memory;
+`agent_configs.shares_memory_with`) is *Its own folder* (the default) or another agent, never the Team Lead (the agent
+with the lead role or Chat). The agents that share one folder are a group, and the agent whose folder it is, the group's
+owner, keeps *Its own folder*:
+
+- **One folder per group:** the agents in a group use the owner's folder, `Agents/<owner name>/`, as their own: they read
+  and write its notes, their runs get its notes, and their `learned` lines go into its `Notes` with who learned them.
+  While an agent shares a folder it has none of its own: a new note in `Agents/<its name>/` is refused, with the folder
+  to use.
+- **No chains:** picking an agent that shares a folder picks that folder's owner. An owner that joins another group
+  brings its group along.
+- **Joining:** the bullets under `## Learned` in the agent's `Notes` are added under `## Learned` in the owner's `Notes`
+  (a bullet the owner's has already is not added again), and its other notes move into the owner's folder, keeping their
+  place in it; a title that is taken gets " (<agent name>)" added. The links to them are rewritten as `memory_move` does,
+  so they still work. The agent's `Notes` goes once its learned lines are in the owner's: when only its template is
+  left (the properties `type: note` and `tags: [agent]`, its title and the line about what it is); anything else in it
+  moves as `Notes (<agent name>)`. A `Notes` about another client or project than the owner's moves whole, so its lines
+  keep reaching only those runs.
+- **Leaving** (back to *Its own folder*): the agent gets a fresh `Agents/<name>/Notes`; the group's notes stay where they
+  are. From one group to another, its notes stay with the old group.
+- **The owner renamed:** its folder moves as before, and the group follows. **The owner removed** (or made the Team
+  Lead): its notes stay, and the group's next agent (the oldest of the others) becomes the owner, so the folder is
+  renamed to that agent's name and the others share it. Gizai does this when an agent becomes the Team Lead, and for a
+  removed owner when it starts.
+
+The Team Lead's `get_agent` shows an agent's `shares_memory_with` (by name), its `memory_folder` and the agents that share
+its folder (`shared_by`); `create_agent` and `update_agent` take `shares_memory_with` by agent name, or `none` for its own
+folder. An agent name that isn't there, or the Team Lead, is refused and nothing changes. A database from before (v0.7.0)
+migrates with every agent on its own folder.
 
 ### Properties
 
@@ -108,14 +141,15 @@ copy what the repository or the board say, never to store a secret, and to look 
 
 A new task run's prompt has a Memory section after the task, built by `memory::prompt_block`:
 
-1. the agent's own notes (`Agents/<name>/Notes` first);
+1. the agent's own notes (`Agents/<name>/Notes` first); an agent in a group gets the group's folder as its own
+   (`Agents/<owner name>/Notes` first);
 2. the shared notes for this card, in this order: the card's project (`project:`), its client (`client:`), the agent's
    role or `all` (`applies_to:`).
 
 At most **6,000 characters** of notes in full (the one that doesn't fit is cut), then the paths of the rest that match
 (**4,000**). **Client isolation:** a note about another client or another project never goes in, not even its path, and
-not from the agent's own folder either; a shared note with `applies_to` for other roles doesn't go in. A continued run
-has the notes in its session already.
+not from the agent's own folder or its group's either; a shared note with `applies_to` for other roles doesn't go in. A
+continued run has the notes in its session already.
 
 An agent keeps what it learned by adding an optional `learned` list to its result line:
 
@@ -124,8 +158,9 @@ GIZAI_RESULT: {"outcome":"ready_for_testing","summary":"…","issues":[],"learne
 ```
 
 Gizai appends each line to the agent's own `Notes` under `## Learned`, as a dated bullet with the card
-(`- 2026-10-09 (GA-19): …`), written by the agent, with the run on the note's version. At most 20 lines, each cut at 300
-characters. A result line without `learned` parses as before.
+(`- 2026-10-09 (GA-19): …`), written by the agent, with the run on the note's version. In a group, every agent's lines
+(the owner's too) go into the group's `Notes` with who learned them: `- 2026-10-11 (GA-12, Backend Agent 2): …`. At most
+20 lines, each cut at 300 characters. A result line without `learned` parses as before.
 
 The task page's Runs tab lists the notes a run was given, with their size (and how much was shown when one was cut).
 
@@ -212,15 +247,20 @@ nor writes its memory folder, whatever its settings say. Codex and Gemini keep n
 
 - **Use memory** in an agent's form (on by default): off, its runs get no Memory section and its `learned` lines are not
   kept (for the Team Lead: no notes in chat and board checks either).
+- **Shares memory with** in an agent's form, under Use memory (*Its own folder* by default): the agent whose folder it
+  shares, never the Team Lead (see Agents that share a folder). For the Team Lead it is off: it keeps its own notes in
+  `Team Lead/`.
 - **Settings → Runs → Use memory** (on by default): off for every agent. The Team Lead's memory tools still work.
 - **Settings → Runs → Ask the Team Lead first** (on by default): off, an agent's question puts its card in the Inbox at once.
 
 ## The Memory page
 
 The sidebar's **Memory** section, under Agents, opens it: the Team Lead first (by its name; it opens every note: its own,
-the shared folders and every agent's folder), then each other agent (only its own folder), each with how many notes it
-opens. With no Team Lead yet it shows **Shared notes** and *Set up the Team Lead*. Routes: `#/memory` (every note),
-`#/memory/shared`, `#/memory/agent/<agent id>`, each with a note's id after it to open that note.
+the shared folders and every agent's folder), then each other agent (only its own folder; an agent in a group the
+group's folder, titled like "Shares Backend Agent's folder"), each with how many notes it opens. With no Team Lead yet it
+shows **Shared notes** and *Set up the Team Lead*. Routes: `#/memory` (every note), `#/memory/shared`,
+`#/memory/agent/<agent id>` (every agent in a group opens the group's folder), each with a note's id after it to open
+that note.
 
 - **Files** (left): the folder tree, folders before notes, by name; it remembers which folders are open (this
   computer). *New note*, *New folder* (a folder exists once a note is in it: until then this computer keeps it), rename

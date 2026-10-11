@@ -75,9 +75,28 @@ export function leadOf<M extends { isLead: boolean; chatEnabled: boolean }>(agen
   return agents.find((a) => a.isLead && a.chatEnabled) ?? agents.find((a) => a.isLead) ?? null;
 }
 
-/** How many notes a sidebar entry opens: the Team Lead every note; another agent its own folder's. */
+/** How many notes a sidebar entry opens: the Team Lead every note; another agent its own folder's (or the folder it
+ *  shares, GA-96). */
 export function noteCount(notes: readonly Pick<MemoryNote, "path" | "scope" | "ownerId">[], scope: MemoryScope): number {
   return notes.filter((n) => inScope(n, scope)).length;
+}
+
+/** Where an agent's memory is (GA-96): its own folder, or the folder it shares with other agents, its group's owner's.
+ *  `ownerId` and `name`: that folder's agent (`name` from `agents`, else, for an agent on another team, its folder's name
+ *  in the notes); `shares`: the folder is another agent's. */
+export type MemoryHome = { ownerId: string; name: string; shares: boolean };
+
+export function memoryHome(agent: { actorId: string; name: string; sharesMemoryWith?: string | null },
+  agents: readonly { actorId: string; name: string }[], notes: readonly Pick<MemoryNote, "path" | "ownerId">[] = []): MemoryHome {
+  const id = agent.sharesMemoryWith;
+  if (!id || id === agent.actorId) return { ownerId: agent.actorId, name: agent.name, shares: false };
+  const folder = notes.find((n) => n.ownerId === id && lower(n.path).startsWith(lower(`${AGENTS}/`)))?.path.split("/")[1];
+  return { ownerId: id, name: agents.find((a) => a.actorId === id)?.name ?? folder ?? "Agent", shares: true };
+}
+
+/** The names of the agents that share agent `ownerId`'s folder (GA-96). */
+export function sharersOf(ownerId: string, agents: readonly { actorId: string; name: string; sharesMemoryWith?: string | null }[]): string[] {
+  return agents.filter((a) => a.sharesMemoryWith === ownerId && a.actorId !== ownerId).map((a) => a.name);
 }
 
 /** A folder a note may go in: a shared folder, an agent's folder or the Team Lead's, or a folder inside one. */

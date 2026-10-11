@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { getTeam, listChatThreads, listProjects, listTasks, memoryNotes } from "../api";
 import { go, href, type Route } from "../router";
-import { leadOf, memoryScope, noteCount } from "../lib/memory";
+import { leadOf, memoryHome, memoryScope, noteCount, sharersOf } from "../lib/memory";
 import type { Member, MemoryNote } from "../types";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
@@ -127,8 +127,9 @@ function FoldSection({ section, name, label, folded, onFold, tag, children }: {
   );
 }
 
-/** Memory (GA-68), under Agents: the Team Lead first (it opens every note), then each other agent (its own folder),
- *  each with how many notes it opens. Without a Team Lead: the shared notes and a link that sets one up. */
+/** Memory (GA-68), under Agents: the Team Lead first (it opens every note), then each other agent (its own folder, or the
+ *  folder it shares with other agents, GA-96), each with how many notes it opens. Without a Team Lead: the shared notes
+ *  and a link that sets one up. */
 function MemorySection({ route, lead, agents, notes, folded, onFold, setUpLead }: {
   route: Route; lead: Member | null; agents: Member[]; notes: MemoryNote[]; folded: boolean; onFold: () => void; setUpLead: () => void;
 }) {
@@ -151,9 +152,12 @@ function MemorySection({ route, lead, agents, notes, folded, onFold, setUpLead }
       )}
       {agents.filter((a) => a.actorId !== lead?.actorId).map((a) => {
         const Role = roleIcon(a.roleKey);
+        const home = memoryHome(a, agents, notes);
+        const sharers = sharersOf(a.actorId, agents);
+        const title = home.shares ? `Shares ${home.name}'s folder` : `${a.name}: its own folder${sharers.length ? `, shared with ${sharers.join(", ")}` : ""}`;
         return (
-          <a key={a.actorId} className={`nav-item${on(a.actorId) ? " on" : ""}`} href={href({ page: "memory", scope: a.actorId })} title={`${a.name}: its own folder`}>
-            <Role className="icon" /><span>{a.name}</span><span className="meta">{count(a.actorId, a.name)}</span>
+          <a key={a.actorId} className={`nav-item${on(a.actorId) ? " on" : ""}`} href={href({ page: "memory", scope: a.actorId })} title={title}>
+            <Role className="icon" /><span>{a.name}</span><span className="meta">{count(home.ownerId, home.name)}</span>
           </a>
         );
       })}

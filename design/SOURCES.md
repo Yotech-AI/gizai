@@ -6,3 +6,6 @@
 - `src/styles/components.css` is its component stylesheet (`components/bundle.css` there); keep the two equal.
 - `design/README.md` is its brand book; `design/gen-design-system.mjs` generated its previews, icons and cover.
 - Icons are Lucide (`lucide-react`); status glyphs are `src/components/StatusIcon.tsx` (same paths as the generator).
+- `design/code-editor/` holds the Code Editor's designs, as pages that open from disk on the app's own stylesheets.
+  `editor.html` is the Editor (GA-105), built by `node design/code-editor/gen-editor.mjs`; its new components are in
+  `editor.css` and its new tokens in `editor-tokens.css`, until F2 moves them into `components.css` and `tokens.json`.

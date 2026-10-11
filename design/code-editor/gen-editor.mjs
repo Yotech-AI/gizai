@@ -77,6 +77,7 @@ const X = {
   pickNothing: say("Folder picker", "Nothing to open at all", "No folders yet. Link a project to its folder (project page → Edit), or say where your projects are in Settings → General → Editor folders."),
   pickFoot: say("Folder picker", "Always, at the bottom", "Projects' folders, the folders in ~/Herd and card worktrees. More places: Settings → General → Editor folders."),
   // 3. the Editor page
+  pageEmptyTitle: say("Editor page", "#/editor, no folder open", "No folder open", "The empty state's heading"),
   pageEmpty: say("Editor page", "#/editor, no folder open", "Open a folder to work on its files: a project's folder, a folder in ~/Herd, or a card's worktree.", "Open a folder"),
   pageGone: say("Editor page", "The folder can't open", "Gizai can't open ~/Herd/old-site: it isn't there any more.", "Remove from the list"),
   standOk: say("Top bar", "Up to date", "main · up to date with origin/main · 4 changed"),
@@ -89,6 +90,7 @@ const X = {
   fetch: say("Top bar", "Always (not for a folder without a remote)", "Fetch", "Tooltip: Fetch origin/main now (last fetched 2m ago). While it runs: Fetching…"),
   openIn: say("Top bar → Open in", "The editors found on this computer", "Open gizai in · VS Code · Zed · PhpStorm", "Each with the command found (code, zeditor, phpstorm). Note: At Sidebar.tsx, line 75"),
   openInNone: say("Top bar → Open in", "None found", "No other editor found. Gizai looks for VS Code (code), Zed (zed, zeditor, zedit) and PhpStorm (phpstorm, phpstorm.sh)."),
+  panelSwitch: say("Left panel", "Its top", "Files · Search", "Search's tooltip: Search in the folder (Ctrl+Shift+F)"),
   goto: say("File tree", "Always", "Go to file", "Ctrl P"),
   treeHead: say("File tree", "Over the tree", "New file · New folder · Fold every folder", "Icon buttons, these are their tooltips"),
   treeFold: say("File tree", "Its fold button", "Fold the file tree (Ctrl+B)", "Folded: Show the file tree (Ctrl+B), on the left of the tabs"),
@@ -383,7 +385,7 @@ const FOLDERS = [
   { key: "invoice-api", name: "invoice-api", stand: `${sm("loader-circle", "spin")}${X.sideUpdating}`, title: "~/Herd/invoice-api · Updating: move main 2 commits to 9e1d4c0 and run composer install" },
 ];
 
-function editorSection(state = "open", { on = null, hover = null } = {}) {
+function editorSection(state = "open", { on = null, hover = null, stands = {} } = {}) {
   const head = (folded, tag = "") => `<div class="nav-label"><span class="fold">${X.sideHead}${tag}</span>`
     + `<button aria-label="Open a folder" title="Open a folder"${state === "picking" ? ' class="is-hover"' : ""}>${sm("plus")}</button>`
     + `<button aria-expanded="${!folded}" aria-label="${folded ? "Show" : "Fold"} Editor" title="${folded ? "Show" : "Fold"} Editor">${sm(folded ? "chevron-up" : "chevron-down")}</button></div>`;
@@ -391,12 +393,12 @@ function editorSection(state = "open", { on = null, hover = null } = {}) {
   if (state === "empty") return `<div class="nav-section" aria-label="Editor">${head(false)}<div class="nav-list">${nav("folder-plus", X.sideEmpty, { tag: "button", cls: hover === "empty" ? "is-hover" : "" })}</div></div>`;
   const rows = FOLDERS.map((f) => `<a class="nav-item${on === f.key ? " on" : ""}${hover === f.key ? " is-hover" : ""}" title="${q(f.title)}">${ic("folder-code")}`
     + (f.card ? `<span class="ellipsis"><span class="card-id">${f.key}</span> <span class="faint">${f.card}</span></span>` : `<span class="ellipsis">${f.name}</span>`)
-    + `<span class="meta"><span class="stand">${f.stand}</span></span></a>`).join("");
+    + ((stands[f.key] ?? f.stand) ? `<span class="meta"><span class="stand">${stands[f.key] ?? f.stand}</span></span>` : "") + `</a>`).join("");
   return `<div class="nav-section" aria-label="Editor">${head(false)}<div class="nav-list">${rows}</div></div>`;
 }
 
 /** The whole sidebar; `crop` keeps the Editor section with its neighbours, Projects and Agents. */
-function sidebar({ editor = "open", on = null, hover = null, page = null, crop = false } = {}) {
+function sidebar({ editor = "open", on = null, hover = null, page = null, crop = false, stands = {} } = {}) {
   const top = nav("square-pen", "New task", { tag: "button", meta: kbd("N") }) + nav("search", "Search", { tag: "button", meta: kbd("Ctrl K") })
     + nav("inbox", "Inbox", { meta: '<span class="count alert">2</span>' })
     + `<div class="nav-section"><div class="nav-label">Work</div>${nav("messages-square", "Chat")}${nav("list-todo", "Tasks", { on: page === "tasks" })}${nav("building-2", "Clients")}${nav("folder-kanban", "Projects")}</div>`;
@@ -408,8 +410,8 @@ function sidebar({ editor = "open", on = null, hover = null, page = null, crop =
   const memory = `<div class="nav-section" aria-label="Memory"><div class="nav-label"><span class="fold">Memory</span><button aria-label="Show Memory" title="Show Memory">${sm("chevron-up")}</button></div></div>`;
   const foot = `<div class="side-foot"><div class="nav-section"><div class="nav-label">Company</div>${nav("chart-column", "Usage")}${nav("network", "Team")}${nav("users", "Users")}${nav("settings", "Settings", { on: page === "settings" })}</div></div>`;
   return crop
-    ? `<aside class="side" aria-label="Navigation"><div class="side-main">${projects}${editorSection(editor, { on, hover })}${agents}</div></aside>`
-    : `<aside class="side" aria-label="Navigation"><div class="side-main">${top}${projects}${editorSection(editor, { on, hover })}${agents}${memory}</div>${foot}</aside>`;
+    ? `<aside class="side" aria-label="Navigation"><div class="side-main">${projects}${editorSection(editor, { on, hover, stands })}${agents}</div></aside>`
+    : `<aside class="side" aria-label="Navigation"><div class="side-main">${top}${projects}${editorSection(editor, { on, hover, stands })}${agents}${memory}</div>${foot}</aside>`;
 }
 
 // ---------- the Editor page's parts ----------
@@ -572,7 +574,7 @@ const PICK_ALL = `<div class="pop-label">Projects</div>`
   + `<button class="opt" role="option">${st("testing")}<span class="card-id">GA-118</span><span class="ellipsis">Show a run's changes</span><span class="stand"><span class="pulse"></span>${X.pickLive}</span></button>`
   + `<button class="opt" role="option">${st("in_progress")}<span class="card-id">GA-112</span><span class="ellipsis">Remember the open tabs per folder</span></button>`;
 const editorEmptyPage = editorMain({ crumbs: "<b>Editor</b>", actions: "", body: "" }).replace('<div class="ed-page"><div class="ed"><div class="ed-main"></div></div></div>',
-  `<div class="ed-empty"><div class="empty">${ic("folder-code")}<b>No folder open</b><span>${X.pageEmpty}</span><button class="btn primary">${ic("folder-plus")}Open a folder</button></div></div>`);
+  `<div class="ed-empty"><div class="empty">${ic("folder-code")}<b>${X.pageEmptyTitle}</b><span>${X.pageEmpty}</span><button class="btn primary">${ic("folder-plus")}Open a folder</button></div></div>`);
 section("picker", "2. Opening a folder: the folder picker",
   p("<b>+</b> on the Editor heading opens it, and so does Open a folder on the Editor page when no folder is open (<code>#/editor</code>, behind it here). A popover like the @ picker, 380px wide, beside the sidebar: its top at the heading, moved up as far as it must to fit the window (fixed, through a portal, since the sidebar clips what overflows it).")
   + notes(
@@ -662,7 +664,9 @@ section("editor", "3. The Editor page",
     "<b>The tree</b> (sizes and states in §9): ignored folders greyed and folded, their files read-only; an ignored file elsewhere, such as <code>.env</code>, greyed but it opens and saves as usual. git's mark on the right: a letter in its colour (M, A, R, U, C) with the word as tooltip; a folder that holds changes gets a dot. File icons by kind only (code, JSON, text, .env, image, other), all <code>text-3</code>: colour stays for meaning.",
     "<b>Tabs</b>: the file's name (and its folder when two have the same name, like the two README.md), git's mark, × or a dot while not saved; middle click or Ctrl+W closes. The open tab joins the code under it, with an accent line on top. Tabs are kept per folder on this computer.",
     "<b>The code</b>: CodeMirror in the app's mono font (Settings → Appearance), <code>t-code</code> (12.5/20, growing with the Interface size), line numbers in <code>text-3</code>, the active line on <code>hover</code>, matching brackets, fold carets that show when the gutter is hovered, no wrapping. Colours: D1's <code>syn-*</code> tokens (placeholders here).",
-    "<b>Status bar</b>: the file's path and git status on the left; the cursor (a button: go to line), line endings, language and whether it's saved on the right. Not saved is a button that saves.")
+    "<b>Status bar</b>: the file's path and git status on the left; the cursor (a button: go to line), line endings, language and whether it's saved on the right. Not saved is a button that saves.",
+    "<b>Fonts.</b> Names in the tree and on tabs are in the interface font, like the Memory page's tree; paths (status bar, picker, bars), branches and identifiers are mono, as machine values are everywhere in Gizai.",
+    "<b>Edit anyway</b> is the Editor's own question: the backend lets you write in a worktree no agent works on (<code>readOnly</code> false), and the Editor asks first when the card isn't yours. While an agent works on it, the backend refuses writes (<code>readOnlyWhy</code>), and the bar says who.")
   + both(win(sidebar({ editor: "open", on: "gizai" }), gizaiPage()), { label: "gizai, Sidebar.tsx not saved, the gutter hovered" })
   + h3("Go to file, find and replace, Open in")
   + p("Go to file (Ctrl+P) is the command palette's look over the Editor: matching files, the match in bold, each file's folder after it. Find and replace (Ctrl+F) is <code>@codemirror/search</code>'s panel on top of the code, drawn with the app's inputs: Match case, Words and Regular expression inside the box, “3 of 4”, previous and next, then Replace and Replace all. Open in lists only the editors found, each with the command it found.")
@@ -729,7 +733,7 @@ section("search", "4. Search in the folder",
     "The box with Match case, Words and Regular expression inside it, pressed like the Markdown toolbar's buttons. Under it, how many results; then the results by file: the file's name, its folder (<code>text-3</code>), how many hits; under it each hit's line number and line, the match marked as the Memory page marks its search hits.",
     "A click (or Enter) opens the file at that line and marks the line for a moment; the result stays selected. A long line shows from a little before its match. At most 2,000 results and 10 seconds; then it says so.",
     "Search in a file is Ctrl+F (§3); replacing across files waits for a later version.")
-  + both(win(sidebar({ editor: "open", on: "kade-portal" }), editorMain({
+  + both(win(sidebar({ editor: "open", on: "kade-portal", stands: { "kade-portal": "" } }), editorMain({
     crumbs: crumbs("kade-portal", { title: "~/Herd/kade-portal" }), stand: standing("main · up to date with origin/main"),
     side: sidePanel({ title: "kade-portal", path: "~/Herd/kade-portal", mode: "search", search: searchPanel(X.searchSum, RESULTS) }),
     tabs: kadeTabs(), body: code(invoice(14, 44), { first: 14, active: LN_TOTAL, flash: LN_TOTAL, cursor: { line: LN_TOTAL, col: 20 } }),
@@ -788,7 +792,7 @@ const cardBar = ({ state, commit = "", push = "", hand = "", lead = st("in_progr
 const commitBtn = (o = {}) => btn("Commit…", { kind: o.primary ? "primary" : "", icon: "git-commit-horizontal", off: o.off, title: o.title, cls: o.cls });
 const pushBtn = (o = {}) => btn("Push", { icon: "upload", off: o.off, title: o.title });
 const handBtn = (o = {}) => btn(o.label ?? "Hand over to Testing", { kind: o.primary ? "primary" : "", icon: "send", off: o.off, title: o.title ?? "Pushes, moves KADE-41 to Testing for QA Agent and takes the pin off" });
-const commitPop = `<div class="pop ed-commit" role="dialog" aria-label="Commit" style="right:248px;left:auto;top:100px">`
+const commitPop = `<div class="pop ed-commit" role="dialog" aria-label="Commit" style="right:262px;left:auto;top:98px">`
   + `<div class="field"><label>Commit message</label><textarea class="textarea" aria-label="Commit message">KADE-41: Fix the invoice total</textarea></div>`
   + `<ul aria-label="What it commits"><li>${mark("modified")}<span>app/Models/Invoice.php</span></li><li>${mark("untracked")}<span>tests/Feature/InvoiceTotalTest.php</span></li></ul>`
   + `<p style="margin-top:-4px;font-size:var(--fs-sm);color:var(--text-2)">Commits every change, as git sees it: 2 files.</p>`
@@ -814,8 +818,8 @@ const board = `<div class="main">${topbar("<b>Tasks</b>", "", `<div class="seg">
   + `</div></div><div class="col"><div class="col-head">${st("testing")}<span class="name">Testing</span><span class="n">1</span></div><div class="col-body">`
   + boardCard({ id: "KADE-37", title: "Credit notes", pr: pri("medium"), labels: label("Feature", "c-blue"), working: "QA Agent", who: "QA Agent", agent: true }).replace('<span class="avatar sm agent" title="QA Agent"></span>', agentAv("flask-conical"))
   + `</div></div></div></div>`;
-const kade41Page = ({ bar: b, overlay = "", unsaved = false } = {}) => editorMain({
-  crumbs: crumbs("KADE-41", { mono: true, title: "~/.local/share/gizai/worktrees/KADE/KADE-41" }), stand: standing(X.standCard), bar: b,
+const kade41Page = ({ bar: b, overlay = "", unsaved = false, stand = "gizai/kade-41-fix-the-invoice-total · 2 changed" } = {}) => editorMain({
+  crumbs: crumbs("KADE-41", { mono: true, title: "~/.local/share/gizai/worktrees/KADE/KADE-41" }), stand: standing(stand), bar: b,
   side: sidePanel({ title: "KADE-41", path: "~/.local/share/gizai/worktrees/KADE/KADE-41", rows: tree(KADE_TREE({ invoiceMark: "modified", extra: ["test"] })) }),
   tabs: tabs([{ name: "Invoice.php", path: "app/Models/Invoice.php", on: true, mark: "modified", unsaved }, { name: "InvoiceTotalTest.php", path: "tests/Feature/InvoiceTotalTest.php", mark: "untracked" }]),
   body: code(invoice(14, 44), { first: 14, active: LN_RETURN, cursor: { line: LN_RETURN, col: 61 } }),
@@ -827,7 +831,7 @@ section("card", "6. A person's card",
     "<b>On the card</b>: Open in editor (Lucide <code>square-code</code>) in the top bar's actions, for a card assigned to you that no agent is working on; its tooltip says what it does. While the worktree is prepared (composer install, npm ci) it says so and turns. Off, with the reason, while an agent works on it. A card started by hand gets the “By hand” badge in its head; Open in editor then just opens it.",
     "<b>The card bar</b>: the column's glyph, the identifier and title, the branch (mono, <code>text-3</code>), how far it is, then Commit…, Push and Hand over to Testing (to Review when the card's Testing switch is off). The button of the next step is primary: Commit… while there are changes, then Hand over, which pushes too. A button that can't act is off, with why as its tooltip.",
     "<b>Commit…</b> opens a small box under it: the message, filled in with “KADE-41: Fix the invoice total”, and the files it commits (every change, as git sees it). Ctrl+Enter commits. What each button did shows in the bar in place of how far it is, for a few seconds.",
-    "<b>Handed over</b>: the bar says where it went; the worktree is read-only once QA works on it. <b>Back from QA</b>: the card is pinned to you again, and the bar says so in <code>needs</code> (magenta: a person is needed) until you open the card.",
+    "<b>Handed over</b>: the bar says where it went; the worktree is read-only once QA works on it. <b>Back from QA</b>: the card is pinned to you again, and the bar says so in <code>needs</code> (magenta: a person is needed) until you open the card. F4 reads it from the card itself (back in In progress, its latest move by QA), with no new field.",
     "<b>On the board</b>: the badge “By hand” (Lucide <code>keyboard</code>) before the person's avatar, never a working strip: no agent waits for it or works on it. The column's note doesn't count it.")
   + rows([
     { label: "Assigned to you, in To do", inner: taskTop({ st: "ready", button: openEditorBtn() }), w: 720, h: 150 },
@@ -853,7 +857,7 @@ section("card", "6. A person's card",
     { label: "Back from QA", inner: stripTop("KADE-41", "gizai/kade-41-fix-the-invoice-total", bar("needs", st("in_progress"), `${X.cardBack}`, btn("Open card", { kind: "primary" }) + commitBtn({ off: true, title: "Nothing to commit" }) + pushBtn({ off: true, title: "Nothing to push" }) + handBtn({ off: true, title: "Commit a change first" })), { mono: true }) },
   ])
   + h3("On the board")
-  + both(board, { h: 520, label: "KADE-41 by hand beside an agent's card", cls: "noside" }));
+  + both(board, { h: 420, label: "KADE-41 by hand beside an agent's card", cls: "noside" }));
 
 // 7. Changed on disk ------------------------------------------------------------------------------------------------------------
 const diskPage = (b, { unsaved = true, save = SAVE.unsaved } = {}) => editorMain({
@@ -875,7 +879,7 @@ section("disk", "7. Changed on disk",
     "<b>Reload</b> shows the version on disk; your unsaved changes here are lost (its tooltip says so). <b>Keep mine</b> keeps your version; the next Ctrl+S then asks once more in the same bar, and the second one saves over the newer file.",
     "<b>Deleted on disk</b>: Save it again writes your version back; Close tab drops it. With no changes here, the tab says the file isn't there any more (§3).",
     "The bar uses the <code>warning</code> icon: a save could lose someone's work. Only the tab's file gets the bar, under the tabs; another tab with the same trouble gets its bar when it is opened.")
-  + both(win(sidebar({ editor: "open", on: "kade-portal" }), diskPage(diskBar("changed"))), { label: "Invoice.php changed on disk while not saved here" })
+  + both(win(sidebar({ editor: "open", on: "kade-portal", stands: { "kade-portal": "1 changed" } }), diskPage(diskBar("changed"))), { label: "Invoice.php changed on disk while not saved here" })
   + strips([
     { label: "After Keep mine", inner: fileBarStrip(diskBar("keeping"), kadeTabs({ mark: "modified", unsaved: true })) },
     { label: "The first Ctrl+S after Keep mine", inner: fileBarStrip(diskBar("confirm"), kadeTabs({ mark: "modified", unsaved: true })) },
@@ -898,7 +902,7 @@ const settingsPage = `<div class="main">${topbar("<b>Settings</b>", "", '<button
   + `<div class="tabs" role="tablist" aria-label="Settings">${[["sliders-horizontal", "General", true], ["palette", "Appearance"], ["bell", "Notifications"], ["bot", "Agents and runs"], ["plug", "MCP servers"], ["git-pull-request", "GitHub and Bitbucket"]].map(([i, l, on]) => `<button class="tab" role="tab" aria-selected="${!!on}">${ic(i)}${l}</button>`).join("")}</div>`
   + `<div class="form settings-panel" role="tabpanel" aria-label="General"><section class="form-section dz-faded"><header><h3>Updates</h3><p>Gizai updates from its releases on GitHub. An update builds the new version from source in the background, backs up your data, installs it and offers a restart.</p></header><div class="fields"><div class="field wide"><label>Version</label><span>0.7.2</span></div></div></section>`
   + settingsSection(folderRow("~/Herd", X.setOk) + folderRow("~/Code", "3 folders: gizai, gizai-site-old and notes."))
-  + `<section class="form-section dz-faded"><header><h3>Data</h3><p>Everything Gizai stores lives in this folder on this computer.</p></header><div class="fields"><div class="field wide"><label>Data folder</label><span class="mono">/home/jeffrey/.local/share/gizai</span></div></div></section>`
+  + `<section class="form-section dz-faded"><header><h3>Data</h3><p>Everything Gizai stores lives in this folder on this computer.</p></header><div class="fields"><div class="field wide"><label>Data folder</label><span class="mono">/home/jefsev/.local/share/gizai</span></div></div></section>`
   + `</div></div></div></div>`;
 section("settings", "8. Settings → General → Editor folders",
   p("Where your projects are. The folder picker lists every folder directly inside these (default <code>~/Herd</code>); projects' linked folders and card worktrees open wherever they are. A section of General, after Updates and before Data, with the same rows as an agent's Folders: a path in mono, × to remove, Add folder, and Browse… for the system's folder picker.")
@@ -951,27 +955,37 @@ const SIZE_STATUS = [
   ["Bar", `on ${c("side")}, a ${c("line")} line above it; text ${c("text-3")}, the path ${c("text-2")}`, "", ""],
 ];
 const sizeTable = (rowsArr) => table(["Part", "Size", "Token", ""], rowsArr.map(([a, b, tk, n]) => [a, b, tk, n ? '<span class="badge info">New</span>' : ""]));
-const TOKENS_SYN = [
-  ["syn-keyword", "#b197fc", "6.36", "#6f42c1", "5.36", "keywords, modifiers, this"],
-  ["syn-string", "#a6d189", "8.84", "#2f6f1f", "5.06", "strings, regular expressions, attribute values"],
-  ["syn-number", "#f29a4a", "6.94", "#a14a06", "4.94", "numbers, true, false, null"],
-  ["syn-comment", "#8b8f99", "4.74", "#5f636e", "4.94", "comments"],
-  ["syn-function", "#7fa6ff", "6.43", "#2556c6", "5.36", "functions called and defined"],
-  ["syn-type", "#e3bd3c", "8.48", "#7d5800", "5.29", "types, classes, namespaces"],
-  ["syn-variable", "#ededf0", "13.13", "#14161b", "14.89", "variables"],
-  ["syn-property", "#c3cbef", "9.58", "#35447a", "7.65", "properties"],
-  ["syn-tag", "#f2706b", "5.34", "#c0302b", "4.67", "HTML and JSX tags"],
-  ["syn-attribute", "#f29a4a", "6.94", "#a14a06", "4.94", "attributes"],
-  ["syn-operator", "#a5a8b1", "6.45", "#4b4f59", "6.74", "operators"],
-  ["syn-punctuation", "#a5a8b1", "6.45", "#4b4f59", "6.74", "brackets, separators"],
-  ["syn-meta", "#f78c6c", "6.52", "#a83f18", "5.10", "<?php, Blade directives, attributes, macros"],
-  ["syn-invalid", "#f2706b", "5.34", "#c0302b", "4.67", "what doesn't parse"],
-  ["diff-add", "#5fcf8f", "7.89", "#13703a", "5.07", "D1: + and added lines; here git's A and U"],
-  ["diff-del", "#f47a75", "5.76", "#bf302a", "4.71", "D1: − and removed lines; here git's D and C"],
-  ["git-modified", "#e3bd3c", "8.48", "#7d5800", "5.29", "New (D2): git's M and R, a folder's dot"],
-  ["git-added", "= diff-add", "", "= diff-add", "", "New (D2): git's A and U"],
-  ["git-deleted", "= diff-del", "", "= diff-del", "", "New (D2): git's D and C"],
+// The colour tokens with their values from editor-tokens.css and their lowest contrast on the surfaces code and the
+// tree's marks sit on (from tokens.css), computed here so the table can't drift from the files.
+function themeVars(file) {
+  const css = fs.readFileSync(file, "utf8");
+  const block = (sel) => { const i = css.indexOf(sel); return css.slice(css.indexOf("{", i) + 1, css.indexOf("}", i)); };
+  const vars = (text) => Object.fromEntries([...text.matchAll(/--([\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  return { dark: vars(block(':root, [data-theme="dark"] {')), light: vars(block('[data-theme="light"] {')) };
+}
+const APP_VARS = themeVars(`${GZ}/src/styles/tokens.css`);
+const OUR_VARS = themeVars(`${HERE}/editor-tokens.css`);
+const SURFACES = ["bg", "raised", "side", "hover", "selected"];
+const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255); };
+const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+const lowest = (theme, hex) => Math.min(...SURFACES.map((sf) => contrast(hex, APP_VARS[theme][sf]))).toFixed(2);
+const TOKEN_USE = [
+  ["syn-keyword", "keywords, modifiers, this"], ["syn-string", "strings, regular expressions, attribute values"], ["syn-number", "numbers, true, false, null"],
+  ["syn-comment", "comments"], ["syn-function", "functions called and defined"], ["syn-type", "types, classes, namespaces"], ["syn-variable", "variables"],
+  ["syn-property", "properties"], ["syn-tag", "HTML and JSX tags"], ["syn-attribute", "attributes"], ["syn-operator", "operators"],
+  ["syn-punctuation", "brackets, separators"], ["syn-meta", "&lt;?php, Blade directives, attributes, macros"], ["syn-invalid", "what doesn't parse"],
+  ["diff-add", "D1: + and added lines; here git's A and U"], ["diff-del", "D1: − and removed lines; here git's D and C"],
+  ["git-modified", "New in D2: git's M and R, a folder's dot"], ["git-added", "New in D2: git's A and U"], ["git-deleted", "New in D2: git's D and C"],
 ];
+const TOKENS_SYN = TOKEN_USE.map(([name, use]) => {
+  const side = (theme) => {
+    const v = OUR_VARS[theme][name];
+    const alias = v.match(/^var\(--([\w-]+)\)$/);
+    return alias ? [`= ${alias[1]}`, ""] : [v, lowest(theme, v)];
+  };
+  return [name, ...side("dark"), ...side("light"), use];
+});
 const sw = (hex) => hex.startsWith("#") ? `<span class="dz-sw" style="background:${hex}"></span><code>${hex}</code>` : hex;
 const CM_THEME = [
   ["&", "background bg; color text; font-family font-mono; font-size 12.5px, line-height 20px (t-code), growing with the Interface size"],
@@ -1028,6 +1042,8 @@ section("specs", "9. Specs: the tree, the tabs, the status bar, colours, keys",
     ["In an ignored folder", inTabs([{ name: "autoload.php", path: "vendor/autoload.php", ignored: true, ro: true }]), "Greyed with the lock"],
     ["git's mark", inTabs([{ name: "Invoice.php", path: "app/Models/Invoice.php", mark: "modified" }]), "The tree's letter after the name"],
     ["Same name", inTabs([{ name: "README.md", path: "README.md" }, { name: "README.md", dir: "design", path: "design/README.md" }]), "Its folder after the name, text-3"],
+    ["The tree folded", `<div class="ed-main gal-cell">${tabs([{ name: "Invoice.php", path: "app/Models/Invoice.php", on: true }], { folded: true })}</div>`, "Show the file tree (Ctrl+B) before the first tab"],
+    ["More tabs than room", inTabs([{ name: "InvoiceController.php", path: "app/Http/Controllers/InvoiceController.php" }, { name: "Invoice.php", path: "app/Models/Invoice.php", on: true }, { name: "InvoiceLine.php", path: "app/Models/InvoiceLine.php" }]), "The strip scrolls sideways (wheel or trackpad); the open tab is scrolled into view"],
   ], 360)
   + h3("The status bar")
   + sizeTable(SIZE_STATUS)
@@ -1050,12 +1066,25 @@ section("specs", "9. Specs: the tree, the tabs, the status bar, colours, keys",
   + table(["Token", "Dark", "Lowest", "Light", "Lowest", "Used for"], TOKENS_SYN.map(([n, d, dc, l, lc, u]) => [c(`--${n}`), sw(d), dc, sw(l), lc, u]))
   + p("Which of Lezer's tags each token colours: the map this page uses to colour TSX with <code>@lezer/javascript</code>, offered for F0's <code>HighlightStyle</code> (D1 may move a tag).")
   + table(["Token", "Lezer tags"], TAG_TOKENS.map(([tk, , tags]) => [c(`--syn-${tk}`), esc(tags)]))
+  + h3("On a narrow window")
+  + p("At the window's smallest, 900 px, 652 px stay beside the sidebar; at 1100 px, 852 px. The breadcrumbs keep their width and the standing gives way (cut off, the whole of it in its tooltip). A bar's sentence wraps beside its buttons, which go under it once less than 380 px is left for it; a person's card puts its branch under its title. The tree keeps its width and folds with Ctrl+B.")
+  + rows([
+    { label: "1100 px: a refusal", inner: behindStrip(refusal(X.refDirty), "main · 3 behind origin/main · 2 changed"), w: 852 },
+    { label: "1100 px: a person's card", inner: stripTop("KADE-41", "gizai/kade-41-fix-the-invoice-total · 2 changed", cardBar({ state: X.cardChanged, commit: commitBtn({ primary: true }), push: pushBtn({ off: true, title: "Nothing to push" }), hand: handBtn({ off: true, title: "Commit your changes first: 2 files aren't committed." }) }), { mono: true }), w: 852 },
+    { label: "900 px: the folder bar", inner: stripTop("GA-112", "gizai/ga-112-remember-the-open-tabs · 1 changed", bar("", ic("lock"), X.barIdle, btn("Edit anyway") + btn("Open card", { kind: "ghost" })), { mono: true, actions: openInBtn() }), w: 652 },
+  ])
+  + h3("For screen readers and the keyboard")
+  + notes(
+    "The tree is a <code>tree</code> of <code>treeitem</code>s (<code>aria-expanded</code> on folders, <code>aria-selected</code> on the open file), with one tab stop: the arrows move, Enter opens, → and ← open and fold a folder.",
+    "The tabs are a <code>tablist</code>; each × is a button named “Close Sidebar.tsx”; a tab that isn't saved says so in its name (“Sidebar.tsx, not saved”).",
+    "A folder's bar is a <code>status</code>, a refusal or failure an <code>alert</code>; the status bar is a <code>status</code>, so “Saved” and “Reloaded” are read out.",
+    "Icons that carry meaning have words beside them or a name (the lock: “Read-only”); git's letters have their word as tooltip and name; nothing relies on colour alone.")
   + h3("Keys")
   + p("Cmd for Ctrl on macOS (the app's <code>modKey()</code>). The app's own keys (N, T, D, Ctrl+K) don't fire in the code, as in the Markdown editor.")
   + table(["Keys", "What they do"], KEYS.map(([k, w]) => [`<span class="kbd-run">${k}</span>`, w])));
 
 section("texts", "10. Every text",
-  p("Every bar, button and refusal on this page, in sentence case, in the order of the page. Numbers, names and paths are the examples'; F2, F3 and F4 put in the real ones. A sentence that Gizai's backend makes (the plan's, git's) is shown as the Editor shows it.")
+  p("Every bar, button and refusal on this page, in sentence case, in the order of the page. Numbers, names and paths are the examples'; F2, F3 and F4 put in the real ones. A sentence that Gizai's backend makes (the plan's, git's) is shown as the Editor shows it. The status words on a sidebar row stay lowercase, like Agents' “paused” and “1 live”.")
   + table(["Where", "When", "Text", "Buttons, tooltips"], TEXTS.map((x) => [x.where, x.when, x.text, x.buttons])));
 
 // ---------- the page ----------

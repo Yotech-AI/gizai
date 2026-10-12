@@ -339,7 +339,7 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 
 The key for Ctrl+\` is read by where it is (`KeyboardEvent.code === "Backquote"`, the key left of 1), so it works on keyboards where that key has another character. [I]
 
-**How the keys get where they should.** xterm.js reads keys in a hidden text field of its own. Gizai's single-letter keys (`n`, `t`, `d`) already skip text fields (`src/App.tsx:41`). Ctrl+K (`:39`) and the Editor's Ctrl keys (`EditorPage.tsx:516-527`) listen on `window`, though, so TF0 makes sure that a key xterm.js sends to the shell never reaches them [I: xterm.js stops the keys it handles; TF0's probe checks it]. The other way round, the keys of this table that Gizai keeps (Ctrl+\`, Ctrl+Shift+\`, Ctrl+PgDn and Ctrl+PgUp, find, copy and paste) are let through xterm.js with `attachCustomKeyEventHandler`, which runs "before keys are processed" [V `xterm.d.ts`].
+**How the keys get where they should.** xterm.js reads keys in a hidden text field of its own. Gizai's single-letter keys (`n`, `t`, `d`) already skip text fields (`src/App.tsx:41`). Ctrl+K (`:39`) and the Editor's Ctrl keys (`EditorPage.tsx:516-527`) listen on `window`, though, but a key that xterm.js turns into input for the shell never reaches them: xterm.js cancels it with `preventDefault` and `stopPropagation` [V `CoreBrowserTerminal.ts` 6.0.0, `_keyDown` and `cancel`], and TF0's probe checks it. The other way round, the keys of this table that Gizai keeps (Ctrl+\`, Ctrl+Shift+\`, Ctrl+PgDn and Ctrl+PgUp, find, copy and paste) are let through with `attachCustomKeyEventHandler`, which runs "before keys are processed" [V `xterm.d.ts`]. When it returns `false`, xterm.js leaves the key alone, so the key reaches Gizai's own handlers [V `CoreBrowserTerminal.ts`].
 
 ### 5.3 One view per terminal: the code's shape
 
@@ -650,6 +650,7 @@ Paste on Linux (TF0) uses `readText()` from `@tauri-apps/plugin-clipboard-manage
 | xterm.js flow control guide | https://xtermjs.org/docs/guides/flowcontrol/ |
 | xterm.js WebGL addon README (6.0.0) | https://github.com/xtermjs/xterm.js/blob/6.0.0/addons/addon-webgl/README.md |
 | xterm.js `DomRenderer.ts` and `BufferLine.ts` (6.0.0) | https://github.com/xtermjs/xterm.js/blob/6.0.0/src/browser/renderer/dom/DomRenderer.ts, https://github.com/xtermjs/xterm.js/blob/6.0.0/src/common/buffer/BufferLine.ts |
+| xterm.js `CoreBrowserTerminal.ts` (6.0.0): keys, `cancel`, `open` | https://github.com/xtermjs/xterm.js/blob/6.0.0/src/browser/CoreBrowserTerminal.ts |
 | VS Code's terminal settings (`terminalConfiguration.ts`, main) | https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts |
 | VS Code's `terminalInstance.ts` (`attachToElement`, `detachFromElement`, main) | https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts |
 | VS Code docs, "Terminal Basics" (updated 2026-10-07) | https://code.visualstudio.com/docs/terminal/basics |

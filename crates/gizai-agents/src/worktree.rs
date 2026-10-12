@@ -450,6 +450,59 @@ pub fn push_new_commits(repo: &Path, to: &str, branch: &str, base: &str, over: &
     }
 }
 
+/// How many commits the local `branch` has that neither `base` (the main branch it started from, as last fetched,
+/// `start_ref`) nor `pushed` (the remote's copy of the branch as this repository last saw it, such as
+/// `refs/remotes/origin/<branch>`, which a push through that remote updates) has: what a push would still send, as far
+/// as this computer knows, without asking the remote. A ref that isn't there counts as nothing.
+pub fn unpushed(repo: &Path, branch: &str, base: &str, pushed: Option<&str>) -> Result<u32, AgentError> {
+    let ours = rev_parse(repo, &format!("refs/heads/{branch}"))
+        .map_err(|_| AgentError::Git(format!("{branch} isn't in {} any more", repo.display())))?;
+    let theirs: Vec<String> = std::iter::once(base).chain(pushed)
+        .filter_map(|r| rev_parse(repo, &format!("{r}^{{commit}}")).ok()).collect();
+    new_commits(repo, &ours, &theirs)
+}
+
+/// The branch checked out in the checkout at `dir`, if it is on one.
+pub fn branch_of(dir: &Path) -> Option<String> {
+    git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().filter(|b| !b.is_empty())
+}
+
+/// Commit…, on a person's card (GA-111): commits every change in the checkout at `dir`, untracked files included
+/// (`git add --all`; what git ignores stays out), with `message`, the way `git commit` in a terminal does: the
+/// repository's own hooks run, and the author is who your git config says. Returns the new commit. Refuses an empty
+/// message and a checkout with nothing to commit, and says in plain words why git refused.
+pub fn commit_all(dir: &Path, message: &str) -> Result<Commit, AgentError> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(AgentError::Git("Write a commit message first".into()));
+    }
+    if uncommitted(dir)? == 0 {
+        return Err(AgentError::Git("There is nothing to commit: no file has changed".into()));
+    }
+    git(dir, &["add", "--all"])?;
+    let out = crate::os::command("git").arg("-C").arg(dir).args(["commit", "--quiet", "-m", message])
+        .stdin(std::process::Stdio::null()).env("GIT_TERMINAL_PROMPT", "0").output()
+        .map_err(|e| AgentError::Git(format!("can't run git: {e}")))?;
+    if !out.status.success() {
+        let said = format!("{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+        return Err(AgentError::Git(commit_refusal(said.trim())));
+    }
+    let sha = git(dir, &["rev-parse", "HEAD"])?;
+    let subject = git(dir, &["log", "-1", "--format=%s", "HEAD"])?;
+    Ok(Commit { sha, subject })
+}
+
+/// Why `git commit` refused, in plain words where Gizai knows them, else git's (or a hook's) last lines.
+fn commit_refusal(said: &str) -> String {
+    if said.contains("Please tell me who you are") || said.contains("unable to auto-detect email address") {
+        return "git doesn't know who you are: set your name and email with git config --global user.name \"Your Name\" and \
+                git config --global user.email you@example.com, then commit again".into();
+    }
+    let lines: Vec<&str> = said.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(5)..].join(" · ");
+    if tail.is_empty() { "git couldn't commit".into() } else { format!("git couldn't commit: {tail}") }
+}
+
 /// How many commits `ours` has that none of `theirs` has (commit ids).
 fn new_commits(repo: &Path, ours: &str, theirs: &[String]) -> Result<u32, AgentError> {
     let mut args = vec!["rev-list", "--count", ours];

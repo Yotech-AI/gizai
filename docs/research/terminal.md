@@ -182,7 +182,7 @@ Answer and recommendation:
 
 **Q6. Safety.**
 
-Answer: as §5.6 says. In short: no agent or Team Lead tool can type into a terminal or read it (none exists, and TB adds none); nothing from a terminal is saved to disk, Memory or a card; scrollback lives in memory only and goes with the terminal; links open only on Ctrl+click and only for http(s); no program can read the clipboard. Recommendation: make each of these an acceptance criterion of TB or TF0 (§6), so they are tested, not just intended. [V for what exists; I for the rules]
+Answer: as §5.6 says. In short: no agent or Team Lead tool can type into a terminal or read it (none exists, and TB adds none); nothing from a terminal is saved to disk, Memory or a card; scrollback lives in memory only and goes with the terminal; links open only on Ctrl+click and only for http(s); no program in a terminal can read or set the clipboard (no OSC 52), and the window reads it only when you paste. Recommendation: make each of these an acceptance criterion of TB or TF0 (§6), so they are tested, not just intended. [V for what exists; I for the rules]
 
 **Q7. The screens.**
 
@@ -491,12 +491,13 @@ At the same time: **TD and TB** first (the design and the backend need nothing e
 ### TF0. The terminal view: xterm.js in Gizai's colours, one view per terminal
 
 - **Column, role:** To do, frontend.
-- **Builds:** TD's `term-*` tokens in `design/tokens.json` and `src/styles/tokens.css` (with `scripts/tokens-css.ts`) and their rule in `design/README.md`; the packages of §4 (`@xterm/xterm` and its addons); `src/lib/terminals.ts` (the store of sessions from `terminalList` and `onTerminalsChanged`, and one xterm.js `Terminal` per session for its whole life, attached once to its output, moved between places, §5.3); `src/components/terminal/TerminalView.tsx` (places the view, fits it, sends the size, recolours it on a theme change, the keys of §5.2, copy and paste, links, find, acknowledging what it drew); `src/styles/terminal.css` (xterm's own stylesheet, imported, and Gizai's); `src/pages/TerminalPage.tsx` with `#/terminal` (New terminal, with the folder picker) and `#/terminal/<id>` (the terminal under its top bar), and the route in `src/router.ts`; a UI probe in `src/selftest.ts` and `scripts/ui-test.sh`.
+- **Builds:** TD's `term-*` tokens in `design/tokens.json` and `src/styles/tokens.css` (with `scripts/tokens-css.ts`) and their rule in `design/README.md`; the packages of §4 (`@xterm/xterm` and its addons); `src/lib/terminals.ts` (the store of sessions from `terminalList` and `onTerminalsChanged`, and one xterm.js `Terminal` per session for its whole life, attached once to its output, moved between places, §5.3); `src/components/terminal/TerminalView.tsx` (places the view, fits it, sends the size, recolours it on a theme change, the keys of §5.2, copy and paste (on Linux, Ctrl+Shift+V reads the clipboard with the plugin's `readText`, §3.2 Q2), links, find, acknowledging what xterm.js wrote; WebGL on screen with the DOM renderer as fallback); `src/styles/terminal.css` (xterm's own stylesheet, imported, and Gizai's); `src/pages/TerminalPage.tsx` with `#/terminal` (New terminal, with the folder picker) and `#/terminal/<id>` (the terminal under its top bar), and the route in `src/router.ts`; a UI probe in `src/selftest.ts` and `scripts/ui-test.sh`.
 - **Acceptance criteria:**
   - [ ] A terminal opens in a folder from `#/terminal`; typing `echo gizai-probe` shows it (UI probe in `cage`).
   - [ ] Leaving the page and coming back shows the same terminal, with what it printed meanwhile and its scrollback (5,000 lines).
   - [ ] Colours come from the tokens; `t` and Settings → Appearance recolour and refont open terminals at once; box-drawing characters line up (`tree`, htop).
-  - [ ] Copy, paste and find with the keys of §5.2 on each system; Ctrl+click opens an http(s) link with the opener, nothing else opens.
+  - [ ] Copy, paste and find with the keys of §5.2 on each system; Ctrl+Shift+V on Linux pastes through the clipboard plugin without WebKit's paste prompt; Ctrl+click opens an http(s) link with the opener, nothing else opens.
+  - [ ] WebGL draws the terminal where a hardware WebGL2 context exists; with WebGL off (a probe forces it) or its context lost, the DOM renderer draws the same screen; only the terminals on screen hold a WebGL context.
   - [ ] In a terminal, Ctrl+K, Ctrl+W, Ctrl+P, Ctrl+B, `n`, `t` and `d` reach the shell and do nothing in Gizai (probe).
   - [ ] `yes` running for 10 s doesn't freeze the window, and Ctrl+C stops it within a second (probe).
   - [ ] The security policy is unchanged; `npm test`, `npm run build` and `scripts/ui-test.sh` pass.

@@ -318,3 +318,19 @@ export type TerminalEnd = {
 ```
 
 Errors are plain sentences, like the rest of the app ("The Editor can't open ~/.ssh: …", "QA Agent is working on GA-118: a terminal there waits until its run ends").
+
+---
+
+## 7. Open questions for Jefsev
+
+1. **The Terminal page's tabs.** Recommended: the terminals of the same folder, the same tabs as that folder's Editor panel, so the page and the panel are one set of tabs in two places, and `+` needs no picker. The other way: every open terminal as a tab, which repeats the sidebar's rows.
+2. **Where a terminal may start.** Recommended: the folders the Editor may open (projects' folders, the folders in `~/Herd`, card worktrees), with the Editor's refusals, so never `~/.ssh` or Gizai's data folder. From there `cd` goes anywhere, as you: the rule decides where Gizai starts a shell, it doesn't fence it in. Should your home folder be a start folder too (most terminal apps start there)? Recommended: not in the first version.
+3. **A card's worktree while an agent works on it.** Recommended: no new terminal there until the run ends, as the Editor makes it read-only; one opened before stays, with the Editor's bar. Or allow it with a warning?
+4. **When the shell ends by itself.** Recommended: `exit` (code 0) closes the terminal; any other end keeps it with the reason and Start again, as VS Code does.
+5. **Closing a terminal that runs a program.** Recommended: ask once, under the row or tab ("npm is still running in gizai 2. Close it and end npm?"), as VS Code asks by default for terminals with child processes. Closing one that only waits for a command doesn't ask.
+6. **Quitting Gizai with terminals open.** Recommended: they end with Gizai (closing the window keeps Gizai and its terminals running, as now). Settings → Quit's question counts busy terminals with the agents ("1 agent and 2 terminals are at work: stop them and quit?"); the tray's Quit and Cmd+Q don't ask, as today. Nothing is restored at the next start: no old output on disk, and no shells started for you.
+7. **How much a terminal keeps.** Recommended: 5,000 lines of scrollback each, in memory only (VS Code keeps 1,000). No limit on how many terminals; from 20 open, New terminal says that each keeps a shell running until you close it.
+8. **The shell on Windows.** Recommended: PowerShell 7 when installed, else Windows PowerShell, else cmd; Git Bash, WSL and a Shell setting later, when asked. (Gizai keeps WSL out for the agents' CLIs and shell commands: `docs/PLATFORMS.md:7`, `:31`.)
+9. **A run's "Open in terminal".** It copies `cd '<worktree>' && claude --resume <id>` for your own terminal app (`RunPanel.tsx:124`). Recommended: rename it to "Copy resume command" in TF1, so it isn't mistaken for Gizai's terminal; a later card may open a Gizai terminal in the worktree with the command typed, not run.
+10. **Free.** Recommended: the terminal is free, with the code editor, in `docs/PAID-FEATURES.md` (§3.2 Q8).
+11. **Order.** Recommended: TD and TB at once, then TF0, then TF1 and TF2 at once.

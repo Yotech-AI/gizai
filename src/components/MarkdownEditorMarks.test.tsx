@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Compartment, EditorSelection, EditorState, type Extension, type TransactionSpec } from "@codemirror/state";
 import { EditorView, ViewPlugin, type DecorationSet } from "@codemirror/view";
-import { defaultHighlightStyle, HighlightStyle, highlightingFor, syntaxHighlighting } from "@codemirror/language";
+import { defaultHighlightStyle, HighlightStyle, highlightingFor, language, syntaxHighlighting } from "@codemirror/language";
 import { tags, type Tag } from "@lezer/highlight";
 import { undo } from "@codemirror/commands";
 
@@ -438,5 +438,42 @@ describe("MarkdownEditor marks: switching", () => {
     const back = marksCompartment(view);
     expect(back.content).not.toBe(toShow);
     expect(h.views).toHaveLength(1);
+  });
+});
+
+// GA-128 QA: the Code Editor's colours (GA-109) and the doc page's Editor | Markdown switch (GA-118) were made on their own
+// branches; on main together, neither may change the other.
+describe("the doc page's Editor | Markdown switch and the Code Editor's colours leave each other alone (GA-128 QA)", () => {
+  const CODE_DOC = `${DOC}\n\n\`\`\`php\n<?php echo "hi"; // a comment\n\`\`\`\n`;
+  const TAGS = [tags.heading1, tags.strong, tags.emphasis, tags.monospace, tags.link, tags.url, tags.quote, tags.contentSeparator,
+    tags.processingInstruction, tags.keyword, tags.string, tags.comment, tags.variableName, tags.typeName, tags.number];
+
+  it.each(["dim", "hide", "show"] as Marks[])("the Markdown editor in %s takes none of the code colours (--syn-*)", async (m) => {
+    const { codeHighlightStyle } = await import("../lib/codeTheme");
+    expect(TAGS.filter((tag) => codeHighlightStyle.style([tag])).length).toBeGreaterThan(5);
+    const { view } = mount(CODE_DOC, m);
+    for (const tag of TAGS) {
+      const code = codeHighlightStyle.style([tag]);
+      const mine = highlightingFor(view.state, [tag]) ?? "";
+      if (code) expect(mine.split(" ")).not.toContain(code);
+      expect(String(styleOf(view.state, tag)?.color ?? "")).not.toContain("--syn-");
+    }
+  });
+
+  it("a Markdown file in the Code Editor keeps the code colours, without the switch's marks or mono font", async () => {
+    const { codeHighlightStyle } = await import("../lib/codeTheme");
+    const { codeState, setLanguage } = await import("./editor/code");
+    let s = codeState(DOC, false, { current: { save: () => {}, update: () => {} } });
+    await setLanguage("README.md", null, () => s, (n) => { s = n; });
+    expect(s.facet(language)?.name).toBe("markdown");
+    expect(s.facet(EditorView.editorAttributes)).not.toContainEqual({ class: "cm-md-source" });
+    for (const tag of TAGS) expect(highlightingFor(s, [tag])).toBe(codeHighlightStyle.style([tag]));
+  });
+
+  it("only the Code Editor and a card's Changes use the code colours: no Markdown editor or view, chat or comment does", () => {
+    const sources = import.meta.glob<string>(["../**/*.ts", "../**/*.tsx", "!../**/*.test.ts", "!../**/*.test.tsx"], { query: "?raw", import: "default", eager: true });
+    expect(Object.keys(sources).length).toBeGreaterThan(20);
+    const users = Object.keys(sources).filter((f) => f !== "../lib/codeTheme.ts" && /from "[./]*\/(lib\/)?codeTheme"/.test(sources[f]));
+    expect(users.sort()).toEqual(["../lib/diffView.ts", "./editor/code.ts"]);
   });
 });

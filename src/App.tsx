@@ -21,9 +21,11 @@ import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { EditorPage } from "./pages/EditorPage";
+import { TerminalPage } from "./pages/TerminalPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
 import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
+import { startTerminals } from "./lib/terminals";
 
 export default function App() {
   const route = useRoute();
@@ -31,6 +33,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState<DrawerReq | null>(null);
+
+  // the open terminals and their views live as long as the window, not a page (GA-135)
+  useEffect(() => { startTerminals(); }, []);
 
   useEffect(() => {
     // The theme and density are on <html> already (main.tsx); t and d switch them, like Settings → Appearance.
@@ -184,6 +189,7 @@ export default function App() {
             : route.page === "usage" ? <UsagePage />
             : route.page === "memory" ? <MemoryPage key={route.scope ?? "all"} route={route} youId={info?.you_id ?? ""} />
             : route.page === "editor" ? <EditorPage id={route.id} youId={info?.you_id ?? ""} />
+            : route.page === "terminal" ? <TerminalPage id={route.id} />
             : route.page === "projects" ? <ProjectsPage />
             : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
             : <Placeholder route={route} info={info} />}

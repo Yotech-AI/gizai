@@ -68,7 +68,7 @@ export const FileBox = memo(function FileBox({ f, source, near, onView }: {
     : f.status === "typechange" ? "Changed type" : tooLarge ? "Too big to show" : folds?.why;
   const hasBody = !renameOnly;
   const stat = f.binary ? <span className="diffstat"><span className="bin">Binary</span></span>
-    : renameOnly ? null : <Diffstat add={f.status === "deleted" ? null : f.additions ?? 0} del={f.deletions ?? 0} />;
+    : renameOnly ? null : <Diffstat add={f.additions ?? 0} del={f.deletions ?? 0} />;
   return (
     <section className={`chg-box${folded ? " folded" : ""}`} data-path={f.path} aria-label={f.path}>
       <header className="chg-fh">

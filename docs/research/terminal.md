@@ -168,6 +168,26 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 
 The key for Ctrl+\` is read by where it is (`KeyboardEvent.code === "Backquote"`, the key left of 1), so it works on keyboards where that key has another character. [I]
 
+### 5.6 Security and privacy
+
+- **It runs as you, and says so by being yours only.** A terminal is a shell with your rights, like any terminal app. Gizai's job is that nothing else drives it or reads it. [I]
+- **Agents and the Team Lead can't reach it.** The Team Lead's 46 tools read the database and the list of live runs, never in-memory state or logs (`src-tauri/src/tools/mod.rs:136-183`, `:341-449`; `src-tauri/src/tools/read.rs`), and task runs get no Gizai tools at all (`src-tauri/src/runs.rs:975`). [V] TB adds no tool and no MCP entry; the tool catalog's test lists every tool, so a terminal tool would show there. The terminal commands are Tauri commands, which only the window can call (`capabilities/default.json:8-13`). [V for today; I for the rule]
+- **Nothing from a terminal is kept on disk.** Its scrollback is xterm.js's buffer in the window's memory, and TB keeps at most 256 KB per terminal in Gizai's memory for a view that attaches again; both go with the terminal. No log file, no database row, no Memory note, nothing on a card. This matters beyond privacy: agents' runs have `cat`, `rg` and `tail` among their default commands and run as you (`crates/gizai-core/src/seed.rs:245-250`; the folder limits apply to the file tools, not to commands, `folders.rs:1-2`), so a terminal log under `<data>` would be readable by any run. [V the agents' commands; I the rule]
+- **Only the window's own terminals.** `terminal_input` writes only to a terminal the window opened, by its id; there is no command that runs a command line. A link is opened only on Ctrl+click (Cmd+click), only `http:` and `https:`, through the opener the app already allows (`opener:allow-open-url`, `capabilities/default.json:11-12`). No program in the terminal can read the clipboard: the clipboard addon (OSC 52) isn't used. Paste uses bracketed paste, so a pasted line isn't run before Enter in shells that support it (xterm.js does this itself, §3.2 Q2). [I design; V the capability]
+- **Where it starts.** Only in a folder the Editor may open, checked by `editor::find` on every `terminal_open` (§3.2 Q5), so never in `~/.ssh` or Gizai's data folder, and not in a card's worktree while an agent works there. This decides where Gizai starts a shell; it doesn't fence the shell in. [V the check; I the rule]
+- **No new rights for the window**: no shell or file plugin, the same capabilities and content security policy (§3.2 Q2).
+
+### 5.7 How it is tested
+
+- **Rust** (TDD, CLAUDE.md:39-45): `crates/gizai-agents/tests/terminal_test.rs`. Behind `#[cfg(unix)]`: a session with `/bin/sh` in a temporary folder echoes what it is sent; `stty size` follows `resize`; `TERM`, `COLORTERM` and `TERM_PROGRAM` are set and `GIZAI_*` aren't; `busy` names `sleep` while it runs; close ends a foreground `sleep 1000`, a `sleep 1000 &` and a `nohup sleep 1000 &` within 3 s (their pids are gone); 50 MB of output arrives in order through a slow fake listener, reading pausing and going on; the shell's own `exit 3` gives `ended.code == 3`. Behind `#[cfg(windows)]` (CI's Windows runner): `cmd.exe /c echo hi` through ConPTY; close ends `ping -t 127.0.0.1` started from the shell (the Job Object). Everywhere: a folder the Editor refuses is refused with its sentence; nothing appears under the data folder. `src-tauri/tests/` flow test: open, attach, input, close, and quit ending what is left.
+- **TypeScript** (`npm test`, in Node without a DOM, `vitest.config.ts:2`): the store (names "gizai", "gizai 2", a card's identifier, rename back to the default, the order of rows), the panel's height share and its limits, where Ctrl+\` and the copy keys go per system, the acknowledgement counter, and the `"terminal"` fold.
+- **UI** (`scripts/ui-test.sh`, headless in `cage`, `src/selftest.ts`): open a terminal, type `echo gizai-probe`, find it in the terminal's buffer; leave and come back, it is still there; the Editor's button opens the panel at 30% and `pwd` prints the folder; drag the handle, reload, the height stays; Ctrl+K and Ctrl+W in the terminal don't open the palette or close a file; `yes` for 10 s keeps the window drawing (frames counted) and Ctrl+C stops it. Screenshots with `scripts/shot-cage.sh` for the design review.
+- **Linux, macOS, Windows:** CI builds and tests all three (`.github/workflows/ci.yml`); the shell differs per system (bash or zsh, zsh on macOS, PowerShell on Windows), so tests that type commands use `/bin/sh` or `cmd.exe` explicitly.
+
+### 5.8 What is left out
+
+A terminal for agents (not this card); splitting a terminal into panes; terminals restored after a restart; a Shell setting, Git Bash and WSL; shell integration (marking each command and its exit code, as VS Code's injected scripts do); opening `src/lib/x.ts:12` in the Editor from a click in the terminal; the clipboard addon and images (sixel); "Open in terminal" for your own terminal app; and a second window.
+
 ---
 
 ## 6. Proposed cards

@@ -70,7 +70,19 @@ Not in this card: building it, and a terminal for agents.
 
 ### 3.2 The eight questions
 
-(Q1, Q2 and Q4 follow below Q8.)
+(Q1 and Q2 follow below Q8.)
+
+**Q4. One terminal in two places: can a terminal be one and the same on its page and in the Editor's panel?**
+
+Answer: **yes**, with one list of sessions and one terminal view per session, moved to wherever it is shown. [I design, on the facts below]
+
+- **One list.** The backend owns the sessions (TB); the window mirrors the list (`terminal_list`, `terminals-changed`). The sidebar shows every session as a row. The Editor's panel shows the sessions whose start folder is the folder the Editor shows (`TerminalSession.folder`), and so does the Terminal page's tab row. So a terminal opened in the Editor's panel is a row under Terminal, and one opened from the sidebar in `gizai` is a tab in gizai's Editor panel. [I]
+- **One view per session.** For each session the window makes **one** xterm.js `Terminal` when the session appears and disposes of it when the session closes. It is attached to the session's output once, so it takes in everything the shell prints, wherever you are. Each place that shows a terminal (the page, the panel) is an empty element: showing a session there moves the view's element into it, fits it to the place and tells the backend the new size; leaving the place takes the element out again, and the view lives on in memory. Moving an element keeps all of xterm.js's state, its buffer, scrollback, cursor and selection, because nothing is rebuilt. (§5.3 has the code's shape.)
+- **Why not a view per place:** two xterm.js views of one session would each need the whole output from the start to draw the same screen, and both would answer the program's questions (cursor position, colours), so the shell would get every answer twice. A pseudo-terminal has one size, so two places of different sizes would fight over it; tmux, which does let several clients show one session, has to choose whose size wins (`window-size`) [I: tmux's manual not read in this run]. One moving view avoids all of that.
+- **Two places at once:** in today's app this can't happen: one page shows at a time (`App.tsx:159-175`), and the Terminal page and the Editor (with its panel) are different pages. If a second window or a split makes it possible later, **the place that asked last shows the terminal**, and the other shows a quiet placeholder with "Show here", the same rule VS Code follows: a terminal is in the panel or in the editor area, never both, and moves between them [V VS Code's docs, "Terminal Basics", updated 2026-10-07].
+- **Size:** the pseudo-terminal always has the size of where the terminal shows now; moving it sends a resize, and full-screen programs redraw. Hidden, it keeps its last size. [I]
+
+Recommendation: build it this way, with the store and the view in TF0, so TF1 (sidebar and page) and TF2 (the Editor's panel) use the same view and can be built at the same time.
 
 **Q3. Sessions: how many, closing, leaving the page, quitting, scrollback, many open.**
 

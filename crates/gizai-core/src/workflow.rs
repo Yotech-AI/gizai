@@ -1,7 +1,8 @@
 //! The Software-team workflow: who picks a card up (its column: the agents on it, Auto or Manual), what a run's verdict
 //! does to the card (the gates, through the column's next column), and what an agent should work on next (the queue).
 //! Labels never route. A card assigned to an agent is started only by that agent. Nothing starts by itself in a Manual
-//! column; only a person's Run does.
+//! column; only a person's Run does. A person's card (GA-111): a card you start by hand is pinned to you, so no agent
+//! takes it, until you hand it over (`start_by_hand`, `hand_over`).
 use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -96,6 +97,11 @@ fn is_active(c: &Connection, actor_id: &str) -> Result<bool> {
                    [actor_id], |r| r.get::<_, i64>(0))? > 0)
 }
 
+/// Whether the actor is a person who isn't removed.
+fn is_person(c: &Connection, actor_id: &str) -> Result<bool> {
+    Ok(c.query_row("SELECT count(*) FROM actors WHERE id=?1 AND kind='person' AND deleted_at IS NULL", [actor_id], |r| r.get::<_, i64>(0))? > 0)
+}
+
 fn is_idle(c: &Connection, actor_id: &str) -> Result<bool> {
     let busy: i64 = c.query_row(
         "SELECT count(*) FROM runs WHERE agent_actor_id=?1 AND status IN ('queued','running','waiting_approval')", [actor_id], |r| r.get(0))?;
@@ -159,8 +165,9 @@ pub fn next_task_for(db: &Db, agent_id: &str) -> Result<Option<String>> {
 }
 
 /// The cards this active agent may start now, best first (the queue). Only cards in Auto columns: those assigned or
-/// pinned to it, wherever they are, and the cards of the columns it is on that aren't assigned or pinned to another
-/// agent (a person as assignee doesn't block). Held, claimed and paused-project cards are skipped, and so is a card
+/// pinned to it, wherever they are, and the cards of the columns it is on that aren't assigned to another agent or
+/// pinned to anyone else (a person as assignee doesn't block; a card pinned to a person, who does it by hand, GA-111,
+/// does). Held, claimed and paused-project cards are skipped, and so is a card
 /// whose last run was stopped (by a person, or because Gizai quit: Run or Continue starts it again) and a card with
 /// its Testing switch off in a Testing column. Best means: priority urgent → low with none last, then cards assigned to
 /// this agent, then column and card order.
@@ -369,7 +376,8 @@ fn set_fields(w: &Writer, task_id: &str, sql_set: &str, params: &[&dyn rusqlite:
 ///   moves it to its column's next column, past Testing columns when its Testing switch is off; without a next column
 ///   it stays. A card a run moves into Review is assigned to the person who reviews; one it moves elsewhere loses its
 ///   agent assignee, so the next column's agents pick it up.
-/// - `qa_fail` sends it back to the column it came from, to the agent that built it; three bounces hold it.
+/// - `qa_fail` sends it back to the column it came from, to the agent that built it; three bounces hold it. A card a
+///   person built by hand (GA-111, `start_by_hand`) goes back to that person, pinned to them again.
 /// - `needs_decision` holds it where it is. The Team Lead looks at the question first when it can (GA-70,
 ///   `questions::hand_over_in`, then `GateResult::lead`): the card stays out of the Inbox until it answers or asks you.
 /// Cards a person moved to Backlog, Done or Cancelled while the agent worked stay where they are, and a Deploy card
@@ -468,6 +476,10 @@ pub fn apply_outcome_with(db: &Db, run_id: &str, outcome: Option<&Outcome>, run_
                     let bounces = t.bounce_count + 1;
                     set_fields(w, &task_id, "bounce_count=?2, assignee_actor_id=COALESCE(implementer_actor_id, assignee_actor_id)", &[&bounces],
                                serde_json::json!({"bounceCount": bounces}))?;
+                    // GA-111: a card a person did by hand goes back to them pinned again, so no agent takes it.
+                    if let Some(person) = t.implementer.as_ref() && is_person(c, person)? {
+                        set_fields(w, &task_id, "pinned_actor_id=?2", &[person], serde_json::json!({"byHand": true}))?;
+                    }
                     if bounces >= MAX_BOUNCES {
                         set_hold(w, &task_id, "needs_decision", &format!("{MAX_BOUNCES} QA bounces"))?;
                         g.hold = Some("needs_decision".into());
@@ -566,6 +578,155 @@ fn record_verdict(w: &Writer, run_id: &str, agent: &str, task_id: &str, outcome:
         }
     }
     Ok(())
+}
+
+// ---- a person's card (GA-111) ----
+
+/// The name of the agent whose run on the card hasn't ended yet (queued, running or waiting for approval), if one has.
+fn agent_at_work(c: &Connection, task_id: &str) -> Result<Option<String>> {
+    Ok(c.query_row(
+        "SELECT a.name FROM runs r JOIN actors a ON a.id = r.agent_actor_id
+         WHERE r.task_id=?1 AND r.status IN ('queued','running','waiting_approval') ORDER BY r.created_at DESC LIMIT 1",
+        [task_id], |r| r.get(0)).optional()?)
+}
+
+/// An actor's name, for messages.
+fn name_of(c: &Connection, actor_id: &str) -> Result<String> {
+    Ok(c.query_row("SELECT name FROM actors WHERE id=?1", [actor_id], |r| r.get(0)).optional()?.unwrap_or_default())
+}
+
+fn identifier_of(c: &Connection, task_id: &str) -> Result<String> {
+    c.query_row("SELECT identifier FROM tasks WHERE id=?1", [task_id], |r| r.get(0)).optional()?
+        .ok_or_else(|| Error::NotFound(format!("task {task_id}")))
+}
+
+/// The card, when `person` may start it by hand now; else why not, in a plain sentence: it is archived, an agent works
+/// on it, it isn't assigned to them (to nobody, to an agent, to another person), or it is in Deploy, Done or Cancelled,
+/// where nothing is built any more (and a pin would keep the DevOps Agent off a Deploy card).
+fn startable(c: &Connection, person: &str, task_id: &str) -> Result<TaskRow> {
+    tasks::not_archived(c, task_id)?;
+    let id = identifier_of(c, task_id)?;
+    let t = task_row(c, task_id)?;
+    if let Some(agent) = agent_at_work(c, task_id)? {
+        return Err(Error::Invalid(format!("{agent} is working on {id}: wait for its run to end")));
+    }
+    match (&t.person_assignee, &t.agent_assignee) {
+        (Some(p), _) if p == person => {}
+        (Some(p), _) => {
+            return Err(Error::Invalid(format!("{id} is assigned to {}: only a card assigned to you can be done by hand", name_of(c, p)?)));
+        }
+        (None, Some(a)) => {
+            return Err(Error::Invalid(format!("{id} is assigned to {}, an agent: assign it to yourself to do it by hand", name_of(c, a)?)));
+        }
+        (None, None) => return Err(Error::Invalid(format!("{id} isn't assigned to anyone: assign it to yourself to do it by hand"))),
+    }
+    if matches!(t.category.as_str(), "deploy" | "done" | "cancelled") {
+        return Err(Error::Invalid(format!("{id} is in {}: move it back to work on it by hand", t.column)));
+    }
+    Ok(t)
+}
+
+/// The card, when `person` does it by hand now (pinned to them, `start_by_hand`); else why not, in a plain sentence: it
+/// is archived, it isn't started by hand (or was handed over since), someone else does it by hand, or, with `idle`, an
+/// agent works on it.
+fn yours_by_hand(c: &Connection, person: &str, task_id: &str, idle: bool) -> Result<TaskRow> {
+    tasks::not_archived(c, task_id)?;
+    let id = identifier_of(c, task_id)?;
+    let t = task_row(c, task_id)?;
+    match t.pinned.as_deref() {
+        Some(p) if p == person => {}
+        Some(p) if is_person(c, p)? => return Err(Error::Invalid(format!("{id} is {}'s to do by hand", name_of(c, p)?))),
+        _ => return Err(Error::Invalid(format!("{id} isn't yours to do by hand: open it in the editor first"))),
+    }
+    if idle && let Some(agent) = agent_at_work(c, task_id)? {
+        return Err(Error::Invalid(format!("{agent} is working on {id}: wait for its run to end")));
+    }
+    Ok(t)
+}
+
+/// Why `person` can't start the card by hand now (Open in editor), in a plain sentence; Ok when they can. `start_by_hand`
+/// asks the same in its write.
+pub fn start_by_hand_check(db: &Db, person: &str, task_id: &str) -> Result<()> {
+    db.read(|c| startable(c, person, task_id).map(|_| ()))
+}
+
+/// Why `person` can't work on the card by hand now (the card bar: its state, Commit, Push, Hand over), in a plain
+/// sentence; Ok when they can. With `idle`, also while an agent works on it (Commit, Push, Hand over).
+pub fn by_hand_check(db: &Db, person: &str, task_id: &str, idle: bool) -> Result<()> {
+    db.read(|c| yours_by_hand(c, person, task_id, idle).map(|_| ()))
+}
+
+/// A person took the card on (`start_by_hand`, `hand_over`): its hold, if it has one, comes off with fresh tries, as a
+/// person's move into To do or In progress answers it (`tasks::move_to`).
+fn release_hold(w: &Writer, task_id: &str, why: &str) -> Result<()> {
+    let n = w.conn().execute(
+        "UPDATE tasks SET hold=NULL, hold_reason=NULL, hold_at=NULL, fail_count=0, updated_at=?2, version=version+1 WHERE id=?1 AND hold IS NOT NULL",
+        rusqlite::params![task_id, ids::now_ms()])?;
+    if n > 0 {
+        w.update("tasks", task_id, serde_json::json!({"hold": null, "released": why}))?;
+    }
+    Ok(())
+}
+
+/// GA-111: `person` starts the card by hand (Open in editor), now that its worktree is ready on `branch`. In one write,
+/// so the queue never sees it half done: the card is pinned to them, so no agent takes it (`waiting_for`); they become its
+/// implementer, so a QA fail brings it back to them (`apply_outcome`); a hold comes off (they take it on); it keeps the
+/// branch it has, else gets `branch`; and a card in a To do-type column moves on to that column's next column (from
+/// Backlog to the first In progress column), as them, as a run's start moves it (`move_on_start`). Refused as
+/// `start_by_hand_check` says. Returns the name of the column it is in now.
+pub fn start_by_hand(db: &Db, person: &str, task_id: &str, branch: &str) -> Result<String> {
+    db.write(Some(person), |w| {
+        let c = w.conn();
+        let t = startable(c, person, task_id)?;
+        set_fields(w, task_id, "pinned_actor_id=?2, implementer_actor_id=?2, updated_at=?3, updated_by=?2", &[&person, &ids::now_ms()],
+                   serde_json::json!({"byHand": true}))?;
+        release_hold(w, task_id, "started by hand")?;
+        c.execute("UPDATE tasks SET branch=COALESCE(NULLIF(branch, ''), ?2) WHERE id=?1", rusqlite::params![task_id, branch])?;
+        if let Some(to) = start_target(c, &t.state_id)?.filter(|to| *to != t.state_id) {
+            tasks::move_in(w, person, task_id, &to, None)?;
+        }
+        Ok(task_row(c, task_id)?.column)
+    })
+}
+
+/// GA-111: `person` hands over the card they did by hand (Hand over). In one write: it moves on as a builder's
+/// `ready_for_testing` moves a card (`apply_outcome`): to its column's next column, past Testing columns when its Testing
+/// switch is off (In progress → Testing, or Review with the switch off); in Testing (switch on) it stays for QA; from
+/// Review it goes to Testing with the switch on, else stays; a card in Backlog, Deploy, Done or Cancelled stays. Into
+/// Review it is assigned to the person who reviews. They stay its implementer, the pin comes off so the next column's
+/// agents take it (QA), a hold comes off, and `comment` goes on the card as theirs. Refused as `by_hand_check` (idle)
+/// says. Returns the name of the column it is in now.
+pub fn hand_over(db: &Db, person: &str, task_id: &str, comment: &str) -> Result<String> {
+    db.write(Some(person), |w| {
+        let c = w.conn();
+        let t = yours_by_hand(c, person, task_id, true)?;
+        let here = || (t.state_id.clone(), t.column.clone(), t.category.clone());
+        let to: Option<(String, String, String)> = match t.category.as_str() {
+            "backlog" | "deploy" | "done" | "cancelled" => None,
+            "testing" if t.testing => None,
+            "review" if t.testing => {
+                Some(columns::first_of(c, &t.team_id, "testing")?.map(|(id, name)| (id, name, "testing".to_string())).unwrap_or_else(here))
+            }
+            "review" => Some(here()),
+            _ => onward(c, &t)?,
+        };
+        set_fields(w, task_id, "pinned_actor_id=NULL, implementer_actor_id=?2, updated_at=?3, updated_by=?2", &[&person, &ids::now_ms()],
+                   serde_json::json!({"byHand": false}))?;
+        release_hold(w, task_id, "handed over")?;
+        if let Some((sid, _, category)) = to {
+            if sid != t.state_id {
+                tasks::move_in(w, person, task_id, &sid, None)?;
+            }
+            if category == "review" {
+                let you = reviewer(c, &t)?;
+                set_fields(w, task_id, "assignee_actor_id=?2", &[&you], serde_json::json!({"assigneeId": you}))?;
+            }
+        }
+        if !comment.trim().is_empty() {
+            comments::add_in(w, person, task_id, comment.trim(), None)?;
+        }
+        Ok(task_row(c, task_id)?.column)
+    })
 }
 
 /// A merged pull request: the column a card in Review goes to (Review's next column; without one, the team's first

@@ -4,6 +4,10 @@
 //! asked (the other branch stays as it is), moves with a fast-forward (never a merge commit, a reset or force), and
 //! installs the dependency folders that are behind as a card's preparation would. It never runs the project's setup
 //! command, which could touch your local database.
+//!
+//! The Editor's Update (GA-110, `behind`) goes through the same checks (`check`, which says why not as a `Refusal` the
+//! Editor words its own way) and the same `update`, never switching branch and installing only for a lock file that
+//! changes (`Plan::only_changed_locks`).
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -113,6 +117,17 @@ impl Plan {
         }
         sentence(&parts)
     }
+
+    /// The plan with only the installs whose lock file the fast-forward changes (between `from` and `to`), so none for
+    /// a dependency folder that is only missing: the Editor's Update installs no more than that.
+    pub fn only_changed_locks(mut self, dir: &Path) -> Plan {
+        let lock_at = |rev: &str, lock: &str| git(dir, &["rev-parse", "--verify", "--quiet", &format!("{rev}:{lock}")]).ok();
+        let (from, to) = (self.from.clone(), self.to.clone());
+        self.install.retain(|folder| {
+            DEPS.iter().any(|(f, lock)| *f == folder.as_str() && lock_at(&from, lock) != lock_at(&to, lock))
+        });
+        self
+    }
 }
 
 /// What an install of the dependency folder is called (as `prepare` runs it with a lock file).
@@ -133,66 +148,108 @@ fn sentence(parts: &[String]) -> String {
     }
 }
 
+/// Why `check` changes nothing, as it found it. `said` words it for the Team Lead (`plan`); the Editor words it its own
+/// way (`behind`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Refusal {
+    /// The folder isn't there, or isn't a checkout (the top folder of one) of the project's repository.
+    NotACheckout,
+    /// A merge, rebase, cherry-pick or revert is in progress: "a merge", "a rebase", "a cherry-pick" or "a revert".
+    InProgress(&'static str),
+    /// Tracked files have uncommitted changes: their paths, as git status gives them.
+    Uncommitted(Vec<String>),
+    /// It is on another branch (None: on no branch), and the plan may not switch.
+    OtherBranch(Option<String>),
+    /// Main (the ref) isn't there: it hasn't been fetched yet.
+    NotFetched,
+    /// The default branch isn't there.
+    NoDefaultBranch,
+    /// The default branch has this many commits main doesn't: only a merge could bring main in.
+    Ahead(u32),
+    /// git failed: what it said.
+    Git(String),
+}
+
+impl Refusal {
+    /// The sentence `plan` refuses with: it names the checkout `dir` by its path and says that nothing changed.
+    pub fn said(&self, dir: &Path, default_branch: &str, main: &str) -> String {
+        let name = dir.display();
+        match self {
+            Refusal::NotACheckout => format!("{name} isn't a checkout of the project's repository: nothing changed"),
+            Refusal::InProgress(what) => format!("{what} is in progress in {name}: nothing changed. Finish or abort it first"),
+            Refusal::Uncommitted(changed) => {
+                let shown = if changed.len() > 10 {
+                    format!("{} and {} more", changed[..10].join(", "), changed.len() - 10)
+                } else {
+                    changed.join(", ")
+                };
+                format!("{name} has uncommitted changes in {shown}: nothing changed. Commit or stash them first")
+            }
+            Refusal::OtherBranch(Some(b)) => format!("{name} is on branch {b}, not {default_branch}: nothing changed. Updating it means switching \
+                                to {default_branch} first ({b} stays as it is): call again with switch only when that is agreed"),
+            Refusal::OtherBranch(None) => format!("{name} has no branch checked out: nothing changed. Updating it means switching to \
+                             {default_branch} first: call again with switch only when that is agreed"),
+            Refusal::NotFetched => format!("main hasn't been fetched into {name} yet ({main}): nothing changed"),
+            Refusal::NoDefaultBranch => format!("{name} has no {default_branch} branch: nothing changed"),
+            Refusal::Ahead(ahead) => format!("{default_branch} in {name} has {ahead} commit{} that main doesn't, so main can't be reached \
+                            with a fast-forward: nothing changed", if *ahead == 1 { "" } else { "s" }),
+            Refusal::Git(said) => said.clone(),
+        }
+    }
+}
+
 /// Whether `update` may run in the checkout `dir` of the repository whose main checkout is `repo`, and what it would do:
 /// bring its `default_branch` to `main` (a ref) with a fast-forward, after switching to it when it is on another branch
-/// and `switch` allows that. Nothing changes here. Says why not, in a sentence, when:
+/// and `switch` allows that. Nothing changes here. Says why not (`Refusal`) when:
 /// - it isn't a checkout of `repo`;
 /// - a merge, rebase, cherry-pick or revert is in progress, or tracked files have uncommitted changes (it names them);
 /// - it is on another branch, or none, and `switch` is false;
 /// - its default branch has commits main doesn't, so only a merge could bring main in;
 /// - main hasn't been fetched yet, or the default branch isn't there.
-pub fn plan(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool) -> Result<Plan, String> {
-    let name = dir.display();
+pub fn check(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool) -> Result<Plan, Refusal> {
     if !dir.is_dir() || !is_checkout_of(dir, repo) {
-        return Err(format!("{name} isn't a checkout of the project's repository: nothing changed"));
+        return Err(Refusal::NotACheckout);
     }
-    let said = |e: AgentError| match e {
+    let failed = |e: AgentError| Refusal::Git(match e {
         AgentError::Git(m) => m,
         other => other.to_string(),
-    };
+    });
     for (marker, what) in [("MERGE_HEAD", "a merge"), ("rebase-merge", "a rebase"), ("rebase-apply", "a rebase"),
                            ("CHERRY_PICK_HEAD", "a cherry-pick"), ("REVERT_HEAD", "a revert")] {
-        let path = git(dir, &["rev-parse", "--path-format=absolute", "--git-path", marker]).map_err(said)?;
+        let path = git(dir, &["rev-parse", "--path-format=absolute", "--git-path", marker]).map_err(failed)?;
         if Path::new(&path).exists() {
-            return Err(format!("{what} is in progress in {name}: nothing changed. Finish or abort it first"));
+            return Err(Refusal::InProgress(what));
         }
     }
     // --no-optional-locks: a check that refuses doesn't even refresh the folder's index
-    let changed: Vec<String> = git(dir, &["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"]).map_err(said)?
+    let changed: Vec<String> = git(dir, &["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"]).map_err(failed)?
         .lines().filter(|l| l.len() > 3).map(|l| l[3..].to_string()).collect();
     if !changed.is_empty() {
-        let shown = if changed.len() > 10 {
-            format!("{} and {} more", changed[..10].join(", "), changed.len() - 10)
-        } else {
-            changed.join(", ")
-        };
-        return Err(format!("{name} has uncommitted changes in {shown}: nothing changed. Commit or stash them first"));
+        return Err(Refusal::Uncommitted(changed));
     }
-    let on = Some(git(dir, &["branch", "--show-current"]).map_err(said)?).filter(|b| !b.is_empty());
+    let on = Some(git(dir, &["branch", "--show-current"]).map_err(failed)?).filter(|b| !b.is_empty());
     let switching = on.as_deref() != Some(default_branch);
     if switching && !switch {
-        return Err(match &on {
-            Some(b) => format!("{name} is on branch {b}, not {default_branch}: nothing changed. Updating it means switching \
-                                to {default_branch} first ({b} stays as it is): call again with switch only when that is agreed"),
-            None => format!("{name} has no branch checked out: nothing changed. Updating it means switching to \
-                             {default_branch} first: call again with switch only when that is agreed"),
-        });
+        return Err(Refusal::OtherBranch(on));
     }
-    let to = git(dir, &["rev-parse", "--verify", "--quiet", &format!("{main}^{{commit}}")])
-        .map_err(|_| format!("main hasn't been fetched into {name} yet ({main}): nothing changed"))?;
+    let to = git(dir, &["rev-parse", "--verify", "--quiet", &format!("{main}^{{commit}}")]).map_err(|_| Refusal::NotFetched)?;
     let from = git(dir, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{default_branch}^{{commit}}")])
-        .map_err(|_| format!("{name} has no {default_branch} branch: nothing changed"))?;
-    let count = |range: String| -> Result<u32, String> {
-        Ok(git(dir, &["rev-list", "--count", &range]).map_err(said)?.trim().parse().unwrap_or(0))
+        .map_err(|_| Refusal::NoDefaultBranch)?;
+    let count = |range: String| -> Result<u32, Refusal> {
+        Ok(git(dir, &["rev-list", "--count", &range]).map_err(failed)?.trim().parse().unwrap_or(0))
     };
     let ahead = count(format!("{to}..{from}"))?;
     if ahead > 0 {
-        return Err(format!("{default_branch} in {name} has {ahead} commit{} that main doesn't, so main can't be reached \
-                            with a fast-forward: nothing changed", if ahead == 1 { "" } else { "s" }));
+        return Err(Refusal::Ahead(ahead));
     }
     let commits = count(format!("{from}..{to}"))?;
-    let install = status(dir, default_branch, main).map_err(said)?.deps.into_iter().map(|d| d.folder).collect();
+    let install = status(dir, default_branch, main).map_err(failed)?.deps.into_iter().map(|d| d.folder).collect();
     Ok(Plan { on, switch: switching, default_branch: default_branch.to_string(), from, to, commits, install })
+}
+
+/// `check`, refused in a sentence for the Team Lead (`Refusal::said`): `update_checkout`'s plan.
+pub fn plan(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool) -> Result<Plan, String> {
+    check(dir, repo, default_branch, main, switch).map_err(|r| r.said(dir, default_branch, main))
 }
 
 /// What `update` did.
@@ -204,6 +261,8 @@ pub struct Updated {
     pub to: String,
     /// The installs it ran ("composer install", "npm ci").
     pub installed: Vec<String>,
+    /// What git and the installs printed, in that order (the end of each install's output); "" when nothing.
+    pub printed: String,
 }
 
 /// Why `update` stopped part-way.
@@ -215,6 +274,37 @@ pub struct Stopped {
     pub why: String,
     /// The end of the output.
     pub output: String,
+    /// The fast-forward had run: the default branch is at main's commit.
+    pub moved: bool,
+    /// The installs that had run ("composer install").
+    pub installed: Vec<String>,
+    /// What git and the installs printed by then, the failed step's output last; "" when nothing.
+    pub printed: String,
+}
+
+/// What `update` has done so far, and what was printed.
+#[derive(Default)]
+struct Progress {
+    done: Vec<String>,
+    moved: bool,
+    installed: Vec<String>,
+    printed: Vec<String>,
+}
+
+impl Progress {
+    /// Keeps what a step printed, when it printed something.
+    fn printed(&mut self, output: &str) {
+        let output = output.trim_end();
+        if !output.trim().is_empty() {
+            self.printed.push(output.to_string());
+        }
+    }
+
+    /// Stops here: `why` the step failed, and `output` its output.
+    fn stop(mut self, why: String, output: String) -> Stopped {
+        self.printed(&output);
+        Stopped { done: self.done, why, output, moved: self.moved, installed: self.installed, printed: self.printed.join("\n") }
+    }
 }
 
 /// Carries out `plan` in the checkout `dir`: switches to the default branch when the plan says so, fast-forwards it to
@@ -222,37 +312,44 @@ pub struct Stopped {
 /// within its time limit). git's hooks don't run, so nothing happens beyond what the plan says. `path` is the PATH the
 /// installs get (None: Gizai's own). The first step that fails stops it.
 pub fn update(dir: &Path, plan: &Plan, path: Option<&OsStr>) -> Result<Updated, Stopped> {
-    let mut done = vec![];
-    let stop = |done: &Vec<String>, why: String, e: AgentError| Stopped {
-        done: done.clone(), why,
-        output: match e { AgentError::Git(m) => m, other => other.to_string() },
+    let mut p = Progress::default();
+    let said = |e: AgentError| match e {
+        AgentError::Git(m) => m,
+        other => other.to_string(),
     };
     const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
     if plan.switch {
         let args = [NO_HOOKS[0], NO_HOOKS[1], "switch", "--quiet", plan.default_branch.as_str()];
-        git(dir, &args).map_err(|e| stop(&done, format!("switching to {} failed", plan.default_branch), e))?;
-        done.push(match &plan.on {
+        match git(dir, &args) {
+            Ok(out) => p.printed(&out),
+            Err(e) => return Err(p.stop(format!("switching to {} failed", plan.default_branch), said(e))),
+        }
+        p.done.push(match &plan.on {
             Some(b) => format!("switched from {b} to {}", plan.default_branch),
             None => format!("switched to {}", plan.default_branch),
         });
     }
     let args = [NO_HOOKS[0], NO_HOOKS[1], "merge", "--ff-only", "--quiet", plan.to.as_str()];
-    git(dir, &args).map_err(|e| stop(&done, "the fast-forward to main failed".into(), e))?;
-    if plan.commits > 0 {
-        done.push(format!("moved {} from {} to {}", plan.default_branch, short(&plan.from), short(&plan.to)));
+    match git(dir, &args) {
+        Ok(out) => p.printed(&out),
+        Err(e) => return Err(p.stop("the fast-forward to main failed".into(), said(e))),
     }
-    let mut installed = vec![];
+    p.moved = true;
+    if plan.commits > 0 {
+        p.done.push(format!("moved {} from {} to {}", plan.default_branch, short(&plan.from), short(&plan.to)));
+    }
     for folder in &plan.install {
         match prepare::install(dir, folder, path) {
-            Ok(shown) => {
-                done.push(format!("ran {shown}"));
-                installed.push(shown);
+            Ok((shown, output)) => {
+                p.printed(&output);
+                p.done.push(format!("ran {shown}"));
+                p.installed.push(shown);
             }
-            Err(f) => return Err(Stopped { done, why: format!("{} {}", f.command, f.why), output: f.output }),
+            Err(f) => return Err(p.stop(format!("{} {}", f.command, f.why), f.output)),
         }
     }
     Ok(Updated {
         switched_from: plan.switch.then(|| plan.on.clone().unwrap_or_default()),
-        from: plan.from.clone(), to: plan.to.clone(), installed,
+        from: plan.from.clone(), to: plan.to.clone(), installed: p.installed, printed: p.printed.join("\n"),
     })
 }

@@ -1,7 +1,7 @@
 // One note on the Memory page (GA-68): in the centre its title, the reading view or the editor (the doc page's editor,
-// saving and conflict handling: useDocEditor), and on the right the panel with collapsible sections: backlinks (linked
-// and unlinked mentions, with Link), outgoing links (also those that find no note yet), the outline, the properties as
-// a small form, the tags (a click filters the tree) and the history.
+// saving and conflict handling: useDocEditor; switching to Read saves, leaving the editor doesn't), and on the right the
+// panel with collapsible sections: backlinks (linked and unlinked mentions, with Link), outgoing links (also those that
+// find no note yet), the outline, the properties as a small form, the tags (a click filters the tree) and the history.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, ChevronDown, ChevronRight, FileText, Hash, Link2, Pencil, Plus, X } from "lucide-react";
 import { docVersionBody, docVersions, renameDoc, saveDoc } from "../../api";
@@ -125,7 +125,7 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
             <div className="doc-editor">
               <MarkdownEditor value={text} ariaLabel="Note text" minHeight={420} handle={editor}
                 placeholder={`Write in Markdown: # headings, [[ links a note (${modKey()}+click opens it), #tags, KADE-12 refs and @mentions.`}
-                wiki={wiki} onChange={ed.edit} onSave={(md) => ed.save(md)} onBlur={ed.blur} />
+                wiki={wiki} onChange={ed.edit} onSave={(md) => ed.save(md)} />
             </div>
           ) : (
             <div ref={reading} onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest("a, button")) switchMode("edit"); }}>

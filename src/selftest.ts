@@ -2492,7 +2492,8 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     check(textIn(".chg-sum .src") === "Since main", `heading: ${textIn(".chg-sum .src")}`);
     check(document.querySelectorAll(".chg-file .chg-dot").length === 2 && /2 files not committed yet/.test(textIn(".chg-sum .unc")), "2 files not committed yet");
     const tab = textIn(".task-tabs .tab[aria-selected=true]");
-    check(/^Changes \+\d+ −\d+$/.test(tab), `the tab's counts: ${tab}`);
+    // a diffstat is two spans side by side, spaced by CSS (D1): its text has no space between the counts
+    check(/^Changes \+\d+−\d+$/.test(tab), `the tab's counts: ${tab}`);
     // a click in the list scrolls its file to the top
     const diffs = document.querySelector<HTMLElement>(".chg-diffs")!;
     document.querySelector<HTMLElement>('.chg-file[data-path="src/big.ts"]')!.click();
@@ -2514,7 +2515,7 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     }
     out.bigTs = { chunks: chunks.length, add, del, widest, list: textIn('.chg-file[data-path="src/big.ts"] .diffstat') };
     check(chunks.length === 40 && widest === 1, `src/big.ts: 40 one-line changes, not ${chunks.length} (widest ${widest} lines)`);
-    check(textIn('.chg-file[data-path="src/big.ts"] .diffstat') === `+${add} −${del}` && add === 40 && del === 40, `src/big.ts shows +${add} −${del}, the list ${textIn('.chg-file[data-path="src/big.ts"] .diffstat')}`);
+    check(textIn('.chg-file[data-path="src/big.ts"] .diffstat') === `+${add}−${del}` && add === 40 && del === 40, `src/big.ts shows +${add} −${del}, the list ${textIn('.chg-file[data-path="src/big.ts"] .diffstat')}`);
     // removed lines show their old numbers (the first change is line 10)
     out.oldNumber = textIn(".cm-lineNumbers .cm-diffStack", box);
     check(out.oldNumber === "10", `the first removed line's old number: ${out.oldNumber}`);

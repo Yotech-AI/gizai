@@ -67,3 +67,103 @@ From the card (Jefsev, 12 Oct 2026):
 4. **The same terminal in both places:** one list of sessions and one terminal component, so a terminal opened in the Editor's panel is also a row under Terminal and can be opened on its own page, and the other way round.
 
 Not in this card: building it, and a terminal for agents.
+
+---
+
+## 5. The design
+
+All screens use the design system as it is, with D2's Editor (`design/code-editor/editor.html`, made by `gen-editor.mjs`) as the model: sidebar rows (`.nav-item`, the row's state in `.meta`), the top bar with breadcrumbs and actions (`.topbar`), the Editor's tabs (`.ed-tab`, `--size-tab` 36px), the folder picker (`src/components/editor/FolderPicker.tsx`), the right-click menu (`ContextMenu`, `Menus.tsx:17-53`), Lucide icons at 16px (`terminal` for a terminal, `design/README.md:145`), sentence case, and questions asked in one sentence under the row, never in a dialog (`gen-editor.mjs:680`). New are the terminal colours, the drag handle and the Terminal button; card TD designs them as a page in the repository for Jefsev to review. [V for the existing parts; I for the rest]
+
+### 5.1 The screens
+
+**Screen 1: the sidebar's Terminal section.** A folding **Terminal** section between Projects and Editor (`Sidebar.tsx:78`–`:80`), drawn with `FoldSection` like Editor: `+` (New terminal) and the caret on its heading; `"terminal"` joins `Fold` (`src/lib/sidebar.ts:8`). [V where; I design]
+
+```
+│ PROJECTS                          + │
+│  ● Gizai                            │
+│  ● Kade portal                      │
+│ TERMINAL                        + ⌄ │
+│  >_ gizai                      npm  │
+│  >_ gizai 2                         │
+│  >_ GA-123 Fix the invoice total    │
+│  >_ kade-portal              ended  │
+│ EDITOR                          + ⌄ │
+│  ▣ gizai                4 changed   │
+│  ▣ kade-portal                      │
+│ AGENTS                            ⌄ │
+```
+
+(`>_` and `▣` stand for the Lucide icons `terminal` and `folder-code`.)
+
+- **Rows:** one per open terminal, any number, in the order they were opened (a new one at the bottom, so rows don't move under the mouse). Each is a link to `#/terminal/<id>`, highlighted (`.on`) while its page shows. The name (§3.2 Q5) and, on the right in `text-3`, the program running in it now (`npm`, `cargo`, `vim`), nothing while the shell waits for a command, or `ended` when the shell ended. Never teal or a pulse: those mean an agent at work (`design/README.md:36-37`).
+- **No × on the row** (D2's rule: no button inside a row that is a link, `gen-editor.mjs:552`). Closing is in the row's menu, a middle click, and the × on the terminal's tab.
+- **Right click** (or the context menu key, Shift+F10): Rename (F2), Show in the Editor (opens its folder in the Editor with this terminal in the panel), Copy folder path, Close. Close on a terminal with a program running asks under the row: "npm is still running in gizai 2. Close it and end npm? [Close] [Cancel]".
+- **Folded:** the heading shows how many are open, "3 open", like the Editor's "2 behind".
+- **None open:** one row, "New terminal", as the Editor's "Open a folder" row.
+
+**Screen 2: New terminal.** `+` opens the Editor's folder picker (`FolderPicker.tsx`) titled "New terminal in": the same groups (Projects, In ~/Herd, Cards) and search box, with the folder the main panel shows now (the Editor's folder, or the current terminal's folder) on top. Enter starts it and opens its page. Ctrl+Shift+\` starts one at once in the folder you are in, without the picker (§5.2).
+
+**Screen 3: the Terminal page** (`#/terminal/<id>`).
+
+```
+┌ Terminal / gizai 2 ──────────── ~/Herd/gizai · zsh · 132 × 38 ───── [Show in Editor] [⋯] ┐
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ >_ gizai  npm  ×    >_ gizai 2  ×    +                                                    │
+├──────────────────────────────────────────────────────────────────────────────────────────┤
+│ jefsev@arch gizai (main) $ git status                                                     │
+│ On branch main                                                                            │
+│ Your branch is up to date with 'origin/main'.                                             │
+│ jefsev@arch gizai (main) $ █                                                              │
+│                                                                                           │
+│                                                                                           │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Top bar:** Terminal / *name* (double-click or F2 renames it in place); then the folder (`~` form, mono), the shell and the size in `text-3`; actions **Show in Editor** and **⋯** (Rename, Find, Clear, Copy folder path, Close).
+- **Tabs:** the terminals of **this terminal's folder**, the same tabs its Editor panel shows (Screen 4), drawn as the Editor's file tabs (`.ed-tab`): `terminal` icon, name, the running program, ×; `+` starts another one in the same folder. A middle click or × closes (asking first when a program runs); a double click renames. Ctrl+PgDn and Ctrl+PgUp step through them. (Open question 1 has the other way: every terminal as a tab.)
+- **The terminal** fills the rest, with 8px padding, the mono font at the code size, and the terminal colours (§5.4).
+- **Find** (Ctrl+Shift+F; Cmd+F on macOS): a small bar at the top right, like the Editor's find panel (`FindPanel.tsx`): the query, Match case, Words, Regular expression, "3 of 12", previous and next, through `@xterm/addon-search`.
+- **Ended:** `exit` (exit code 0) closes the terminal, as VS Code does [I]. Any other end keeps it, read-only, with a bar: "The shell ended with exit code 1. [Start again] [Close]". "Couldn't start zsh in ~/Herd/gizai: <why>" when it never started.
+
+**Screen 4: the Editor's terminal panel.**
+
+```
+┌ Editor / gizai ──── ⑂ main · 4 changed ─────────────────── [Fetch] [>_ Terminal] [Open in ▾] ┐
+├────────────────────────┬────────────────────────────────────────────────────────────────────┤
+│ Files | Search      ⇤  │ Sidebar.tsx ● ×   worktree.rs ×                                     │
+│ [Go to file…  Ctrl P]  │  40  const agents = (team.data?.members ?? [])…                     │
+│ ▾ src                  │  41  const notes = useData(() => memoryNotes()…                     │
+│   ▾ components       M │  42  …                                              (70%)            │
+│       Sidebar.tsx    M ├══════════════════════════════ ═══ ═══════════════════════════════════┤ ← drag handle
+│   ▸ lib                │ >_ gizai  npm ×   >_ gizai 2 ×   +          [⤢ Own page] [⌄ Hide]    │
+│ ▸ crates               │ $ npm run dev                                                       │
+│                        │   VITE v8 ready in 312 ms                           (30%)            │
+│                        │   ➜  Local: http://localhost:5173/                                   │
+│                        ├────────────────────────────────────────────────────────────────────┤
+│                        │ src/components/Sidebar.tsx · Modified · Ln 42, Col 7 · TSX · Saved  │
+└────────────────────────┴────────────────────────────────────────────────────────────────────┘
+```
+
+- **The Terminal button** (`btn ghost sm`, Lucide `terminal`, "Terminal") sits in the top bar's actions **between Fetch and Open in** (`EditorPage.tsx:457-459`; Fetch arrives with the Editor's Behind main card, so until then it is first). It is pressed (`aria-pressed`) while the panel shows; its tooltip says "Show the terminal (Ctrl+\`)" or "Hide the terminal (Ctrl+\`)". [V where; I design]
+- **What it does:** shows the panel. When the folder has no terminal yet, it starts one in the folder's root, as PhpStorm ("the root directory of the current project") and VS Code ("the folder that is opened in the Explorer") do [V their docs]. The terminal gets the focus.
+- **Where:** in the code column (`.ed-main`), between the code (`.ed-code`, `EditorPage.tsx:549-562`) and the file's status bar (`:564-579`), so the file tree keeps its full height, as in VS Code's default layout [I]. (The status bar then sits under the panel, at the Editor's bottom edge as in VS Code and PhpStorm; TD may keep it with the code instead.)
+- **Height:** the first time **30% of the column** (tabs, code and panel together); the **drag handle** is the panel's top border: a 1px line with a 6px grab area, `row-resize` cursor, `role="separator"` with `aria-orientation="horizontal"` and the height in `aria-valuenow`; ↑ and ↓ move it by 5% when it has focus, a double click sets it back to 30%. The panel keeps at least its tab row and 4 lines (about 120px), the code at least 120px. Gizai remembers the height as a share of the column (not pixels), once for all folders, in `localStorage` (`gizai.editor.panel`), so it stays 30% when the window changes size. [I]
+- **Its own tabs:** this folder's terminals (the same as on the Terminal page), `+`, ×, the running program; on the right **Own page** (opens `#/terminal/<id>`) and **Hide** (Lucide `chevron-down`, Ctrl+\`). Hiding keeps every terminal running; closing the last tab hides the panel. Whether the panel was open is remembered per folder, like the folder's file tabs (`gizai.editor.tabs`, `src/lib/editor.ts:59-87`).
+- **A card's worktree an agent works on** (the Editor's read-only folder, `folder.readOnly`): the button is off, with the folder's reason ("QA Agent is working on GA-118: a terminal there waits until its run ends"); a terminal opened before the run started stays, with the Editor's read-only bar above. (Open question 3.)
+
+**Screen 5: one terminal, two places.** Only one page shows at a time (`App.tsx:159-175`), so the Terminal page and the Editor's panel are never on screen together. A terminal moves with you: open gizai 2 from the sidebar and the page has it; go back to the Editor and the panel has it again, with everything on it, its scrollback, what runs in it and its selection. The terminal takes the size of where it is (120 × 12 in the panel, 132 × 38 on the page), and a full-screen program (vim, htop) redraws at the new size. When two places want it at once, which a second window or a split could bring later, **the place that asked last shows it** and the other shows a quiet placeholder: "gizai 2 is on its own page. [Show here]". VS Code works the same way: a terminal is in one place at a time and moves between the panel and the editor area [V VS Code's docs]. §5.3 says how.
+
+### 5.2 Keys
+
+| Key | Where | What it does |
+|---|---|---|
+| Ctrl+\` (all three systems) | the Editor, also from inside its terminal | shows or hides the terminal panel, as VS Code [V its docs] |
+| Ctrl+Shift+\` | the Editor; the Terminal page | a new terminal in the folder: a new tab in the panel, or on the page |
+| Ctrl+Shift+C, Ctrl+Shift+V (Linux); Ctrl+C with a selection, Ctrl+V (Windows); Cmd+C, Cmd+V (macOS) | in a terminal | copy and paste, as VS Code on each system [V its docs]; without a selection Ctrl+C is the program's interrupt |
+| Shift+Insert (Linux, Windows) | in a terminal | paste |
+| Ctrl+Shift+F (Cmd+F on macOS) | in a terminal | find in its scrollback |
+| Ctrl+PgDn, Ctrl+PgUp | in a terminal | the next and previous terminal tab |
+| Ctrl+click (Cmd+click on macOS) | on a link | opens an http or https link in the browser [I] |
+| every other key | in a terminal | goes to the shell: Ctrl+W, Ctrl+P, Ctrl+B, Ctrl+K, Ctrl+R and Escape do what the shell or the program wants, not what the Editor or Gizai would (`EditorPage.tsx:407-423`, `App.tsx:36-43`) |
+
+The key for Ctrl+\` is read by where it is (`KeyboardEvent.code === "Backquote"`, the key left of 1), so it works on keyboards where that key has another character. [I]

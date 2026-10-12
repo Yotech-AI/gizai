@@ -159,7 +159,7 @@ export default function App() {
           {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
             : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
             : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
-            : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} />
+            : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} youId={info?.you_id ?? ""} />
             : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />
             : route.page === "agent" && route.id ? <AgentPage key={route.id} id={route.id} />
             : route.page === "team" ? <TeamPage />

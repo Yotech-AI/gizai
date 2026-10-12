@@ -240,6 +240,19 @@ export const editorUpdate = (folder: string) => invoke<string>("editor_update", 
 export const onEditorUpdated = (cb: (e: T.EditorUpdated) => void): Promise<UnlistenFn> =>
   listen<T.EditorUpdated>("editor-updated", (m) => cb(m.payload));
 
+// ---- a person's card (GA-111, contract C4): a card you do by hand, in the Editor or your own editor ----
+/** Open in editor, on a card assigned to you: makes and prepares its worktree as for an agent, pins the card to you and moves
+ *  it on from To do. Resolves with where it is (its folder is an EditorFolder id). */
+export const startByHand = (taskId: string) => invoke<T.HandCard>("start_by_hand", { taskId });
+export const handCard = (taskId: string) => invoke<T.HandCard>("hand_card", { taskId });
+/** Commits every change in the card's worktree with this message. */
+export const handCommit = (taskId: string, message: string) => invoke<T.Commit>("hand_commit", { taskId, message });
+/** Pushes the card's branch like Gizai's push after a run; resolves with what it did ("Pushed gizai/ga-123-… (2 commits)."). */
+export const handPush = (taskId: string) => invoke<string>("hand_push", { taskId });
+/** Refuses uncommitted changes; pushes, moves the card to Testing (Review with its Testing switch off) and takes the pin off.
+ *  Resolves with the column's name. */
+export const handOver = (taskId: string) => invoke<string>("hand_over", { taskId });
+
 // ---- updates: the release check and Update to <version> ----
 /** This version, what the release check found, and the update that runs (or ran). */
 export const updateStatus = () => invoke<T.UpdateStatus>("update_status");

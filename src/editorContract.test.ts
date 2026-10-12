@@ -100,6 +100,15 @@ const COMMANDS: [string, string[]][] = [
   ["open_in_app", ["app", "folder", "path", "line"]],
 ];
 
+/** GA-111: contract C4's commands (a person's card) follow C2's in editor.rs; handContract.test.ts checks them. */
+const C4_COMMANDS: [string, string[]][] = [
+  ["start_by_hand", ["task_id"]],
+  ["hand_card", ["task_id"]],
+  ["hand_commit", ["task_id", "message"]],
+  ["hand_push", ["task_id"]],
+  ["hand_over", ["task_id"]],
+];
+
 describe("contract C2 in src/api.ts and src/types.ts (GA-107)", () => {
   it("api.ts holds C2's calls word for word, in C2's order", () => {
     const lines = C2_API.trim().split("\n");
@@ -183,7 +192,7 @@ describe("contracts C2 and C3 in src-tauri (GA-107, GA-110)", () => {
     const commands = [...editor.matchAll(/#\[tauri::command\]\s*pub async fn (\w+)\(([^)]*)\)/g)]
       // `st: State<'_, AppState>` has a comma of its own: an argument is what has a type after its name
       .map(([, name, params]) => [name, params.split(",").filter((p) => p.includes(":")).map((p) => p.split(":")[0].trim()).filter((p) => p !== "st")]);
-    expect(commands).toEqual([...COMMANDS, ...C3_COMMANDS]);
+    expect(commands).toEqual([...COMMANDS, ...C3_COMMANDS, ...C4_COMMANDS]);
   });
 
   it("hands every command to Tauri", () => {

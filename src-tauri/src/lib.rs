@@ -10,6 +10,7 @@ pub mod editor;
 pub mod folders;
 pub mod git;
 pub mod github;
+pub mod hand;
 pub mod limits;
 pub mod mcp;
 pub mod mcp_servers;
@@ -596,6 +597,7 @@ pub fn run() {
             editor::editor_rename, editor::editor_delete, editor::editor_files, editor::editor_search, editor::editor_git,
             editor::editor_versions, editor::editor_apps, editor::open_in_app, editor::editor_main, editor::editor_fetch,
             editor::editor_update,
+            editor::start_by_hand, editor::hand_card, editor::hand_commit, editor::hand_push, editor::hand_over,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")

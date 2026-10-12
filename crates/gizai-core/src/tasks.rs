@@ -15,7 +15,8 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
       WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
     CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') IN ('asking','answering') FROM runs r
       WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
-      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
+      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person')
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -34,6 +35,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0, archived_at: r.get(26)?, archived_by: r.get(27)?,
         run_for_me: crate::runs::commands_of(r.get(29)?),
         with_lead: r.get::<_, Option<i64>>(30)?.unwrap_or(0) != 0,
+        by_hand: r.get::<_, i64>(31)? != 0,
     })
 }
 

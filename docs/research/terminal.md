@@ -356,7 +356,7 @@ function create(s: TerminalSession) {              // when terminal_list or term
                               minimumContrastRatio: 4.5, fontFamily: monoFont(), theme: themeFromTokens() });
   const fit = new FitAddon();
   term.loadAddon(fit); /* + unicode11, search, web-links with Gizai's handler */
-  term.open(host);                                 // once, before any place shows it
+  // not opened yet: xterm.js keeps what is written in its buffer, and opens when a place first shows it (show)
   term.onData((d) => terminalInput(s.id, d));
   term.onBinary((d) => terminalInput(s.id, d, true));
   let written = 0;                                 // flow control, §3.2 Q1
@@ -372,7 +372,8 @@ export function show(id: string, place: HTMLElement) {  // a place (the page, th
   if (v.place && v.place !== place) left(v.place, id);  // the other place shows "Show here" (§5.1, Screen 5)
   place.appendChild(v.host);                       // moves the element: buffer, scrollback, cursor and selection stay
   v.place = place;
-  v.term.open(v.host);                             // as VS Code's attachToElement does; cheap when already open
+  v.term.open(v.host);                             // first time: measures the font in the page; later, as VS Code's
+                                                   // attachToElement does, it only picks up the new place
   if (!v.webgl && hardwareWebgl2()) {              // WebGL only while on screen (§3.2 Q2)
     v.webgl = new WebglAddon();
     v.webgl.onContextLoss(() => { v.webgl?.dispose(); v.webgl = null; });  // falls back to the DOM renderer

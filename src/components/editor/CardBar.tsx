@@ -18,7 +18,7 @@ import {
 import { StatusIcon } from "../StatusIcon";
 
 /** The most files Commit…'s box lists. */
-const LISTED = 12;
+const LISTED = 8;
 
 export function CardBar({ task, folder, git, onChanged, onHanded }: {
   task: Task;
@@ -170,6 +170,9 @@ function CommitBox({ message, setMessage, files, count, busy, onCommit, onClose 
   message: string; setMessage: (m: string) => void; files: [string, GitMark][]; count: number; busy: boolean; onCommit: () => void; onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const area = useRef<HTMLTextAreaElement>(null);
+  // the message has the focus, the caret after what is filled in
+  useEffect(() => { const a = area.current; if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); } }, []);
   useEffect(() => {
     // the box and its button are one: a click on the button toggles it
     const down = (e: MouseEvent) => { if (!ref.current?.parentElement?.contains(e.target as Node)) onClose(); };
@@ -182,7 +185,7 @@ function CommitBox({ message, setMessage, files, count, busy, onCommit, onClose 
       onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); } }}>
       <div className="field">
         <label htmlFor="ed-commit-message">Commit message</label>
-        <textarea id="ed-commit-message" className="textarea" autoFocus value={message} onChange={(e) => setMessage(e.target.value)}
+        <textarea ref={area} id="ed-commit-message" className="textarea" value={message} onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!empty && !busy) onCommit(); } }} />
       </div>
       {files.length > 0 && (

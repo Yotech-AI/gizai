@@ -29,6 +29,9 @@ const h = vi.hoisted(() => {
     terms: [] as FakeTerminal[],
     webgls: [] as FakeWebgl[],
     links: [] as FakeLinks[],
+    /** The fonts measured on a canvas, and the glyph's height there per pixel of font size (the font's ascent + descent). */
+    measured: [] as string[],
+    glyph: 1.2,
   };
   class FakeTerminal {
     options: Record<string, unknown>;
@@ -115,6 +118,24 @@ Object.assign(s.tokens, TOKENS);
 vi.stubGlobal("document", { documentElement: {}, body: el(), createElement: () => el() });
 vi.stubGlobal("getComputedStyle", () => ({ getPropertyValue: (n: string) => s.tokens[n] ?? "" }));
 vi.stubGlobal("requestAnimationFrame", (f: (t: number) => void) => { f(0); return 0; });
+vi.stubGlobal("devicePixelRatio", 1);
+// A canvas measures "W" as xterm.js 6 does (CharSizeService's TextMetricsMeasureStrategy): ascent + descent of the font
+vi.stubGlobal("OffscreenCanvas", class {
+  getContext() {
+    let font = "";
+    return {
+      get font() { return font; },
+      set font(f: string) { font = f; s.measured.push(f); },
+      measureText: () => {
+        const size = parseFloat(font);
+        return { width: size * 0.6, fontBoundingBoxAscent: size * s.glyph * 0.8, fontBoundingBoxDescent: size * s.glyph * 0.2 };
+      },
+    };
+  }
+});
+/** A row as xterm.js 6 draws it (DomRenderer and WebglRenderer alike): floor(ceil(glyph × dpr) × lineHeight) device
+ *  pixels, in CSS pixels. */
+const rowPx = (fontSize: number, lineHeight: unknown, dpr = 1) => Math.floor(Math.ceil(fontSize * s.glyph * dpr) * Number(lineHeight)) / dpr;
 vi.stubGlobal("navigator", {
   userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko)",
   clipboard: { writeText: (t: string) => { s.copied.push(t); return Promise.resolve(); } },
@@ -245,11 +266,34 @@ describe("the theme from the term-* tokens (themeFrom)", () => {
       "selectionInactiveBackground", "black", "red", "green", "yellow", "blue", "cyan", "white", "brightBlack", "brightRed", "brightGreen",
       "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"]));
   });
-  it("uses the code size, 12.5px on 1.6 lines, grown with the interface text; 5,000 lines of scrollback", () => {
+  it("uses the code size, 12.5px on 1.6 lines (20px), grown with the interface text; 5,000 lines of scrollback", () => {
     expect(T.fontSizeFor(0)).toBe(12.5);
     expect(T.fontSizeFor(2)).toBe(14.5);
     expect(T.LINE_HEIGHT).toBe(1.6);
+    expect(T.rowHeightFor(12.5)).toBe(20);
+    expect(T.rowHeightFor(14.5)).toBeCloseTo(23.2);
     expect(T.SCROLLBACK).toBe(5000);
+  });
+  it("lineHeightFor: xterm.js multiplies the glyph's height, so the rows are the code's lines for any font and screen", () => {
+    // a row is floor(ceil(glyph × dpr) × lineHeight) device pixels; it must come out as the code's line, rounded to a pixel
+    for (const dpr of [1, 1.25, 1.5, 2, 3]) {
+      for (const size of [11.5, 12.5, 13.5, 14.5, 16.5]) {
+        for (const ratio of [1, 1.1, 1.17, 1.2, 1.25, 1.33, 1.45]) {
+          const glyph = size * ratio, row = T.rowHeightFor(size);
+          const lh = T.lineHeightFor(glyph, row, dpr);
+          expect(Math.floor(Math.ceil(glyph * dpr) * lh), `${size}px, glyph ${glyph}px, dpr ${dpr}`).toBe(Math.round(row * dpr));
+          expect(lh, `${size}px, glyph ${glyph}px, dpr ${dpr}`).toBeGreaterThanOrEqual(1);
+        }
+      }
+    }
+    // 12.5px in a font whose glyph is 15px tall: 20px rows, not the 24px that lineHeight 1.6 would give
+    expect(Math.floor(15 * T.lineHeightFor(15, 20, 1))).toBe(20);
+    expect(Math.floor(15 * 1.6)).toBe(24);
+    // at least 1, as xterm.js wants: a glyph taller than the line; and 1 when the glyph couldn't be measured
+    expect(T.lineHeightFor(25, 20, 1)).toBe(1);
+    expect(T.lineHeightFor(0, 20, 1)).toBe(1);
+    expect(T.lineHeightFor(Number.NaN, 20, 1)).toBe(1);
+    expect(T.lineHeightFor(15, 0, 1)).toBe(1);
   });
 });
 
@@ -287,7 +331,9 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     expect(o.scrollback).toBe(5000);
     expect(o.cursorBlink).toBe(false);
     expect(o.fontSize).toBe(12.5);
-    expect(o.lineHeight).toBe(1.6);
+    // the code's 20px lines, from the glyph measured as xterm.js measures it (15px here), not lineHeight 1.6
+    expect(s.measured).toContain(`12.5px ${TOKENS["--font-mono"]}`);
+    expect(rowPx(12.5, o.lineHeight)).toBe(20);
     expect(o.fontFamily).toBe(TOKENS["--font-mono"]);
     expect(o.customGlyphs).toBe(true); // box drawing lines up
     const theme = o.theme as Record<string, string>;
@@ -332,7 +378,9 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
   let page: El, panel: El;
   it("puts the one view in its place, fits it, sends the size once, and draws it with WebGL on screen", async () => {
     page = el();
+    s.glyph = 1.25; // the loaded font measures otherwise than the one there was when the view was made
     expect(await T.attachView("t1", page as unknown as HTMLElement)).toBe(true);
+    expect(rowPx(12.5, term().options.lineHeight)).toBe(20); // measured again before it opens: still 20px rows
     const v = T.probeView("t1")!;
     expect(page.children).toEqual([v.host]);
     expect(term().opens).toEqual([v.host]);
@@ -344,6 +392,18 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     expect(s.webgls.length).toBe(1);
     // a hardware WebGL2 context: one with a major performance caveat (a software renderer) doesn't count
     expect(s.glAsked).toContainEqual(["webgl2", { failIfMajorPerformanceCaveat: true }]);
+  });
+
+  it("keeps 20px rows on a new pixel ratio (a zoom, another screen) when it fits again", () => {
+    const before = term().options.lineHeight;
+    expect(rowPx(12.5, before, 2)).not.toBe(20); // the old lineHeight would give 20.5px rows at 2×
+    vi.stubGlobal("devicePixelRatio", 2);
+    T.fitView("t1");
+    expect(rowPx(12.5, term().options.lineHeight, 2)).toBe(20);
+    vi.stubGlobal("devicePixelRatio", 1);
+    T.fitView("t1");
+    expect(term().options.lineHeight).toBe(before);
+    expect(s.resizes.length).toBe(1); // the place kept its size
   });
 
   it("moves the same view to a second place, which frees the first place's WebGL context", async () => {
@@ -445,6 +505,9 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     s.restyle!();
     await vi.waitFor(() => expect(term().options.fontSize).toBe(14.5));
     expect(term().options.fontFamily).toBe('"JetBrains Mono", monospace');
+    // the rows grow with the text: 1.6 times 14.5px, measured in the new font
+    expect(s.measured).toContain('14.5px "JetBrains Mono", monospace');
+    expect(rowPx(14.5, term().options.lineHeight)).toBe(23);
     await vi.waitFor(() => expect(s.resizes.at(-1)).toEqual(["t1", 110, 33]));
   });
 

@@ -208,8 +208,9 @@ pub(crate) async fn wait_shown(st: &AppState, run_id: &str, tool_use: Option<&st
     }
 }
 
-/// The agent's own MCP servers in a turn's init line: their state in its last run, and a chat note for each that didn't connect.
-fn mcp_states(st: &AppState, thread_id: &str, agent_id: &str, log_path: &Path) {
+/// The agent's own MCP servers in a turn's init line: their state in its last run, and a chat note for each that didn't connect
+/// (for one in `claude_code`, Claude Code signs in to it).
+fn mcp_states(st: &AppState, thread_id: &str, agent_id: &str, log_path: &Path, claude_code: &[String]) {
     let Ok(text) = std::fs::read_to_string(log_path) else { return };
     let Some(init) = text.lines().filter(|l| l.contains("\"init\"") && l.contains("\"mcp_servers\""))
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
@@ -217,7 +218,12 @@ fn mcp_states(st: &AppState, thread_id: &str, agent_id: &str, log_path: &Path) {
     let states: Vec<gizai_agents::stream::McpState> = gizai_agents::mcp_run::init_states(&init).unwrap_or_default().into_iter()
         .filter(|(n, _)| n != "gizai").map(|(name, status)| gizai_agents::stream::McpState { name, status }).collect();
     for s in &states {
-        if let Some(note) = gizai_agents::mcp_run::not_connected(&s.name, &s.status) {
+        let note = if claude_code.contains(&s.name) {
+            gizai_agents::mcp_run::claude_code_not_connected(&s.name, &s.status)
+        } else {
+            gizai_agents::mcp_run::not_connected(&s.name, &s.status)
+        };
+        if let Some(note) = note {
             system(st, thread_id, &note);
         }
     }
@@ -1129,6 +1135,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     for n in &left_out {
         system(st, &thread.id, n);
     }
+    let claude_code = crate::mcp_servers::claude_code_names(st, &servers);
     let gizai = json!({"type": "stdio", "command": shim.display().to_string(), "args": [],
         "env": {"GIZAI_SOCKET": st.mcp_socket.display().to_string(), "GIZAI_TOKEN": token}});
     let config = gizai_agents::mcp_run::config(vec![("gizai".into(), gizai)], &servers);
@@ -1256,7 +1263,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     }
     cleanup(&token);
     if !servers.is_empty() {
-        mcp_states(st, &thread.id, &agent.actor_id, &log_path);
+        mcp_states(st, &thread.id, &agent.actor_id, &log_path, &claude_code);
     }
     crate::mcp_servers::record_seen_tools(st, &agent.actor_id, &plan.cli.id, &log_path);
     let stopped = st.chat.stopped.lock().unwrap().contains(&thread.id);

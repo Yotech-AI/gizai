@@ -963,6 +963,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     // keychain) is left out, and the log says why.
     let mut allowed_tools = allowed_tools;
     let (mut mcp_config, mut mcp_refused) = (None, vec![]);
+    // The servers Claude Code signs in to: a needs-auth in the init line then says to sign Claude Code in, not Gizai.
+    let mut claude_code_signs_in: Vec<String> = vec![];
     if agent.tools.servers_on().next().is_some() {
         if spec.kind == Kind::ClaudeCode {
             let (st2, a2, cap) = (st.clone(), agent.clone(), std::time::Duration::from_secs(limits.minutes * 60));
@@ -976,6 +978,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                         allowed_tools.extend(allow);
                         mcp_refused = refuse;
                         mcp_config = Some(path);
+                        claude_code_signs_in = crate::mcp_servers::claude_code_names(st, &servers);
                     }
                     Err(e) => notes.push(format!("Couldn't write this run's MCP config, so it goes without its MCP servers: {e}")),
                 }
@@ -1023,9 +1026,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         folders, temp_dir, git_config,
     };
     let exec = agent_cli::task_exec(&spec, &run);
-    // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then
-    // Gizai's notes.
+    // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then which
+    // MCP servers Claude Code signs in to, then Gizai's notes.
     let head: String = (spec.kind != Kind::ClaudeCode).then(|| agent_cli::log_header(spec.kind)).into_iter()
+        .chain((!claude_code_signs_in.is_empty()).then(|| agent_cli::claude_code_line(&claude_code_signs_in)))
         .chain(notes.iter().map(|n| agent_cli::note_line(n)))
         .map(|l| format!("{l}\n")).collect();
     let drop_config = || if let Some(p) = &mcp_config { let _ = std::fs::remove_file(p); };
@@ -1036,8 +1040,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             return Err(StartError::Other(e.to_string()));
         }
     }
+    let mut parser = agent_cli::Parser::new(spec.kind);
+    parser.claude_code_signs_in(claude_code_signs_in);
     let mut handle = match process::spawn_exec::<RunEvent, _>(&exec, &wt.path, &log_path,
-        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, agent_cli::Parser::new(spec.kind)) {
+        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, parser) {
         Ok(h) => h,
         Err(e) => {
             drop_config();

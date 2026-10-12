@@ -1,0 +1,250 @@
+// GA-114 QA: the sidebar's Editor section and behind main (F3). Each opened folder's row says how it stands against
+// main as last fetched ("3 behind"), "updating" while Update runs, and loses its "3 behind" when the update ends, without
+// a reload: it follows what the Editor page tells it (src/lib/behind.ts tellMain) and the editor-updated event. Folded,
+// the heading says how many folders are behind. The sidebar runs in a small hook runtime (as in EditorPage.test.tsx):
+// components are called as functions, keep their hooks by their place in the tree, and effects run after each render;
+// its data (useData, the team, the live runs, the drawers) is handed in, and contract C3 is a fake.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactElement, ReactNode } from "react";
+import type { EditorFolder, EditorUpdated, FolderGit, FolderMain } from "../types";
+
+type Inst = { slots: unknown[]; i: number };
+type EffectSlot = { effect: true; deps?: unknown[]; first: boolean; cleanup?: () => void };
+const h = vi.hoisted(() => ({ cur: null as Inst | null, dirty: false, effects: [] as (() => void)[] }));
+
+vi.mock("react", async (orig) => {
+  const R = await orig<typeof import("react")>();
+  const slot = <T,>(make: () => T): T => {
+    const c = h.cur!;
+    if (c.i === c.slots.length) c.slots.push(make());
+    return c.slots[c.i++] as T;
+  };
+  const changed = (deps?: unknown[], prev?: unknown[]) => !deps || !prev || deps.length !== prev.length || deps.some((d, i) => !Object.is(d, prev[i]));
+  const useState = ((init: unknown) => {
+    if (!h.cur) return R.useState(init);
+    const box = slot(() => {
+      const b = { v: typeof init === "function" ? (init as () => unknown)() : init, set: (x: unknown) => {
+        const v = typeof x === "function" ? (x as (p: unknown) => unknown)(b.v) : x;
+        if (!Object.is(v, b.v)) { b.v = v; h.dirty = true; }
+      } };
+      return b;
+    });
+    return [box.v, box.set];
+  }) as typeof R.useState;
+  const useRef = ((init: unknown) => (h.cur ? slot(() => ({ current: init })) : R.useRef(init))) as typeof R.useRef;
+  const useMemo = ((f: () => unknown, deps: unknown[]) => {
+    if (!h.cur) return R.useMemo(f, deps);
+    const s = slot(() => ({ deps: undefined as unknown[] | undefined, v: undefined as unknown }));
+    if (changed(deps, s.deps)) { s.v = f(); s.deps = deps; }
+    return s.v;
+  }) as typeof R.useMemo;
+  const useCallback = ((f: unknown, deps: unknown[]) => (h.cur ? useMemo(() => f, deps) : R.useCallback(f as () => void, deps))) as typeof R.useCallback;
+  const useEffect = ((f: () => void | (() => void), deps?: unknown[]) => {
+    if (!h.cur) return R.useEffect(f, deps);
+    const s = slot<EffectSlot>(() => ({ effect: true, first: true }));
+    if (s.first || changed(deps, s.deps)) {
+      s.first = false;
+      s.deps = deps;
+      h.effects.push(() => { s.cleanup?.(); const c = f(); s.cleanup = typeof c === "function" ? c : undefined; });
+    }
+  }) as typeof R.useEffect;
+  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect };
+  return { ...R, default: { ...R, ...hooks }, ...hooks };
+});
+
+// ---- two folders under ~/Herd, and a card's worktree; contract C3 as a fake ----
+const KADE = "/home/you/Herd/kade-portal";
+const API = "/home/you/Herd/invoice-api";
+const CARD = "/home/you/.local/share/gizai/worktrees/GA/GA-118";
+const FOLDERS: EditorFolder[] = [
+  { id: KADE, path: KADE, name: "kade-portal", kind: "root", projectId: null, taskId: null, readOnly: false, readOnlyWhy: null },
+  { id: API, path: API, name: "invoice-api", kind: "root", projectId: null, taskId: null, readOnly: false, readOnlyWhy: null },
+  { id: CARD, path: CARD, name: "GA-118", kind: "card", projectId: "p1", taskId: "t1", readOnly: false, readOnlyWhy: null },
+];
+const NOW = Date.UTC(2026, 9, 12, 12, 0, 0);
+const mains = new Map<string, FolderMain>();
+const gits = new Map<string, FolderGit>();
+const listeners: ((e: EditorUpdated) => void)[] = [];
+const main = (more: Partial<FolderMain> = {}): FolderMain => ({
+  mainLabel: "origin/main", fetchedAt: NOW - 2 * 60_000, fetchError: null, branch: "main", onDefault: true, behind: 3, ahead: 0, uncommitted: 0,
+  canUpdate: true, updateSays: "move main 3 commits to 319bf0b and run npm ci", updating: false, ...more,
+});
+
+const state = vi.hoisted(() => ({ data: {} as Record<string, unknown> }));
+vi.mock("../api", async (orig) => {
+  const real = await orig<Record<string, unknown>>();
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(real)) if (typeof real[k] === "function") out[k] = () => new Promise(() => {});
+  const as = (key: string) => () => { const p = { key, catch: () => p }; return p; };
+  return {
+    ...out,
+    listProjects: as("projects"), listTasks: as("tasks"), getTeam: as("team"), memoryNotes: as("notes"), listChatThreads: as("threads"),
+    editorFolders: () => Promise.resolve(FOLDERS),
+    editorApps: () => Promise.resolve([]),
+    editorGit: (id: string) => Promise.resolve(gits.get(id) ?? { branch: "main", files: {}, uncommitted: 0 }),
+    editorMain: (id: string) => (mains.has(id) ? Promise.resolve(mains.get(id)!) : Promise.reject("no such folder")),
+    onEditorUpdated: (cb: (e: EditorUpdated) => void) => { listeners.push(cb); return Promise.resolve(() => { listeners.splice(listeners.indexOf(cb), 1); }); },
+  };
+});
+vi.mock("../lib/useData", () => ({
+  useData: (fetch: () => { key: string }) => ({ data: state.data[fetch().key] ?? null, error: null, reload: () => {}, setData: () => {} }),
+}));
+vi.mock("../lib/team", async (orig) => ({ ...(await orig<object>()), useCurrentTeam: () => ["t1", () => {}] }));
+vi.mock("../lib/useLiveRuns", () => ({ useLiveRuns: () => [] }));
+vi.mock("../lib/drawers", async (orig) => ({ ...(await orig<object>()), useDrawer: () => () => {} }));
+vi.mock("../router", async (orig) => ({ ...(await orig<object>()), go: () => {} }));
+vi.mock("./chat/useChat", () => ({ useChatLive: () => [] }));
+vi.mock("./UpdateNotice", () => ({ UpdateNotice: () => null }));
+vi.mock("./editor/FolderPicker", async (orig) => ({ ...(await orig<object>()), FolderPicker: () => null }));
+
+const store = new Map<string, string>();
+vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, String(v)); }, removeItem: (k: string) => { store.delete(k); } });
+vi.stubGlobal("navigator", { userAgent: "Linux", platform: "Linux x86_64" });
+const win = new EventTarget();
+vi.stubGlobal("window", win);
+const doc = { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} } };
+vi.stubGlobal("document", doc);
+
+const { Sidebar } = await import("./Sidebar");
+const { tellMain } = await import("../lib/behind");
+
+// ---- the hook runtime ----
+let root: () => ReactNode = () => null;
+const insts = new Map<string, Inst>();
+const unmount = (inst: Inst) => { for (const s of inst.slots) if ((s as EffectSlot)?.effect) (s as EffectSlot).cleanup?.(); };
+function expand(node: ReactNode, path: string, seen: Set<string>): ReactNode {
+  if (Array.isArray(node)) return node.map((n, i) => expand(n, `${path}.${(n as { key?: string | null })?.key ?? i}`, seen));
+  if (!node || typeof node !== "object" || !("props" in node)) return node;
+  const el = node as ReactElement<Record<string, unknown>>;
+  if (typeof el.type === "function") {
+    const key = `${path}>${el.type.name}${el.key !== null ? `#${el.key}` : ""}`;
+    seen.add(key);
+    let inst = insts.get(key);
+    if (!inst) insts.set(key, (inst = { slots: [], i: 0 }));
+    inst.i = 0;
+    h.cur = inst;
+    let out: ReactNode;
+    try { out = (el.type as (p: unknown) => ReactNode)(el.props); } finally { h.cur = null; }
+    return expand(out, key, seen);
+  }
+  return { ...el, props: { ...el.props, children: expand(el.props.children as ReactNode, `${path}>${String(el.type)}`, seen) } } as ReactNode;
+}
+let tree: ReactNode = null;
+function render() {
+  for (let n = 0; n < 40; n++) {
+    h.dirty = false;
+    const seen = new Set<string>();
+    tree = expand(root(), "", seen);
+    for (const [k, inst] of insts) if (!seen.has(k)) { unmount(inst); insts.delete(k); }
+    for (const f of h.effects.splice(0)) f();
+    if (!h.dirty) return;
+  }
+  throw new Error("the render never settled");
+}
+async function settle() { for (let i = 0; i < 4; i++) { await vi.advanceTimersByTimeAsync(0); render(); } }
+
+type Found = { type: unknown; props: Record<string, unknown> };
+function findAll(node: ReactNode, pred: (f: Found) => boolean, out: Found[] = []): Found[] {
+  if (Array.isArray(node)) node.forEach((n) => findAll(n, pred, out));
+  else if (node && typeof node === "object" && "props" in node) {
+    const el = node as ReactElement<Record<string, unknown>>;
+    const f = { type: el.type, props: el.props };
+    if (pred(f)) out.push(f);
+    findAll(el.props.children as ReactNode, pred, out);
+  }
+  return out;
+}
+function textOf(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return `${node}`;
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (node && typeof node === "object" && "props" in node) return textOf((node as ReactElement<{ children?: ReactNode }>).props.children);
+  return "";
+}
+const editorSection = () => findAll(tree, (f) => f.props.className === "nav-section" && f.props["aria-label"] === "Editor")[0]!;
+/** Each opened folder's row: its name, what it says on the right and its tooltip. */
+const rows = () => findAll(editorSection().props.children as ReactNode, (f) => f.type === "a").map((a) => {
+  const meta = findAll(a.props.children as ReactNode, (f) => f.props.className === "meta")[0];
+  const spin = meta ? findAll(meta.props.children as ReactNode, (f) => String(f.props.className ?? "").includes("spin")).length > 0 : false;
+  const name = findAll(a.props.children as ReactNode, (f) => f.type === "span" && f.props.className !== "meta" && f.props.className !== "stand")[0];
+  return { name: name ? textOf(name.props.children as ReactNode) : "", says: meta ? textOf(meta.props.children as ReactNode) : "", spin, tip: a.props.title as string };
+});
+const says = () => Object.fromEntries(rows().map((r) => [r.name, r.says]));
+/** The folded heading's tag, or null. */
+const tag = () => { const t = findAll(editorSection().props.children as ReactNode, (f) => f.props.className === "fold-tag")[0]; return t ? { word: textOf(t.props.children as ReactNode), tip: t.props.title } : null; };
+const caret = () => findAll(editorSection().props.children as ReactNode, (f) => f.type === "button" && String(f.props["aria-label"] ?? "").endsWith("Editor"))[0]!.props.onClick as () => void;
+async function ends(e: EditorUpdated) { for (const l of [...listeners]) l(e); await settle(); }
+
+async function show() {
+  root = () => <Sidebar route={{ page: "tasks" }} youId="u1" onSearch={() => {}} onNewTask={() => {}} />;
+  render();
+  await settle();
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+  for (const [k, inst] of insts) { unmount(inst); insts.delete(k); }
+  h.effects.length = 0;
+  store.clear(); mains.clear(); gits.clear(); listeners.length = 0;
+  state.data = { projects: [], tasks: [], threads: [], notes: [], team: { id: "t1", name: "Software", members: [], states: [], labels: [] } };
+  store.set("gizai.editor.opened", JSON.stringify([KADE, API, CARD]));
+  mains.set(KADE, main());
+  mains.set(API, main({ behind: 0, canUpdate: false, updateSays: "invoice-api is up to date with origin/main." }));
+  mains.set(CARD, main({ branch: "gizai/ga-118-show-a-run-s-changes", onDefault: false, behind: 5, ahead: 2, canUpdate: false, updateSays: "x" }));
+  gits.set(API, { branch: "main", files: {}, uncommitted: 4 });
+});
+afterEach(() => { root = () => null; render(); vi.useRealTimers(); });
+
+describe("the sidebar's Editor rows and behind main (GA-114)", () => {
+  it("a folder behind main says '3 behind'; one that's up to date says how many files changed; a card's worktree never says behind", async () => {
+    await show();
+    expect(says()).toEqual({ "kade-portal": "3 behind", "invoice-api": "4 changed", "GA-118": "" });
+    const kade = rows().find((r) => r.name === "kade-portal")!;
+    expect(kade.tip).toBe("/home/you/Herd/kade-portal · main is 3 commits behind origin/main, fetched 2m ago");
+  });
+
+  it("while Update runs (told by the Editor page) the row says 'updating' with a turning loader, then loses '3 behind' at its end, without a reload", async () => {
+    await show();
+    tellMain(KADE, main({ updating: true, canUpdate: false }));
+    await settle();
+    const kade = rows().find((r) => r.name === "kade-portal")!;
+    expect(kade.says).toBe("updating");
+    expect(kade.spin).toBe(true);
+    // the update ends: the backend now says up to date, and editor-updated comes
+    mains.set(KADE, main({ behind: 0, canUpdate: false, updateSays: "kade-portal is up to date with origin/main." }));
+    await ends({ folder: KADE, ok: true, said: "Moved main 3 commits to 319bf0b and ran npm ci.", output: "" });
+    expect(says()["kade-portal"]).toBe("");
+    expect(rows().find((r) => r.name === "kade-portal")!.tip).toBe("/home/you/Herd/kade-portal · main, up to date with origin/main");
+  });
+
+  it("an update from the Team Lead's chat (no page open) still clears the row at its end", async () => {
+    await show();
+    expect(says()["kade-portal"]).toBe("3 behind");
+    mains.set(KADE, main({ behind: 0, canUpdate: false, updateSays: "kade-portal is up to date with origin/main." }));
+    await ends({ folder: KADE, ok: true, said: "Moved main 3 commits to 319bf0b.", output: "" });
+    expect(says()["kade-portal"]).toBe("");
+  });
+
+  it("a fetch on the Editor page that finds more commits shows on the row at once", async () => {
+    await show();
+    tellMain(KADE, main({ behind: 4 }));
+    await settle();
+    expect(says()["kade-portal"]).toBe("4 behind");
+  });
+
+  it("folded, the Editor heading says how many folders are behind, cards' worktrees not counted", async () => {
+    await show();
+    expect(tag()).toBeNull();
+    caret()();
+    await settle();
+    expect(tag()).toEqual({ word: "1 behind", tip: "1 folder is behind origin/main" });
+    mains.set(API, main({ behind: 2 }));
+    tellMain(API, main({ behind: 2 }));
+    await settle();
+    expect(tag()).toEqual({ word: "2 behind", tip: "2 folders are behind origin/main" });
+    tellMain(KADE, main({ behind: 0 }));
+    tellMain(API, main({ behind: 0 }));
+    await settle();
+    expect(tag()).toBeNull();
+  });
+});

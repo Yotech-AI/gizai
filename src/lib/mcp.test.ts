@@ -2,8 +2,8 @@
 // switches per server and tool, the last-run and sign-in badges, secret lines that never carry a saved value, and names.
 import { describe, expect, it } from "vitest";
 import {
-  actsAsYou, cleanSwitches, lastRunLabel, linesOf, nameProblem, npmWarning, parseArgs, renameLine, RISK_BADGE, RISK_LABEL, sameSwitches, secretLines,
-  serverWhere, signInLabel, switchServer, switchTool, TAKEN_NAMES, toolsSummary, TRANSPORT_LABEL,
+  actsAsYou, CLAUDE_CODE_NO_LIST, CLAUDE_CODE_SIGN_IN_HINT, cleanSwitches, lastRunLabel, linesOf, nameProblem, npmWarning, parseArgs, renameLine, RISK_BADGE, RISK_LABEL, sameSwitches, secretLines,
+  serverWhere, SIGN_IN_BY_LABEL, signInLabel, switchServer, switchTool, TAKEN_NAMES, toolsSummary, TRANSPORT_LABEL,
 } from "./mcp";
 import type { AgentServer, McpToolView } from "../types";
 // The Rust side, as text (Vite's ?raw), to check the shared wording.
@@ -231,5 +231,26 @@ describe("nameProblem", () => {
     }
     for (const n of ["otus", "my_server", "a_b_c", "x-_y", "gizai-notes", "_otus"]) expect(nameProblem(n, [])).toBeNull();
     expect(rust("crates/gizai-core/src/mcp_servers.rs")).toContain("can't have two _ in a row or end with _, not \\\"{name}\\\": its tools are called mcp__<name>__<tool>, and Claude Code reads __ as where the name ends");
+  });
+});
+
+// GA-120: a server Claude Code signs in to, and the form's Who signs in.
+describe("Claude Code signs in", () => {
+  it("has its badge, and its tools act as you", () => {
+    expect(signInLabel("claude_code")).toEqual({ text: "Claude Code signs in", badge: "outline" });
+    expect(actsAsYou({ signIn: "claude_code", name: "figma" })).toBe("Claude Code signs in: its tools act as you in figma.");
+    expect(actsAsYou({ signIn: "signed_in", name: "otus" })).toBe("Signed in: its tools act as you in otus.");
+    expect(actsAsYou({ signIn: "needs_sign_in", name: "acme" })).toBeNull();
+  });
+
+  it("offers Gizai first, then Claude Code, with the values the Rust side takes", () => {
+    expect(Object.entries(SIGN_IN_BY_LABEL)).toEqual([["", "Gizai (it registers itself with the service)"], ["claude_code", "Claude Code, with its own sign-in"]]);
+    expect(rust("crates/gizai-core/src/mcp_servers.rs")).toContain('pub const CLAUDE_CODE_SIGNS_IN: &str = "claude_code";');
+  });
+
+  it("says why List tools is off in the same words as the backend's refusal", () => {
+    expect(CLAUDE_CODE_NO_LIST).toBe("Claude Code signs in to this server, so Gizai can't list its tools. An agent that has it on gets all of them.");
+    expect(rust("src-tauri/src/mcp_servers.rs")).toContain(`pub const CLAUDE_CODE_NO_LIST: &str = "${CLAUDE_CODE_NO_LIST}";`);
+    expect(CLAUDE_CODE_SIGN_IN_HINT).toBe("For a service that only lets known apps sign in, like Figma. Give the server the name it has in Claude Code, and sign Claude Code in once per account: in a terminal, run claude, type /mcp, pick the server and Authenticate. Gizai never reads Claude Code's sign-ins.");
   });
 });

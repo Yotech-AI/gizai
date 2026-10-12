@@ -47,7 +47,7 @@ const tool = (name: string, risk: string): McpToolView => ({
   summary: `${name}: ${risk}`, notes: [],
 });
 const server = (s: Partial<McpServerView> & { id: string; name: string }): McpServerView => ({
-  transport: "http", command: "", args: [], envNames: [], url: `https://${s.name}.example.com/mcp`, headerNames: [], clientId: "", source: "",
+  transport: "http", command: "", args: [], envNames: [], url: `https://${s.name}.example.com/mcp`, headerNames: [], clientId: "", signInBy: "", source: "",
   signIn: "", problem: null, missing: [], listed: null, usedBy: [], ...s,
 });
 const otus = server({ id: "s-otus", name: "otus", signIn: "signed_in", usedBy: ["Backend Agent"], source: "Claude Code (user scope)",
@@ -165,7 +165,7 @@ describe("a saved secret value is never shown", () => {
   it("Edit opens the form with the names only, no value, each saved unless missing", () => {
     const { got, button } = tree({});
     button("Edit")[2].onClick(); // local
-    expect(got[EDIT]).toEqual([{ id: "s-local", name: "local", transport: "stdio", command: "npx", args: "-y\n@acme/mcp", url: "", clientId: "", source: "",
+    expect(got[EDIT]).toEqual([{ id: "s-local", name: "local", transport: "stdio", command: "npx", args: "-y\n@acme/mcp", url: "", clientId: "", signInBy: "", source: "",
       env: [{ name: "ACME_TOKEN", value: "", saved: true }, { name: "ACME_URL", value: "", saved: false }], headers: [] }]);
     button("Edit")[1].onClick(); // acme
     expect((got[EDIT][1] as { headers: unknown }).headers).toEqual([{ name: "X-Api-Key", value: "", saved: false }]);
@@ -314,5 +314,98 @@ describe("a renamed line", () => {
     await tree({ edit: back }).button("Save server")[0].onClick();
     const input = calls.find(([k]) => k === "saveMcpServer")![1][0] as McpServerInput;
     expect(input.env).toEqual([{ name: "ACME_TOKEN", value: null }, { name: "ACME_HOST", value: null }]);
+  });
+});
+
+// GA-120: Who signs in to an address server: Gizai (it registers itself) or Claude Code with its own sign-in, for a service
+// like Figma that only lets known apps register. With Claude Code, the form hides the client id and says how to sign Claude
+// Code in; the list shows "Claude Code signs in", no Sign in or Sign out, and List tools off with why.
+describe("Who signs in", () => {
+  const HINT = "For a service that only lets known apps sign in, like Figma. Give the server the name it has in Claude Code, and sign Claude Code in once per account: in a terminal, run claude, type /mcp, pick the server and Authenticate. Gizai never reads Claude Code's sign-ins.";
+  const NO_LIST = "Claude Code signs in to this server, so Gizai can't list its tools. An agent that has it on gets all of them.";
+  const draft = (d: Record<string, unknown> = {}) => ({ id: "", name: "figma", transport: "http", command: "", args: "", env: [], url: "https://mcp.figma.com/mcp",
+    headers: [], clientId: "", signInBy: "", source: "", ...d });
+  const figma = server({ id: "s-figma", name: "figma", url: "https://mcp.figma.com/mcp", signInBy: "claude_code", signIn: "claude_code", usedBy: ["Design Agent"] });
+  const selects = (t: ReactNode) => findAll(t, (p) => p.className === "select") as { value: string; onChange: (e: unknown) => void }[];
+
+  for (const transport of ["http", "sse"]) {
+    it(`the form of an address server (${transport}) shows Who signs in, set to Gizai, with the client id`, () => {
+      const html = render({ edit: draft({ transport }) });
+      const t = text(html);
+      expect(t).toContain("Who signs in Gizai (it registers itself with the service) Claude Code, with its own sign-in");
+      expect(html).toContain('<option value="" selected="">Gizai (it registers itself with the service)</option>');
+      expect(html).toContain('<option value="claude_code">Claude Code, with its own sign-in</option>');
+      expect(t).toContain("Client id for sign-in");
+      expect(t).not.toContain("like Figma");
+    });
+  }
+
+  it("a command's form doesn't show it", () => {
+    const t = text(render({ edit: draft({ transport: "stdio", url: "", command: "npx" }) }));
+    expect(t).not.toContain("Who signs in");
+    expect(t).not.toContain("Claude Code, with its own sign-in");
+  });
+
+  it("Add MCP server starts with Gizai", () => {
+    const { got, button } = tree({});
+    button("Add MCP server")[0].onClick();
+    expect(got[EDIT][0]).toMatchObject({ transport: "stdio", signInBy: "" });
+  });
+
+  it("choosing Claude Code sets it in the form, hides the client id and shows the hint word for word", () => {
+    const edit = draft();
+    const first = tree({ edit });
+    const [kind, who] = selects(first.t);
+    expect(kind.value).toBe("http");
+    expect(who.value).toBe("");
+    who.onChange({ target: { value: "claude_code" } });
+    const chosen = (first.got[EDIT][0] as (x: unknown) => Record<string, unknown>)(edit);
+    expect(chosen).toMatchObject({ signInBy: "claude_code" });
+    const html = render({ edit: chosen });
+    expect(html).toContain('<option value="claude_code" selected="">Claude Code, with its own sign-in</option>');
+    const t = text(html);
+    expect(t).toContain(HINT);
+    expect(t).not.toContain("Client id for sign-in");
+    expect(html).not.toContain("Only when the service doesn't let Gizai register itself");
+  });
+
+  it("Save sends the choice for an address, and Gizai for a command", async () => {
+    answers.saveMcpServer = () => figma;
+    calls.length = 0;
+    const saved = tree({ edit: draft({ signInBy: "claude_code" }) });
+    await saved.button("Add server")[0].onClick();
+    const input = calls.find(([k]) => k === "saveMcpServer")![1][0] as McpServerInput;
+    expect(input.server).toMatchObject({ name: "figma", transport: "http", url: "https://mcp.figma.com/mcp", signInBy: "claude_code" });
+    // Saved as Claude Code: no "List tools shows what it offers", as List tools is off for it.
+    expect(saved.got[2]).toContain("Saved figma.");
+
+    answers.saveMcpServer = () => local;
+    calls.length = 0;
+    // Claude Code chosen, then the kind changed to a command.
+    await tree({ edit: draft({ transport: "stdio", command: "npx", url: "", signInBy: "claude_code" }) }).button("Add server")[0].onClick();
+    expect((calls.find(([k]) => k === "saveMcpServer")![1][0] as McpServerInput).server.signInBy).toBe("");
+  });
+
+  it("Edit shows the saved choice again", () => {
+    const { got, button } = tree({ list: [figma] });
+    button("Edit")[0].onClick();
+    expect(got[EDIT][0]).toMatchObject({ id: "s-figma", transport: "http", signInBy: "claude_code" });
+    const html = render({ list: [figma], edit: got[EDIT][0] });
+    expect(html).toContain('<option value="claude_code" selected="">Claude Code, with its own sign-in</option>');
+    expect(text(html)).toContain(HINT);
+  });
+
+  it("a server Claude Code signs in to shows it, with no Sign in or Sign out and List tools off with why", () => {
+    const f = row(render({ list: [figma, otus, acme] }), "figma");
+    expect(f).toContain('<span class="badge outline">Claude Code signs in</span>');
+    expect(f).toContain(`<button class="btn ghost sm" disabled="" title="${NO_LIST.replace(/'/g, "&#x27;")}">List tools</button>`);
+    const t = text(f);
+    expect(t).not.toMatch(/Sign (in|out)\b/);
+    expect(t).not.toContain("Needs sign-in");
+    expect(t).toContain(NO_LIST);
+    expect(t).not.toContain("Its tools act as you in figma.");
+    // the List tools button can't be pressed for it, only for the others
+    const { button } = tree({ list: [figma, otus] });
+    expect(button("List tools").map((b) => !!b.disabled)).toEqual([true, false]);
   });
 });

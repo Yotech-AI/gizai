@@ -520,6 +520,9 @@ export type McpServer = {
   url: string; headerNames: string[];
   /** A client id for sign-in, for a server that doesn't let Gizai register itself. */
   clientId: string;
+  /** Who signs in to an address server: "" Gizai (it registers itself), "claude_code" Claude Code with its own sign-in.
+   * Always "" for a command. */
+  signInBy: string;
   /** Where it was imported from; empty when added by hand. */
   source: string;
 };
@@ -537,7 +540,7 @@ export type McpToolView = {
 };
 export type McpListed = { serverName: string; serverVersion: string; listedAt: number; tools: McpToolView[] };
 export type McpServerView = McpServer & {
-  /** signed_in | needs_sign_in | "" */
+  /** signed_in | needs_sign_in | claude_code (Claude Code signs in, not Gizai) | "" */
   signIn: string;
   problem?: string | null;
   /** Lines whose value isn't in the keychain. */

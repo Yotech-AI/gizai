@@ -33,7 +33,8 @@ const MCP_VERSION: &str = "2025-06-18";
 const BODY_LIMIT: u64 = 1 << 20;
 
 /// What a server without dynamic client registration needs from you.
-pub const NO_REGISTRATION: &str = "This server doesn't let Gizai register itself: enter a client id for Gizai from the service's settings";
+pub const NO_REGISTRATION: &str = "This server doesn't let Gizai register itself: set Who signs in to Claude Code (Edit), or enter a client id \
+                                   for Gizai from the service's settings";
 
 /// What a `WWW-Authenticate: Bearer …` header (on an MCP server's 401 or 403) says about signing in.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -342,7 +343,11 @@ fn register(d: &Discovery, redirect_uri: &str) -> Result<String, String> {
     let answer = post_json(url, &body)?;
     let host = host_of(url);
     if !answer.ok() {
-        let hint = if matches!(answer.status, 401 | 403) { ": enter a client id for Gizai from the service's settings" } else { "" };
+        let hint = if matches!(answer.status, 401 | 403) {
+            ": set Who signs in to Claude Code (Edit), or enter a client id for Gizai from the service's settings"
+        } else {
+            ""
+        };
         return Err(format!("{host} didn't let Gizai register itself ({}){hint}", refusal(&answer)));
     }
     serde_json::from_str::<Value>(&answer.body).ok().and_then(|doc| text(&doc, "client_id"))

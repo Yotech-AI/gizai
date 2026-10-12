@@ -531,8 +531,8 @@ impl ContinueNote {
     }
 }
 
-/// An actor's name (a person or an agent), for a prompt.
-fn actor_name(st: &AppState, actor_id: &str) -> String {
+/// An actor's name (a person or an agent), for a prompt or a comment.
+pub(crate) fn actor_name(st: &AppState, actor_id: &str) -> String {
     team::agent(&st.db, actor_id).map(|m| m.name).ok()
         .or_else(|| gizai_core::users::list(&st.db).ok()?.into_iter().find(|p| p.id == actor_id).map(|p| p.name))
         .filter(|n| !n.trim().is_empty())
@@ -731,8 +731,10 @@ fn open_worktree(st: &AppState, project: &Project, task: &Task, repo: &Path, sta
 
 /// Prepares a new or taken-over worktree before the agent starts: the project's copies, the install of what is still
 /// missing, then its setup command (`gizai_agents::prepare`). A command that fails puts the card on hold "blocked"
-/// with its output; no run starts, so it doesn't count as a failed run, and the next start prepares again.
-async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
+/// with its output, as `holder` (the agent that was to start); no run starts, so it doesn't count as a failed run, and
+/// the next start prepares again. Without `holder` (a person's start by hand, GA-111) the card gets no hold: the error
+/// says why.
+async fn prepare_worktree(st: &AppState, holder: Option<&str>, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
                           todo: worktree::Unprepared) -> Result<(), StartError> {
     let plan = Prepare { copy: project.worktree_copy.clone(), install: project.worktree_install, setup: project.worktree_setup.clone() };
     // Not while the project's own folder is being updated from chat (`code::start_update`), and the other way round:
@@ -755,8 +757,13 @@ async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &
         }
         Err(failed) => {
             let reason = format!("Preparing its worktree failed: {failed}");
-            hold_card(st, agent_id, &task.id, &reason);
-            Err(StartError::Held(reason))
+            match holder {
+                Some(agent_id) => {
+                    hold_card(st, agent_id, &task.id, &reason);
+                    Err(StartError::Held(reason))
+                }
+                None => Err(StartError::Card(reason)),
+            }
         }
     }
 }
@@ -846,7 +853,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     wait_if_paused()?;
     let wt = open_worktree(st, &project, &task, Path::new(&repo), &start)?;
     if let Some(todo) = worktree::unprepared(&wt.path) {
-        prepare_worktree(st, &agent_id, &task, &project, Path::new(&repo), &wt, todo).await?;
+        prepare_worktree(st, Some(&agent_id), &task, &project, Path::new(&repo), &wt, todo).await?;
     }
     let base = project.repo_url.as_ref().map(|_| BaseInfo {
         from: start.strip_prefix("refs/remotes/").or_else(|| start.strip_prefix("refs/")).unwrap_or(&start).to_string(),
@@ -1408,11 +1415,7 @@ async fn push_after_run(st: &AppState, run_id: &str, dir: &Path) -> Option<After
     let link = gizai_core::repo_url::normalize(project.repo_url.as_deref()?).ok().flatten()?;
     let (st2, dir) = (st.clone(), dir.to_path_buf());
     let after = tokio::task::spawn_blocking(move || {
-        let push = crate::pulls::push_over_for(&st2, &link.provider).map_err(|e| format!("Couldn't push {branch}: {e}")).and_then(|over| {
-            // the main branch the card started from, as fetched for this run: the remote has its commits
-            let base = crate::git::start_point(&project, &repo, None).map_err(crate::pulls::plain)?;
-            worktree::push_new_commits(&repo, &crate::pulls::push_to(&repo, &link.url), &branch, &base, &over).map_err(crate::pulls::plain)
-        });
+        let push = push_card(&st2, &project, &repo, &link, &branch);
         AfterRun { uncommitted: worktree::uncommitted(&dir).unwrap_or(0), branch, push }
     }).await;
     match after {
@@ -1427,6 +1430,61 @@ async fn push_after_run(st: &AppState, run_id: &str, dir: &Path) -> Option<After
             None
         }
     }
+}
+
+/// Gizai's push of a card's `branch` (GA-56), after a run and for a person's card (GA-111, `hand::push`): to the
+/// project's link `link`, through your remote for it (where Open pull request pushes, `pulls::push_to`) and over the same
+/// Push over setting (`pulls::push_over_for`), only when the branch has commits that remote doesn't have
+/// (`worktree::push_new_commits`), never forced, tried once. Blocking: it talks to the remote.
+pub(crate) fn push_card(st: &AppState, project: &Project, repo: &Path, link: &gizai_core::repo_url::RepoUrl, branch: &str)
+    -> Result<worktree::Pushed, String> {
+    let over = crate::pulls::push_over_for(st, &link.provider).map_err(|e| format!("Couldn't push {branch}: {e}"))?;
+    // the main branch the card started from, as last fetched: the remote has its commits
+    let base = crate::git::start_point(project, repo, None).map_err(crate::pulls::plain)?;
+    worktree::push_new_commits(repo, &crate::pulls::push_to(repo, &link.url), branch, &base, &over).map_err(crate::pulls::plain)
+}
+
+/// GA-111: Open in editor, on a card assigned to you (contract C4's start). Its worktree is made, or taken over, and
+/// prepared from main just fetched, as for an agent's run (`open_worktree`, `prepare_worktree`); meanwhile the card
+/// counts as starting (`working_on`), so no agent's run starts on it. Then, in one write, it is pinned to you, you become
+/// its implementer and it moves on from To do as you (`workflow::start_by_hand`). A preparation that fails puts no hold
+/// on the card: the error says why, and the next Open in editor prepares again. Refused, in a plain sentence, while an
+/// agent works on the card or its run starts, as `workflow::start_by_hand_check` says (an archived card, one not
+/// assigned to you, one in Deploy, Done or Cancelled), and when the card's worktree is on another branch than the card's.
+/// On a card that is yours by hand already it makes sure the worktree is there and ready. Returns the worktree.
+pub async fn start_by_hand(st: &AppState, task_id: &str) -> Result<worktree::Worktree, String> {
+    if is_closing(st) {
+        return Err("Gizai is quitting".into());
+    }
+    let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
+    let busy = || format!("An agent is working on {}: wait for its run to end", task.identifier);
+    if working_on(st, task_id) {
+        return Err(busy());
+    }
+    workflow::start_by_hand_check(&st.db, &st.you_id, task_id).map_err(|e| e.to_string())?;
+    let _starting = Starting::take(st, task_id).ok_or_else(busy)?;
+    let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
+    let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| format!("Link a git repository to {} first (project page → Edit)", project.name))?;
+    let start = {
+        let (p, dir) = (project.clone(), PathBuf::from(&repo));
+        tokio::task::spawn_blocking(move || crate::git::start_point(&p, &dir, Some(crate::git::START_FETCH_LIMIT)))
+            .await.map_err(|e| e.to_string())?.map_err(crate::pulls::plain)?
+    };
+    if project.repo_url.is_some() {
+        crate::code::fetched(st, &project.key);
+    }
+    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start).map_err(StartError::message)?;
+    // Commit, Push and Hand over work on the card's branch (`hand`): its worktree must have it checked out.
+    if let Some(b) = task.branch.as_deref().filter(|b| !b.trim().is_empty() && *b != wt.branch) {
+        return Err(format!("{}'s worktree is on branch {}, not on the card's branch {b}: switch it back first", task.identifier, wt.branch));
+    }
+    if let Some(todo) = worktree::unprepared(&wt.path) {
+        prepare_worktree(st, None, &task, &project, Path::new(&repo), &wt, todo).await.map_err(StartError::message)?;
+    }
+    workflow::start_by_hand(&st.db, &st.you_id, task_id, &wt.branch).map_err(|e| e.to_string())?;
+    (st.notify)(Note::RowsChanged("tasks"));
+    Ok(wt)
 }
 
 /// Gizai's note on a run that is ending: in its log, where Show output reads it later, and in the Run panel now.

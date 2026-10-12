@@ -1,5 +1,6 @@
 //! The Editor's commands (GA-107; contract C2 with the Editor page, F2): the folders it may open
-//! (`gizai_core::editor`), what is in them (`gizai_agents::editor`), and Open in VS Code, Zed or PhpStorm.
+//! (`gizai_core::editor`), what is in them (`gizai_agents::editor`), and Open in VS Code, Zed or PhpStorm. And a
+//! person's card (GA-111; contract C4 with the card bar, F4): Open in editor, Commit, Push and Hand over (`hand`).
 //! - Every command checks again that the Editor may open the folder (a project's linked folder, a folder in the Editor
 //!   folders, a card's worktree), so one that may not any more stops at once.
 //! - A card's worktree is read-only while an agent works on the card: a live run, or a run getting its worktree ready.
@@ -8,11 +9,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use gizai_agents::editor::{self as inside, AppId, DirEntry, EditorApp, Find, FolderGit, OpenedFile, SearchResult};
+use gizai_agents::worktree::Commit;
 use gizai_core::editor::{self as core_editor, EditorFolder, Kind};
 use gizai_core::folders::Places;
 use tauri::State;
 
 use crate::AppState;
+use crate::hand::HandCard;
 
 type R<T> = Result<T, String>;
 
@@ -188,4 +191,31 @@ pub async fn editor_apps(st: State<'_, AppState>) -> R<Vec<EditorApp>> {
 #[tauri::command]
 pub async fn open_in_app(st: State<'_, AppState>, app: String, folder: String, path: Option<String>, line: Option<u32>) -> R<()> {
     off(&st, move |st| open_in(st, &app, &folder, path.as_deref(), line)).await
+}
+
+// ---- a person's card, word for word as contract C4 names them (GA-111; the work is in `hand`) ----
+
+#[tauri::command]
+pub async fn start_by_hand(st: State<'_, AppState>, task_id: String) -> R<HandCard> {
+    crate::hand::start(&st, &task_id).await
+}
+
+#[tauri::command]
+pub async fn hand_card(st: State<'_, AppState>, task_id: String) -> R<HandCard> {
+    crate::hand::card(&st, &task_id).await
+}
+
+#[tauri::command]
+pub async fn hand_commit(st: State<'_, AppState>, task_id: String, message: String) -> R<Commit> {
+    crate::hand::commit(&st, &task_id, &message).await
+}
+
+#[tauri::command]
+pub async fn hand_push(st: State<'_, AppState>, task_id: String) -> R<String> {
+    crate::hand::push(&st, &task_id).await
+}
+
+#[tauri::command]
+pub async fn hand_over(st: State<'_, AppState>, task_id: String) -> R<String> {
+    crate::hand::over(&st, &task_id).await
 }

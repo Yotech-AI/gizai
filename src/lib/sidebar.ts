@@ -1,10 +1,11 @@
-// The sidebar's Agents and Memory sections fold (GA-90). Which are folded is kept on this computer in localStorage as a
-// comma list ("agents,memory"), the way the Memory page keeps its panel's closed sections; both start open.
+// The sidebar's Editor (GA-113), Agents and Memory sections fold (GA-90). Which are folded is kept on this computer in
+// localStorage as a comma list ("agents,memory"), the way the Memory page keeps its panel's closed sections; all start
+// open.
 import { useState } from "react";
 
 export const FOLDED_KEY = "gizai.sidebar.folded";
 /** The sections that fold. */
-export type Fold = "agents" | "memory";
+export type Fold = "editor" | "agents" | "memory";
 
 /** The folded sections in what localStorage keeps (null: nothing kept, so none). */
 export function foldedOf(kept: string | null): string[] {

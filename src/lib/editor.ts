@@ -73,7 +73,11 @@ export function keptTabs(kept: string | null, folder: string): KeptTabs {
 /** What to keep after `folder`'s tabs changed; a folder without tabs is left out. */
 export function withTabs(kept: string | null, folder: string, tabs: KeptTabs): string {
   let all: Record<string, KeptTabs> = {};
-  try { all = (JSON.parse(kept ?? "{}") as Record<string, KeptTabs>) ?? {}; } catch { all = {}; }
+  try {
+    const parsed: unknown = JSON.parse(kept ?? "{}");
+    // Anything but a plain object of folders (a list, a number, null) is started over.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) all = parsed as Record<string, KeptTabs>;
+  } catch { all = {}; }
   if (tabs.paths.length) all[folder] = tabs;
   else delete all[folder];
   return JSON.stringify(all);
@@ -288,7 +292,8 @@ export function searchSummary(r: SearchResult): string {
 /** A hit's line as shown: from a little before its match when the line is long, with the match apart to mark it. The
  *  match is the query's length from the hit's column for a plain search, or what the regular expression finds there. */
 export function hitParts(hit: SearchHit, query: string, o: { regex: boolean; caseSensitive: boolean }): { before: string; match: string; after: string } {
-  const text = hit.text.replace(/\t/g, "  ");
+  // The column counts a tab as one, so the line is cut on its own text and its tabs are widened afterwards.
+  const text = hit.text;
   const start = Math.max(0, Math.min(hit.column - 1, text.length));
   let len = query.length;
   if (o.regex) {
@@ -299,7 +304,12 @@ export function hitParts(hit: SearchHit, query: string, o: { regex: boolean; cas
     } catch { len = 0; }
   }
   const from = start > 40 ? start - 24 : 0;
-  return { before: (from > 0 ? "…" : "") + text.slice(from, start), match: text.slice(start, start + len), after: text.slice(start + len) };
+  const shown = (s: string) => s.replace(/\t/g, "  ");
+  return {
+    before: (from > 0 ? "…" : "") + shown(text.slice(from, start)),
+    match: shown(text.slice(start, start + len)),
+    after: shown(text.slice(start + len)),
+  };
 }
 
 // ---- Go to file ----

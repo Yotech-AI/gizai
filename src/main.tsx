@@ -6,6 +6,7 @@ import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/components.css";
 import "./styles/app.css";
+import "./styles/changes.css";
 import "./styles/appearance.css";
 
 // The font, text sizes, theme and density (Settings → Appearance), before anything is drawn.

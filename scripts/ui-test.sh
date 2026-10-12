@@ -63,6 +63,13 @@
 #     following the open note), an agent's page and the shared page show only their notes and what those name, and reduced
 #     motion gives a still layout; (d) a click on a dim dot offers New note with its name, on a card, agent or tag dot opens
 #     the card, the agent or the tree filtered by the tag.
+# 14. changes (GA-112), against prep_changes' repository and cards, in two starts: (a) a card in its worktree: Changes +/−
+#     in the tab, the list (9 files, 2 not committed, "Since main"), a click in the list puts its file at the top; the
+#     1,500-line src/big.ts shows git's 40 one-line changes and the list's +40 −40, removed lines their old numbers, folds
+#     keep 3 lines around changes (6 and 30 unchanged lines), ↓ 20 leaves 10 and a click shows all; the diff colours in dark
+#     and light; n, p, Alt+↓, [ and Esc; Show changes beside both runs, and each run's changes only; no branch, branch
+#     only, merged and no changes. (b) speed: the 2,000-line (32 files) and the 15,000-line (245 files) cards show their
+#     first screen within 300 ms of the Changes tab and scroll for 3 s without a frame over 100 ms.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -121,4 +128,9 @@ DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-a $GRAPH" script
 DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-b $GRAPH" scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-c $GRAPH" scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE=memory/graph MODE="memory:graph-d $GRAPH" scripts/smoke-cage.sh || fail=1
+fresh
+rm -rf .devdata/uitest-changes .devdata/uitest-changes.wt && mkdir -p .devdata/uitest-changes
+CHG=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_changes -- .devdata/uitest "$PWD/.devdata/uitest-changes")
+DATA=$PWD/.devdata/uitest ROUTE="task/${CHG%% *}/changes" MODE="changes-a:$CHG" scripts/smoke-cage.sh || fail=1
+DATA=$PWD/.devdata/uitest ROUTE="task/${CHG%% *}" MODE="changes-b:$CHG" scripts/smoke-cage.sh || fail=1
 exit $fail

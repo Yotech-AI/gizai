@@ -600,7 +600,7 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .ed-bar.done > .icon { color: var(--success); }
 .ed-bar.failed { background: var(--danger-soft); }
 .ed-bar.failed > .icon { color: var(--danger); }
-.ed-bar.needs > .icon { color: var(--needs); }
+.ed-bar.needs > .icon, .ed-bar.needs > .st { color: var(--needs); } /* QA sent your card by hand back: the column's glyph too */
 .ed-bar .update-output { flex-basis: 100%; margin: 0 0 var(--space-1); }
 /* The open file's bar: the editor's width, a tab's height */
 .ed-bar.file { min-height: var(--size-tab); padding: var(--space-1) var(--space-3); font-size: var(--fs-sm); }

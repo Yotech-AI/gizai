@@ -22,7 +22,7 @@ const states: WorkflowState[] = [
 ];
 const task = (n: number, s: WorkflowState): Task => ({
   id: `t${n}`, identifier: `GA-${n}`, projectId: "p1", title: `Card ${n}`, descriptionMd: "", stateId: s.id, stateName: s.name, stateCategory: s.category,
-  priority: 0, labels: [], bounceCount: 0, failCount: 0, sortKey: "a0", testing: true, createdAt: 0, updatedAt: 0,
+  priority: 0, labels: [], bounceCount: 0, failCount: 0, sortKey: "a0", testing: true, createdAt: 0, updatedAt: 0, byHand: false,
 } as Task);
 const tasks = states.map((s, i) => task(i + 1, s)); // GA-1 To do … GA-4 Done, GA-5 Cancelled
 const card = (html: string, id: string) => {

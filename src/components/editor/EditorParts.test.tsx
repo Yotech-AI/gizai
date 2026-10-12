@@ -353,6 +353,24 @@ describe("The file tree", () => {
     }
   });
 
+  // The backend refuses changes inside an ignored folder, not to the folder itself (in_ignored_folder looks at the
+  // folders above a path), so the folder's own Rename and Delete stay on; an ignored file at the top makes new files
+  // next to it, at the top, which isn't ignored.
+  it("keeps Rename and Delete on for the ignored folder itself, and New on for an ignored file at the top", async () => {
+    showTree();
+    await rightClick("vendor");
+    for (const label of ["Rename", "Delete"]) {
+      expect(menuItem(label).props.disabled, label).toBeFalsy();
+      expect(menuItem(label).props.title, label).toBeUndefined();
+    }
+    await fire(menuItem("Copy path"), "onClick");
+    await rightClick(".env");
+    for (const label of ["New file", "New folder", "Rename", "Delete"]) {
+      expect(menuItem(label).props.disabled, label).toBeFalsy();
+      expect(menuItem(label).props.title, label).toBeUndefined();
+    }
+  });
+
   it("marks a file over 1 MB read-only with a lock, saying why", () => {
     showTree();
     expect(hasLock("dump.sql")).toBe(true);
@@ -609,6 +627,18 @@ describe("Search in the folder", () => {
     await typeIn(searchBox(), "return");
     await wait(300);
     expect(findAll(hitRows()[0]!.el, (x) => x.type === "mark").map(text)).toEqual(["return"]);
+  });
+
+  it("marks what a regular expression finds on lines indented with tabs, and a long line from a little before it, with …", async () => {
+    const long = `\t\t${"x".repeat(50)}\treturn $invoice;`;
+    h.api.editorSearch = async () => ({ hits: [hit("app/Jobs/Send.php", 9, 3, "\t\treturn $invoice;"), hit("app/Jobs/Send.php", 12, 54, long)], truncated: false });
+    show(() => <SearchHost />);
+    await fire(byLabel("Regular expression"), "onClick");
+    await typeIn(searchBox(), "ret\\w+");
+    await wait(300);
+    expect(calls("editorSearch").at(-1)).toEqual(["/home/me/Herd/kade-portal", "ret\\w+", false, false, true]);
+    expect(hitRows().map((f) => findAll(f.el, (x) => x.type === "mark").map(text))).toEqual([["return"], ["return"]]);
+    expect(text(byClass("tx", hitRows()[1]!.el)[0]!)).toBe(`…${"x".repeat(23)}  return $invoice;`);
   });
 
   it("opens the file at the hit's line and column on a click, or with Enter on the hit, and the first hit with Enter in the box", async () => {

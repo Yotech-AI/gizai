@@ -503,6 +503,28 @@ describe("a hit's line as shown (GA-113)", () => {
     expect(hitParts({ path: "a.go", line: 1, column: 2, text: "\tfoo()" }, "foo", plain)).toEqual({ before: "  ", match: "foo", after: "()" });
     expect(hitParts({ path: "a.go", line: 1, column: 3, text: "\t\tbar := foo" }, "bar", plain)).toEqual({ before: "    ", match: "bar", after: " := foo" });
   });
+  it("marks what a regular expression finds on a line indented with tabs, widening a tab inside the match too", () => {
+    expect(hitParts({ path: "a.php", line: 1, column: 3, text: "\t\treturn $invoice;" }, "ret\\w+", regex)).toEqual({ before: "    ", match: "return", after: " $invoice;" });
+    expect(hitParts({ path: "a.php", line: 1, column: 3, text: "\t\tRETURN $x;" }, "return", { regex: true, caseSensitive: true })).toEqual({ before: "    ", match: "", after: "RETURN $x;" });
+    // the match itself holds a tab: "=>\t'x'" from column 6
+    expect(hitParts({ path: "a.php", line: 1, column: 6, text: "\t'a' =>\t'x'," }, "=>\\s+'x'", regex)).toEqual({ before: "  'a' ", match: "=>  'x'", after: "," });
+  });
+  it("marks the word with Match case and Words on a line indented with tabs (the toggles only change what git finds)", () => {
+    expect(hitParts({ path: "a.go", line: 1, column: 2, text: "\tfoo := foobar" }, "foo", { regex: false, caseSensitive: true })).toEqual({ before: "  ", match: "foo", after: " := foobar" });
+    expect(hitParts({ path: "a.go", line: 1, column: 9, text: "\tfoo := foobar" }, "foobar", plain)).toEqual({ before: "  foo := ", match: "foobar", after: "" });
+  });
+  it("starts a long line indented with tabs a little before its match, with …, counting each tab as one", () => {
+    // "needle" is at index 53: 2 tabs, 50 x's, a tab; 24 characters before it are 23 x's and the tab.
+    const text = `\t\t${"x".repeat(50)}\tneedle()`;
+    expect(hitParts({ path: "a.go", line: 1, column: 54, text }, "needle", plain)).toEqual({ before: `…${"x".repeat(23)}  `, match: "needle", after: "()" });
+    // only tabs before the match: the 24 kept are widened, so 48 spaces
+    expect(hitParts({ path: "a.go", line: 1, column: 46, text: `${"\t".repeat(45)}needle` }, "needle", plain)).toEqual({ before: `…${" ".repeat(48)}`, match: "needle", after: "" });
+  });
+  it("marks the match after letters outside the basic plane, git's column counting them as JavaScript does (UTF-16)", () => {
+    // the backend turns git's byte column into UTF-16 units: "😀\t" is 3, so needle is at column 4
+    expect(hitParts({ path: "a.md", line: 1, column: 4, text: "😀\tneedle" }, "needle", plain)).toEqual({ before: "😀  ", match: "needle", after: "" });
+    expect(hitParts({ path: "a.md", line: 1, column: 7, text: "héllo needle" }, "needle", plain)).toEqual({ before: "héllo ", match: "needle", after: "" });
+  });
   it("keeps the column within the line", () => {
     expect(hitParts({ path: "a.ts", line: 1, column: 99, text: "short" }, "x", plain)).toEqual({ before: "short", match: "", after: "" });
   });

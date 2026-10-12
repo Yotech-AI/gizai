@@ -41,6 +41,7 @@ let liveChats: ChatStatus[] = [];
 vi.mock("../lib/useLiveRuns", () => ({ useLiveRuns: () => liveRuns }));
 vi.mock("../components/chat/useChat", () => ({ useChatLive: () => liveChats }));
 vi.mock("../components/UpdateSettings", () => ({ UpdateSettings: () => <section className="form-section"><h3>Updates</h3></section> }));
+vi.mock("../components/EditorFoldersSetting", () => ({ EditorFoldersSetting: () => null }));
 vi.mock("../components/CliSettings", () => ({ CliSettings: () => null }));
 vi.mock("../components/GithubSettings", () => ({ GithubSettings: () => null }));
 vi.mock("../components/BitbucketSettings", () => ({ BitbucketSettings: () => null }));

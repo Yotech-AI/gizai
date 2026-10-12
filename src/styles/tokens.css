@@ -65,6 +65,9 @@
   --syn-operator: var(--text-2);
   --syn-punctuation: var(--text-2);
   --syn-invalid: var(--danger);
+  --git-modified: #e3bd3c;
+  --git-added: var(--diff-add);
+  --git-deleted: var(--diff-del);
   --scrim: rgba(0, 0, 0, 0.55);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
   --shadow-drawer: -24px 0 48px rgba(0, 0, 0, 0.5);
@@ -115,6 +118,7 @@
   --syn-type: #855600;
   --syn-string: #9c4507;
   --syn-comment: #5f636e;
+  --git-modified: #7d5800;
   --scrim: rgba(20, 22, 27, 0.28);
   --shadow-pop: 0 12px 32px rgba(15, 17, 23, 0.14);
   --shadow-drawer: -24px 0 48px rgba(15, 17, 23, 0.12);
@@ -145,6 +149,10 @@
   --size-topbar: 52px;
   --size-row: 40px;
   --size-board-col: 286px;
+  --size-tree: 260px;
+  --size-tree-row: 28px;
+  --size-tab: 36px;
+  --size-statusbar: 24px;
   --font-sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
   --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
 }

@@ -9,6 +9,7 @@ import { AppearanceSettings } from "../components/AppearanceSettings";
 import { AskLeadSetting } from "../components/AskLeadSetting";
 import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
+import { EditorFoldersSetting } from "../components/EditorFoldersSetting";
 import { GithubSettings } from "../components/GithubSettings";
 import { McpSettings } from "../components/McpSettings";
 import { MemorySetting } from "../components/MemorySetting";
@@ -70,6 +71,7 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
         <div {...panel("general")}>
           <QuitSettings />
           <UpdateSettings />
+          <EditorFoldersSetting s={s} setS={setS} />
           <FormSection title="Data" text="Everything Gizai stores lives in this folder on this computer.">
             <Field label="Data folder" wide><span className="mono">{s.dataDir}</span></Field>
             <Field label="Worktrees" wide><span className="mono">{s.dataDir}/worktrees</span></Field>

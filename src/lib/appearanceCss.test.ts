@@ -44,7 +44,9 @@ const root = block(appearanceCss, ":root");
 describe("the sizes at the defaults", () => {
   it("are the design tokens' sizes, for every token appearance.css grows", () => {
     const grown = [...root.keys()].filter((k) => tokenSizes.has(k));
-    expect(grown.sort()).toEqual(["--fs", "--fs-lg", "--fs-md", "--fs-sm", "--fs-xl", "--fs-xs", "--size-board-col", "--size-row", "--size-side", "--size-topbar"]);
+    expect(grown.sort()).toEqual(["--fs", "--fs-lg", "--fs-md", "--fs-sm", "--fs-xl", "--fs-xs", "--size-board-col", "--size-row", "--size-side",
+      // GA-113: the Editor's tree, its rows, the tabs and the status bar grow like the sidebar and rows
+      "--size-statusbar", "--size-tab", "--size-topbar", "--size-tree", "--size-tree-row"]);
     for (const k of grown) expect([k, atDefault(root.get(k) ?? "")]).toEqual([k, tokenSizes.get(k)]);
   });
   it("keep the chat at the interface text (your messages, the composer) and Markdown at --fs-md, as before", () => {

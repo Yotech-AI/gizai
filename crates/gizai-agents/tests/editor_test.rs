@@ -783,6 +783,24 @@ fn search_finds_lines_with_git_grep_in_files_git_doesnt_ignore() {
     }
 }
 
+// The Editor marks a hit's match by cutting its line at `column` (src/lib/editor.ts hitParts): so a tab counts as one,
+// and letters count as JavaScript counts them (UTF-16), whatever git's byte column says.
+#[test]
+fn search_counts_a_hits_column_in_the_lines_own_characters_a_tab_as_one_and_utf16_beyond_ascii() {
+    let tmp = real_tempdir();
+    let dir = repo(tmp.path(), "shop", &[("Send.php", "<?php\n\t\treturn $invoice;\n"), ("notes.md", "😀\tneedle\nhé\tneedle\n"),
+                                          ("crlf.txt", "\tneedle\r\n")]);
+    let hits = |q: &str, how: Find| {
+        editor::search(&dir, q, how).unwrap().hits.into_iter().map(|h| (h.path, h.line, h.column, h.text)).collect::<Vec<_>>()
+    };
+    let s = |p: &str, l: u32, c: u32, t: &str| (p.to_string(), l, c, t.to_string());
+    assert_eq!(hits("return", Find::default()), [s("Send.php", 2, 3, "\t\treturn $invoice;")]);
+    assert_eq!(hits("ret\\w+", Find { regex: true, ..Default::default() }), [s("Send.php", 2, 3, "\t\treturn $invoice;")]);
+    assert_eq!(hits("return", Find { whole_word: true, case_sensitive: true, ..Default::default() }), [s("Send.php", 2, 3, "\t\treturn $invoice;")]);
+    // 😀 is 4 bytes and 2 UTF-16 units, é 2 bytes and 1 unit; a Windows line ending is left out of the text
+    assert_eq!(hits("needle", Find::default()), [s("crlf.txt", 1, 2, "\tneedle"), s("notes.md", 1, 4, "😀\tneedle"), s("notes.md", 2, 4, "hé\tneedle")]);
+}
+
 #[test]
 fn search_stops_at_2000_hits_or_after_its_time_and_says_so() {
     assert_eq!((editor::MAX_HITS, editor::SEARCH_LIMIT), (2000, Duration::from_secs(10)));

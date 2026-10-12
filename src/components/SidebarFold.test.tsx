@@ -101,13 +101,14 @@ function tree(): ReactElement<Props>[] {
   walk(Sidebar(props));
   return all;
 }
-const caret = (section: "agents" | "memory") => {
+type Section = "editor" | "agents" | "memory";
+const caret = (section: Section) => {
   const found = tree().filter((el) => el.type === "button" && el.props["aria-controls"] === `side-${section}`);
   expect(found).toHaveLength(1);
   return found[0]!.props as { onClick: () => void };
 };
-const heading = (section: "agents" | "memory") => {
-  const name = section === "agents" ? "Agents" : "Memory";
+const heading = (section: Section) => {
+  const name = section === "agents" ? "Agents" : section === "editor" ? "Editor" : "Memory";
   const found = tree().filter((el) => el.type === "span" && el.props.className === "fold" && [el.props.children].flat().includes(name));
   expect(found).toHaveLength(1);
   return found[0]!.props as { onClick: () => void };
@@ -115,7 +116,8 @@ const heading = (section: "agents" | "memory") => {
 
 /** A section of the rendered sidebar, from its heading to the next section. */
 function section(page: string, name: string): string {
-  const start = page.indexOf(`<div class="nav-section"${name === "Memory" ? ' aria-label="Memory"' : ""}><div class="nav-label">${name === "Agents" || name === "Memory" ? '<span class="fold">' : ""}${name}`);
+  const labelled = name === "Memory" || name === "Editor";
+  const start = page.indexOf(`<div class="nav-section"${labelled ? ` aria-label="${name}"` : ""}><div class="nav-label">${name === "Agents" || labelled ? '<span class="fold">' : ""}${name}`);
   expect(start, `the ${name} section`).toBeGreaterThan(-1);
   const end = page.indexOf('<div class="nav-section"', start + 1);
   return page.slice(start, end === -1 ? undefined : end);
@@ -143,17 +145,18 @@ describe("the carets on Agents and Memory (GA-90)", () => {
     expect(page).toContain('<div class="nav-list" id="side-agents" hidden=""></div>');
     expect(page).toContain('<div class="nav-list" id="side-memory" hidden=""></div>');
   });
-  it("are only on Agents and Memory: Work, Projects and Company have none", () => {
+  it("are only on Editor (GA-113), Agents and Memory: Work, Projects and Company have none", () => {
     const page = html();
-    expect(page.match(/aria-expanded=/g)).toHaveLength(2);
-    expect(page.match(/lucide-chevron-(down|up)/g)).toHaveLength(2);
+    expect(page.match(/aria-expanded=/g)).toHaveLength(3);
+    expect(page.match(/lucide-chevron-(down|up)/g)).toHaveLength(3);
+    expect([...page.matchAll(/aria-controls="side-(\w+)"/g)].map((m) => m[1])).toEqual(["editor", "agents", "memory"]);
     expect(head(page, "Work")).toBe('<div class="nav-section"><div class="nav-label">Work</div>');
     expect(page).toContain('<div class="nav-label">Company</div>');
   });
   it("are buttons, so Tab reaches them and Enter or Space clicks them", () => {
     const page = html();
     expect(page).not.toMatch(/tabindex="-1"/);
-    expect(tree().filter((el) => el.type === "button" && el.props["aria-controls"]).map((el) => typeof el.props.onClick)).toEqual(["function", "function"]);
+    expect(tree().filter((el) => el.type === "button" && el.props["aria-controls"]).map((el) => typeof el.props.onClick)).toEqual(["function", "function", "function"]);
   });
 });
 
@@ -364,5 +367,68 @@ describe("Memory entries for agents that share one folder (GA-96)", () => {
     const memory = section(html(), "Memory");
     expect(memory).toMatch(/href="#\/memory\/agent\/qa" title="QA Agent: its own folder">.*?<span class="count" title="Notes">1<\/span>/);
     expect(memory).toMatch(/<span>Team Lead<\/span><span class="meta"><span class="count" title="Notes">5<\/span>/);
+  });
+});
+
+// GA-113 QA: the Editor section, above Agents. It folds like Agents and Memory (the caret, the heading's text), its fold is
+// kept in gizai.sidebar.folded with theirs, and it lists the folders you opened (gizai.editor.opened, newest first).
+describe("the Editor section (GA-113)", () => {
+  const OPENED = "gizai.editor.opened";
+  it("sits between Projects and Agents, open at first, with + to open a folder before its caret", () => {
+    const page = reload();
+    expect(page.indexOf('aria-label="Editor"')).toBeGreaterThan(page.indexOf(">Projects<"));
+    expect(page.indexOf('aria-label="Editor"')).toBeLessThan(page.indexOf('<span class="fold">Agents'));
+    expect(head(page, "Editor")).toMatch(/^<div class="nav-section" aria-label="Editor"><div class="nav-label"><span class="fold">Editor<\/span><button aria-label="Open a folder" title="Open a folder"><svg[^>]*lucide-plus[^>]*>.*?<\/svg><\/button><button aria-expanded="true" aria-controls="side-editor" aria-label="Fold Editor" title="Fold Editor"><svg[^>]*class="lucide lucide-chevron-down icon sm"/);
+  });
+  it("says Open a folder while no folder was opened yet", () => {
+    expect(section(html(), "Editor")).toMatch(/<button class="nav-item"><svg[^>]*lucide-folder-code[^>]*>.*?<\/svg><span>Open a folder<\/span><\/button>/);
+  });
+  it("lists the folders you opened, newest first, each linking to its Editor page", () => {
+    store.set(OPENED, JSON.stringify(["/home/you/Herd/kade-portal", "/home/you/Herd/invoice-api"]));
+    const editor = section(reload(), "Editor");
+    expect([...editor.matchAll(/<a class="nav-item" href="([^"]+)"[^>]*>.*?<span>([^<]+)<\/span>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ["#/editor/%2Fhome%2Fyou%2FHerd%2Fkade-portal", "kade-portal"],
+      ["#/editor/%2Fhome%2Fyou%2FHerd%2Finvoice-api", "invoice-api"],
+    ]);
+    expect(editor).not.toContain("<span>Open a folder</span>");
+  });
+  it("marks the folder whose Editor page is open", () => {
+    store.set(OPENED, JSON.stringify(["/home/you/Herd/kade-portal"]));
+    slots.length = 0; slot = 0;
+    const page = renderToStaticMarkup(<Sidebar {...props} route={{ page: "editor", id: "/home/you/Herd/kade-portal" }} />);
+    expect(section(page, "Editor")).toContain('<a class="nav-item on" href="#/editor/%2Fhome%2Fyou%2FHerd%2Fkade-portal"');
+  });
+  it("folds with its caret, leaving only the heading, and shows its list again", () => {
+    store.set(OPENED, JSON.stringify(["/home/you/Herd/kade-portal"]));
+    const before = section(reload(), "Editor");
+    caret("editor").onClick();
+    const folded = section(html(), "Editor");
+    expect(folded).toMatch(/aria-expanded="false" aria-controls="side-editor" aria-label="Show Editor" title="Show Editor"><svg[^>]*class="lucide lucide-chevron-up icon sm"/);
+    expect(folded).toContain('<div class="nav-list" id="side-editor" hidden=""></div>');
+    expect(folded).not.toContain("kade-portal");
+    caret("editor").onClick();
+    expect(section(html(), "Editor")).toBe(before);
+  });
+  it("folds with a click on its heading's text too, and leaves Agents and Memory as they were", () => {
+    const open = html();
+    heading("editor").onClick();
+    const page = html();
+    expect(head(page, "Editor")).toContain('aria-label="Show Editor"');
+    expect(section(page, "Agents")).toBe(section(open, "Agents"));
+    expect(section(page, "Memory")).toBe(section(open, "Memory"));
+  });
+  it("is remembered: kept in gizai.sidebar.folded, and a reload shows it folded", () => {
+    caret("editor").onClick();
+    expect(store.get(KEY)).toBe("editor");
+    const page = reload();
+    expect(head(page, "Editor")).toContain('aria-expanded="false"');
+    expect(head(page, "Agents")).toContain('aria-expanded="true"');
+    caret("agents").onClick();
+    expect(store.get(KEY)).toBe("editor,agents");
+    caret("editor").onClick();
+    expect(store.get(KEY)).toBe("agents");
+    const again = reload();
+    expect(head(again, "Editor")).toContain('aria-expanded="true"');
+    expect(head(again, "Agents")).toContain('aria-expanded="false"');
   });
 });

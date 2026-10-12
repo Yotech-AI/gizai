@@ -281,6 +281,19 @@ async fn a_newer_write_for_the_same_note_replaces_the_older_whether_it_names_the
     assert_eq!(t.waiting(&thread), [append, newer]);
 }
 
+#[tokio::test]
+async fn a_call_gizai_cant_keep_is_still_not_run_and_the_team_lead_asks_you_in_a_new_message() {
+    let t = setup();
+    // an answer in a chat that isn't in the database (gone meanwhile): the call can't be kept for it
+    app_chat::mark_outside(&t.st, "no-such-chat", "mcp__otus__search");
+    let e = t.call(Some("no-such-chat"), "set_agent_status", json!({"agent": "Backend Agent", "status": "paused"})).await.unwrap_err();
+    assert!(e.starts_with("set_agent_status wasn't run: this answer used mcp__otus__search, a tool from outside Gizai, and Gizai couldn't keep \
+        the call for the user to approve ("), "{e}");
+    assert!(e.ends_with("). Tell the user what you would do and ask them to confirm it in a new message."), "{e}");
+    assert_eq!(team::agent(&t.st.db, &t.backend).unwrap().status, "active", "not run");
+    assert_eq!(t.rows(), 0);
+}
+
 // ---- every tool in the list ----
 
 #[tokio::test]
@@ -691,6 +704,13 @@ async fn the_team_leads_next_answer_starts_with_what_you_approved_and_discarded_
     assert!(last.contains(&line), "{last}");
     assert_eq!(last.matches("decided on calls of yours").count(), 1, "once: {last}");
     assert!(last.trim_end().ends_with("What did I decide?"), "your message comes after it: {last}");
+    // the Team Lead's instructions say how it works
+    let calls: Vec<Value> = std::fs::read_to_string(st.data_dir.join("chat/fake-calls.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let argv: Vec<String> = calls.last().unwrap()["argv"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_string()).collect();
+    let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
+    assert!(sys.contains(&format!("After a tool from outside Gizai, a call of yours that acts (runs, agents, columns, attach_file, update_checkout, \
+        memory's writes, merge_pull_request) isn't run: Gizai keeps it under your answer for {you} to approve with one click or discard. Say in a \
+        sentence what each such call does; don't make it again. A later message starts with what {you} decided, in square brackets.")), "{sys}");
     // heard: the answer after it doesn't hear it again
     assert!(pending::for_turn(&st, &thread).line.is_empty());
     let (_, s4) = turn(&st, Some(thread.clone()), "And now?").await;

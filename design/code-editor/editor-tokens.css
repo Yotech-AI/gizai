@@ -1,0 +1,67 @@
+/* The Editor's tokens (GA-105, D2 of the Code Editor), until they are in design/tokens.json and src/styles/tokens.css.
+
+   - syn-* and diff-* are D1's names (GA-104: colours for code and diffs). D1 sets their values; these are placeholders so
+     this page shows code in colour. Each one is at least 4.5:1 on bg, raised, side, hover and selected in both themes (the
+     numbers are on the page, under Tokens), and none has a teal or magenta hue. This file is loaded before tokens.css, so
+     once F0 puts D1's values there, those win and these only fill in what tokens.css doesn't have yet.
+   - git-* and the size-* below are new in D2. F2 adds them: git-* to tokens.json's two themes (git-added and git-deleted as
+     aliases of D1's diff-add and diff-del), the sizes to its sizes and, growing with the density and the Interface text
+     size like size-row and size-side, to appearance.css.
+
+   An alias is declared in each theme here, so a frame of this page in the other theme resolves it to its own colour. */
+
+:root, [data-theme="dark"] {
+  /* D1's syntax colours: placeholders */
+  --syn-keyword: #b197fc;
+  --syn-string: #a6d189;
+  --syn-number: #f29a4a;
+  --syn-comment: #8b8f99;
+  --syn-function: #7fa6ff;
+  --syn-type: #e3bd3c;
+  --syn-variable: #ededf0;
+  --syn-property: #c3cbef;
+  --syn-tag: #f2706b;
+  --syn-attribute: #f29a4a;
+  --syn-operator: #a5a8b1;
+  --syn-punctuation: #a5a8b1;
+  --syn-meta: #f78c6c;
+  --syn-invalid: #f2706b;
+  /* D1's + and − colours, which git's marks share: placeholders */
+  --diff-add: #5fcf8f;
+  --diff-del: #f47a75;
+  /* D2: git's mark on a file in the tree, on its tab and in the status bar */
+  --git-modified: #e3bd3c;
+  --git-added: var(--diff-add);
+  --git-deleted: var(--diff-del);
+}
+
+[data-theme="light"] {
+  --syn-keyword: #6f42c1;
+  --syn-string: #2f6f1f;
+  --syn-number: #a14a06;
+  --syn-comment: #5f636e;
+  --syn-function: #2556c6;
+  --syn-type: #7d5800;
+  --syn-variable: #14161b;
+  --syn-property: #35447a;
+  --syn-tag: #c0302b;
+  --syn-attribute: #a14a06;
+  --syn-operator: #4b4f59;
+  --syn-punctuation: #4b4f59;
+  --syn-meta: #a83f18;
+  --syn-invalid: #c0302b;
+  --diff-add: #13703a;
+  --diff-del: #bf302a;
+  --git-modified: #7d5800;
+  --git-added: var(--diff-add);
+  --git-deleted: var(--diff-del);
+}
+
+:root {
+  /* D2: the Editor's layout. The file tree is as wide as the chat's list of threads and grows like it; its rows, the tabs
+     and the status bar grow with the density (--ui-box), like size-row and size-topbar. */
+  --size-tree: calc(260px + 6 * var(--ui-grow, 0px));
+  --size-tree-row: calc(28px + var(--ui-box, 0px));
+  --size-tab: calc(36px + var(--ui-box, 0px));
+  --size-statusbar: calc(24px + var(--ui-box, 0px));
+}

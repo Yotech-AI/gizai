@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use portable_pty::ChildKiller;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 
@@ -286,6 +288,7 @@ impl Terminals {
         let mut out = lock(&s.out);
         out.generation += 1;
         out.listener = Some(output);
+        out.attached = true;
         out.pending = kept(&out.kept, out.wrapped);
         out.unacked = out.pending.len() as u64;
         out.paused = out.unacked > PAUSE_ABOVE;
@@ -446,7 +449,10 @@ struct Out {
     wrapped: bool,
     /// Read and not sent yet.
     pending: Vec<u8>,
+    /// The listener; out of here while the sender calls it.
     listener: Option<Output>,
+    /// A listener is attached (also while the sender calls it): what is read goes to `pending`.
+    attached: bool,
     /// Counts the listeners attached, so a send to one that was replaced meanwhile doesn't bring it back.
     generation: u64,
     /// Sent, or about to be, and not acknowledged.
@@ -472,6 +478,8 @@ enum Todo {
 /// How a shell ended.
 enum Exit {
     Code(i32),
+    /// Linux and macOS: the signal that ended it (Windows has no signals).
+    #[cfg_attr(windows, allow(dead_code))]
     Signal(String),
 }
 
@@ -564,7 +572,7 @@ impl Session {
             out.kept.drain(..over);
             out.wrapped = true;
         }
-        if out.listener.is_some() && !bytes.is_empty() {
+        if out.attached && !bytes.is_empty() {
             out.pending.extend_from_slice(bytes);
             out.unacked += bytes.len() as u64;
             if out.unacked > PAUSE_ABOVE {
@@ -587,7 +595,7 @@ impl Session {
         }
         let Some(at) = bytes.windows(ASK.len()).position(|w| w == ASK) else { return Cow::Borrowed(bytes) };
         out.asked_cursor = true;
-        if out.listener.is_some() {
+        if out.attached {
             return Cow::Borrowed(bytes);
         }
         self.todo(Todo::Input(b"\x1b[1;1R".to_vec()));
@@ -628,6 +636,7 @@ impl Session {
                             out.listener = Some(listener);
                         } else {
                             // gone (the window reloaded): reading goes on, for the next listener
+                            out.attached = false;
                             out.pending.clear();
                             out.unacked = 0;
                             out.paused = false;
@@ -825,7 +834,7 @@ impl Session {
 
     /// The rest of `close`. Linux and macOS: waits until nothing runs in the terminal's session any more; at `deadline`
     /// SIGKILL goes to every process still in it (one that ignores SIGHUP, as `nohup` makes it), and it waits a moment
-    /// more for them to go. Then the shell may be reaped.
+    /// more for them to go. Then the shell is reaped, so its id is gone too when `close` returns.
     fn finish_end(&self, deadline: Instant) {
         #[cfg(unix)]
         if !self.reaped.load(Ordering::SeqCst) {
@@ -847,9 +856,17 @@ impl Session {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
+        self.set_done();
+        // Linux and macOS: the waiter reaps the shell now (at once: nothing runs in its session any more)
+        #[cfg(unix)]
+        {
+            let reaped_by = Instant::now() + Duration::from_secs(1);
+            while !self.reaped.load(Ordering::SeqCst) && Instant::now() < reaped_by {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         #[cfg(windows)]
         let _ = deadline;
-        self.set_done();
     }
 
     /// Stops reading, sending and writing, drops what was kept, and closes the pseudo-terminal (on Windows on the
@@ -859,6 +876,7 @@ impl Session {
             let mut out = lock(&self.out);
             out.closing = true;
             out.listener = None;
+            out.attached = false;
             out.pending = Vec::new();
             out.kept = VecDeque::new();
             self.out_moved.notify_all();

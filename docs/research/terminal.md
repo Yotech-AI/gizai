@@ -128,7 +128,7 @@ Answer:
   - *WebView2 (Windows):* Chromium, as under VS Code. WebGL2 works on a GPU. With Chromium's software WebGL (a virtual machine, a blocked driver) characters can go missing. So, as Proxmox does for its xterm.js console, WebGL is only used when `getContext("webgl2", { failIfMajorPerformanceCaveat: true })` gives a context [V the Proxmox patch, 2023-10-25].
   - *WKWebView (macOS):* WebGL2 since Safari 15 (2021), on Metal [V WebKit's blog]. The WebKit of the macOS versions Gizai supports has it [I: Gizai's oldest macOS isn't written down].
   - *WebKitGTK (Linux):* WebGL2 since WebKitGTK 2.40 (March 2023), through ANGLE [V webkitgtk.org]. Whether it is fast depends on the GPU driver. A known WebKit bug draws green artifacts on a *transparent* canvas; it was reported from a Tauri app with xterm.js on Linux and is still open [V bugs.webkit.org 264268]. So Gizai keeps xterm.js's `allowTransparency` off (the default) and the terminal's background opaque.
-  - *Context limits:* a page keeps only a limited number of WebGL contexts alive and drops the oldest. WebKit recycles older contexts [V WebKit's commit "Creating a large number of WebGL contexts should recycle older contexts"]; Chromium's limit is 16 [I: from forum reports, not Chromium's source]. With "any number" of terminals, the view on screen loads the WebGL addon and a view that leaves the screen disposes of it. At most one or two contexts are then in use. [I]
+  - *Context limits:* a page keeps only a limited number of WebGL contexts alive and drops the oldest. WebKit keeps at most 16 and recycles the oldest (`maxActiveContexts = 16`) [V WebKit's `WebGLRenderingContextBase.cpp`]; Chromium's limit is 16 too [I: from forum reports, not Chromium's source]. With "any number" of terminals, the view on screen loads the WebGL addon and a view that leaves the screen disposes of it. At most one or two contexts are then in use. [I]
   - *Recommendation:* WebGL when a hardware WebGL2 context is available, else the DOM renderer. When the WebGL context is lost (a GPU reset, the system sleeping), dispose of the addon and go on with the DOM renderer, as the addon's README advises (`onContextLoss`) [V the README]. TF0 measures `yes`, `cat` of a 50 MB file and htop with both renderers on the three systems before this is settled (I: nothing was measured in this run).
 - **Speed with a lot of output:** Q1's flow control keeps at most about 500 KB waiting in xterm.js, whose parser runs on the window's main thread. A terminal that isn't on screen still parses what arrives, so its scrollback stays whole, but it draws nothing [I: xterm.js pauses drawing for an element that isn't visible; its render service wasn't re-read in this run]. **Scrollback costs memory:** xterm.js keeps 3 × 32 bits per cell (`CELL_SIZE = 3`, `BufferLine.ts`) [V], so 5,000 lines of 120 columns are about 7 MB per terminal when full, about 70 MB for ten. Q3 recommends 5,000 lines anyway: VS Code keeps 1,000 [V `terminalConfiguration.ts`], which is short for a build log.
 - **Copy and paste.** Selecting with the mouse works as in any terminal. Copy (the keys in §5.2) takes xterm.js's `getSelection()` and writes it with `navigator.clipboard.writeText`, as Gizai already does elsewhere (`src/pages/EditorPage.tsx:403`). [V Gizai; I design]
@@ -147,10 +147,10 @@ Recommendation: xterm.js 6 with the fit, webgl, search, web-links and unicode11 
 Answer and recommendation:
 
 - **Any number at once**, each a row under Terminal (§5.1). The backend keeps them in a list in `AppState` (TB), in the order opened; the window keeps the same list (`terminal_list`, `terminals-changed`). A terminal costs a shell process, two threads in Gizai (reading and writing) and its scrollback in the window. [I]
-- **Closing ends the shell and everything it started, as Stop ends a run**, in two steps like Stop's (`process.rs:243-276`) [V Stop; I the steps]:
+- **Closing ends the shell and everything it started, as Stop ends a run**, in two steps, like the clean-up after a run ends (SIGTERM, then SIGKILL after 3 s, `crates/gizai-agents/src/process.rs:263-276`; Stop itself is `:249-261`) [V Stop; I the steps]:
   - *Linux and macOS:* SIGHUP to the terminal's foreground process group and to the shell's own group, then closing the pseudo-terminal (the kernel then sends SIGHUP to the shell's session, as when a terminal window closes). After 3 s, SIGKILL to every process still attached to the terminal: on Linux the processes whose `/proc/<pid>/stat` names it as their controlling terminal (`tty_nr`, field 7 [V proc_pid_stat(5)]), on macOS those `sysctl` lists for it with `KERN_PROC_TTY` (in `libc` 0.2.190, the version Gizai locks [V docs.rs, `Cargo.lock:2179-2180`]). That reaches background jobs and `nohup` programs too, which live in other process groups of the same terminal and which `kill(-group)` alone would miss. A program that left the terminal on purpose (`setsid`, a daemon) keeps running, as it would after closing any terminal window. Gizai's own `spawn_tree` can't be used as it is: it puts the child in a new process group (`os.rs:255`), and a terminal's shell must lead a new session instead, which `portable-pty` does itself (§3.2 Q1). [V `os.rs`; I the rest]
   - *Windows:* right after the shell starts, TB puts it in a **Job Object** with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, the same kind `spawn_tree` uses for agents (`os.rs:341-364`), so everything the shell starts is in the job. Close ends the job (`TerminateJobObject`, as `Tree::end`, `os.rs:222-226`) and closes the pseudo-console. The shell runs for a few microseconds before it is in the job, too short to start anything. [V `os.rs`; I the gap]
-- **They keep running when you leave the page or hide the panel.** The backend reads every terminal all the time, and the window writes what arrives into that terminal's one xterm.js view, which lives for the terminal's life outside the pages (§5.3). Pages unmount when you leave them (`App.tsx:159-175`), so the view can't live inside one. A view that isn't on screen still takes in output and acknowledges it, so no program stalls because you looked away. [V the unmount; I design]
+- **They keep running when you leave the page or hide the panel.** The backend reads every terminal all the time, and the window writes what arrives into that terminal's one xterm.js view, which lives for the terminal's life outside the pages (§5.3). Pages unmount when you leave them (`src/App.tsx:165-181`), so the view can't live inside one. A view that isn't on screen still takes in output and acknowledges it, so no program stalls because you looked away. [V the unmount; I design]
 - **When Gizai quits,** every terminal ends, with the steps above, in `quit.rs`'s exit path next to the agents (`end_agents`, `quit.rs:52-60`). Closing the window only hides it (`lib.rs:612-624`), so terminals keep running then, like agents. If Gizai crashes, Linux and macOS close its pseudo-terminals with the process (SIGHUP to each shell) and Windows ends the jobs when their last handle goes, so no shell is left behind. Nothing is restored at the next start (question 6). [V quit and window; I crash behaviour]
 - **Scrollback: 5,000 lines** per terminal, in memory only (VS Code's default is 1,000 [V `terminalConfiguration.ts`]); Clear empties it. §3.2 Q2 gives what that costs.
 - **Very many open:** no limit and no dialog. From the 20th, New terminal says "20 terminals are open: each keeps its shell running until you close it." The folded heading always says how many are open. [I]
@@ -190,7 +190,50 @@ Answer: §5.1 (sidebar section, New terminal, the Terminal page with its tabs, t
 
 **Q8. Free or paid.**
 
-Answer: free. `docs/PAID-FEATURES.md` keeps the whole desktop app free and sells only hosted services; "the code editor and a card's changes" is on its free list (`:36`) and in the plans table's first row (`:46`). [V] A terminal runs entirely on your computer, so nothing in it could be a hosted service. Recommendation: TF1 writes "the terminal" next to the code editor in both places and in README.md.
+Answer: free. `docs/PAID-FEATURES.md` keeps the whole desktop app free and sells only hosted services; "the code editor and a card's changes" is on its free list (`:36`) and in the plans table's first feature row (`:46`, under Price). [V] A terminal runs entirely on your computer, so nothing in it could be a hosted service. Recommendation: TF1 writes "the terminal" next to the code editor in both places and in README.md.
+
+---
+
+## 4. Options
+
+All three options draw the terminal with xterm.js (§3.2 Q2). It is the maintained terminal emulator for web pages, and VS Code's. They differ in what starts and keeps the shells, and in how the output reaches the window.
+
+### Option A (recommended): Gizai's own terminal sessions on `portable-pty`, a `Channel` per terminal
+
+- **What it takes:** a terminal module in `gizai-agents` (sessions, reading, writing, resizing, ending with everything a shell started). It comes with Tauri commands that check the folder, and one event. The window gets one xterm.js view per session, moved between places (§5.3).
+- **Libraries:**
+  - `portable-pty` 0.9.0: MIT, from WezTerm, 20 million downloads; released in February 2025, with fixes on WezTerm's main branch since (§3.2 Q1).
+  - `@xterm/xterm` 6.0.0 and five addons, all MIT: about 470 KB minified for xterm.js and the WebGL addon [V unpkg]. They go in a chunk of their own that loads with the first terminal, through a dynamic `import()` [I].
+  - Tauri's clipboard plugin, for paste on Linux.
+- **Risks:**
+  - portable-pty's slow releases. Mitigation: pin it, and take a git dependency or a copy if a fix is needed.
+  - ConPTY's ways: the cursor-position question when it starts, and redraws after a resize.
+  - WebGL in WebKitGTK, which depends on the GPU driver. Mitigation: the DOM renderer as the fallback.
+  - The window's main thread when output floods. Mitigation: the acknowledgements.
+  
+  All are measurable in TB's and TF0's tests. [I]
+- **Size:** TB about 1,500–2,500 lines with its tests; TF0 about 1,000–1,500; TF1 and TF2 about 800–1,500 each. Merged card PRs here have a median of 964 changed lines [I, from the R&D notes on this repository].
+
+### Option B: `tauri-plugin-pty`, with the window driving the terminals
+
+- **What it takes:** the plugin in Rust and its npm package; the window starts the shell, writes, resizes and kills through the plugin's commands, and reads by calling `read` in a loop.
+- **Libraries:** `tauri-plugin-pty` 0.3.1 (MIT; built on portable-pty; 50 thousand downloads; first published December 2023, last July 2026; its README says "Developing!") and `tauri-pty` 0.3.1 [V crates.io, `npm view`, its `lib.rs` 0.3.1].
+- **Risks:**
+  - Its `spawn` takes any program, arguments, folder and environment from the window, with no allow-list [V `lib.rs`]. Today Gizai gives the window no way to start a program (`src-tauri/capabilities/default.json:8-13`).
+  - Output comes by polling, 4,096 bytes per `read`, with no flow control [V].
+  - `kill` ends the shell only, through portable-pty's `ChildKiller`, so on Windows it hits the inverted `kill()` result of Q1, and nothing it started is ended.
+  - Closing it to the window and adding the folder rules, closing and flow control means writing option A on top of it.
+- **Size:** a few hundred lines at first; then the security and closing work of option A comes back. [I]
+
+### Option C: Gizai's own sessions, with the screen kept in Rust (`alacritty_terminal`)
+
+- **What it takes:** Alacritty's terminal library parses the output into a screen grid in Rust, as Zed does for its native terminal. The window draws that grid, either through a renderer of Gizai's own or by turning grid updates back into escape sequences for xterm.js.
+- **Libraries:** `alacritty_terminal` 0.26.0 (Apache-2.0, April 2026, 2 million downloads) [V crates.io]; it includes its own pseudo-terminal code.
+- **What it would give:** the backend knows the screen, so a reloaded window, or two windows showing one terminal at once, get the exact screen.
+- **Risks:** with its own renderer, Gizai would rebuild selection, find, links, input encoding, screen readers and speed, which xterm.js already has. With xterm.js on top, the screen is parsed twice. Either way it is the largest option, and the only thing it gives is what §5.3's 256 KB replay already gives closely enough. [I]
+- **Size:** about two to three times option A's TB and TF0. [I]
+
+**Recommended: option A.** It keeps every program start in Rust behind the Editor's folder rules, and ends a terminal with everything it started, as Gizai ends agents. It streams output with flow control, and it uses the pseudo-terminal layer of WezTerm and the terminal of VS Code. One terminal in two places works by moving one view (§3.2 Q4), so option A doesn't need option C's screen in Rust.
 
 ---
 
@@ -222,7 +265,7 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 - **Rows:** one per open terminal, any number, in the order they were opened (a new one at the bottom, so rows don't move under the mouse). Each is a link to `#/terminal/<id>`, highlighted (`.on`) while its page shows. The name (§3.2 Q5) and, on the right in `text-3`, the program running in it now (`npm`, `cargo`, `vim`), nothing while the shell waits for a command, or `ended` when the shell ended. Never teal or a pulse: those mean an agent at work (`design/README.md:36-37`).
 - **No × on the row** (D2's rule: no button inside a row that is a link, `gen-editor.mjs:552`). Closing is in the row's menu, a middle click, and the × on the terminal's tab.
 - **Right click** (or the context menu key, Shift+F10): Rename (F2), Show in the Editor (opens its folder in the Editor with this terminal in the panel), Copy folder path, Close. Close on a terminal with a program running asks under the row: "npm is still running in gizai 2. Close it and end npm? [Close] [Cancel]".
-- **Folded:** the heading shows how many are open, "3 open", like the Editor's "2 behind".
+- **Folded:** the heading shows how many are open, "3 open", like the "2 behind" D2 drew on the Editor's folded heading (`design/code-editor/gen-editor.mjs:61`; the app doesn't show it yet, `src/components/Sidebar.tsx:181`, `:219`).
 - **None open:** one row, "New terminal", as the Editor's "Open a folder" row.
 
 **Screen 2: New terminal.** `+` opens the Editor's folder picker (`FolderPicker.tsx`) titled "New terminal in": the same groups (Projects, In ~/Herd, Cards) and search box, with the folder the main panel shows now (the Editor's folder, or the current terminal's folder) on top. Enter starts it and opens its page. Ctrl+Shift+\` starts one at once in the folder you are in, without the picker (§5.2).
@@ -275,7 +318,7 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 - **Its own tabs:** this folder's terminals (the same as on the Terminal page), `+`, ×, the running program; on the right **Own page** (opens `#/terminal/<id>`) and **Hide** (Lucide `chevron-down`, Ctrl+\`). Hiding keeps every terminal running; closing the last tab hides the panel. Whether the panel was open is remembered per folder, like the folder's file tabs (`gizai.editor.tabs`, `src/lib/editor.ts:59-87`).
 - **A card's worktree an agent works on** (the Editor's read-only folder, `folder.readOnly`): the button is off, with the folder's reason ("QA Agent is working on GA-118: a terminal there waits until its run ends"); a terminal opened before the run started stays, with the Editor's read-only bar above. (Open question 3.)
 
-**Screen 5: one terminal, two places.** Only one page shows at a time (`App.tsx:159-175`), so the Terminal page and the Editor's panel are never on screen together. A terminal moves with you: open gizai 2 from the sidebar and the page has it; go back to the Editor and the panel has it again, with everything on it, its scrollback, what runs in it and its selection. The terminal takes the size of where it is (120 × 12 in the panel, 132 × 38 on the page), and a full-screen program (vim, htop) redraws at the new size. When two places want it at once, which a second window or a split could bring later, **the place that asked last shows it** and the other shows a quiet placeholder: "gizai 2 is on its own page. [Show here]". VS Code works the same way: a terminal is in one place at a time and moves between the panel and the editor area [V VS Code's docs]. §5.3 says how.
+**Screen 5: one terminal, two places.** Only one page shows at a time (`src/App.tsx:165-181`), so the Terminal page and the Editor's panel are never on screen together. A terminal moves with you: open gizai 2 from the sidebar and the page has it; go back to the Editor and the panel has it again, with everything on it, its scrollback, what runs in it and its selection. The terminal takes the size of where it is (120 × 12 in the panel, 132 × 38 on the page), and a full-screen program (vim, htop) redraws at the new size. When two places want it at once, which a second window or a split could bring later, **the place that asked last shows it** and the other shows a quiet placeholder: "gizai 2 is on its own page. [Show here]". VS Code works the same way: a terminal is in one place at a time and moves between the panel and the editor area [V VS Code's docs]. §5.3 says how.
 
 ### 5.2 Keys
 
@@ -292,14 +335,105 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 
 The key for Ctrl+\` is read by where it is (`KeyboardEvent.code === "Backquote"`, the key left of 1), so it works on keyboards where that key has another character. [I]
 
+### 5.3 One view per terminal: the code's shape
+
+The store lives in a module, `src/lib/terminals.ts` (TF0), started once by `App`, not by a page, because pages unmount when you leave them (`src/App.tsx:165-181`). [V the unmount; I the rest]
+
+```ts
+// src/lib/terminals.ts (TF0): one view per session, for the session's whole life
+type View = { term: Terminal; fit: FitAddon; host: HTMLDivElement; webgl: WebglAddon | null; place: HTMLElement | null };
+const views = new Map<string, View>();
+
+function create(s: TerminalSession) {              // when terminal_list or terminals-changed brings a new session
+  const host = document.createElement("div");      // the view's own element: this is what moves between places
+  const term = new Terminal({ scrollback: 5000, customGlyphs: true, rescaleOverlappingGlyphs: true,
+                              minimumContrastRatio: 4.5, fontFamily: monoFont(), theme: themeFromTokens() });
+  const fit = new FitAddon();
+  term.loadAddon(fit); /* + unicode11, search, web-links with Gizai's handler */
+  term.open(host);                                 // once, before any place shows it
+  term.onData((d) => terminalInput(s.id, d));
+  term.onBinary((d) => terminalInput(s.id, d, true));
+  let written = 0;                                 // flow control, §3.2 Q1
+  terminalAttach(s.id, (bytes) => term.write(bytes, () => {
+    written += bytes.length;
+    if (written >= 100_000) { terminalAck(s.id, written); written = 0; }
+  }));
+  views.set(s.id, { term, fit, host, webgl: null, place: null });
+}
+
+export function show(id: string, place: HTMLElement) {  // a place (the page, the panel) wants the terminal
+  const v = views.get(id); if (!v) return;
+  if (v.place && v.place !== place) left(v.place, id);  // the other place shows "Show here" (§5.1, Screen 5)
+  place.appendChild(v.host);                       // moves the element: buffer, scrollback, cursor and selection stay
+  v.place = place;
+  v.term.open(v.host);                             // as VS Code's attachToElement does; cheap when already open
+  if (!v.webgl && hardwareWebgl2()) {              // WebGL only while on screen (§3.2 Q2)
+    v.webgl = new WebglAddon();
+    v.webgl.onContextLoss(() => { v.webgl?.dispose(); v.webgl = null; });  // falls back to the DOM renderer
+    v.term.loadAddon(v.webgl);
+  }
+  v.fit.fit();
+  terminalResize(id, v.term.cols, v.term.rows);
+}
+
+export function hide(id: string, place: HTMLElement) {  // the place goes: page left, panel hidden, another tab
+  const v = views.get(id);
+  if (!v || v.place !== place) return;             // another place has it already
+  v.webgl?.dispose(); v.webgl = null;              // frees the WebGL context; the buffer stays
+  v.host.remove(); v.place = null;                 // still takes in output and acknowledges it
+}
+// when a session closes: views.get(id)?.term.dispose(); views.delete(id)
+```
+
+```tsx
+// src/components/terminal/TerminalView.tsx (TF0): a place, used by the Terminal page (TF1) and the Editor's panel (TF2)
+export function TerminalView({ id }: { id: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current!;
+    show(id, el);
+    const ro = new ResizeObserver(() => refit(id));  // fit, then terminal_resize at most every 50 ms
+    ro.observe(el);
+    return () => { ro.disconnect(); hide(id, el); };
+  }, [id]);
+  return <div ref={ref} className="term-place" />;
+}
+```
+
+- **A reloaded window** (a reload in development, or WebKitGTK's page process restarting) rebuilds the store from `terminal_list`. Each view attaches again, and TB first sends the last 256 KB it kept, so the screen and recent output come back. Full-screen programs redraw at the next resize. [I]
+- **An ended shell** keeps its view with `disableStdin`, until the terminal is closed (§5.1, Screen 3). [I]
+- **Themes and fonts:** the store listens to `appearance.ts` (§3.2 Q2) and sets `term.options.theme` and `fontFamily` and `fontSize` on every view; the view on screen fits again. [I]
+
+### 5.4 Terminal colours and the font
+
+- **Tokens:** TD defines `term-*` tokens in `design/tokens.json` for dark and light: `term-fg`, `term-bg`, `term-cursor`, `term-cursor-text`, `term-selection`, `term-selection-inactive`, and the 16 colours `term-black` … `term-bright-white`. TF0 generates them into `src/styles/tokens.css` with `scripts/tokens-css.ts`, as every token is generated (`tokens.css:1`). [V the generator; I the names]
+- **Into xterm.js:** xterm.js takes colours as strings, not CSS variables. So the store reads each token with `getComputedStyle(document.documentElement).getPropertyValue("--term-red")` when it starts and after each theme change. A token written as `var(--…)` (as `--st-review: var(--needs)`, `tokens.css:34`) arrives resolved. [V the token style; I the rest]
+- **The background** is the code's background, so the Editor's panel and the code above it are one surface; the panel's top border is the drag handle. [I]
+- **The rules of `design/README.md`:** teal (`--live`) only for an agent at work and magenta (`--needs`) only for "needs you" (`design/README.md:35-38`). A program's cyan and magenta are its own output, not Gizai's states, so TD picks `term-cyan` and `term-magenta` clearly apart from `--live` and `--needs` (TD's acceptance criteria). [V the rule; I the reading]
+- **The font:** `--font-mono` at the code size (`.t-code`, 12.5px on 20px lines, `tokens.css:171`): xterm.js gets `fontSize: 12.5` and `lineHeight: 1.6`. It follows Settings → Appearance (`src/styles/appearance.css:11-15`); box drawing as in §3.2 Q2. [V the sizes; I the mapping]
+
+### 5.5 The data, the commands and the files
+
+- **Data:** no database table and nothing on disk. TB keeps the sessions in memory in `AppState` (the shell, the reader and writer threads, the 256 KB of recent output, the counters for acknowledgements). The window keeps the views (§5.3). `localStorage` gets only the layout: `"terminal"` in `gizai.sidebar.folded`; the panel's height share in `gizai.editor.panel`; and whether the panel was open, per folder, with the folder's tabs (`gizai.editor.tabs`, `src/lib/editor.ts:59-87`). It never gets a terminal's name, folder or output. [V the keys today; I the new ones]
+- **Commands and the event:** contract CT (§6), word for word.
+- **Files** [I]:
+
+| Card | New | Changed |
+|---|---|---|
+| TD | `design/terminal/gen-terminal.mjs`, `design/terminal/terminal.html` | `design/README.md` (the terminal colours' rule) |
+| TB | `crates/gizai-agents/src/terminal.rs`, `src-tauri/src/terminal.rs`, `crates/gizai-agents/tests/terminal_test.rs`, a flow test in `src-tauri/tests/` | `crates/gizai-agents/Cargo.toml` (`portable-pty`), `crates/gizai-agents/src/os.rs` (the shell, the Job Object, the processes on a terminal), `src-tauri/src/lib.rs` (`AppState.terminals`, the commands, the clipboard plugin), `src-tauri/src/quit.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tests/tools_test.rs`, `src/api.ts`, `src/types.ts`, `package.json`, `docs/PLATFORMS.md` |
+| TF0 | `src/lib/terminals.ts` (+ test), `src/components/terminal/TerminalView.tsx`, `src/styles/terminal.css`, `src/pages/TerminalPage.tsx` | `package.json` (`@xterm/*`), `design/tokens.json`, `src/styles/tokens.css`, `src/router.ts`, `src/App.tsx`, `src/selftest.ts`, `scripts/ui-test.sh` |
+| TF1 | `src/components/terminal/TerminalTabs.tsx` | `src/components/Sidebar.tsx`, `src/lib/sidebar.ts`, `src/pages/TerminalPage.tsx`, `docs/PAID-FEATURES.md`, `README.md`, `src/components/RunPanel.tsx` (open question 9) |
+| TF2 | `src/components/editor/TerminalPanel.tsx` (+ test) | `src/pages/EditorPage.tsx`, `src/lib/editor.ts`, `src/styles/components.css` |
+
 ### 5.6 Security and privacy
 
 - **It runs as you, and says so by being yours only.** A terminal is a shell with your rights, like any terminal app. Gizai's job is that nothing else drives it or reads it. [I]
-- **Agents and the Team Lead can't reach it.** The Team Lead's 46 tools read the database and the list of live runs, never in-memory state or logs (`src-tauri/src/tools/mod.rs:136-183`, `:341-449`; `src-tauri/src/tools/read.rs`), and task runs get no Gizai tools at all (`src-tauri/src/runs.rs:975`). [V] TB adds no tool and no MCP entry; the tool catalog's test lists every tool, so a terminal tool would show there. The terminal commands are Tauri commands, which only the window can call (`capabilities/default.json:8-13`). [V for today; I for the rule]
+- **Agents and the Team Lead can't reach it.** The Team Lead's 46 tools read the database and the list of live runs, never in-memory state or logs (`src-tauri/src/tools/mod.rs:136-183`, `:341-449`; `src-tauri/src/tools/read.rs`), and task runs get no Gizai tools at all (`src-tauri/src/runs.rs:975`). [V] TB adds no tool and no MCP entry. It also adds a test that fails when a tool in the catalog reaches a terminal: today's tests check the catalog's names and schemas, not what the tools do (`src-tauri/tests/tools_test.rs:38-59`), so a terminal tool would pass them. The terminal commands are Tauri commands. Their only caller is the window, which runs only Gizai's own code: the capability names the `main` window (`src-tauri/capabilities/default.json:5-13`), and the security policy loads no remote script. [V for today; I for the rule]
 - **Nothing from a terminal is kept on disk.** Its scrollback is xterm.js's buffer in the window's memory, and TB keeps at most 256 KB per terminal in Gizai's memory for a view that attaches again; both go with the terminal. No log file, no database row, no Memory note, nothing on a card. This matters beyond privacy: agents' runs have `cat`, `rg` and `tail` among their default commands and run as you (`crates/gizai-core/src/seed.rs:245-250`; the folder limits apply to the file tools, not to commands, `folders.rs:1-2`), so a terminal log under `<data>` would be readable by any run. [V the agents' commands; I the rule]
 - **Only the window's own terminals.** `terminal_input` writes only to a terminal the window opened, by its id; there is no command that runs a command line. A link is opened only on Ctrl+click (Cmd+click), only `http:` and `https:`, through the opener the app already allows (`opener:allow-open-url`, `capabilities/default.json:11-12`). No program in the terminal can read the clipboard: the clipboard addon (OSC 52) isn't used. Paste uses bracketed paste, so a pasted line isn't run before Enter in shells that support it (xterm.js does this itself, §3.2 Q2). [I design; V the capability]
 - **Where it starts.** Only in a folder the Editor may open, checked by `editor::find` on every `terminal_open` (§3.2 Q5), so never in `~/.ssh` or Gizai's data folder, and not in a card's worktree while an agent works there. This decides where Gizai starts a shell; it doesn't fence the shell in. [V the check; I the rule]
-- **No new rights for the window**: no shell or file plugin, the same capabilities and content security policy (§3.2 Q2).
+- **One new right for the window:** reading the clipboard's text (`clipboard-manager:allow-read-text`), used only to paste into a terminal with Ctrl+Shift+V on Linux (§3.2 Q2). No shell or file plugin, and the same content security policy. [I]
 
 ### 5.7 How it is tested
 
@@ -316,7 +450,7 @@ A terminal for agents (not this card); splitting a terminal into panes; terminal
 
 ## 6. Proposed cards
 
-Five cards, each one pull request that fits in one agent run (the Editor's F2, PR #96, was 5,201 added lines in 35 files in one run [V `gh pr list`]). "Builds on" names the cards that must be merged first. The contract between the backend card and the frontend cards is below the list, word for word.
+Five cards, each one pull request that fits in one agent run (the Editor's F2, PR #96, was 5,201 added lines in 35 files [V `gh pr view 96`], built as one card). "Builds on" names the cards that must be merged first. The contract between the backend card and the frontend cards is below the list, word for word.
 
 | # | Card | Starts in | Role | Builds on |
 |---|---|---|---|---|
@@ -342,16 +476,16 @@ At the same time: **TD and TB** first (the design and the backend need nothing e
 ### TB. Terminals in the backend
 
 - **Column, role:** To do, backend.
-- **Builds:** `crates/gizai-agents/src/terminal.rs` (new): the sessions, on `portable-pty` 0.9 (§4); your shell and environment (§3.2 Q1); reading on a thread per terminal, batched, with flow control and 256 KB kept in memory for a view that attaches again; writing on a thread of its own; resize; the program running now; ending a terminal and everything it started (§3.2 Q3). `crates/gizai-agents/src/os.rs`: the user's shell; on Windows the shell's Job Object; on Unix the processes still attached to a terminal. `src-tauri/src/terminal.rs` (new) with the commands and the event of contract CT, `AppState.terminals`, registered in `lib.rs`; every terminal ended at quit (`quit.rs`). The start folder is checked with `editor::find` (`crates/gizai-core/src/editor.rs:150-168`). `src/api.ts` and `src/types.ts` as in CT. `docs/PLATFORMS.md`: a row for the terminal (shells, ConPTY, how it ends). No database change, no new Tauri plugin, the same security policy and capabilities.
+- **Builds:** `crates/gizai-agents/src/terminal.rs` (new): the sessions, on `portable-pty` 0.9 (§4); your shell and environment (§3.2 Q1); reading on a thread per terminal, batched, with flow control and 256 KB kept in memory for a view that attaches again; writing on a thread of its own; resize; the program running now; ending a terminal and everything it started (§3.2 Q3). `crates/gizai-agents/src/os.rs`: the user's shell; on Windows the shell's Job Object; on Unix the processes still attached to a terminal. `src-tauri/src/terminal.rs` (new) with the commands and the event of contract CT, `AppState.terminals`, registered in `lib.rs`; every terminal ended at quit (`quit.rs`). The start folder is checked with `editor::find` (`crates/gizai-core/src/editor.rs:150-168`). `src/api.ts` and `src/types.ts` as in CT. `docs/PLATFORMS.md`: a row for the terminal (shells, ConPTY, how it ends). Tauri's clipboard plugin (`tauri-plugin-clipboard-manager`, `@tauri-apps/plugin-clipboard-manager`), registered in `lib.rs`, with only `clipboard-manager:allow-read-text` added to `src-tauri/capabilities/default.json`, for TF0's paste on Linux. No database change, and the same security policy.
 - **Acceptance criteria:**
   - [ ] `terminal_open` starts your shell in one of the Editor's folders and refuses any other folder with the Editor's own sentence; it refuses a card's worktree while an agent works on it.
   - [ ] On Linux and macOS the shell is `$SHELL` (else your entry in the password database, else `/bin/sh`), a login shell on macOS; on Windows `pwsh.exe` when it is found, else `powershell.exe`, else `cmd.exe`. The environment has `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=gizai` and `TERM_PROGRAM_VERSION`, and no `GIZAI_*` variables (tested).
-  - [ ] Output reaches the attached channel as bytes, in order, at most one message per terminal every 8 ms; 50 MB of output arrives complete, while reading pauses above 1 MB not yet acknowledged and goes on below 256 KB (tested with a fake listener that acknowledges slowly).
+  - [ ] Output reaches the attached channel as bytes, in order, at most one message per terminal every 8 ms; 50 MB of output arrives complete, while reading pauses above 500,000 bytes not yet acknowledged and goes on at 200,000 (tested with a fake listener that acknowledges slowly).
   - [ ] Input, a paste of 1 MB and resize work (`stty size` on Unix and `$Host.UI.RawUI.WindowSize` on Windows report the new size).
   - [ ] `terminal_close` ends the shell, a program in the foreground (`sleep 1000`), a background job (`sleep 1000 &`) and a `nohup` one within 3 s on Linux and macOS, and on Windows the shell and its children (`ping -t`), through the Job Object.
   - [ ] Every terminal ends when Gizai quits, and when it is killed (Linux: closing the pseudo-terminal; Windows: the job), tested with a scratch process.
   - [ ] `busy` names the program in the foreground within a second; `terminals-changed` comes on open, rename, busy, end and close.
-  - [ ] Nothing a terminal shows or is sent is written to disk, to the database, a log, Memory or a card; no MCP tool reaches terminals (the catalog test lists none).
+  - [ ] Nothing a terminal shows or is sent is written to disk, to the database, a log, Memory or a card; no MCP tool reaches terminals (a new test in `src-tauri/tests/tools_test.rs` checks the catalog).
   - [ ] `cargo test --workspace`, `npm test` and `npm run build` pass, and CI passes on Linux, macOS and Windows.
 
 ### TF0. The terminal view: xterm.js in Gizai's colours, one view per terminal
@@ -387,7 +521,7 @@ At the same time: **TD and TB** first (the design and the backend need nothing e
   - [ ] The button opens the panel at 30% of the column with a terminal in the folder's root (`pwd` prints it, probe); pressed again or Ctrl+\`, it hides, and the shell keeps running.
   - [ ] Dragging the handle changes the height between the limits; a double click gives 30% back; the height is the same after a reload and in another folder.
   - [ ] A terminal opened in the panel is a row under Terminal and opens on its own page with the same screen; one opened from the sidebar in the same folder is a tab in the panel.
-  - [ ] With the focus in the terminal, Ctrl+W, Ctrl+P, Ctrl+B and Ctrl+Shift+F go to the shell, not to the Editor; Ctrl+\` still hides the panel.
+  - [ ] With the focus in the terminal, Ctrl+W, Ctrl+P and Ctrl+B go to the shell and Ctrl+Shift+F finds in the terminal, none of them reaching the Editor; Ctrl+\` still hides the panel.
   - [ ] For a folder an agent works on, the button is off and says why.
   - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
 
@@ -427,8 +561,8 @@ export function terminalAttach(id: string, onBytes: (bytes: Uint8Array) => void)
 /** What you typed or pasted (xterm's onData), or with `binary` xterm's onBinary: one byte per character. */
 export const terminalInput = (id: string, data: string, binary = false) => invoke<void>("terminal_input", { id, data, binary });
 export const terminalResize = (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows });
-/** The view has drawn this many more bytes (send it every 64 KB or so). Above 1 MB not yet drawn, the backend stops reading
- *  until it is back under 256 KB, and the program waits, as in any terminal. */
+/** xterm.js has written this many more bytes (its write callback; send it every 100,000 bytes or so). Above 500,000 bytes
+ *  not yet acknowledged the backend stops reading until it is back at 200,000, and the program waits, as in any terminal. */
 export const terminalAck = (id: string, bytes: number) => invoke<void>("terminal_ack", { id, bytes });
 /** An empty name gives the default back. */
 export const terminalRename = (id: string, name: string) => invoke<T.TerminalSession>("terminal_rename", { id, name });
@@ -463,6 +597,8 @@ export type TerminalEnd = {
 
 Errors are plain sentences, like the rest of the app ("The Editor can't open ~/.ssh: …", "QA Agent is working on GA-118: a terminal there waits until its run ends").
 
+Paste on Linux (TF0) uses `readText()` from `@tauri-apps/plugin-clipboard-manager`, which TB adds with its one permission (`clipboard-manager:allow-read-text`); there is no Gizai command for it.
+
 ---
 
 ## 7. Open questions for Jefsev
@@ -471,10 +607,52 @@ Errors are plain sentences, like the rest of the app ("The Editor can't open ~/.
 2. **Where a terminal may start.** Recommended: the folders the Editor may open (projects' folders, the folders in `~/Herd`, card worktrees), with the Editor's refusals, so never `~/.ssh` or Gizai's data folder. From there `cd` goes anywhere, as you: the rule decides where Gizai starts a shell, it doesn't fence it in. Should your home folder be a start folder too (most terminal apps start there)? Recommended: not in the first version.
 3. **A card's worktree while an agent works on it.** Recommended: no new terminal there until the run ends, as the Editor makes it read-only; one opened before stays, with the Editor's bar. Or allow it with a warning?
 4. **When the shell ends by itself.** Recommended: `exit` (code 0) closes the terminal; any other end keeps it with the reason and Start again, as VS Code does.
-5. **Closing a terminal that runs a program.** Recommended: ask once, under the row or tab ("npm is still running in gizai 2. Close it and end npm?"), as VS Code asks by default for terminals with child processes. Closing one that only waits for a command doesn't ask.
+5. **Closing a terminal that runs a program.** Recommended: ask once, under the row or tab ("npm is still running in gizai 2. Close it and end npm?"). VS Code can ask for terminals with child processes, by default only for those in its editor area (`terminal.integrated.confirmOnKill`: `editor`); Gizai asks in both places, because a terminal moves between them. Closing one that only waits for a command doesn't ask.
 6. **Quitting Gizai with terminals open.** Recommended: they end with Gizai (closing the window keeps Gizai and its terminals running, as now). Settings → Quit's question counts busy terminals with the agents ("1 agent and 2 terminals are at work: stop them and quit?"); the tray's Quit and Cmd+Q don't ask, as today. Nothing is restored at the next start: no old output on disk, and no shells started for you.
 7. **How much a terminal keeps.** Recommended: 5,000 lines of scrollback each, in memory only (VS Code keeps 1,000). No limit on how many terminals; from 20 open, New terminal says that each keeps a shell running until you close it.
 8. **The shell on Windows.** Recommended: PowerShell 7 when installed, else Windows PowerShell, else cmd; Git Bash, WSL and a Shell setting later, when asked. (Gizai keeps WSL out for the agents' CLIs and shell commands: `docs/PLATFORMS.md:7`, `:31`.)
 9. **A run's "Open in terminal".** It copies `cd '<worktree>' && claude --resume <id>` for your own terminal app (`RunPanel.tsx:124`). Recommended: rename it to "Copy resume command" in TF1, so it isn't mistaken for Gizai's terminal; a later card may open a Gizai terminal in the worktree with the command typed, not run.
 10. **Free.** Recommended: the terminal is free, with the code editor, in `docs/PAID-FEATURES.md` (§3.2 Q8).
 11. **Order.** Recommended: TD and TB at once, then TF0, then TF1 and TF2 at once.
+
+---
+
+## 8. Sources
+
+**The repository**, read on 2026-10-12 in this card's worktree and at `origin/main` `a70fd15` (`git show origin/main:<path>` for the files PR #97 changed): every `path:line` above. Commands: `git log`, `git diff --stat HEAD...origin/main`, `rg`, `gh pr list`, `gh pr view 96 --json additions,changedFiles`. Packages: `npm view @xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-webgl`, `@xterm/addon-search`, `@xterm/addon-web-links`, `@xterm/addon-unicode11`, `@xterm/addon-canvas`, `tauri-pty` and `@tauri-apps/plugin-clipboard-manager`, all on 2026-10-12.
+
+**Outside sources**, all read on 2026-10-12:
+
+| What | Link |
+|---|---|
+| portable-pty on crates.io: versions, dates, licence, downloads | https://crates.io/api/v1/crates/portable-pty |
+| portable-pty 0.9.0's dependencies | https://crates.io/api/v1/crates/portable-pty/0.9.0/dependencies |
+| portable-pty 0.9.0, `CommandBuilder` | https://docs.rs/portable-pty/0.9.0/portable_pty/cmdbuilder/struct.CommandBuilder.html |
+| portable-pty 0.9.0 source: `cmdbuilder.rs`, `unix.rs`, `win/psuedocon.rs` | https://docs.rs/crate/portable-pty/0.9.0/source/src/cmdbuilder.rs, https://docs.rs/crate/portable-pty/0.9.0/source/src/unix.rs, https://docs.rs/crate/portable-pty/0.9.0/source/src/win/psuedocon.rs |
+| Commits to WezTerm's `pty/` folder | https://api.github.com/repos/wezterm/wezterm/commits?path=pty |
+| WezTerm #7709, "pty: windows: fix kill()" | https://github.com/wezterm/wezterm/commit/8afe0ad |
+| tauri-plugin-pty on crates.io, and its 0.3.1 source | https://crates.io/api/v1/crates/tauri-plugin-pty, https://docs.rs/crate/tauri-plugin-pty/0.3.1/source/src/lib.rs |
+| alacritty_terminal on crates.io | https://crates.io/api/v1/crates/alacritty_terminal |
+| Tauri 2, "Calling the Frontend from Rust" (channels and events) | https://v2.tauri.app/develop/calling-frontend/ |
+| Tauri 2.12.1, `Channel` | https://docs.rs/tauri/2.12.1/tauri/ipc/struct.Channel.html |
+| Tauri 2.12.1 source: channels, `IpcResponse`, the security policy's nonces | https://github.com/tauri-apps/tauri/blob/tauri-v2.12.1/crates/tauri/src/ipc/channel.rs, https://github.com/tauri-apps/tauri/blob/tauri-v2.12.1/crates/tauri/src/ipc/mod.rs, https://github.com/tauri-apps/tauri/blob/tauri-v2.12.1/crates/tauri/src/manager/mod.rs |
+| xterm.js 6.0.0 release notes | https://github.com/xtermjs/xterm.js/releases/tag/6.0.0 |
+| xterm.js 6.0.0 typings (`xterm.d.ts`) | https://unpkg.com/@xterm/xterm@6.0.0/typings/xterm.d.ts |
+| xterm.js and the WebGL addon, file sizes | https://unpkg.com/@xterm/xterm@6.0.0/?meta, https://unpkg.com/@xterm/addon-webgl@0.19.0/?meta |
+| xterm.js flow control guide | https://xtermjs.org/docs/guides/flowcontrol/ |
+| xterm.js WebGL addon README (6.0.0) | https://github.com/xtermjs/xterm.js/blob/6.0.0/addons/addon-webgl/README.md |
+| xterm.js `DomRenderer.ts` and `BufferLine.ts` (6.0.0) | https://github.com/xtermjs/xterm.js/blob/6.0.0/src/browser/renderer/dom/DomRenderer.ts, https://github.com/xtermjs/xterm.js/blob/6.0.0/src/common/buffer/BufferLine.ts |
+| VS Code's terminal settings (`terminalConfiguration.ts`, main) | https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts |
+| VS Code's `terminalInstance.ts` (`attachToElement`, `detachFromElement`, main) | https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/browser/terminalInstance.ts |
+| VS Code docs, "Terminal Basics" (updated 2026-10-07) | https://code.visualstudio.com/docs/terminal/basics |
+| PhpStorm docs, "Terminal" | https://www.jetbrains.com/help/phpstorm/terminal-emulator.html |
+| WebKitGTK 2.40.0: ANGLE and WebGL2 | https://webkitgtk.org/2023/03/17/webkitgtk2.40.0-released.html |
+| WebKit, "New WebKit Features in Safari 15": WebGL2 | https://webkit.org/blog/11989/new-webkit-features-in-safari-15/ |
+| WebKit bug 264268, green artifacts on a transparent canvas (Tauri, xterm.js) | https://bugs.webkit.org/show_bug.cgi?id=264268 |
+| WebKit's limit of 16 WebGL contexts (`WebGLRenderingContextBase.cpp`, main) | https://github.com/WebKit/WebKit/blob/main/Source/WebCore/html/canvas/WebGLRenderingContextBase.cpp |
+| WebKit's test: `readText` of the platform's text shows the paste UI | https://github.com/WebKit/WebKit/blob/main/LayoutTests/editing/async-clipboard/clipboard-read-text-from-platform-expected.txt |
+| Proxmox, detecting hardware WebGL2 before xterm.js's WebGL addon (2023-10-25) | https://lists.proxmox.com/pipermail/pve-devel/2023-October/059631.html |
+| proc_pid_stat(5): `tty_nr`, `tpgid` | https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html |
+| libc 0.2.190, `KERN_PROC_TTY` (Apple) | https://docs.rs/libc/0.2.190/x86_64-apple-darwin/libc/constant.KERN_PROC_TTY.html |
+
+Not read in this run, so marked [I] where used: Chromium's source for its WebGL context limit, tmux's manual (`window-size`), xterm.js's render service (drawing paused while hidden), and the docs of GNOME Terminal, Konsole and Terminal.app on login shells.

@@ -357,6 +357,21 @@ fn note_of(line: &str) -> Option<RunEvent> {
     (v.get("type")?.as_str()? == "gizai_note").then(|| RunEvent::Note { text: text_of(&v, "text") })
 }
 
+/// A line of Gizai's own in a run log, with the notes: the run's MCP servers that Claude Code signs in to
+/// (`Parser::claude_code_signs_in`), so the log reads again as the run went. The Run panel doesn't show it.
+pub fn claude_code_line(servers: &[String]) -> String {
+    serde_json::json!({"type": "gizai_mcp", "claude_code_signs_in": servers}).to_string()
+}
+
+fn claude_code_of(line: &str) -> Option<Vec<String>> {
+    if !line.contains("\"gizai_mcp\"") {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line.trim()).ok()?;
+    (v.get("type")?.as_str()? == "gizai_mcp").then(|| v.get("claude_code_signs_in").and_then(Value::as_array).into_iter().flatten()
+        .filter_map(|n| n.as_str().map(str::to_string)).collect())
+}
+
 /// A finished run's log → its events. A log without a header is Claude Code's.
 pub fn parse_log(text: &str) -> Vec<RunEvent> {
     let mut lines = text.lines().peekable();
@@ -365,7 +380,17 @@ pub fn parse_log(text: &str) -> Vec<RunEvent> {
         None => Kind::ClaudeCode,
     };
     let mut p = Parser::new(kind);
-    let mut out: Vec<RunEvent> = lines.flat_map(|l| note_of(l).map(|n| vec![n]).unwrap_or_else(|| p.line(l))).collect();
+    let mut out: Vec<RunEvent> = vec![];
+    for l in lines {
+        if let Some(servers) = claude_code_of(l) {
+            p.claude_code_signs_in(servers);
+            continue;
+        }
+        match note_of(l) {
+            Some(n) => out.push(n),
+            None => out.extend(p.line(l)),
+        }
+    }
     out.extend(p.finish());
     out
 }
@@ -405,6 +430,14 @@ impl Parser {
             Parser::Text(p) => p.finish(),
         }
     }
+
+    /// The run's MCP servers that Claude Code signs in to (Settings → MCP servers → Who signs in): when the init line says
+    /// one needs sign-in, its note says to sign Claude Code in (`mcp_run::claude_code_not_connected`). Claude Code only.
+    pub fn claude_code_signs_in(&mut self, servers: Vec<String>) {
+        if let Parser::Claude(p) = self {
+            p.claude_code = servers.into_iter().collect();
+        }
+    }
 }
 
 /// Claude Code's stream-json (`stream::parse_line`), and each refused tool call as it happens: a `system` line with
@@ -417,13 +450,15 @@ pub struct Claude {
     asked: HashMap<String, (String, String)>,
     /// The refused calls already shown, by id.
     refused: HashSet<String>,
+    /// The MCP servers Claude Code signs in to, by name (`Parser::claude_code_signs_in`).
+    claude_code: HashSet<String>,
 }
 
 impl Claude {
     pub fn line(&mut self, line: &str) -> Vec<RunEvent> {
         let mut evs = stream::parse_line(line);
         if line.contains("\"mcp_servers\"") {
-            evs.extend(mcp_states(line));
+            evs.extend(mcp_states(line, &self.claude_code));
         }
         let watch = ["\"tool_use\"", "\"permission_denied\"", "\"permission_denials\""];
         if !watch.iter().any(|w| line.contains(w)) {
@@ -466,8 +501,9 @@ impl Claude {
     }
 }
 
-/// An init line's MCP servers besides Gizai's own: their states, and a note for each that didn't connect.
-fn mcp_states(line: &str) -> Vec<RunEvent> {
+/// An init line's MCP servers besides Gizai's own: their states, and a note for each that didn't connect (for one in
+/// `claude_code`, Claude Code signs in to it).
+fn mcp_states(line: &str, claude_code: &HashSet<String>) -> Vec<RunEvent> {
     let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { return vec![] };
     if v.get("type").and_then(Value::as_str) != Some("system") || v.get("subtype").and_then(Value::as_str) != Some("init") {
         return vec![];
@@ -476,7 +512,8 @@ fn mcp_states(line: &str) -> Vec<RunEvent> {
     if states.is_empty() {
         return vec![];
     }
-    let mut out: Vec<RunEvent> = states.iter().filter_map(|(n, s)| crate::mcp_run::not_connected(n, s)).map(|text| RunEvent::Note { text }).collect();
+    let note = |n: &str, s: &str| if claude_code.contains(n) { crate::mcp_run::claude_code_not_connected(n, s) } else { crate::mcp_run::not_connected(n, s) };
+    let mut out: Vec<RunEvent> = states.iter().filter_map(|(n, s)| note(n, s)).map(|text| RunEvent::Note { text }).collect();
     out.push(RunEvent::McpServers { servers: states.into_iter().map(|(name, status)| stream::McpState { name, status }).collect() });
     out
 }

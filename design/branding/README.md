@@ -28,11 +28,12 @@ Nothing in the app changes in this card.
 - **Sharp at every width, no seams.** One vector picture 4800 × 128 at 1:1, centred under the window's middle and cut at
   the sides (`preserveAspectRatio="xMidYMax slice"`), its lines 1px at every size (`vector-effect: non-scaling-stroke`).
   The valley is 300px wide at the bottom edge, so an 800px window still shows peaks on both sides.
-- **The window's lowest layer.** One element, `.band`, the first child of `.app` at `z-index: -1` in the window's own
-  stacking context. The canvases are see-through (the sidebar, the main column, the chat's threads and composer strip, the
-  Editor's tree, the properties panel); the side-coloured ones keep their colour on a `::before` under the band. What holds
-  content stays solid: cards, controls, the composer box, code and its status bar, menus and drawers. The band never runs
-  behind code.
+- **The window's lowest layer.** One element, `.band`, the first child of `.app`, fixed along the bottom edge at
+  `z-index: -1` in the page's own stacking context, over `html`'s background (`body` drops its copy of it while the band
+  is on). No element gets a new stacking context, so menus, drawers, the palette and toasts keep their order. The
+  canvases are see-through (the sidebar, the main column, the chat's threads and composer strip, the Editor's tree, the
+  properties panel); the side-coloured ones keep their colour on a `::before` under the band. What holds content stays
+  solid: cards, controls, the composer box, code and its status bar, menus and drawers. The band never runs behind code.
 - **Not a status.** One cool blue, hue 228° in OKLCH: about 40° from teal (`live`, an agent at work) and from the accent's
   blue, with less chroma than either and a low alpha. It never moves. The terminal's rule holds (at least 35° and a ΔE2000
   of 15 from `live` and `needs`), and 30° from the accent.

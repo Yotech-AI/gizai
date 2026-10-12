@@ -769,23 +769,25 @@ async function main() {
   section("build", "5. How to build it",
     p("For the frontend card that builds the strength Jefsev picks. Nothing in the app changes in this card. The CSS is in <code>band.css</code>, which this page uses as it is; the tokens are in <code>new-tokens.json</code>.")
     + h3("5.1 Where the layer sits")
-    + p("One element, the window's lowest layer: the first child of <code>.app</code>, along its bottom edge at <code>z-index: -1</code>, inside the window's own stacking context (<code>isolation: isolate</code> on <code>.app</code>). Everything in the window is above it; the canvases are see-through, so it shows between what is on them.")
-    + `<pre class="dz-code">${esc(`<div class="app">                          position: relative; isolation: isolate
-  <div class="band" aria-hidden="true">   z-index: -1, the window's width, along its bottom
-    <svg …>mountains.svg's lines</svg>     currentColor: band-line, on a glow of band-glow
+    + p("One element, the window's lowest layer: the first child of <code>.app</code>, fixed along the window's bottom edge at <code>z-index: -1</code>, in the page's own stacking context. Everything in the window is above it; the canvases are see-through, so it shows between what is on them. No element gets a new stacking context, so menus portaled to the body, drawers, the palette, toasts and the close question keep the order they have now.")
+    + `<pre class="dz-code">${esc(`<html data-band="on">                       html's bg is the canvas; body's own background goes
+  <div class="app">                           as now: no z-index, no isolation
+    <div class="band" aria-hidden="true">     position: fixed; z-index: -1; the window's width, along its bottom
+      <svg …>mountains.svg's lines</svg>       currentColor: band-line, on a glow of band-glow
+    </div>
+    <aside class="side">…</aside>             see-through: its colour on .side::before, z-index: -2
+    <main class="main">…</main>               see-through: html's bg is its colour
   </div>
-  <aside class="side">…</aside>           see-through: its colour on .side::before, z-index: -2
-  <main class="main">…</main>             see-through: body's bg is its colour
-</div>`)}</pre>`
+</html>`)}</pre>`
     + notes(
       "<b>Inline, not an image.</b> <code>Band.tsx</code> puts the SVG's markup in the page (Vite's <code>?raw</code> import of <code>mountains.svg</code>), not an <code>&lt;img&gt;</code> or a CSS background: inline, the lines take <code>currentColor</code>, so one file serves both themes and every strength, and no mask image has to load.",
-      "<b>The layers</b>, bottom up: body's <code>bg</code>; the side-coloured columns' <code>::before</code> (z-index -2); the band (-1), its glow and then its lines; then everything else in the window, in its usual order.",
+      "<b>The layers</b>, bottom up: html's <code>bg</code>; the side-coloured columns' <code>::before</code> (z-index -2); the band (-1), its glow and then its lines; then everything else in the window, in its usual order.",
       "<b>The glow</b> is a gradient on the band itself: <code>transparent</code> at its top to <code>band-glow</code> at the bottom edge. The SVG fades its own top (a mask in the file) and its far lines.",
-      "<b>Nothing else needs a z-index.</b> A stacking context inside <code>.app</code> (a popover, the palette, a dragged card) stays above the band as now. Only a new <code>z-index</code> below 0 could go under it.")
+      "<b>Nothing else needs a z-index.</b> Nothing in the app has a negative one now. Keep <code>.app</code>, <code>.main</code>, <code>.chat</code> and <code>.ed</code> without a stacking context (no z-index, opacity, transform or filter on them): one there would keep a column's <code>::before</code> and the band apart.")
     + h3("5.2 See-through and solid")
     + table(["Surface", "Over the band", "Why"], [
       ["The sidebar (<code>.side</code>)", "See-through; its colour moves to <code>.side::before</code>", "The band runs under it, behind Company's rows; a row's hover and selected fill stay solid"],
-      ["The main column (<code>.main</code>) and its canvases: <code>.content</code>, <code>.board</code>, <code>.doc</code>, <code>.page</code>", "See-through", "body's <code>bg</code> is their colour already"],
+      ["The main column (<code>.main</code>) and its canvases: <code>.content</code>, <code>.board</code>, <code>.doc</code>, <code>.page</code>", "See-through", "html's <code>bg</code> is their colour already"],
       ["The chat's threads (<code>.chat-threads</code>)", "See-through, like the sidebar", "The band runs on under the second column"],
       ["The chat's composer strip (<code>.chat-composer</code>)", "See-through", "Only the strip: the box in it stays solid"],
       ["The Editor's file tree (<code>.ed-side</code>)", "See-through, like the sidebar", "Its rows are names, not code"],

@@ -45,8 +45,10 @@ body { margin: 0; }
 .win .side { flex: none; width: var(--size-side); height: auto; }
 .win > .main { flex: 1; min-width: 0; min-height: 0; }
 .win.strip { box-shadow: none; }
-/* The app sizes these by the window (100vh); a frame isn't the window, so they follow its height */
-.win .band { height: var(--band-h); }
+/* A frame isn't the window: its band sits at the frame's bottom (absolute, in the frame's own stacking context, where the
+   app's is fixed, in the page's) and the app's sizes by the window (100vh) follow the frame's height */
+.win[data-band] { position: relative; isolation: isolate; }
+.win .band { position: absolute; height: var(--band-h); }
 .win .col-body { max-height: calc(var(--frame-h) - 210px); }
 .variants { display: flex; flex-direction: column; gap: 18px; margin: 16px 0 0; }
 .vrow { display: grid; gap: 6px; }

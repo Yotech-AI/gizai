@@ -270,16 +270,19 @@ function pathData(lines) {
   }
   return d;
 }
-/** The artwork as SVG. `id` prefixes its one gradient and mask, so two of them can share a page. With `symbol`, the
- *  inner part only, for a <symbol>. The lines are currentColor; `color` is only for opening the file on its own. */
-export function svg(cam, { id, symbol = false, color = "#8fb7d3", top = 0.3, groups = draw(cam) } = {}) {
+/** The artwork as SVG. `id` prefixes its one gradient and mask, so two of them can share a page. `part` "defs" gives
+ *  the gradient and the mask alone and "body" the lines alone, for a page's sprite (its <defs> and a <symbol>); "file" the
+ *  whole file. The lines are currentColor; `color` is only for opening the file on its own. */
+export function svg(cam, { id, part = "file", color = "#8fb7d3", top = 0.3, groups = draw(cam) } = {}) {
   const W = cam.W * Q, H = cam.H * Q, f = (n) => String(Math.round(n * 1000) / 1000).replace(/^0\./, ".");
   const paths = groups.map((g) => `<path vector-effect="non-scaling-stroke"${g.fade < 1 ? ` stroke-opacity="${f(g.fade)}"` : ""} d="${pathData(g.lines)}"/>`).join("\n");
   // the top of the picture fades, so the peaks melt into what is above the band
-  const defs = `<defs><linearGradient id="${id}-fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="${f(top)}"/><stop offset=".5" stop-color="#fff"/></linearGradient>`
-    + `<mask id="${id}-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="url(#${id}-fade)"/></mask></defs>`;
-  const inner = `${defs}\n<g mask="url(#${id}-mask)" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">\n${paths}\n</g>`;
-  if (symbol) return inner;
+  const defs = `<linearGradient id="${id}-fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="${f(top)}"/><stop offset=".5" stop-color="#fff"/></linearGradient>`
+    + `<mask id="${id}-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="url(#${id}-fade)"/></mask>`;
+  const body = `<g mask="url(#${id}-mask)" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">\n${paths}\n</g>`;
+  if (part === "defs") return defs;
+  if (part === "body") return body;
+  const inner = `<defs>${defs}</defs>\n${body}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMax slice" color="${color}" aria-hidden="true">\n`
     + `<!-- Gizai's mountains (GA-139): our own land from seed ${SEED}, made by design/branding/gen-bottom-band.mjs. The lines are currentColor. -->\n${inner}\n</svg>\n`;
 }
@@ -954,8 +957,10 @@ ${cmpStyle}
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 ${await sprite()}
-<symbol id="gz-mountains" viewBox="0 0 ${BAND_CAMERA.W * 4} ${BAND_CAMERA.H * 4}" preserveAspectRatio="xMidYMax slice">${svg(BAND_CAMERA, { id: "gz-band", symbol: true, groups: band })}</symbol>
-<symbol id="gz-hero" viewBox="0 0 ${HERO_CAMERA.W * 4} ${HERO_CAMERA.H * 4}" preserveAspectRatio="xMidYMax slice">${svg(HERO_CAMERA, { id: "gz-hero", symbol: true, top: 0.45, groups: hero })}</symbol>
+<!-- The artwork: the band's and the hero's lines (mountains.svg and mountains-hero.svg), their fades outside the symbols -->
+<defs>${svg(BAND_CAMERA, { id: "gz-band", part: "defs", groups: band })}${svg(HERO_CAMERA, { id: "gz-hero", part: "defs", top: 0.45, groups: hero })}</defs>
+<symbol id="gz-mountains" viewBox="0 0 ${BAND_CAMERA.W * 4} ${BAND_CAMERA.H * 4}" preserveAspectRatio="xMidYMax slice">${svg(BAND_CAMERA, { id: "gz-band", part: "body", groups: band })}</symbol>
+<symbol id="gz-hero" viewBox="0 0 ${HERO_CAMERA.W * 4} ${HERO_CAMERA.H * 4}" preserveAspectRatio="xMidYMax slice">${svg(HERO_CAMERA, { id: "gz-hero", part: "body", top: 0.45, groups: hero })}</symbol>
 </svg>
 ${body}
 <script>

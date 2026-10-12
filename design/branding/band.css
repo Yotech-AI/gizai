@@ -16,8 +16,9 @@
 .band { position: fixed; left: 0; right: 0; bottom: 0; z-index: -1; height: clamp(var(--size-band-min), 14vh, var(--size-band));
   overflow: hidden; pointer-events: none; user-select: none; color: var(--band-line); background: linear-gradient(transparent, var(--band-glow)); }
 /* The artwork keeps its height and is cut at the sides (xMidYMax slice): its middle under the window's middle, its lines
-   1px at every width (non-scaling-stroke) */
-.band > svg { display: block; width: 100%; height: 100%; }
+   1px at every width (non-scaling-stroke). The file's own color attribute is only for opening it on its own: the band's
+   colour wins. */
+.band > svg { display: block; width: 100%; height: 100%; color: inherit; }
 
 /* body's own background would cover a layer under it: html's, the same bg, is the canvas */
 [data-band] body { background: none; }

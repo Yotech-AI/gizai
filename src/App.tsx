@@ -4,6 +4,7 @@ import { useRoute } from "./router";
 import type { AppInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
+import { CloseGuard } from "./components/CloseGuard";
 import { Placeholder } from "./pages/Placeholder";
 import { ClientsPage } from "./pages/ClientsPage";
 import { ClientPage } from "./pages/ClientPage";
@@ -173,6 +174,7 @@ export default function App() {
             : <Placeholder route={route} info={info} />}
         </main>
         <CommandPalette open={palette} onClose={() => setPalette(false)} onNewTask={() => newTask()} />
+        <CloseGuard />
       </div>
     </DrawerHost>
   );

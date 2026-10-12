@@ -392,3 +392,135 @@ fn a_server_without_registration_signs_in_with_the_client_id_you_entered() {
     let v = mcp_servers::list_tools(&t.st, &t.id).unwrap();
     assert!(v.listed.is_some(), "{:?}", v.problem);
 }
+
+// ---- GA-120: a server Claude Code signs in to (Settings → MCP servers → Who signs in) ----
+
+const NO_LIST: &str = "Claude Code signs in to this server, so Gizai can't list its tools. An agent that has it on gets all of them.";
+
+impl T {
+    /// Saves the server again with Who signs in set to `by` ("" Gizai, "claude_code" Claude Code).
+    fn set_sign_in_by(&self, by: &str) -> ServerView {
+        let mut server = self.view().server;
+        server.sign_in_by = by.into();
+        mcp_servers::save(&self.st, ServerInput { server, ..Default::default() }).unwrap()
+    }
+
+    /// What the cache keeps for the server: (needs sign-in, its problem).
+    fn mark(&self) -> (bool, Option<String>) {
+        gizai_core::mcp_servers::tool_lists(&self.st.db).unwrap().get(&self.id).map(|c| (c.needs_sign_in, c.problem.clone())).unwrap_or_default()
+    }
+}
+
+#[test]
+fn list_tools_and_sign_in_are_refused_for_a_server_claude_code_signs_in_to_without_asking_it_anything() {
+    let t = setup(Config::otus());
+    let v = t.set_sign_in_by("claude_code");
+    assert_eq!(v.server.sign_in_by, "claude_code");
+    assert_eq!(v.sign_in, "claude_code");
+    assert_eq!(mcp_servers::CLAUDE_CODE_NO_LIST, NO_LIST);
+
+    assert_eq!(mcp_servers::list_tools(&t.st, &t.id).unwrap_err(), NO_LIST);
+    let why = "Claude Code signs in to otus: sign Claude Code in, not Gizai.";
+    assert_eq!(mcp_servers::begin_sign_in(&t.st, &t.id).unwrap_err(), why);
+    let mut opened = false;
+    let e = mcp_servers::sign_in(&t.st, &t.id, |_| { opened = true; Ok(()) }, WAIT).unwrap_err();
+    assert_eq!(e, why);
+    assert!(!opened, "no sign-in page opened");
+
+    assert!(t.fake.log().requests.is_empty(), "the server got no request: {:?}", t.fake.log().requests);
+    let v = t.view();
+    assert_eq!(v.sign_in, "claude_code", "not marked Needs sign-in");
+    assert_eq!(v.problem, None);
+    assert!(v.listed.is_none());
+    assert_eq!(t.mark(), (false, None));
+    assert!(t.saved().is_none());
+
+    // Sign out (nothing to sign out of) doesn't mark it Needs sign-in either.
+    let v = mcp_servers::sign_out(&t.st, &t.id).unwrap();
+    assert_eq!(v.sign_in, "claude_code");
+    assert_eq!(t.mark().0, false);
+}
+
+#[test]
+fn saving_a_signed_in_server_as_claude_code_revokes_gizais_tokens_and_back_to_gizai_it_signs_in_and_lists_as_before() {
+    let t = setup(Config::otus());
+    mcp_servers::list_tools(&t.st, &t.id).unwrap();
+    t.sign_in().unwrap();
+    assert!(mcp_servers::list_tools(&t.st, &t.id).unwrap().listed.is_some());
+    let s = t.saved().unwrap();
+    let refresh_token = s.refresh_token.clone().unwrap();
+    let agent = t.agent_with_otus_on();
+
+    let v = t.set_sign_in_by("claude_code");
+    assert_eq!(t.fake.log().revoked, vec![(refresh_token.clone(), "refresh_token".to_string())], "revoked at the server");
+    assert!(!t.fake.refresh_valid(&refresh_token));
+    assert!(t.saved().is_none());
+    assert_eq!(t.st.keychain.get(&format!("mcp/{}/oauth", t.id)).unwrap(), None, "Gizai's tokens left the keychain");
+    assert_eq!(v.sign_in, "claude_code");
+    assert_eq!(v.problem, None);
+    assert!(v.listed.is_none(), "Gizai's old tool list doesn't apply");
+
+    // A run gets it as it is: its address, no token from Gizai, no note.
+    let (servers, notes) = mcp_servers::for_run(&t.st, &agent, THIRTY_MINUTES);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0].entry, serde_json::json!({"type": "http", "url": t.fake.mcp_url(), "headers": {}}));
+
+    // The agent form: Claude Code signs in, its tools act as you.
+    let a = mcp_servers::agent_view(&t.st, &agent.actor_id).unwrap();
+    let otus = a.servers.iter().find(|s| s.name == "otus").unwrap();
+    assert_eq!(otus.sign_in, "claude_code");
+    assert_eq!(otus.acts_as_you.as_deref(), Some("Claude Code signs in: its tools act as you in otus."));
+    assert_eq!(otus.summary, NO_LIST);
+
+    // Back to Gizai: it signs in again, lists its tools and a run gets Gizai's token, as before.
+    let v = t.set_sign_in_by("");
+    assert_eq!(v.server.sign_in_by, "");
+    assert_eq!(v.sign_in, "");
+    let v = mcp_servers::list_tools(&t.st, &t.id).unwrap();
+    assert_eq!(v.sign_in, "needs_sign_in");
+    let v = t.sign_in().unwrap();
+    assert_eq!(v.sign_in, "signed_in");
+    assert_eq!(t.fake.log().registrations.len(), 2, "registered again");
+    let v = mcp_servers::list_tools(&t.st, &t.id).unwrap();
+    assert!(v.listed.is_some(), "{:?}", v.problem);
+    let (servers, notes) = mcp_servers::for_run(&t.st, &agent, THIRTY_MINUTES);
+    assert!(notes.is_empty(), "{notes:?}");
+    assert_eq!(bearer(&servers[0].entry), t.saved().unwrap().access_token);
+    let v = mcp_servers::sign_out(&t.st, &t.id).unwrap();
+    assert_eq!(v.sign_in, "needs_sign_in", "signing out of a server Gizai signs in to marks it as before");
+}
+
+#[test]
+fn a_server_marked_needs_sign_in_saved_as_claude_code_loses_the_mark_and_its_problem_and_a_run_takes_it() {
+    let t = setup(Config::otus());
+    let v = mcp_servers::list_tools(&t.st, &t.id).unwrap();
+    assert_eq!(v.sign_in, "needs_sign_in");
+    assert!(v.problem.is_some());
+    let agent = t.agent_with_otus_on();
+    let (servers, notes) = mcp_servers::for_run(&t.st, &agent, THIRTY_MINUTES);
+    assert!(servers.is_empty());
+    assert_eq!(notes, ["Left out otus: signed out. Sign in again in Settings → MCP servers."]);
+    let before = t.fake.log().requests.len();
+
+    let v = t.set_sign_in_by("claude_code");
+    assert_eq!(v.sign_in, "claude_code");
+    assert_eq!(v.problem, None);
+    assert_eq!(t.mark(), (false, None));
+    assert_eq!(t.fake.log().revoked, vec![], "nothing to revoke");
+    let (servers, notes) = mcp_servers::for_run(&t.st, &agent, THIRTY_MINUTES);
+    assert!(notes.is_empty(), "no Left out note: {notes:?}");
+    assert_eq!(servers.len(), 1);
+    assert!(servers[0].entry.get("headers").and_then(|h| h.get("Authorization")).is_none(), "{}", servers[0].entry);
+    assert_eq!(t.fake.log().requests.len(), before, "saving and the run asked the server nothing");
+    let a = mcp_servers::agent_view(&t.st, &agent.actor_id).unwrap();
+    assert_eq!(a.servers[0].sign_in, "claude_code", "no Needs sign-in in the agent form");
+}
+
+#[test]
+fn a_refused_registration_says_to_let_claude_code_sign_in_or_enter_a_client_id() {
+    let t = setup(Config { registration: false, ..Config::otus() });
+    let e = t.sign_in().unwrap_err();
+    assert_eq!(e, "This server doesn't let Gizai register itself: set Who signs in to Claude Code (Edit), or enter a client id for Gizai from the service's settings");
+    assert_eq!(e, gizai_agents::oauth::NO_REGISTRATION);
+}

@@ -230,3 +230,47 @@ fn codex_and_gemini_task_runs_never_get_the_mcp_config() {
         assert!(!all.contains("r1.mcp.json") && !all.contains("mcp__docs"), "{kind:?}: {all}");
     }
 }
+
+// ---- GA-120: a server Claude Code signs in to (Settings → MCP servers → Who signs in) ----
+
+const DOCS_CLAUDE_CODE: &str = "docs: Claude Code isn't signed in to it, so this run goes without it. In a terminal, run claude (for a second account \
+                                with its CLAUDE_CONFIG_DIR), type /mcp, pick docs and Authenticate.";
+
+#[test]
+fn a_server_claude_code_signs_in_to_that_needs_auth_says_how_to_sign_claude_code_in() {
+    assert_eq!(mcp_run::claude_code_not_connected("docs", "needs-auth").unwrap(), DOCS_CLAUDE_CODE);
+    // the other states say what they say for any server
+    for status in ["connected", "failed", "", "pending", "disabled"] {
+        assert_eq!(mcp_run::claude_code_not_connected("docs", status), mcp_run::not_connected("docs", status), "{status}");
+    }
+    // a server Gizai signs in to keeps its note
+    assert_eq!(mcp_run::not_connected("docs", "needs-auth").unwrap(),
+               "docs: needs sign-in, so this run goes without it. Sign in again in Settings → MCP servers.");
+}
+
+#[test]
+fn the_claude_parser_gives_the_claude_code_note_only_for_the_servers_claude_code_signs_in_to_live_and_read_back_from_the_log() {
+    // docs (needs-auth) is Claude Code's; otus (failed) isn't.
+    let init = INIT.lines().next().unwrap();
+    let mut p = Parser::new(Kind::ClaudeCode);
+    p.claude_code_signs_in(strings(&["docs", "figma"]));
+    let mut live: Vec<RunEvent> = p.line(init);
+    live.extend(p.finish());
+    let notes = |evs: &[RunEvent]| evs.iter().filter_map(|e| match e { RunEvent::Note { text } => Some(text.clone()), _ => None }).collect::<Vec<_>>();
+    assert_eq!(notes(&live), [
+        "otus: failed to connect, so this run goes without it. Settings → MCP servers → List tools shows why.".to_string(),
+        DOCS_CLAUDE_CODE.to_string(),
+    ]);
+
+    // The log as runs.rs writes it: Gizai's line naming those servers first, then Claude Code's stream.
+    let head = cli::claude_code_line(&strings(&["docs", "figma"]));
+    let log = format!("{head}\n{}\n{}", init, include_str!("fixtures/run-ok.jsonl").lines().skip(1).collect::<Vec<_>>().join("\n"));
+    let back = cli::parse_log(&log);
+    assert_eq!(notes(&back), notes(&live), "read back, the run says the same");
+    assert!(!back.iter().any(|e| matches!(e, RunEvent::Text { text } if text.contains("gizai_mcp"))), "Gizai's line isn't shown: {back:?}");
+    assert!(matches!(back.last(), Some(RunEvent::Result { is_error: false, .. })), "{back:?}");
+
+    // Without it (a server Gizai signs in to), the note stays as before.
+    let plain = cli::parse_log(&log.lines().skip(1).collect::<Vec<_>>().join("\n"));
+    assert_eq!(notes(&plain)[1], mcp_run::not_connected("docs", "needs-auth").unwrap());
+}

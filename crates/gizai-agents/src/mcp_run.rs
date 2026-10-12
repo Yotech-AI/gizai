@@ -112,3 +112,13 @@ pub fn not_connected(name: &str, status: &str) -> Option<String> {
         other => Some(format!("{name}: {other}, so this run goes without it. Settings → MCP servers → List tools shows why.")),
     }
 }
+
+/// The same for a server Claude Code signs in to (Settings → MCP servers → Who signs in): needs-auth means Claude Code isn't
+/// signed in to it in this run's account, so the note says how to sign Claude Code in, not Gizai.
+pub fn claude_code_not_connected(name: &str, status: &str) -> Option<String> {
+    match status {
+        "needs-auth" => Some(format!("{name}: Claude Code isn't signed in to it, so this run goes without it. In a terminal, run claude \
+                                      (for a second account with its CLAUDE_CONFIG_DIR), type /mcp, pick {name} and Authenticate.")),
+        _ => not_connected(name, status),
+    }
+}

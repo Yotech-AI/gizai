@@ -25,6 +25,12 @@ pub const BROWSER: &str = "chrome-devtools";
 /// The Chrome DevTools MCP version a new install starts with: an exact version, never `latest`.
 pub const BROWSER_VERSION: &str = "1.10.1";
 pub const TRANSPORTS: [&str; 3] = ["stdio", "http", "sse"];
+/// Who signs in to an address server: Gizai, registering itself with the service (""), or Claude Code with its own
+/// sign-in (`CLAUDE_CODE_SIGNS_IN`).
+pub const SIGN_IN_BY: [&str; 2] = ["", CLAUDE_CODE_SIGNS_IN];
+/// Claude Code signs in to the server itself, per account (`claude` → `/mcp` → Authenticate), for a service that only lets
+/// apps on its own list sign in, like Figma. Gizai never reads those sign-ins.
+pub const CLAUDE_CODE_SIGNS_IN: &str = "claude_code";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -47,8 +53,19 @@ pub struct McpServer {
     /// Sign-in: a client id you entered, for a server that doesn't let Gizai register itself. Not a secret: Gizai signs in
     /// as a public client.
     pub client_id: String,
+    /// http and sse: who signs in, "" for Gizai (also a server saved before this choice) or "claude_code"
+    /// (`CLAUDE_CODE_SIGNS_IN`). Always "" for a command.
+    pub sign_in_by: String,
     /// Where it came from, like "Claude Code, local scope: /home/me/code/otus"; empty when added by hand.
     pub source: String,
+}
+
+impl McpServer {
+    /// Claude Code signs in to it: Gizai doesn't sign in to it, list its tools or send it a token of its own, and a run gets
+    /// it as it is, for Claude Code to sign in with its own sign-in.
+    pub fn claude_code_signs_in(&self) -> bool {
+        self.transport != "stdio" && self.sign_in_by == CLAUDE_CODE_SIGNS_IN
+    }
 }
 
 /// The agent's own tool settings (agent form → Tools). Everything is off until you switch it on.
@@ -245,6 +262,10 @@ pub fn clean(servers: &[McpServer], s: McpServer) -> Result<McpServer> {
             return Err(Error::Invalid(format!("give {name} its address, starting with https://")));
         }
         out.header_names = names(&s.header_names, valid_header_name, "a header", &name)?;
+        out.sign_in_by = s.sign_in_by.trim().to_lowercase();
+        if !SIGN_IN_BY.contains(&out.sign_in_by.as_str()) {
+            return Err(Error::Invalid(format!("Gizai or Claude Code signs in to {name}, not {}", out.sign_in_by)));
+        }
     }
     Ok(out)
 }

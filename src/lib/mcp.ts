@@ -69,8 +69,18 @@ export function lastRunLabel(status: string): { text: string; badge: string } {
 export function signInLabel(signIn: string): { text: string; badge: string } | null {
   if (signIn === "signed_in") return { text: "Signed in", badge: "ok" };
   if (signIn === "needs_sign_in") return { text: "Needs sign-in", badge: "needs" };
+  if (signIn === "claude_code") return { text: "Claude Code signs in", badge: "outline" };
   return null;
 }
+
+/** Who signs in to an address server, as the form offers it (`SIGN_IN_BY` in crates/gizai-core/src/mcp_servers.rs). */
+export const SIGN_IN_BY_LABEL: Record<string, string> = { "": "Gizai (it registers itself with the service)", claude_code: "Claude Code, with its own sign-in" };
+
+/** The form's hint when Claude Code signs in. */
+export const CLAUDE_CODE_SIGN_IN_HINT = "For a service that only lets known apps sign in, like Figma. Give the server the name it has in Claude Code, and sign Claude Code in once per account: in a terminal, run claude, type /mcp, pick the server and Authenticate. Gizai never reads Claude Code's sign-ins.";
+
+/** Why List tools is off for a server Claude Code signs in to (`CLAUDE_CODE_NO_LIST` in src-tauri/src/mcp_servers.rs). */
+export const CLAUDE_CODE_NO_LIST = "Claude Code signs in to this server, so Gizai can't list its tools. An agent that has it on gets all of them.";
 
 /** A server's command line or address, to show in one line (never a value of its lines). */
 export function serverWhere(s: { transport: string; command: string; args: string[]; url: string }): string {
@@ -103,9 +113,11 @@ export function secretLines(lines: LineDraft[]): SecretLine[] {
   return lines.filter((l) => l.name.trim()).map((l) => ({ name: l.name.trim(), value: l.value ? l.value : null }));
 }
 
-/** What the agent form says next to a signed-in server's switch. */
+/** What the agent form says next to the switch of a signed-in server, or one Claude Code signs in to. */
 export function actsAsYou(s: Pick<McpServerView, "signIn" | "name">): string | null {
-  return s.signIn === "signed_in" ? `Signed in: its tools act as you in ${s.name}.` : null;
+  if (s.signIn === "signed_in") return `Signed in: its tools act as you in ${s.name}.`;
+  if (s.signIn === "claude_code") return `Claude Code signs in: its tools act as you in ${s.name}.`;
+  return null;
 }
 
 /** Names Gizai keeps for itself (`TAKEN` in crates/gizai-core/src/mcp_servers.rs). */

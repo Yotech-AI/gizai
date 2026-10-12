@@ -396,10 +396,9 @@ pub(crate) fn done(tool: &str, result: &Value) -> String {
     let s = |p: &str| result.pointer(p).and_then(Value::as_str).map(str::to_string);
     let n = |p: &str| result.pointer(p).and_then(Value::as_i64);
     match tool {
-        "memory_write" | "memory_append" => match (result.get("created").and_then(Value::as_bool), n("/note/version")) {
-            (Some(true), _) => format!("Made {}.", s("/note/path").unwrap_or_else(|| "the note".into())),
-            (_, Some(v)) => format!("Saved as version {v}."),
-            _ => "Saved.".into(),
+        "memory_write" | "memory_append" => match n("/note/version") {
+            Some(v) => format!("Saved as version {v}."),
+            None => "Saved.".into(),
         },
         "memory_move" => match (result.get("copied").and_then(Value::as_bool), s("/note/path")) {
             (Some(true), Some(p)) => format!("The copy is at {p}."),

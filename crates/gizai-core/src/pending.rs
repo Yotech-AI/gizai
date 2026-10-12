@@ -119,8 +119,34 @@ fn not_waiting(a: &PendingAction) -> Error {
         "running" => "It is being approved already.".into(),
         "approved" | "failed" => "It was approved already, so it doesn't run again.".into(),
         "discarded" => "It was discarded already.".into(),
-        "replaced" => "A newer call for the same note took its place: look at that one.".into(),
+        "replaced" => "It no longer waits: a newer call of the Team Lead's took its place.".into(),
         other => format!("It is {other}."),
+    })
+}
+
+/// The Team Lead made `tool` with `args` itself in the chat (in a later answer without a tool from outside Gizai, say
+/// after you said yes in a message): the same call that still waits there no longer does, so approving it can't make
+/// it twice. Those calls are replaced, with `why`; returns them (none: nothing changed, and nothing was written).
+pub fn made(db: &Db, thread_id: &str, tool: &str, args: &Value, why: &str) -> Result<Vec<PendingAction>> {
+    let same = |c: &rusqlite::Connection| -> Result<Vec<PendingAction>> {
+        let mut st = c.prepare(&format!("SELECT {COLS} FROM pending_actions WHERE thread_id=?1 AND status='pending' AND tool=?2 ORDER BY rowid"))?;
+        let waiting = st.query_map(rusqlite::params![thread_id, tool], row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(waiting.into_iter().filter(|a| &a.args == args).collect())
+    };
+    if db.read(same)?.is_empty() {
+        return Ok(vec![]);
+    }
+    db.write(None, |w| {
+        let c = w.conn();
+        let now = ids::now_ms();
+        let mut out = vec![];
+        for a in same(c)? {
+            c.execute("UPDATE pending_actions SET status='replaced', decided_at=?2, result_md=?3, updated_at=?2 WHERE id=?1 AND status='pending'",
+                      rusqlite::params![a.id, now, why])?;
+            w.update("pending_actions", &a.id, serde_json::json!({"status": "replaced", "made": true}))?;
+            out.push(get_in(c, &a.id)?);
+        }
+        Ok(out)
     })
 }
 

@@ -43,6 +43,24 @@ pub(crate) fn keep(st: &AppState, actor: &str, thread_id: &str, run_id: Option<&
     Ok(a)
 }
 
+/// The Team Lead made `tool` with `args` itself in the chat `thread_id` (it ran): the same call that still waits there no
+/// longer does, so Approve can't make it twice, and the chat says so. Nothing happens when none waits.
+pub(crate) fn made(st: &AppState, thread_id: &str, tool: &str, args: &Map<String, Value>) {
+    const WHY: &str = "The Team Lead made the same call itself in a later answer.";
+    let gone = match core::made(&st.db, thread_id, tool, &Value::Object(args.clone()), WHY) {
+        Ok(g) => g,
+        Err(e) => return eprintln!("gizai: clearing a call that waited for approval failed: {e}"),
+    };
+    for a in &gone {
+        let what = lower_first(&preview::preview(st, &a.actor_id, &a.thread_id, &a.tool, &a.args).line);
+        crate::chat::note(st, &a.thread_id, &format!("No longer waiting for your OK: {what}. {WHY}"),
+                          json!({"kind": "pending_gone", "action": a.id, "tool": a.tool, "run": a.run_id}));
+    }
+    if !gone.is_empty() {
+        changed(st);
+    }
+}
+
 fn view(st: &AppState, a: PendingAction) -> PendingView {
     let preview = preview::preview(st, &a.actor_id, &a.thread_id, &a.tool, &a.args);
     PendingView { action: a, preview }

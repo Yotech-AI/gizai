@@ -143,7 +143,7 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         }
     }
     let cx = Cx { st, actor, thread, check };
-    match name {
+    let out = match name {
         "get_overview" => read::overview(&cx),
         "read_inbox" => read::inbox(&cx),
         "check_board" => crate::board::check_json(st),
@@ -191,7 +191,13 @@ async fn call_scoped(st: &AppState, actor: &str, thread: Option<&str>, check: Op
         "update_checkout" => write::update_checkout(&cx, &a).await,
         "merge_pull_request" => merge::merge_pull_request(&cx, &a).await,
         other => Err(format!("unknown tool {other}")),
+    };
+    // GA-102: the same call made and run here (in a later answer, say after the user said yes in a message) no longer
+    // waits for the user's OK, so approving the kept one can't make it twice.
+    if let Some(t) = thread.filter(|_| out.is_ok() && NOT_AFTER_OUTSIDE.contains(&name)) {
+        crate::pending::made(st, t, name, &a.0);
     }
+    out
 }
 
 /// What every tool gets: the app and the acting agent.

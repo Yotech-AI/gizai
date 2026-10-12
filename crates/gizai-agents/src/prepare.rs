@@ -160,14 +160,15 @@ fn bash(shown: &str, path: Option<&OsStr>) -> Result<PathBuf, PrepareFailed> {
 
 /// Installs the dependency folder `folder` ("vendor" or "node_modules") in the checkout `dir` the way `prepare` does
 /// (composer install; npm ci with a package-lock.json, else npm install), without prompts and within `COMMAND_LIMIT`.
-/// Returns the command as shown ("npm ci"). Used for the update of a project's own checkout (`checkout::update`).
-pub fn install(dir: &Path, folder: &str, path: Option<&OsStr>) -> Result<String, PrepareFailed> {
+/// Returns the command as shown ("npm ci") and the end of what it printed. Used for the update of a project's own
+/// checkout and of a folder open in the Editor (`checkout::update`).
+pub fn install(dir: &Path, folder: &str, path: Option<&OsStr>) -> Result<(String, String), PrepareFailed> {
     let Some(dep) = DEPS.iter().find(|d| d.folder == folder) else {
         return Err(PrepareFailed { command: format!("installing {folder}/"), why: "isn't something Gizai installs".into(), output: String::new() });
     };
     let (shown, program, args) = install_command(dir, dep);
-    run(&shown, program, args, dir, path, COMMAND_LIMIT)?;
-    Ok(shown)
+    let printed = run(&shown, program, args, dir, path, COMMAND_LIMIT)?;
+    Ok((shown, printed))
 }
 
 /// What a project's copy list could start with, from its main checkout: .env when it has one, vendor/ for a

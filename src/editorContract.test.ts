@@ -168,7 +168,14 @@ describe("contract C2 in src/api.ts and src/types.ts (GA-107)", () => {
   });
 });
 
-describe("contract C2 in src-tauri (GA-107)", () => {
+/** The commands of C3 (GA-110), which editor.rs has after C2's. */
+const C3_COMMANDS: [string, string[]][] = [
+  ["editor_main", ["folder"]],
+  ["editor_fetch", ["folder"]],
+  ["editor_update", ["folder"]],
+];
+
+describe("contracts C2 and C3 in src-tauri (GA-107, GA-110)", () => {
   const editor = rust("editor.rs");
   const lib = rust("lib.rs");
 
@@ -176,11 +183,11 @@ describe("contract C2 in src-tauri (GA-107)", () => {
     const commands = [...editor.matchAll(/#\[tauri::command\]\s*pub async fn (\w+)\(([^)]*)\)/g)]
       // `st: State<'_, AppState>` has a comma of its own: an argument is what has a type after its name
       .map(([, name, params]) => [name, params.split(",").filter((p) => p.includes(":")).map((p) => p.split(":")[0].trim()).filter((p) => p !== "st")]);
-    expect(commands).toEqual(COMMANDS);
+    expect(commands).toEqual([...COMMANDS, ...C3_COMMANDS]);
   });
 
   it("hands every command to Tauri", () => {
     const handler = lib.slice(lib.indexOf("generate_handler!["));
-    for (const [name] of COMMANDS) expect(handler, name).toContain(`editor::${name}`);
+    for (const [name] of [...COMMANDS, ...C3_COMMANDS]) expect(handler, name).toContain(`editor::${name}`);
   });
 });

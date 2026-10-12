@@ -339,6 +339,27 @@ export type SearchResult = { hits: SearchHit[]; truncated: boolean };
 export type FolderGit = { branch: string | null; files: Record<string, GitMark>; uncommitted: number };
 export type EditorApp = { id: "vscode" | "zed" | "phpstorm"; name: string };
 
+// ---- behind main in the Editor (GA-110, contract C3) ----
+export type FolderMain = {
+  mainLabel: string;          // "origin/main"
+  fetchedAt: number | null;   // ms since 1970; null: never fetched
+  fetchError: string | null;
+  branch: string | null;
+  onDefault: boolean;         // on the default branch
+  behind: number;
+  ahead: number;
+  uncommitted: number;
+  canUpdate: boolean;
+  updateSays: string;         // what Update will do (the plan's sentence), or why it can't
+  updating: boolean;
+};
+export type EditorUpdated = {
+  folder: string;
+  ok: boolean;
+  said: string;               // "Moved main 3 commits to 319bf0b and ran npm ci."
+  output: string;             // what git and the install printed, for Show output; "" when nothing
+};
+
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */
 export type PushOver = "ssh" | "https";

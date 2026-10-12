@@ -170,3 +170,12 @@ describe("the current file when the view opens", () => {
     expect(html.match(/class="chg-file on" data-path="([^"]+)"/)?.[1]).toBe(boxes[0]);
   });
 });
+
+describe("a deleted file's counts", () => {
+  it("are +0 −45 in the list and in its header, as D1 writes them (design/code-editor/changes.html)", () => {
+    const html = view(changes({ files: [file("crates/gizai-agents/src/old_folders.rs", { status: "deleted", additions: 0, deletions: 45 })] }));
+    const stat = '<span class="diffstat"><span class="add">+0</span><span class="del">−45</span></span>';
+    expect(html.match(/<button class="chg-file[^"]*"(?:(?!<\/button>).)*<\/button>/)?.[0]).toContain(stat);
+    expect(html.match(/<header class="chg-fh">(?:(?!<\/header>).)*<\/header>/)?.[0]).toContain(stat);
+  });
+});

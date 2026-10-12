@@ -13,6 +13,7 @@ import {
 import { codeTheme } from "../../lib/codeTheme";
 import { loadLanguage } from "../../lib/codeLanguages";
 import { indentOf } from "../../lib/editor";
+import { findPanel } from "./FindPanel";
 
 /** What the code tells the page; the page swaps them as it renders, every state shares the one object. */
 export type CodeHandlers = { save: () => void; update: (u: ViewUpdate) => void };
@@ -42,22 +43,15 @@ const pageTheme = EditorView.theme({
   ".cm-flash": { backgroundColor: "var(--accent-soft)", transition: "background-color .6s" },
   ".cm-foldGutter .cm-gutterElement": { opacity: "0", cursor: "pointer" },
   ".cm-gutters:hover .cm-foldGutter .cm-gutterElement": { opacity: "1" },
-  // @codemirror/search's own panel, with the app's inputs and buttons
-  ".cm-panel.cm-search": { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 8px", padding: "8px 12px", fontFamily: "var(--font-sans)", fontSize: "var(--fs-sm)" },
-  ".cm-panel.cm-search br": { flexBasis: "100%", height: "0", content: "''" },
-  ".cm-panel.cm-search input[type=checkbox]": { margin: "0 4px 0 0", accentColor: "var(--accent)" },
-  ".cm-panel.cm-search label": { display: "inline-flex", alignItems: "center", color: "var(--text-2)", fontSize: "var(--fs-sm)" },
-  ".cm-textfield": {
-    height: "calc(28px + var(--ui-box, 0px))", minWidth: "220px", margin: "0", padding: "0 8px", border: "1px solid var(--line-2)", borderRadius: "var(--radius)",
+  // Go to line's small panel (@codemirror/search's own), with the app's inputs and buttons; find and replace is FindPanel
+  ".cm-panel.cm-gotoLine input": {
+    height: "calc(28px + var(--ui-box, 0px))", margin: "0 8px", padding: "0 8px", border: "1px solid var(--line-2)", borderRadius: "var(--radius)",
     background: "var(--bg)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", outline: "none",
   },
-  ".cm-textfield:focus": { borderColor: "var(--focus)", boxShadow: "0 0 0 3px var(--accent-soft)" },
-  ".cm-button": {
-    height: "26px", margin: "0", padding: "0 9px", border: "1px solid var(--line-2)", borderRadius: "var(--radius)", backgroundImage: "none",
+  ".cm-panel.cm-gotoLine button": {
+    height: "26px", padding: "0 9px", border: "1px solid var(--line-2)", borderRadius: "var(--radius)", backgroundImage: "none",
     background: "var(--raised)", color: "var(--text)", fontFamily: "var(--font-sans)", fontSize: "var(--fs-sm)", cursor: "pointer",
   },
-  ".cm-button:hover": { background: "var(--hover)" },
-  ".cm-panel.cm-search [name=close]": { position: "static", marginLeft: "auto", padding: "0 6px", border: "0", background: "none", color: "var(--text-3)", fontSize: "18px", cursor: "pointer" },
   ".cm-panel.cm-gotoLine": { padding: "8px 12px", fontSize: "var(--fs-sm)" },
 });
 
@@ -71,7 +65,7 @@ export function codeState(text: string, readOnly: boolean, on: { current: CodeHa
     extensions: [
       lineNumbers(), highlightActiveLineGutter(), highlightSpecialChars(), history(), foldGutter(), drawSelection(), dropCursor(),
       EditorState.allowMultipleSelections.of(true), indentOnInput(), bracketMatching(), rectangularSelection(), crosshairCursor(),
-      highlightActiveLine(), highlightSelectionMatches(), search({ top: true }), flashField,
+      highlightActiveLine(), highlightSelectionMatches(), search({ top: true, createPanel: findPanel }), flashField,
       indentUnit.of(indentOf(text)), EditorState.tabSize.of(4),
       keymap.of([
         { key: "Mod-s", run: () => { on.current.save(); return true; }, preventDefault: true },

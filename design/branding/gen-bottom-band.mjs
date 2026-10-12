@@ -82,7 +82,7 @@ export function height(X, Z, F) {
   const side = smooth(LAND.valley, LAND.valley + LAND.rise, ax);
   if (side === 0) return 0;
   // ranges come and go along the band, taller near the valley, so every window width shows peaks on both sides
-  const range = 0.3 + 0.7 * smooth(-0.32, 0.38, N2(X / 1500, Z / 2200 + 3.7));
+  const range = 0.5 + 0.5 * smooth(-0.32, 0.38, N2(X / 1500, Z / 2200 + 3.7));
   const near = 1 + 0.6 * Math.exp(-(((ax - 470) / 330) ** 2));
   const front = smooth(0.86 * F, 1.32 * F, Z);
   const r = ridged(X / LAND.wave, Z / LAND.wave) ** 1.55;
@@ -174,15 +174,22 @@ function clip(cam, a, b) {
   return [[a[0] + dx * t0, a[1] + dy * t0], [a[0] + dx * t1, a[1] + dy * t1]];
 }
 
-/** The visible lines, as polylines grouped by how strong they are (their depth): [{ fade, lines: [[x, y], ...][] }] */
+/** How strong a column's line is across the picture: full in the middle, fading toward the sides, where perspective lays
+ *  the columns almost flat; the rows, which draw the ridges, keep their strength. */
+export function sideFade(cam, x) {
+  return 1 - 0.55 * smooth(520, 1500, Math.abs(x - cam.W / 2) / cam.s);
+}
+/** The visible lines, as polylines grouped by how strong they are (their depth, and for a column how far to the side):
+ *  [{ fade, lines: [[x, y], ...][] }] */
 export function draw(cam, { levels = 7 } = {}) {
   const rs = rows(cam), hz = horizon(cam);
   const groups = new Map();
-  const level = (Z) => Math.round(depthFade(cam, Z) * (levels - 1)) / (levels - 1);
+  const level = (Z, x, kind) => Math.round(depthFade(cam, Z) * (kind === "col" ? sideFade(cam, x) : 1) * (levels - 1)) / (levels - 1);
   const put = (Z, a, b, kind) => {
     const c = clip(cam, a, b);
     if (!c) return;
-    const f = level(Z);
+    const f = level(Z, (c[0][0] + c[1][0]) / 2, kind);
+    if (f <= 0) return;
     if (!groups.has(f)) groups.set(f, { row: [], col: [] });
     groups.get(f)[kind].push(c);
   };
@@ -673,7 +680,7 @@ async function main() {
       + `<div class="win strip" data-theme="dark" data-band="${PICK}" style="${box};--frame-h:${h}px;--band-h:100%">${BAND_EL}</div></div></div>`;
   };
   section("art", "1. The artwork",
-    p(`Our own land, drawn by ${c("gen-bottom-band.mjs")} from seed ${SEED}: the same lines every time it runs, and no wallpaper or photo in it. A flat valley runs into the distance between ridged mountains, seen through a perspective camera, as a mesh of four-sided cells. The lines a nearer slope hides are taken out (a floating horizon, front to back), so the file holds only the lines you see; far lines fade, and the top of the picture fades so the peaks melt into the page above.`)
+    p(`Our own land, drawn by ${c("gen-bottom-band.mjs")} from seed ${SEED}: the same lines every time it runs, and no wallpaper or photo in it. A flat valley runs into the distance between ridged mountains, seen through a perspective camera, as a mesh of four-sided cells. The lines a nearer slope hides are taken out (a floating horizon, front to back), so the file holds only the lines you see. Far lines fade; toward the far sides, where perspective lays the columns almost flat, the columns fade and the ridges stay; and the top of the picture fades so the peaks melt into the page above.`)
     + `<div class="dz-facts"><div class="dz-fact"><b>${kb(bandSvg.length)}</b><span>mountains.svg, for the app's band (under 60 kB)</span></div>`
     + `<div class="dz-fact"><b>${kb(heroSvg.length)}</b><span>mountains-hero.svg, for the website's hero</span></div>`
     + `<div class="dz-fact"><b>${BAND_CAMERA.W} × ${BAND_CAMERA.H}</b><span>the band at 1:1 (viewBox in quarter pixels: 0 0 ${BAND_CAMERA.W * 4} ${BAND_CAMERA.H * 4})</span></div>`

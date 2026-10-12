@@ -498,12 +498,12 @@ const BOARD = `<div class="main">${topbar(`<a>Kade portal</a><span class="sep">/
     { id: "KADE-45", title: "Show the VAT rate on the invoice PDF", p: "low", labels: ["Feature"] },
   ], { note: "Frontend Agent and Backend Agent take cards by priority" })
   + column("in_progress", "In progress", [
-    { id: "KADE-39", title: "Export invoices as CSV", p: "medium", labels: ["Feature"], who: "BA", working: "BA" },
     { id: "KADE-41", title: "Fix the invoice total", p: "high", labels: ["Bug"], hand: true, who: "JS" },
     { id: "KADE-43", title: "Postcode and house number lookup on checkout", p: "urgent", labels: ["Frontend"], who: "FA" },
     { id: "KADE-42", title: "Filament table: remember column order per user", p: "medium", labels: ["Frontend"], who: "FA" },
     { id: "KADE-46", title: "Log in with a link by mail", p: "medium", labels: ["Feature"], who: "FA" },
     { id: "KADE-48", title: "Archive paid invoices after a year", p: "low", labels: ["Backend"], who: "BA" },
+    { id: "KADE-39", title: "Export invoices as CSV", p: "medium", labels: ["Feature"], who: "BA", working: "BA" },
   ])
   + column("testing", "Testing", [
     { id: "KADE-37", title: "Credit notes", p: "medium", labels: ["Feature"], who: "QA", working: "QA" },
@@ -705,7 +705,7 @@ async function main() {
     + h3("The board")
     + notes(
       "The canvas is see-through: the band shows under the sidebar, between the columns and below the cards. Cards stay solid, so their text never has the band behind it, and a live card's working strip keeps its teal on the card's own surface.",
-      "A long column's last cards stand in the band, and so does Review's “Show 2 more of 8” (<code>text-2</code> on no surface of its own).",
+      "A long column's last cards stand in the band, and so does Review's “Show 2 more of 8” (<code>text-2</code> on no surface of its own). In progress ends with KADE-39, Backend Agent at work: its teal working strip sits on the band, and reads as the only status there.",
       "Under the sidebar the band runs behind Company's Usage, Team, Users and Settings (<code>text-2</code>, icons <code>text-3</code>). The sidebar's colour stays: it moves under the band.")
     + three("Board", () => sidebar("tasks") + BOARD)
     + h3("The chat, with its composer at the bottom")

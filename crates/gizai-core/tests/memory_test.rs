@@ -621,15 +621,16 @@ fn an_agents_block_has_its_own_notes_first_then_this_projects_this_clients_and_i
     let b = memory::prompt_block(&f.db, &f.qa(), &internal).unwrap();
     assert_eq!(b.given.iter().map(|g| g.path.as_str()).collect::<Vec<_>>(), ["Agents/QA Agent/Notes", "Standards/Test style", "Workflows/Release"]);
 
-    // capped at FULL_CAP in total: a note that doesn't fit is cut, the rest are listed by path
+    // capped at FULL_CAP in total: a note that doesn't fit is cut, the rest are listed by path; with shared notes for the
+    // card its own notes take at most OWN_CAP of it (GA-103)
     let v = memory::get(&f.db, &f.be(), "Agents/Backend Agent/Notes").unwrap().current_version;
     memory::write(&f.db, &f.be(), "Agents/Backend Agent/Notes", &"Own lesson, kept for later.\n".repeat(180), Some(v), None).unwrap();
-    memory::write(&f.db, &f.lead(), "Projects/Shop", &format!("---\nproject: SHOP\n---\n{}", "Shop deploys on Fridays.\n".repeat(80)), Some(1), None).unwrap();
+    memory::write(&f.db, &f.lead(), "Projects/Shop", &format!("---\nproject: SHOP\n---\n{}", "Shop deploys on Fridays.\n".repeat(160)), Some(1), None).unwrap();
     let b = memory::prompt_block(&f.db, &f.be(), &shop).unwrap();
     let shown: i64 = b.given.iter().map(|g| g.shown).sum();
     assert!(shown <= memory::FULL_CAP as i64, "{shown}");
     assert_eq!(b.given[0].path, "Agents/Backend Agent/Notes");
-    assert_eq!(b.given[0].shown, b.given[0].chars, "its own notes in full (5,000 characters)");
+    assert_eq!(b.given[0].shown, memory::OWN_CAP as i64, "its own notes (5,000 characters) cut at 3,000");
     assert_eq!(b.given[1].path, "Projects/Shop");
     assert!(b.given[1].shown < b.given[1].chars, "cut: {:?}", b.given[1]);
     assert!(b.text.contains("the rest stays in Gizai's Memory at Projects/Shop"), "{}", b.text);
@@ -789,4 +790,273 @@ fn the_use_memory_switches_are_on_by_default_and_each_turns_it_off() {
     memory::set_enabled(&f.db, true).unwrap();
     assert!(memory::agent_uses(&f.db, &f.qa));
     assert!(!memory::agent_uses(&f.db, &f.be), "its own switch still off");
+}
+
+// ---- GA-103 QA: an agent's run keeps its newest learned lines and room for the card's shared notes ----
+
+/// A new agent's `Notes` (`agent_template`) with `n` learned lines of about 165 characters, oldest first; and the lines.
+fn learned_notes(name: &str, n: usize) -> (String, Vec<String>) {
+    let lesson = "the fake CLI scripts need the run's worktree as their folder, so set it before cargo test or the run waits on a prompt forever in a QA run";
+    let bullets: Vec<String> = (1..=n).map(|i| {
+        let line = format!("- 2026-10-{:02} (GA-{i}): Lesson {i:02}: {lesson}", 1 + i / 3);
+        line.chars().take(165).collect::<String>().trim_end().to_string()
+    }).collect();
+    (format!("{}\n{}\n", memory::agent_template(name), bullets.join("\n")), bullets)
+}
+
+/// Saves `body` as the note at `path` (it exists), as `who`.
+fn set_note(f: &F, who: &Who, path: &str, body: &str) {
+    let v = memory::get(&f.db, who, path).unwrap().current_version;
+    memory::write(&f.db, who, path, body, Some(v), None).unwrap();
+    assert_eq!(memory::get(&f.db, who, path).unwrap().body_md, body, "saved as it was given");
+}
+
+/// What a Memory block shows of the note at `path`: the text under its `### <path> (version …)` heading.
+fn section<'a>(text: &'a str, path: &str) -> &'a str {
+    let at = text.find(&format!("\n### {path} (version ")).unwrap_or_else(|| panic!("no {path} in {text}"));
+    let start = at + text[at..].find(")\n\n").unwrap() + 3;
+    let end = text[start..].find("\n\n### ").map_or(text.len(), |e| start + e);
+    text[start..end].trim_end_matches('\n')
+}
+
+fn given_paths(b: &memory::Block) -> Vec<&str> {
+    b.given.iter().map(|g| g.path.as_str()).collect()
+}
+
+/// A run on a card of project GA (Gizai), no client.
+fn ga(role: &str) -> Context {
+    Context { role: role.into(), project: Some(("GA".into(), "Gizai".into())), client: None }
+}
+
+#[test]
+fn an_agents_notes_with_60_learned_lines_give_its_run_the_text_before_learned_and_its_newest_lines_with_how_many_older_were_left_out() {
+    let f = setup();
+    let p = f.project("Gizai", "GA", None);
+    let (body, bullets) = learned_notes("Backend Agent", 60);
+    let size = body.trim().chars().count();
+    assert!((9_500..10_500).contains(&size), "about 10,000 characters: {size}");
+    set_note(&f, &f.be(), "Agents/Backend Agent/Notes", &body);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/Backend Agent/Notes"], "no shared notes for GA");
+
+    // the text before ## Learned as it is, a line on how many older lines were left out, then the newest lines in order
+    let shown = section(&b.text, "Agents/Backend Agent/Notes");
+    let head = memory::agent_template("Backend Agent");
+    let (line, kept) = shown.strip_prefix(&format!("{}\n\n", head.trim_end())).and_then(|r| r.split_once("\n\n"))
+        .unwrap_or_else(|| panic!("not the text before ## Learned, then a line: {shown}"));
+    let kept: Vec<&str> = kept.lines().collect();
+    let out = bullets.len() - kept.len();
+    assert!(out > 0 && kept.len() > 10, "{out} left out, {} kept", kept.len());
+    assert_eq!(line, format!("({out} older lines left out; they stay in Gizai's Memory at Agents/Backend Agent/Notes.)"));
+    assert_eq!(kept, bullets[out..], "the newest lines, ending with the last one learned");
+    for old in &bullets[..out] {
+        assert!(!b.text.contains(old.as_str()), "an older line is in the run: {old}");
+    }
+    // without shared notes its own notes may use all 6,000, and every line that fits is in
+    let len = shown.chars().count();
+    assert!(len > memory::OWN_CAP && len <= memory::FULL_CAP, "{len}");
+    assert!(len + 1 + bullets[out - 1].chars().count() > memory::FULL_CAP, "room for one more line: {len}");
+    assert!(!b.text.contains("Cut here") && !b.text.contains("More notes for this card"), "{}", b.text);
+
+    // given: the note's size, and how many of its own characters the run got (the line on what was left out not counted)
+    let own = len - line.chars().count() - 2;
+    assert_eq!(b.given, [memory::Given { path: "Agents/Backend Agent/Notes".into(), chars: size as i64, shown: own as i64 }]);
+    // the run's record (the Runs tab) says the same
+    let task = tasks::create(&f.db, &f.you, TaskInput { project_id: p, title: "Long notes".into(), ..Default::default() }).unwrap();
+    let run = runs::create(&f.db, &f.be, &task, "backend", "S", "/tmp", "/tmp", "gizai/x", "/tmp/r.jsonl").unwrap();
+    memory::record_given(&f.db, &run, &b.given).unwrap();
+    let r = runs::list_for_task(&f.db, &task).unwrap().into_iter().find(|r| r.id == run).unwrap();
+    assert_eq!(r.memory, b.given);
+}
+
+#[test]
+fn with_a_shared_note_for_the_card_an_agents_own_notes_take_at_most_3000_and_the_shared_notes_get_the_rest_in_their_order() {
+    let f = setup();
+    f.project("Gizai", "GA", None);
+    let devops = Who::Agent(team::add_agent(&f.db, &f.you, &f.team, AgentInput { name: "DevOps Agent".into(), role_key: "devops".into(),
+        ..Default::default() }).unwrap());
+    let (body, bullets) = learned_notes("DevOps Agent", 60);
+    set_note(&f, &devops, "Agents/DevOps Agent/Notes", &body);
+    let deploy = "---\ntype: deployment\nproject: GA\napplies_to: devops\n---\n# Deploying Gizai\n\nA release is a pull request from main to \
+production, then a vX.Y.Z tag on production.";
+    f.write("Deployments/GA", deploy);
+    let b = memory::prompt_block(&f.db, &devops, &ga("devops")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/DevOps Agent/Notes", "Deployments/GA"], "{}", b.text);
+    let shown = section(&b.text, "Agents/DevOps Agent/Notes");
+    let len = shown.chars().count();
+    assert!(len <= memory::OWN_CAP && len > memory::OWN_CAP - 200, "its own notes take at most 3,000: {len}");
+    assert!(shown.contains(" older lines left out; they stay in Gizai's Memory at Agents/DevOps Agent/Notes.)\n\n- "), "{shown}");
+    assert!(shown.ends_with(bullets[59].as_str()) && !shown.contains(bullets[0].as_str()), "{shown}");
+    assert_eq!(section(&b.text, "Deployments/GA"), deploy, "the deploy note in full");
+    let d = deploy.chars().count() as i64;
+    assert_eq!((b.given[1].chars, b.given[1].shown), (d, d));
+    assert!(!b.text.contains("More notes for this card"), "{}", b.text);
+
+    // more shared notes for the card get the rest of the 6,000, in their order: the project's, then the role's or all
+    let project = format!("---\nproject: GA\n---\n# Gizai\n\n{}", "Gizai builds with npm run tauri build -- --no-bundle.\n".repeat(36));
+    let release = format!("---\napplies_to: all\n---\n# Release\n\n{}", "Tag releases on production, never on main.\n".repeat(50));
+    f.write("Projects/Gizai", &project);
+    f.write("Workflows/Release", &release);
+    let b = memory::prompt_block(&f.db, &devops, &ga("devops")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/DevOps Agent/Notes", "Deployments/GA", "Projects/Gizai", "Workflows/Release"]);
+    assert_eq!(section(&b.text, "Agents/DevOps Agent/Notes"), shown, "its own notes the same");
+    assert_eq!(section(&b.text, "Projects/Gizai"), project.trim());
+    let rest = memory::FULL_CAP - len - deploy.chars().count() - project.trim().chars().count();
+    let size = release.trim().chars().count();
+    assert!(rest >= 500 && rest < size, "{rest}");
+    assert_eq!((b.given[3].chars as usize, b.given[3].shown as usize), (size, rest), "the last one gets what is left of the 6,000");
+    assert!(b.text.contains(&format!("(Cut here: the note has {size} characters; the rest stays in Gizai's Memory at Workflows/Release.)")),
+            "{}", b.text);
+}
+
+#[test]
+fn an_agents_own_notes_share_the_3000_when_the_card_has_shared_notes_and_may_use_all_6000_without_them() {
+    let f = setup();
+    f.project("Gizai", "GA", None);
+    let notes = format!("# Notes\n\n{}", "Own lesson, kept for later.\n".repeat(85));
+    let gotchas = "Run cargo with -j 4 in a QA run.\n".repeat(80);
+    set_note(&f, &f.be(), "Agents/Backend Agent/Notes", &notes);
+    memory::write(&f.db, &f.be(), "Agents/Backend Agent/Gotchas", &gotchas, None, None).unwrap();
+    let (n, g) = (notes.trim().chars().count(), gotchas.trim().chars().count());
+    assert!(n < memory::OWN_CAP && n + g > memory::OWN_CAP && n + g < memory::FULL_CAP);
+    // without shared notes for the card: both in full
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/Backend Agent/Notes", "Agents/Backend Agent/Gotchas"]);
+    assert!(b.given.iter().all(|x| x.shown == x.chars), "{:?}", b.given);
+
+    // with one: its other note gets what Notes left of the 3,000, cut at the end; the shared note comes in full
+    f.write("Projects/Gizai", "---\nproject: GA\n---\nGizai builds with npm run tauri build -- --no-bundle.");
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/Backend Agent/Notes", "Agents/Backend Agent/Gotchas", "Projects/Gizai"]);
+    assert_eq!((b.given[0].shown as usize, b.given[1].shown as usize), (n, memory::OWN_CAP - n));
+    assert!(b.text.contains(&format!("(Cut here: the note has {g} characters; the rest stays in Gizai's Memory at Agents/Backend Agent/Gotchas.)")),
+            "{}", b.text);
+    assert_eq!(b.given[2].shown, b.given[2].chars);
+
+    // with less than 500 of the 3,000 left, its other note is listed by path
+    set_note(&f, &f.be(), "Agents/Backend Agent/Notes", &format!("# Notes\n\n{}", "Own lesson, kept for later.\n".repeat(100)));
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/Backend Agent/Notes", "Projects/Gizai"]);
+    let more = &b.text[b.text.find("### More notes for this card, not shown in full").expect("an index")..];
+    assert!(more.contains(&format!("- Agents/Backend Agent/Gotchas ({} characters)", gotchas.chars().count())), "{more}");
+}
+
+#[test]
+fn a_notes_that_fits_is_shown_as_it_is_one_character_over_leaves_its_oldest_line_out_and_the_team_leads_block_cuts_as_before() {
+    let f = setup();
+    f.project("Gizai", "GA", None);
+    f.write("Projects/Gizai", "---\nproject: GA\n---\nGizai builds with npm run tauri build -- --no-bundle.");
+    let path = "Agents/Backend Agent/Notes";
+    let (body, bullets) = learned_notes("Backend Agent", 10);
+    let size = body.trim().chars().count();
+    set_note(&f, &f.be(), path, &body);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    assert_eq!(section(&b.text, path), body.trim(), "as it is");
+    assert_eq!(b.given[0], memory::Given { path: path.into(), chars: size as i64, shown: size as i64 });
+    assert!(!b.text.contains("left out") && !b.text.contains("Cut here"), "{}", b.text);
+
+    // exactly 3,000 characters with a shared note: still as it is
+    let padded = |to: usize| body.replacen("## Learned", &format!("{}\n\n## Learned", "p".repeat(to - size - 2)), 1);
+    let full = padded(memory::OWN_CAP);
+    assert_eq!(full.trim().chars().count(), memory::OWN_CAP);
+    set_note(&f, &f.be(), path, &full);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    assert_eq!(section(&b.text, path), full.trim());
+    assert_eq!((b.given[0].chars, b.given[0].shown), (3_000, 3_000));
+
+    // one character more: its oldest line is left out, the rest as it was
+    let over = padded(memory::OWN_CAP + 1);
+    set_note(&f, &f.be(), path, &over);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    let (head, _) = over.split_once("\n\n- ").unwrap();
+    assert_eq!(section(&b.text, path), format!("{head}\n\n(1 older line left out; it stays in Gizai's Memory at {path}.)\n\n{}",
+                                               bullets[1..].join("\n")));
+    assert_eq!((b.given[0].chars, b.given[0].shown), (3_001, (3_001 - bullets[0].chars().count() - 1) as i64));
+    assert_eq!(given_paths(&b), [path, "Projects/Gizai"]);
+
+    // the Team Lead's Notes over 6,000 is cut at its end with a pointer to memory_read, as before, not by its learned lines
+    memory::ensure_lead_notes(&f.db, &f.lead, "Jeffrey").unwrap();
+    let (lead, _) = learned_notes("Team Lead", 60);
+    set_note(&f, &f.lead(), "Team Lead/Notes", &lead);
+    let b = memory::prompt_block(&f.db, &f.lead(), &Context::default()).unwrap();
+    let size = lead.trim().chars().count();
+    let first: String = lead.trim().chars().take(memory::FULL_CAP).collect();
+    assert_eq!(section(&b.text, "Team Lead/Notes"),
+               format!("{first}\n\n(Cut here: the note has {size} characters. Read the rest with memory_read \"Team Lead/Notes\".)"));
+    assert_eq!(b.given, [memory::Given { path: "Team Lead/Notes".into(), chars: size as i64, shown: memory::FULL_CAP as i64 }]);
+    assert!(!b.text.contains("left out"), "{}", b.text);
+    // and keeps no room for other notes: 5,000 characters of its own come in full
+    let five = format!("# Notes\n\n{}", "Jeffrey wants short summaries.\n".repeat(160));
+    set_note(&f, &f.lead(), "Team Lead/Notes", &five);
+    let b = memory::prompt_block(&f.db, &f.lead(), &Context::default()).unwrap();
+    assert_eq!(section(&b.text, "Team Lead/Notes"), five.trim());
+    assert!(b.given[0].shown > memory::OWN_CAP as i64 && b.given[0].shown == b.given[0].chars, "{:?}", b.given);
+    assert!(b.text.contains("- Projects/Gizai ("), "the others by path: {}", b.text);
+}
+
+#[test]
+fn a_section_after_the_learned_list_stays_and_a_notes_without_the_list_or_too_long_around_it_is_cut_at_the_end() {
+    let f = setup();
+    f.project("Gizai", "GA", None);
+    f.write("Projects/Gizai", "---\nproject: GA\n---\nGizai builds with npm run tauri build -- --no-bundle.");
+    let path = "Agents/Backend Agent/Notes";
+    // a section after the list stays after the newest lines; a line with a second line goes whole
+    let (body, bullets) = learned_notes("Backend Agent", 30);
+    let tail = "## Open threads\n\n- Ask Jeffrey about the release day.";
+    let body = format!("{}\n  It also needs GIT_CEILING_DIRECTORIES.\n\n{tail}\n", body.trim_end());
+    set_note(&f, &f.be(), path, &body);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    let shown = section(&b.text, path);
+    let len = shown.chars().count();
+    assert!(len <= memory::OWN_CAP, "{len}");
+    assert!(shown.ends_with(&format!("{}\n  It also needs GIT_CEILING_DIRECTORIES.\n\n{tail}", bullets[29])), "{shown}");
+    let line = shown.lines().find(|l| l.contains("older lines left out")).unwrap_or_else(|| panic!("{shown}"));
+    let out: usize = line.trim_start_matches('(').split(' ').next().unwrap().parse().unwrap();
+    assert!(shown.contains(&format!("## Learned\n\n{line}\n\n{}\n", bullets[out])) && !shown.contains(bullets[out - 1].as_str()), "{shown}");
+    assert_eq!(b.given[0].shown as usize, len - line.chars().count() - 2);
+    assert_eq!(b.given[0].chars as usize, body.trim().chars().count());
+
+    // no ## Learned list: cut at the end, as any note
+    let plain = format!("# Notes\n\n{}", "Own lesson, kept for later.\n".repeat(150));
+    let size = plain.trim().chars().count();
+    set_note(&f, &f.be(), path, &plain);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    let first: String = plain.trim().chars().take(memory::OWN_CAP).collect();
+    assert_eq!(section(&b.text, path), format!("{first}\n\n(Cut here: the note has {size} characters; the rest stays in Gizai's Memory at {path}.)"));
+    assert_eq!((b.given[0].chars as usize, b.given[0].shown as usize), (size, memory::OWN_CAP));
+    assert_eq!(given_paths(&b), [path, "Projects/Gizai"]);
+
+    // the text before ## Learned alone doesn't fit: cut at the end too
+    let long = format!("# Notes\n\n{}\n## Learned\n\n- 2026-10-12 (GA-103): The newest line.\n", "Context for the agent.\n".repeat(140));
+    let size = long.trim().chars().count();
+    set_note(&f, &f.be(), path, &long);
+    let b = memory::prompt_block(&f.db, &f.be(), &ga("backend")).unwrap();
+    let first: String = long.trim().chars().take(memory::OWN_CAP).collect();
+    assert_eq!(section(&b.text, path), format!("{first}\n\n(Cut here: the note has {size} characters; the rest stays in Gizai's Memory at {path}.)"));
+    assert_eq!((b.given[0].chars as usize, b.given[0].shown as usize), (size, memory::OWN_CAP));
+}
+
+#[test]
+fn an_agent_that_shares_a_folder_gets_the_groups_notes_cut_from_their_oldest_learned_line() {
+    let f = setup();
+    f.project("Gizai", "GA", None);
+    let be2 = team::add_agent(&f.db, &f.you, &f.team, AgentInput { name: "Backend Agent 2".into(), role_key: "backend".into(),
+        shares_memory_with: Some(f.be.clone()), ..Default::default() }).unwrap();
+    // 60 lines, 20 per run, from both agents
+    for (k, agent) in [&f.be, &be2, &f.be].into_iter().enumerate() {
+        let lines: Vec<String> = (1..=20).map(|i| format!("Lesson {i:02} of run {k}: the fake CLI scripts need the run's worktree as \
+their folder, so set it before cargo test or the run waits.")).collect();
+        memory::learned(&f.db, agent, &format!("GA-{}", 100 + k), &lines, None, "2026-10-12").unwrap();
+    }
+    let size = memory::find(&f.db, "Agents/Backend Agent/Notes").unwrap().unwrap().body_md.trim().chars().count();
+    assert!(size > memory::FULL_CAP, "{size}");
+    let b = memory::prompt_block(&f.db, &Who::of(&f.db, &be2).unwrap(), &ga("backend")).unwrap();
+    assert_eq!(given_paths(&b), ["Agents/Backend Agent/Notes"]);
+    let shown = section(&b.text, "Agents/Backend Agent/Notes");
+    assert!(shown.chars().count() <= memory::FULL_CAP);
+    assert!(shown.contains(" older lines left out; they stay in Gizai's Memory at Agents/Backend Agent/Notes.)"), "{shown}");
+    assert!(shown.ends_with("(GA-102, Backend Agent): Lesson 20 of run 2: the fake CLI scripts need the run's worktree as their folder, so \
+set it before cargo test or the run waits."), "{shown}");
+    assert!(!shown.contains("Lesson 01 of run 0") && shown.contains("Lesson 20 of run 1"), "{shown}");
+    assert!(b.given[0].shown < b.given[0].chars);
 }

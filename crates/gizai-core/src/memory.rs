@@ -28,6 +28,9 @@ pub const FROM_CLAUDE: &str = "claude-code";
 pub const TYPES: [&str; 9] = ["client", "project", "standard", "workflow", "deployment", "dependency", "decision", "lesson", "note"];
 /// A prompt's Memory block: this many characters of notes in full…
 pub const FULL_CAP: usize = 6_000;
+/// …of which an agent's own notes take at most this many in its run when the card has shared notes, so those keep the
+/// rest (GA-103)…
+pub const OWN_CAP: usize = 3_000;
 /// …then at most this many of the list of the others.
 pub const INDEX_CAP: usize = 4_000;
 /// A `learned` line from a result is cut to this many characters.
@@ -1795,13 +1798,62 @@ fn rank_for(props: &BTreeMap<String, Vec<String>>, cx: &Context) -> Option<u8> {
     }
 }
 
+/// An agent's `Notes` that doesn't fit in `room` characters, cut from the oldest item of its `## Learned` list (GA-103):
+/// a run's learned lines are added at the list's end, so the run gets the text around the list and its newest items that
+/// fit, in their order, after a line on how many older ones were left out and where they stay. The text, at most `room`
+/// characters, and how many of the note's own characters it shows (that line not counted). None when the note has no
+/// such list, or the text around it doesn't fit.
+fn newest_learned(body: &str, path: &str, room: usize) -> Option<(String, usize)> {
+    let lines: Vec<&str> = body.lines().collect();
+    let (at, end) = section_at(&lines, "Learned")?;
+    let items = learned_items(body);
+    if items.is_empty() {
+        return None;
+    }
+    let left_out = |n: usize| if n == 1 {
+        format!("(1 older line left out; it stays in Gizai's Memory at {path}.)")
+    } else {
+        format!("({n} older lines left out; they stay in Gizai's Memory at {path}.)")
+    };
+    let len = |s: &str| s.chars().count();
+    let (head, tail) = (lines[..=at].join("\n"), lines[end..].join("\n"));
+    // The text around the list, and the line on what was left out at its longest.
+    let around = len(&head) + 2 + len(&left_out(items.len())) + if tail.is_empty() { 0 } else { 2 + len(&tail) };
+    let mut free = room.checked_sub(around)?;
+    let mut kept = 0;
+    for item in items.iter().rev() {
+        // A blank line before the first, a line break before each other.
+        let need = len(item) + if kept == 0 { 2 } else { 1 };
+        if need > free {
+            break;
+        }
+        free -= need;
+        kept += 1;
+    }
+    let out = items.len() - kept;
+    let line = (out > 0).then(|| left_out(out));
+    let mut parts = vec![head];
+    parts.extend(line.clone());
+    if kept > 0 {
+        parts.push(items[out..].join("\n"));
+    }
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    let text = parts.join("\n\n");
+    let shown = len(&text) - line.map_or(0, |l| len(&l) + 2);
+    Some((text, shown))
+}
+
 /// The Memory block for `who`'s prompt. The Team Lead (chat, board check and its task runs): its own notes in full (at
 /// most `FULL_CAP` characters, a note that doesn't fit cut with a pointer to memory_read), then the paths of every other
 /// note it may read (at most `INDEX_CAP`); the notes imported from Claude Code's own memory (`Team Lead/Imported/`) are
 /// one line there until they are sorted. Another agent's task run (`cx`): its own notes (an agent in a group: the
 /// group's) first, then the shared notes for this card's project, its client, and its role or `all` (`applies_to`), in
-/// that order, `FULL_CAP` in total, then the paths of those that didn't fit (`INDEX_CAP`). Never a note of another client
-/// or project, not even from its own folder. Introduced as data, never instructions.
+/// that order, `FULL_CAP` in total, then the paths of those that didn't fit (`INDEX_CAP`). When the card has shared notes,
+/// its own take at most `OWN_CAP` of that and the shared notes the rest (GA-103); its `Notes` that doesn't fit keeps the
+/// newest lines of its `## Learned` list (`newest_learned`). Never a note of another client or project, not even from its
+/// own folder. Introduced as data, never instructions.
 pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
     let notes = db.read(|c| all_in(c, true))?;
     let lead = matches!(who, Who::Lead(_) | Who::Person(_));
@@ -1821,6 +1873,8 @@ pub fn prompt_block(db: &Db, who: &Who, cx: &Context) -> Result<Block> {
     let waiting = if lead { own.iter().filter(|n| n.path.starts_with(&imported) && from_claude(n)).count() } else { 0 };
     own.retain(|n| !lead || !n.path.starts_with(&imported));
     notes_first(&mut own);
+    // The first `mine` are its own notes; in an agent's run the card's shared notes follow them.
+    let mine = own.len();
     if !lead {
         let mut ranked: Vec<(u8, Note)> = rest.into_iter().filter(|n| n.scope == "shared")
             .filter_map(|n| rank_for(&properties(&n.body_md), cx).map(|r| (r, n))).collect();
@@ -1844,29 +1898,39 @@ repository and the board don't say (a decision and its reason, a gotcha, how thi
     let mut text = format!("## Memory\n\n{intro}\n");
     let mut given = vec![];
     let mut budget = FULL_CAP;
+    // An agent's own notes leave room for the card's shared notes (GA-103): at most OWN_CAP when there are any.
+    let mut own_budget = if own.len() > mine { OWN_CAP } else { FULL_CAP };
     let mut index: Vec<&Note> = vec![];
-    for n in own.iter() {
+    for (i, n) in own.iter().enumerate() {
+        let room = if i < mine { budget.min(own_budget) } else { budget };
         let body = n.body_md.trim();
         let size = body.chars().count();
-        if budget == 0 || (size > budget && budget < 500 && !given.is_empty()) {
+        if room == 0 || (size > room && room < 500 && !given.is_empty()) {
             index.push(n);
             continue;
         }
-        let (shown, cut_note) = if size > budget {
-            let keep: String = body.chars().take(budget).collect();
+        // The note as the prompt shows it, how many of its characters that is, and how much of the budget it takes.
+        let learned = !lead && i < mine && n.title().eq_ignore_ascii_case(NOTES);
+        let (shown, shown_chars, used) = if size <= room {
+            (body.to_string(), size, size)
+        } else if learned && let Some((cut, kept)) = newest_learned(body, &n.path, room) {
+            let used = cut.chars().count();
+            (cut, kept, used)
+        } else {
+            let keep: String = body.chars().take(room).collect();
             let pointer = if lead {
                 format!("\n\n(Cut here: the note has {size} characters. Read the rest with memory_read \"{}\".)", n.path)
             } else {
                 format!("\n\n(Cut here: the note has {size} characters; the rest stays in Gizai's Memory at {}.)", n.path)
             };
-            (keep, pointer)
-        } else {
-            (body.to_string(), String::new())
+            (format!("{keep}{pointer}"), room, room)
         };
-        let shown_chars = shown.chars().count();
-        text.push_str(&format!("\n### {} (version {})\n\n{shown}{cut_note}\n", n.path, n.current_version));
+        text.push_str(&format!("\n### {} (version {})\n\n{shown}\n", n.path, n.current_version));
         given.push(Given { path: n.path.clone(), chars: size as i64, shown: shown_chars as i64 });
-        budget = budget.saturating_sub(shown_chars);
+        budget = budget.saturating_sub(used);
+        if i < mine {
+            own_budget = own_budget.saturating_sub(used);
+        }
     }
     index.extend(rest.iter());
     if !index.is_empty() || waiting > 0 {

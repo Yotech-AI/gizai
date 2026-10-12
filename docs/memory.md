@@ -148,9 +148,30 @@ A new task run's prompt has a Memory section after the task, built by `memory::p
 2. the shared notes for this card, in this order: the card's project (`project:`), its client (`client:`), the agent's
    role or `all` (`applies_to:`).
 
-At most **6,000 characters** of notes in full (the one that doesn't fit is cut), then the paths of the rest that match
-(**4,000**). **Client isolation:** a note about another client or another project never goes in, not even its path, and
-not from the agent's own folder or its group's either; a shared note with `applies_to` for other roles doesn't go in. A
+At most **6,000 characters** of notes in full, then the paths of the rest that match (**4,000**). When the card has
+shared notes, the agent's own notes take at most **3,000** of the 6,000 and the shared notes get the rest, in the order
+above, so a long `Notes` never pushes the card's notes out; without shared notes its own notes may use all 6,000
+(GA-103). A note that doesn't fit in what is left is cut at the end, with where the rest stays in Gizai's Memory (task
+runs have no memory tools to read it), or only its path is listed when less than 500 characters are left.
+
+The agent's `Notes` grows at the end of its `## Learned` list (below), so when it doesn't fit, that list is cut from
+its oldest line instead: the run gets the text before `## Learned` (and any after the list), a line on how many older
+lines were left out, and the newest lines that fit, in their order:
+
+```markdown
+## Learned
+
+(41 older lines left out; they stay in Gizai's Memory at Agents/Backend Agent/Notes.)
+
+- 2026-10-11 (GA-101): …
+- 2026-10-12 (GA-103): …
+```
+
+A `Notes` that fits is shown as it is. One without a `## Learned` list, or whose text around the list doesn't fit by
+itself, is cut at the end like any other note. The Team Lead's block cuts its notes as before.
+
+**Client isolation:** a note about another client or another project never goes in, not even its path, and not from
+the agent's own folder or its group's either; a shared note with `applies_to` for other roles doesn't go in. A
 continued run has the notes in its session already.
 
 An agent keeps what it learned by adding an optional `learned` list to its result line:
@@ -165,6 +186,8 @@ Gizai appends each line to the agent's own `Notes` under `## Learned`, as a date
 20 lines, each cut at 300 characters. A result line without `learned` parses as before.
 
 The task page's Runs tab lists the notes a run was given, with their size (and how much was shown when one was cut).
+For a `Notes` cut by its `## Learned` list, that is the characters of its text the run got, the line on what was left
+out not counted.
 
 The DevOps role keeps a project's deploy note in `Deployments/<KEY>`, with `type: deployment`, `project: <KEY>` and
 `applies_to: devops`, so it comes into the DevOps Agent's runs; the agent reports what changed as `learned` lines and the

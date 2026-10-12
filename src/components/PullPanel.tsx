@@ -2,7 +2,7 @@
 // card in Review. On GitHub that pushes the branch over SSH or HTTPS, as Settings → GitHub says, and opens the pull request with gh;
 // on Bitbucket it pushes over SSH and opens it through Bitbucket's API (Settings → Bitbucket). Opening the page of a card Gizai
 // follows asks GitHub or Bitbucket at once, so a pull request an agent opened shows straight away, and a merge moves the card to
-// Deploy (or Done when the team has no Deploy column).
+// Deploy (or Done when the team has no Deploy column). With the card's changes, their counts and Show changes (GA-112).
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ExternalLink, GitMerge, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Upload } from "lucide-react";
@@ -10,12 +10,15 @@ import { checkPullRequest, getProject, openPullRequest } from "../api";
 import { useData } from "../lib/useData";
 import { hasPulls, HOST_NAMES, pullHostOf } from "../lib/provider";
 import { followsPull, pullAction, pullBadge, pullHint, pullNumber } from "../lib/pulls";
-import type { Task } from "../types";
+import { href } from "../router";
+import type { CardChanges, Task } from "../types";
+import { Diffstat } from "./changes/Diffstat";
 
 const ICONS = { open: GitPullRequest, draft: GitPullRequestDraft, merged: GitMerge, closed: GitPullRequestClosed };
 
-/** `mergeTo`: the column a merge moves the card to (the team's Deploy column; Done when left out). */
-export function PullPanel({ task, live, mergeTo }: { task: Task; live: boolean; mergeTo?: string }) {
+/** `mergeTo`: the column a merge moves the card to (the team's Deploy column; Done when left out). `changes`: the card's
+ *  changes, for their counts and Show changes. */
+export function PullPanel({ task, live, mergeTo, changes }: { task: Task; live: boolean; mergeTo?: string; changes?: CardChanges | null }) {
   const { data: project } = useData(() => (task.projectId ? getProject(task.projectId) : Promise.resolve(null)), [task.projectId]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -59,6 +62,10 @@ export function PullPanel({ task, live, mergeTo }: { task: Task; live: boolean; 
           <span className={`badge ${badge.cls}`}>{badge.text}</span>
         </>}
         <span className="right">
+          {changes && changes.files.length > 0 && <>
+            <Diffstat add={changes.additions} del={changes.deletions} />
+            <a className="link" style={{ color: "var(--accent)" }} href={href({ page: "task", id: task.id, view: "changes" })}>Show changes</a>
+          </>}
           {action && <button className="btn sm primary" onClick={open} disabled={busy || !!action.why} title={action.why ?? undefined}>
             {action.label === "Push branch" ? <Upload className="icon" /> : <GitPullRequest className="icon" />}{busy ? "Pushing…" : action.label}</button>}
         </span>

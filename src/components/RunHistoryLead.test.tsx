@@ -24,7 +24,12 @@ const asked = (l: LeadAnswer | null): Run => ({
   inputTokens: 0, outputTokens: 0, logPath: "/runs/r.jsonl", lead: l,
 } as Run);
 const render = (l: LeadAnswer | null) => renderToStaticMarkup(<RunHistory runs={[asked(l)]} />);
-const row = (html: string) => text(html.slice(html.indexOf('<button class="panel-row"'), html.indexOf("</button>")));
+// the row's line: since GA-112 a div holding the button that opens the row and, beside it, Show changes
+const row = (html: string) => {
+  const at = html.indexOf('<div class="panel-row run-line">');
+  expect(at).toBeGreaterThanOrEqual(0);
+  return text(html.slice(at, html.indexOf("</button>", at)));
+};
 
 describe("the Runs tab: who answered a question (GA-70)", () => {
   it("while the Team Lead has it: a teal badge, and its look in the open row", () => {

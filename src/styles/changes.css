@@ -1,0 +1,177 @@
+/* The Changes view on a card (Code Editor F1, GA-112): D1's design (design/code-editor/changes.css, its first part, as
+   designed; all tokens), then what the app adds: the file list's rows as buttons, a file's CodeMirror diff in its box, and
+   the box's size before its diff loads. */
+/* ---------- Card | Changes: the tabs under the top bar of the task page ---------- */
+.task-tabs { flex-wrap: nowrap; padding: 0 16px; }
+.diffstat { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diffstat .add { color: var(--diff-add); }
+.diffstat .del { color: var(--diff-del); }
+.diffstat .bin { font-family: var(--font-sans); font-size: var(--fs-xs); color: var(--text-3); }
+.tab .diffstat { margin-left: 2px; }
+
+/* ---------- the view: file list | diffs, under the tabs, full width (Properties closes) ---------- */
+.chg { display: grid; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; outline: none; }
+.chg [hidden] { display: none !important; }
+/* folded ([ or the list's own button): a 36px rail on side, like a folded board column, brings it back */
+.chg-rail { display: none; }
+.chg.list-folded { grid-template-columns: 36px minmax(0, 1fr); }
+.chg.list-folded > .chg-files { display: none; }
+.chg.list-folded > .chg-rail { display: flex; flex-direction: column; align-items: center; padding-top: 10px; border-right: 1px solid var(--line); background: var(--side); }
+
+/* the file list: the Memory page's explorer, on the dimmest surface */
+.chg-files { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--side); }
+.chg-sum { display: flex; flex-direction: column; gap: 3px; padding: 12px 8px 8px 14px; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-2); }
+.chg-sum .src { display: flex; align-items: flex-start; gap: 6px; color: var(--text); font-weight: 500; }
+.chg-sum .src > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chg-sum .src .icon.sm { margin-right: 6px; vertical-align: -2px; color: var(--text-3); }
+.chg-sum .src .btn { flex: none; margin: -4px 0 0; }
+.chg-sum .tot { color: var(--text-3); }
+.chg-sum .unc { display: flex; align-items: center; gap: 7px; }
+.chg-filter { position: relative; display: flex; align-items: center; padding: 4px 10px 8px; }
+.chg-filter > .icon { position: absolute; left: 20px; color: var(--text-3); pointer-events: none; }
+.chg-filter .input { height: calc(30px + var(--ui-box, 0px)); padding-left: 30px; font-size: var(--fs-sm); }
+.chg-tree { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 12px; }
+.chg-dir { display: flex; align-items: center; gap: 4px; width: 100%; min-height: calc(26px + var(--ui-box, 0px)); margin-top: 6px; padding: 0 6px; border: 0; border-radius: var(--radius);
+  background: none; color: var(--text-3); font-family: var(--font-mono); font-size: 11.5px; text-align: left; cursor: pointer; }
+.chg-dir:first-child { margin-top: 0; }
+.chg-dir:hover { background: var(--hover); color: var(--text-2); }
+.chg-dir:focus-visible, .chg-file:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.chg-dir .icon { width: 14px; height: 14px; flex: none; }
+.chg-dir > span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chg-dir .n { margin-left: auto; font-family: var(--font-sans); font-size: var(--fs-xs); }
+.chg-dir[aria-expanded="false"] + .chg-group { display: none; }
+.chg-file { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 8px; height: calc(28px + var(--ui-box, 0px)); padding: 0 8px 0 22px;
+  border-radius: var(--radius); color: var(--text-2); font-size: var(--fs); text-decoration: none; cursor: pointer; }
+.chg-group > .chg-file:only-child, .chg-tree > .chg-group:first-child .chg-file { scroll-margin-top: 8px; }
+.chg-file:hover { background: var(--hover); color: var(--text); }
+.chg-file.on { background: var(--selected); color: var(--text); }
+.chg-file .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chg-file .nm .was { color: var(--text-3); }
+.chg-file .nm .arrow { width: 12px; height: 12px; vertical-align: -1px; color: var(--text-3); }
+.chg-file .meta { display: inline-flex; align-items: center; gap: 6px; }
+/* text-3 never sits on selected: the current row lifts its faint parts to text-2 */
+.chg-file.on .was, .chg-file.on .arrow, .chg-file.on .bin { color: var(--text-2); }
+.chg-st { font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; line-height: 1; text-align: center; color: var(--text-2); }
+.chg-st.a { color: var(--diff-add); }
+.chg-st.d { color: var(--diff-del); }
+.chg-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-2); }
+.chg-nomatch { padding: 10px 8px; color: var(--text-2); font-size: var(--fs-sm); }
+.chg-nomatch .link { display: inline; color: var(--accent); }
+.chg-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 9px 14px 11px; border-top: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-xs); }
+.chg-keys .kbd { min-width: 16px; height: 16px; }
+
+/* the Runs tab: a run with commits gets Show changes beside the button that opens it */
+.run-line { gap: 8px; padding-right: 14px; }
+.run-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; align-self: stretch; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.run-open .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-open .chev { flex: none; color: var(--text-3); }
+
+/* one run: who and when, its commits, and back to all changes */
+.chg-run { display: flex; flex-direction: column; align-items: stretch; gap: 3px; }
+.chg-commits { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 2px; padding: 0; list-style: none; color: var(--text-2); font-size: var(--fs-xs); }
+.chg-commits li { display: flex; gap: 7px; min-width: 0; }
+.chg-commits .mono { flex: none; color: var(--text-3); }
+.chg-run .chg-back { align-self: flex-start; margin-top: 6px; }
+
+/* the diffs: every file below each other, in the list's order; the column scrolls on its own */
+.chg-diffs { min-width: 0; overflow: auto; padding: 12px 20px 48px; background: var(--bg); scroll-padding-top: 8px; }
+.chg-box { margin-bottom: 12px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--bg); scroll-margin-top: 8px; }
+/* the file's header sticks while its diff is in sight */
+.chg-fh { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; min-height: calc(40px + var(--ui-box, 0px)); padding: 0 8px 0 6px;
+  border-bottom: 1px solid var(--line); border-radius: calc(var(--radius-l) - 1px) calc(var(--radius-l) - 1px) 0 0; background: var(--raised); }
+.chg-box.folded > .chg-fh, .chg-box:not(:has(> :not(.chg-fh))) > .chg-fh { border-bottom: 0; border-radius: calc(var(--radius-l) - 1px); }
+.chg-caret { display: grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: pointer; }
+.chg-caret:hover { background: var(--hover); color: var(--text); }
+.chg-caret .icon { transition: transform .12s; }
+.chg-box.folded .chg-caret .icon { transform: rotate(-90deg); }
+.chg-caret-off { width: 24px; flex: none; }
+.chg-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text); }
+.chg-path .dir { color: var(--text-2); }
+.chg-path b { font-weight: 500; }
+.chg-path .arrow { width: 13px; height: 13px; margin: 0 5px; vertical-align: -2px; color: var(--text-3); }
+.chg-fh .why { color: var(--text-3); font-size: var(--fs-sm); white-space: nowrap; }
+.chg-fh .grow { flex: 1; }
+.chg-fh .btn { flex: none; }
+/* a folded file shows its header and the note that says why (lock file, big diff, deleted); its rows wait for Show */
+.chg-box.folded > .chg-code, .chg-box.folded > .chg-later { display: none; }
+.chg-box:not(.folded) > .chg-note:has([data-show]) { display: none; }
+
+/* the rows: t-code, a number column (the line's number now; a removed line's old number), the + or − mark, the code */
+.chg-code { --gut: calc(var(--digits, 3) * 1ch + 20px); overflow-x: auto; padding: 4px 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 20px; color: var(--text); }
+.chg-lines { width: max-content; min-width: 100%; }
+.chg-code .r { display: grid; grid-template-columns: var(--gut) 18px auto; }
+.r .ln { padding-right: 10px; color: var(--text-3); text-align: right; user-select: none; }
+.r .sg { color: var(--text-3); text-align: center; user-select: none; }
+.r .tx { padding-right: 24px; white-space: pre; }
+.r.add { background: var(--diff-add-soft); }
+.r.del { background: var(--diff-del-soft); }
+.r.add .ln, .r.add .sg { color: var(--diff-add); }
+.r.del .ln, .r.del .sg { color: var(--diff-del); }
+.r.add .x { border-radius: 2px; background: var(--diff-add-strong); }
+.r.del .x { border-radius: 2px; background: var(--diff-del-strong); }
+
+/* the fold bar: "37 unchanged lines" shows them all; ↓ 20 and ↑ 20 step from the change above and the one below */
+.fold { display: grid; grid-template-columns: var(--gut) 18px auto; align-items: center; min-height: 28px; margin: 2px 0; background: var(--diff-fold); color: var(--text-2);
+  font-family: var(--font-sans); font-size: var(--fs-sm); line-height: 1.3; }
+.fold .ln { display: flex; justify-content: flex-end; padding-right: 8px; color: var(--text-3); }
+.fold .tx { display: flex; align-items: center; gap: 6px; padding: 3px 12px 3px 0; white-space: nowrap; }
+.fold-all { height: 22px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-2); font: inherit; cursor: pointer; }
+.fold-all:hover { background: var(--hover); color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+.fold-step { height: 22px; padding: 0 7px; border: 1px solid var(--line-2); border-radius: var(--radius-s); background: var(--bg); color: var(--text-2); font: inherit; font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums; cursor: pointer; }
+.fold-step:hover { background: var(--hover); color: var(--text); }
+.fold-all:focus-visible, .fold-step:focus-visible, .chg-caret:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.fold-off { color: var(--text-3); }
+
+/* a file without rows: binary, too big, renamed only, loading, failed */
+.chg-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; color: var(--text-2); font-size: var(--fs-sm); }
+.chg-note > .icon { color: var(--text-3); }
+.chg-note .arrow { width: 13px; height: 13px; vertical-align: -2px; }
+.chg-note .btn { margin-left: auto; }
+
+/* syntax: the syn-* tokens (F0's HighlightStyle gives CodeMirror's spans these colours) */
+.s-kw { color: var(--syn-keyword); }
+.s-meta { color: var(--syn-meta); }
+.s-fn { color: var(--syn-function); }
+.s-tag { color: var(--syn-tag); }
+.s-ty { color: var(--syn-type); }
+.s-str { color: var(--syn-string); }
+.s-num { color: var(--syn-number); }
+.s-com { color: var(--syn-comment); }
+.s-attr { color: var(--syn-attribute); }
+.s-prop { color: var(--syn-property); }
+.s-var { color: var(--syn-variable); }
+.s-op { color: var(--syn-operator); }
+.s-pun { color: var(--syn-punctuation); }
+.s-inv { color: var(--syn-invalid); text-decoration: underline wavy; text-underline-offset: 3px; }
+
+/* empty states: the design system's Empty, in the middle of the view */
+.chg-empty { display: flex; flex: 1; align-items: flex-start; justify-content: center; padding: 56px 36px; }
+.chg-empty .empty { max-width: 520px; }
+.chg-empty .empty .icon.lg { width: 20px; height: 20px; }
+
+@media (prefers-reduced-motion: reduce) { .chg-caret .icon { transition: none; } }
+
+
+/* ---------- what the app adds ---------- */
+/* the file list's rows and the run's back button are buttons, not links */
+button.chg-file { width: 100%; border: 0; background: none; font: inherit; text-align: left; }
+.chg-files .chg-sum .src .btn.icon-only { width: 22px; height: 22px; }
+/* the task page under Card | Changes: the view fills what is left under the tabs */
+.task-tabs { flex: none; }
+.chg { position: relative; }
+/* the boxes measure their place from the top of the diffs column (a click in the list scrolls there) */
+.chg-diffs { position: relative; }
+/* a file's diff: CodeMirror draws the rows (numbers, marks, folds) and scrolls long lines sideways itself */
+.chg-code.cm-host { overflow: visible; padding: 0; }
+.chg-code.cm-host .cm-editor { border-radius: 0 0 calc(var(--radius-l) - 1px) calc(var(--radius-l) - 1px); }
+.chg-code.cm-host .cm-scroller { overflow-y: hidden; }
+/* removed lines: one number (or −) a line, as tall as the lines beside them */
+.chg-code.cm-host .cm-diffStack > div { white-space: nowrap; }
+.chg-code.cm-host .cm-gutterElement .icon { color: var(--text-3); }
+/* before its diff loads, a box keeps the height its rows will take, so the scroll doesn't jump */
+.chg-wait { min-height: var(--rows-h, 28px); }
+.chg-note.faint { color: var(--text-3); }
+.chg-note[role="alert"] { color: var(--danger); }
+/* a pull request's diff: the rows of D1's design, drawn without CodeMirror */
+.chg-code .chg-lines .fold .tx { padding-left: 0; }

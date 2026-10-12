@@ -1,4 +1,6 @@
 // One Gizai per data folder, and backups on demand.
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::sync::Arc;
 
 #[test]
@@ -11,6 +13,8 @@ fn a_second_gizai_on_the_same_data_folder_is_refused() {
     // another data folder is fine
     assert!(gizai_lib::open_state(dir.path().join("other"), Arc::new(|_| {})).is_ok());
     drop(first);
+    // within a moment: a program another test starts just then has a copy of the lock until it runs (data_lock.rs)
+    data_lock::released_blocking(&data);
     assert!(gizai_lib::open_state(data, Arc::new(|_| {})).is_ok(), "the lock goes with the first Gizai");
 }
 

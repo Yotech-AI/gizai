@@ -712,25 +712,23 @@ fn fetched_from(project: &Project) -> &'static str {
 }
 
 /// The card's worktree: its own when it has one; else a finished card's worktree of the same project, taken over so
-/// its build stays warm (`worktree::reuse`, see `worktrees::reusable`); else a new one. A new or taken-over worktree is
-/// noted as still to prepare.
-fn open_worktree(st: &AppState, project: &Project, task: &Task, repo: &Path, start: &str) -> Result<worktree::Worktree, StartError> {
+/// its build stays warm (`worktrees::take_over`, which empties a build folder over `worktrees::BUILD_LIMIT`); else a new
+/// one. A new or taken-over worktree is noted as still to prepare. Off the async threads: a take-over measures the
+/// finished card's build folder, and can delete a big one.
+async fn open_worktree(st: &AppState, project: &Project, task: &Task, repo: &Path, start: &str) -> Result<worktree::Worktree, StartError> {
+    let (st, project, task, repo, start) = (st.clone(), project.clone(), task.clone(), repo.to_path_buf(), start.to_string());
+    tokio::task::spawn_blocking(move || open_worktree_now(&st, &project, &task, &repo, &start))
+        .await.map_err(|e| StartError::Other(e.to_string()))?
+}
+
+fn open_worktree_now(st: &AppState, project: &Project, task: &Task, repo: &Path, start: &str) -> Result<worktree::Worktree, StartError> {
     let base_dir = st.data_dir.join("worktrees").join(&project.key);
     let has_own = base_dir.join(&task.identifier).exists()
         || worktree::worktree_of(repo, &worktree::branch_name(&task.identifier, &task.title)).ok().flatten().is_some();
-    let mut wt = None;
-    if !has_own {
-        for from in crate::worktrees::reusable(st, &project.id, &base_dir) {
-            match worktree::reuse(repo, &from, &base_dir, &task.identifier, &task.title, start, &crate::worktrees::keep_on_reuse(project)) {
-                Ok(w) => {
-                    wt = Some(w);
-                    break;
-                }
-                Err(e) => eprintln!("gizai: {} couldn't take over the worktree {}: {e}", task.identifier, from.display()),
-            }
-        }
-    }
-    let wt = match wt {
+    let taken = if has_own { None } else {
+        crate::worktrees::take_over(st, project, task, repo, &base_dir, start, crate::worktrees::BUILD_LIMIT)
+    };
+    let wt = match taken {
         Some(w) => w,
         None => worktree::ensure(repo, &base_dir, &task.identifier, &task.title, start).map_err(|e| StartError::Card(e.to_string()))?,
     };
@@ -862,7 +860,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         _ => Ok(()),
     };
     wait_if_paused()?;
-    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start)?;
+    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start).await?;
     if let Some(todo) = worktree::unprepared(&wt.path) {
         prepare_worktree(st, Some(&agent_id), &task, &project, Path::new(&repo), &wt, todo).await?;
     }
@@ -1491,7 +1489,7 @@ pub async fn start_by_hand(st: &AppState, task_id: &str) -> Result<worktree::Wor
     if project.repo_url.is_some() {
         crate::code::fetched(st, &project.key);
     }
-    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start).map_err(StartError::message)?;
+    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start).await.map_err(StartError::message)?;
     // Commit, Push and Hand over work on the card's branch (`hand`): its worktree must have it checked out.
     if let Some(b) = task.branch.as_deref().filter(|b| !b.trim().is_empty() && *b != wt.branch) {
         return Err(format!("{}'s worktree is on branch {}, not on the card's branch {b}: switch it back first", task.identifier, wt.branch));

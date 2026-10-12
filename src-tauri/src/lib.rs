@@ -606,7 +606,7 @@ pub fn run() {
             changes::card_changes, changes::card_file_diff, changes::run_changes,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
-            commands::list_old_worktrees, commands::remove_old_worktrees,
+            commands::list_old_worktrees, commands::remove_old_worktrees, commands::remove_old_worktree_anyway,
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,
             editor::editor_folders, editor::editor_list, editor::editor_read, editor::editor_write, editor::editor_create,

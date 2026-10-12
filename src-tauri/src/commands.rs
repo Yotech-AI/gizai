@@ -746,6 +746,13 @@ pub async fn remove_old_worktrees(st: State<'_, AppState>, task_ids: Vec<String>
     let st = st.inner().clone();
     tauri::async_runtime::spawn_blocking(move || crate::worktrees::remove(&st, &task_ids)).await.map_err(|err| err.to_string())?
 }
+/// Remove anyway: puts a finished card's uncommitted changes in git's stash, then removes its worktree (after you
+/// confirmed); says what happened, or why nothing was removed.
+#[tauri::command]
+pub async fn remove_old_worktree_anyway(st: State<'_, AppState>, task_id: String) -> R<crate::worktrees::RemovedWorktree> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::worktrees::remove_anyway(&st, &task_id)).await.map_err(|err| err.to_string())?
+}
 
 // ---- updates (Settings → Updates, the notice above Company) ----
 #[tauri::command]

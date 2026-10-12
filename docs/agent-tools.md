@@ -47,18 +47,20 @@ Read only: Gizai never writes in `~/.claude.json`, `~/.claude` or a second accou
 
 ### Signing in (OAuth)
 
-An address server that answers `401` with `WWW-Authenticate` shows **Needs sign-in** and a **Sign in** button. Gizai signs in itself, as a device of its own; it never reads or reuses Claude Code's sign-ins (they share a file with the Claude login, and a server like Otus OS replaces the refresh token on every use, so sharing one would sign the other side out).
+An address server that answers `401` with `WWW-Authenticate` shows **Needs sign-in** and a **Sign in** button. Gizai signs in itself, as a device of its own; it never reads Claude Code's sign-ins (they share a file with the Claude login, and a server like Otus OS replaces the refresh token on every use, so sharing one would sign the other side out). A server set to Claude Code (below) uses Claude Code's own sign-in, which Claude Code keeps itself.
 
 Following the MCP authorization spec, Gizai:
 
 1. reads the protected resource metadata (RFC 9728), from the header or the well-known address, and the authorization server's metadata (RFC 8414, OpenID discovery as a fallback);
-2. registers itself as a public client named "Gizai" (RFC 7591) with a loopback redirect `http://127.0.0.1:<free port>/callback`; a server without registration needs a client id, entered in the server's form;
+2. registers itself as a public client named "Gizai" (RFC 7591) with a loopback redirect `http://127.0.0.1:<free port>/callback`; a server without registration needs a client id, entered in the server's form, or **Who signs in** set to Claude Code (below);
 3. opens the sign-in page in **your default browser** through the system opener (the only time Gizai opens a browser, on your click; no agent touches it), with PKCE S256, `state` and `resource` set to the server's address (RFC 8707);
 4. takes one answer on the loopback address, checks `state`, and gives up after 10 minutes.
 
 The server then shows **Signed in**. A signed-in server's tools act as you in that service; the agent form says so next to its switch. **Sign out** revokes the refresh token where the server offers revocation (RFC 7009), and forgets the tokens.
 
 Tokens are refreshed before List tools, and before a run when less than the run's time cap is left: one refresh at a time per server, the new refresh token saved before the new access token is used. After a refused refresh Gizai reads the stored token once more (another run may just have refreshed it) before it asks you to sign in again.
+
+**When Claude Code signs in.** Some services only let the apps on their own list register. Figma's MCP server (`https://mcp.figma.com/mcp`) lets Claude Code, Cursor, VS Code, Codex, Gemini CLI and a few others in, but not Gizai, which registers as "Gizai" and never under another app's name; a client id from Figma's developer settings doesn't get MCP access either. Our runs are Claude Code, which Figma lets in, so for such a server set **Who signs in** (Edit) to **Claude Code, with its own sign-in**. Claude Code then signs in itself, with the sign-ins it keeps per account (`~/.claude`, or a second account's `CLAUDE_CONFIG_DIR`), and uses them for a server with the same name and address, also one from a run's `--mcp-config`. So give the server the name it has in Claude Code, and sign Claude Code in once per account: `claude mcp add --scope user --transport http figma https://mcp.figma.com/mcp`, then in a terminal run `claude` (for a second account with its `CLAUDE_CONFIG_DIR`), type `/mcp`, pick the server and **Authenticate**. In Gizai the server shows **Claude Code signs in**, with no Sign in or Sign out. **List tools** is off: Gizai has no sign-in to call the server with, so it can't list its tools, and an agent that has the server on gets all of them (no switch per tool). A run gets the server with its address and header lines, and no Authorization header from Gizai; it is never left out for Gizai's sign-in. When the run's init line says `needs-auth` for it, Claude Code isn't signed in to it in that account: the run goes without it and says how to sign Claude Code in. Saving a server as Claude Code first signs Gizai out of it (revoking where the server offers it). Set back to Gizai, the server signs in as above. Gizai never reads, copies or refreshes Claude Code's sign-ins (`.credentials.json`).
 
 ## Per agent: the switches
 
@@ -70,7 +72,7 @@ In a run, the agent's servers go into the run's own MCP config, next to `gizai` 
 - some off: the ones on by full name in `--allowedTools`, the ones off in `--disallowedTools`;
 - the server off: it isn't in the config.
 
-A server that can't be used (signed out, a refused refresh, a value missing from the keychain) is left out of the run, and the run says which one and why, like "Left out otus: signed out. Sign in again in Settings → MCP servers." When Claude Code's init line says a server failed to connect, the run says which one; the form shows each server's state in the last run.
+A server that can't be used (signed out, a refused refresh, a value missing from the keychain) is left out of the run, and the run says which one and why, like "Left out otus: signed out. Sign in again in Settings → MCP servers." A server Claude Code signs in to is never left out for Gizai's sign-in. When Claude Code's init line says a server failed to connect, the run says which one; the form shows each server's state in the last run.
 
 Stop, the time cap and quitting end the MCP servers a run started with it: Claude Code starts them in the run's process group, which gets SIGINT, then SIGTERM, then SIGKILL. A server that starts a child in a process group of its own ends that child on the SIGINT or SIGTERM it gets first. (Quitting a second time while agents are being stopped ends them at once, with SIGKILL.)
 

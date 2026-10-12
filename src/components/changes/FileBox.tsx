@@ -4,11 +4,12 @@
 // files, files over 1 MB and renames without changes say what they are.
 import { memo, useEffect, useRef, useState } from "react";
 import { ArrowRight, Binary, ChevronDown, CircleAlert, FileMinus, FileX, FoldVertical, LoaderCircle, Lock, RefreshCw } from "lucide-react";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { cardFileDiff } from "../../api";
 import { estimatedRows, foldedNote, foldedWhy, patchRows, sameContent, splitPath, STATUS } from "../../lib/changes";
 import { formatBytes } from "../../lib/format";
-import { loadLanguage } from "../../lib/codeLanguages";
+import { languageFor } from "../../lib/codeLanguages";
+import { diffState } from "../../lib/diffView";
 import type { FileChange, FileDiff } from "../../types";
 import { Diffstat } from "./Diffstat";
 
@@ -118,23 +119,23 @@ function Body({ f, load, retry, near, onView }: { f: FileChange; load: Load; ret
   return <DiffCode path={f.path} diff={d} onView={onView} />;
 }
 
-/** The diff in a read-only CodeMirror editor (lib/diffView.ts), in the file's language. */
+/** The diff in a read-only CodeMirror editor (lib/diffView.ts), in the file's language. It draws at once; a language
+ *  that hasn't loaded yet colours the code when it arrives. */
 function DiffCode({ path, diff, onView }: { path: string; diff: FileDiff; onView: (path: string, view: EditorView | null) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const [digits, setDigits] = useState(3);
   useEffect(() => {
-    let alive = true, view: EditorView | null = null;
-    (async () => {
-      const [{ EditorView }, { diffState }, language] = await Promise.all([
-        import("@codemirror/view"), import("../../lib/diffView"), loadLanguage(path).catch(() => null),
-      ]);
-      if (!alive || !host.current) return;
-      const built = diffState({ oldText: diff.oldText, newText: diff.newText, hunks: diff.hunks, language, label: `Changes in ${path}` });
-      setDigits(built.digits);
-      view = new EditorView({ state: built.state, parent: host.current });
-      onView(path, view);
-    })();
-    return () => { alive = false; if (view) { onView(path, null); view.destroy(); } };
+    if (!host.current) return;
+    let alive = true;
+    const lang = languageFor(path);
+    const build = (language: Parameters<typeof diffState>[0]["language"]) =>
+      diffState({ oldText: diff.oldText, newText: diff.newText, hunks: diff.hunks, language, label: `Changes in ${path}` });
+    const built = build(lang?.support ?? null);
+    setDigits(built.digits);
+    const view = new EditorView({ state: built.state, parent: host.current });
+    onView(path, view);
+    if (lang && !lang.support) lang.load().then((l) => { if (alive) view.setState(build(l).state); }).catch(() => {});
+    return () => { alive = false; onView(path, null); view.destroy(); };
   }, [path, diff]); // eslint-disable-line react-hooks/exhaustive-deps
   return <div className="chg-code cm-host" ref={host} style={{ "--digits": Math.max(2, digits) } as React.CSSProperties} />;
 }

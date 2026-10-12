@@ -3,7 +3,7 @@
 // Both scroll on their own; the current file in the list follows the scroll, and a click in the list scrolls its file
 // to the top. Keys while the view has the focus: n and p the next and previous file, Alt+↓ and Alt+↑ the next and
 // previous change, [ folds the list, Esc goes back to Card. With `runId`, only what that run committed.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, ChevronDown, ChevronRight, CircleAlert, FileDiff, GitBranch, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Search,
   Settings, SquareKanban,
@@ -81,7 +81,7 @@ function Failed({ error, retry, taskId }: { error: string; retry: () => void; ta
   if (m) {
     const bitbucket = /Bitbucket/.test(m[1]);
     const text = m[1].charAt(0).toUpperCase() + m[1].slice(1);
-    return <Empty icon={<CircleAlert className="icon lg" />} title="Gizai can't find what this card changed" text={/[.)]$/.test(text) ? text : text + "."}
+    return <Empty icon={<CircleAlert className="icon lg" />} title="Gizai can't find what this card changed" text={/\.$/.test(text) ? text : text + "."}
       action={/Settings/.test(m[1]) ? <a className="btn" href={href({ page: "settings", id: "github" })}><Settings className="icon" />Open {bitbucket ? "Bitbucket" : "GitHub"} settings</a>
         : <a className="btn" href={href({ page: "task", id: taskId })}><SquareKanban className="icon" />Back to Card</a>} />;
   }
@@ -231,11 +231,11 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
           {groups.map((g) => {
             const open = !closedDirs.has(g.dir);
             return (
-              <div key={g.dir || "/"}>
+              <Fragment key={g.dir || "/"}>
                 {g.dir && <button className="chg-dir" aria-expanded={open} title={g.dir} onClick={() => toggleDir(g.dir)}>
                   {open ? <ChevronDown className="icon" /> : <ChevronRight className="icon" />}<span>{g.dir}</span>{!open && <span className="n">{filesText(g.files.length)}</span>}</button>}
                 <div className="chg-group">{g.files.map((f) => <FileRow key={f.path} f={f} on={f.path === current} onClick={() => goTo(f.path)} />)}</div>
-              </div>
+              </Fragment>
             );
           })}
           {!shown.length && <div className="chg-nomatch">No file matches <b>“{query.trim()}”</b>. <button className="link" onClick={() => setQuery("")}>Clear the filter</button></div>}

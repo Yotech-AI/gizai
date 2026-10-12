@@ -398,3 +398,101 @@ fn migration_0017_on_a_v16_database_adds_pending_actions_after_a_backup_and_ever
     assert_eq!(pending::get(&db, &a.id).unwrap().status, "pending");
     assert_eq!(std::fs::read_dir(dir.path().join("backups")).unwrap().count(), 1);
 }
+
+/// Every row of every table (search's too), sorted, as text: what an upgrade must keep.
+fn all_rows(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
+    let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").unwrap()
+        .query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    tables.into_iter().map(|t| {
+        let mut s = c.prepare(&format!("SELECT * FROM \"{t}\"")).unwrap();
+        let n = s.column_count();
+        let mut rows: Vec<String> = s.query_map([], |r| Ok((0..n).map(|i| format!("{:?}", r.get::<_, rusqlite::types::Value>(i).unwrap()))
+            .collect::<Vec<_>>().join(" | "))).unwrap().map(Result::unwrap).collect();
+        rows.sort();
+        (t, rows)
+    }).collect()
+}
+
+/// The schema as SQLite keeps it: every table, index, trigger and view with its SQL.
+fn schema(c: &Connection) -> Vec<(String, String, Option<String>)> {
+    c.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
+}
+
+#[test]
+fn a_v080_database_full_of_work_migrates_to_17_and_keeps_every_row_of_every_table() {
+    use gizai_core::{clients, comments, docs, memory, projects, tasks, users};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gizai.db");
+    // a day's work: clients, projects, cards in each column with labels and comments, a doc with versions, a file, a Team
+    // Lead with a chat, and notes in memory
+    let db = Db::open(&path).unwrap();
+    let s = seed::ensure_seed(&db, "Jeffrey").unwrap();
+    let you = &s.you_id;
+    users::create(&db, you, "Sanne Bakker", Some("sanne@studio.example")).unwrap();
+    let kade = clients::create(&db, you, ClientInput { name: "Kade Logistics B.V.".into(), city: Some("Amsterdam".into()), ..Default::default() }).unwrap();
+    clients::upsert_contact(&db, you, Contact { client_id: kade.clone(), name: "Marloes Visser".into(), is_primary: true, ..Default::default() }).unwrap();
+    let p = projects::create(&db, you, ProjectInput { name: "Kade portal".into(), key: "KADE".into(), client_id: Some(kade), ..Default::default() }).unwrap();
+    let board = team::get(&db, &s.team_id).unwrap();
+    for (i, column) in ["Backlog", "To do", "In progress", "Testing", "Review", "Done"].into_iter().enumerate() {
+        let id = tasks::create(&db, you, TaskInput { project_id: p.clone(), title: format!("Card {i} in {column}"), priority: (i % 5) as i64,
+            description_md: format!("## Context\n\n- [ ] step {i}"), label_ids: board.labels.iter().take(i % 3).map(|l| l.id.clone()).collect(),
+            ..Default::default() }).unwrap();
+        let col = board.states.iter().find(|x| x.name == column).unwrap().id.clone();
+        tasks::move_to(&db, you, &id, &col, "").unwrap();
+        comments::add(&db, you, &id, &format!("A comment on card {i}."), None).unwrap();
+    }
+    let doc = docs::create(&db, you, &p, "Requirements").unwrap();
+    docs::save(&db, you, &doc, "# Requirements\n\nFirst.", 1).unwrap();
+    docs::save(&db, you, &doc, "# Requirements\n\nFirst, then second.", 2).unwrap();
+    let sample = dir.path().join("invoices-sample.csv");
+    std::fs::write(&sample, "number;amount\n2026-0412;1250,00\n").unwrap();
+    gizai_core::files::add_from_path(&db, you, dir.path(), "project", &p, &sample).unwrap();
+    let lead = team::add_agent(&db, you, &s.team_id, AgentInput { name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true),
+        ..Default::default() }).unwrap();
+    let thread = chat::create_thread(&db, you, &lead, "Plan the invoices export").unwrap();
+    chat::add_message(&db, NewMessage { thread_id: thread.clone(), role: "user".into(), author_id: Some(you.clone()),
+        body_md: Some("Plan the invoices export".into()), ..Default::default() }).unwrap();
+    chat::add_message(&db, NewMessage { thread_id: thread.clone(), role: "agent".into(), author_id: Some(lead.clone()),
+        body_md: Some("I made KADE-1.".into()), ..Default::default() }).unwrap();
+    let who = memory::Who::of(&db, you).unwrap();
+    memory::write(&db, &who, "Decisions/Use SQLite", "# Use SQLite\n\nOne file, no server.", None, None).unwrap();
+    memory::append(&db, &who, "Decisions/Use SQLite", None, "And backups are a copy.", None).unwrap();
+    drop(db);
+    // one step back to the database v0.8.0 leaves (schema 16): 0017 only adds pending_actions and its index
+    let c = Connection::open(&path).unwrap();
+    c.execute_batch("DROP INDEX pending_actions_thread; DROP TABLE pending_actions; PRAGMA user_version = 16;").unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let genuine = v16_db(other.path());
+    assert_eq!(schema(&c), schema(&Connection::open(&genuine).unwrap()), "the step back is exactly schema 16 (migrations 0001..0016)");
+    let before = all_rows(&c);
+    let filled = before.values().filter(|rows| !rows.is_empty()).count();
+    assert!(filled >= 20, "the work fills many tables, not a few: {filled} of {}", before.len());
+    for t in ["tasks", "task_labels", "comments", "docs", "doc_versions", "files", "chat_threads", "chat_messages", "clients", "contacts",
+        "projects", "agent_configs", "changes"] {
+        assert!(before.get(t).is_some_and(|rows| !rows.is_empty()), "{t} has rows before the upgrade");
+    }
+    drop(c);
+    // Gizai 0.9.0 opens it
+    let db = Db::open(&path).unwrap();
+    let (v, broken, ok): (i64, i64, String) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
+        c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?,
+        c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?))).unwrap();
+    assert_eq!((v, broken, ok.as_str()), (17, 0, "ok"), "schema 17, foreign keys and the file intact");
+    let mut after = db.read(|c| Ok(all_rows(c))).unwrap();
+    assert_eq!(after.remove("pending_actions"), Some(vec![]), "pending_actions is new and empty");
+    assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>(), "no table lost, none added but pending_actions");
+    for (t, rows) in &before {
+        assert!(&after[t] == rows, "{t}: every row kept as it was ({} before, {} after)", rows.len(), after[t].len());
+    }
+    // the backup made before the upgrade is that schema 16 database, with the same rows
+    let snaps: Vec<_> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().path()).collect();
+    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v17-"), "{snaps:?}");
+    let old = Connection::open(&snaps[0]).unwrap();
+    assert_eq!(old.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 16);
+    assert!(all_rows(&old) == before, "the backup holds every row");
+    // and the work reads as before
+    assert_eq!(tasks::list(&db, &Default::default()).unwrap().len(), 6);
+    assert_eq!(chat::messages(&db, &thread).unwrap().len(), 2);
+    assert!(memory::get(&db, &who, "Decisions/Use SQLite").unwrap().body_md.contains("And backups are a copy."));
+}

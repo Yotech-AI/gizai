@@ -93,6 +93,8 @@ vi.mock("../components/editor/GoToFile", () => ({ GoToFile: (p: { onOpen: (path:
 vi.mock("../components/editor/FolderPicker", () => ({ FolderPicker: () => null }));
 vi.mock("../components/editor/Menus", async (orig) => ({ ...(await orig<object>()), OpenInMenu: () => null }));
 vi.mock("../router", async (orig) => ({ ...(await orig<object>()), go: (r: unknown) => { h.calls.push(`go ${JSON.stringify(r)}`); } }));
+// the question before closing a tab that isn't saved is put on the body: here it shows where it is made
+vi.mock("react-dom", async (orig) => ({ ...(await orig<object>()), createPortal: (children: ReactNode) => children }));
 
 // ---- the fake disk: a folder under a test root, in a git repository ----
 const ROOT = "/srv/test-root/Herd";
@@ -605,5 +607,82 @@ describe("a folder the Editor can't open (GA-113)", () => {
     expect(page).toContain("Gizai can't open /etc: The Editor can't open /etc.");
     await click("Remove from the list");
     expect(h.calls).toContain(`go ${JSON.stringify({ page: "editor" })}`);
+  });
+});
+
+describe("closing a tab with text that isn't saved asks first (GA-128 QA)", () => {
+  // Ctrl+W finds the tab by its path in a selector
+  beforeEach(() => { Object.assign(globalThis, { CSS: { escape: (s: string) => s } }); });
+  afterEach(() => { delete (globalThis as { CSS?: unknown }).CSS; });
+  const at = { ...ev, currentTarget: { parentElement: { getBoundingClientRect: () => ({ left: 10, bottom: 20 }) } } };
+  async function closeTab(name: string) {
+    (one((f) => f.type === "button" && f.props["aria-label"] === `Close ${name}`, `close buttons of ${name}`).props.onClick as (e: unknown) => void)(at);
+    await settle();
+  }
+  const asks = () => findAll(tree, (f) => f.props.role === "alertdialog");
+  const askButtons = () => findAll(asks()[0]!.props.children as ReactNode, (f) => f.type === "button").map((f) => textOf(f.props.children as ReactNode).trim());
+  async function answer(name: string) {
+    const b = findAll(asks()[0]!.props.children as ReactNode, (f) => f.type === "button" && textOf(f.props.children as ReactNode).trim() === name);
+    expect(b).toHaveLength(1);
+    (b[0]!.props.onClick as () => void)();
+    await settle();
+  }
+  async function typeInApp() {
+    await open();
+    await clickRow("src");
+    await clickRow("src/app.ts");
+    await typeAtEnd("export const two = 2;\n");
+    expect(tab("src/app.ts").props["aria-label"]).toBe("app.ts, not saved");
+  }
+
+  it("asks with Save and close, Close without saving and Cancel; Cancel keeps the tab and its text and saves nothing", async () => {
+    await typeInApp();
+    await closeTab("app.ts");
+    expect(asks()).toHaveLength(1);
+    expect(asks()[0]!.props["aria-label"]).toBe("Close app.ts");
+    expect(textOf(asks()[0]!.props.children as ReactNode)).toContain("app.ts has changes that aren't saved.");
+    expect(askButtons()).toEqual(["Save and close", "Close without saving", "Cancel"]);
+    await answer("Cancel");
+    expect(asks()).toHaveLength(0);
+    expect(tabs().map((t) => t.props["data-path"])).toEqual(["src/app.ts"]);
+    expect(view().state.doc.toString()).toBe("export const one = 1;\nexport const two = 2;\n");
+    expect(String(tab("src/app.ts").props.className)).toContain("unsaved");
+    expect(writes).toEqual([]);
+  });
+
+  it("Close without saving closes the tab and leaves the file on disk as it was", async () => {
+    await typeInApp();
+    await closeTab("app.ts");
+    await answer("Close without saving");
+    expect(asks()).toHaveLength(0);
+    expect(tabs()).toEqual([]);
+    expect(writes).toEqual([]);
+    expect(disk.get("src/app.ts")!.text).toBe("export const one = 1;\n");
+  });
+
+  it("Save and close saves exactly the text, then closes the tab", async () => {
+    await typeInApp();
+    await closeTab("app.ts");
+    await answer("Save and close");
+    await wait(500);
+    expect(writes.map((w) => [w.path, w.text])).toEqual([["src/app.ts", "export const one = 1;\nexport const two = 2;\n"]]);
+    expect(disk.get("src/app.ts")!.text).toBe("export const one = 1;\nexport const two = 2;\n");
+    expect(tabs()).toEqual([]);
+    expect(asks()).toHaveLength(0);
+  });
+
+  it("a saved tab closes without asking, and Ctrl+W asks the same question for one that isn't saved", async () => {
+    await open();
+    await clickRow("README.md");
+    await closeTab("README.md");
+    expect(asks()).toHaveLength(0);
+    expect(tabs()).toEqual([]);
+    await clickRow("src");
+    await clickRow("src/app.ts");
+    await typeAtEnd("export const two = 2;\n");
+    await key("w");
+    expect(asks().map((a) => a.props["aria-label"])).toEqual(["Close app.ts"]);
+    expect(tabs().map((t) => t.props["data-path"])).toEqual(["src/app.ts"]);
+    expect(writes).toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
 //! GA-133: terminals (`gizai_agents::terminal`), with a shell the tests type into: /bin/sh on Linux and macOS, cmd.exe on
 //! Windows, never your own shell (docs/research/terminal.md §5.7). What a view gets (bytes in order, at most one message
-//! every 8 ms, the last 256 KB first after a new attach, 50 MB through a slow view with reading paused above 500,000
+//! every 8 ms (GA-140: the sender's rule itself, and a count over a whole run, never the gap between two calls of the
+//! view), the last 256 KB first after a new attach, 50 MB through a slow view with reading paused above 500,000
 //! unacknowledged bytes and going on below 200,000), what it sends (input, a 1 MB paste, binary input, a resize), the
 //! environment, `busy`, names and renames, how a shell ends and what `close` ends. The folder checks, the data folder and
 //! quitting are the app's: src-tauri/tests/terminal_flow_test.rs.
@@ -198,6 +199,21 @@ fn a_session_goes_to_the_window_in_contract_cts_shape() {
     let open = TerminalSession { task_id: None, busy: None, ended: None, ..s };
     let json = serde_json::to_value(&open).unwrap();
     assert_eq!((&json["taskId"], &json["busy"], &json["ended"]), (&serde_json::Value::Null, &serde_json::Value::Null, &serde_json::Value::Null));
+}
+
+/// The sender's own rule, on its own clock (GA-140): a view's clock can't check it on a busy machine.
+#[test]
+fn the_sender_sends_the_first_message_at_once_and_each_next_one_8_ms_after_the_last_at_the_earliest() {
+    let last = Instant::now();
+    let ms = Duration::from_millis;
+    assert_eq!(terminal::next_send(None, last), last, "nothing sent before: at once");
+    assert_eq!(terminal::next_send(None, last + ms(3)), last + ms(3));
+    for now in [last, last + ms(1), last + ms(7), last + ms(8) - Duration::from_nanos(1)] {
+        assert_eq!(terminal::next_send(Some(last), now), last + ms(8), "asked {:?} after the last send: 8 ms after it", now - last);
+    }
+    for now in [last + ms(8), last + ms(9), last + ms(500)] {
+        assert_eq!(terminal::next_send(Some(last), now), now, "asked {:?} after the last send: at once", now - last);
+    }
 }
 
 #[test]
@@ -460,12 +476,14 @@ fn fifty_megabytes_arrive_complete_and_in_order_through_a_slow_view_with_reading
     let s = terms.open(start(&dir, "kade", None, test_shell()), Told::default().changed()).unwrap();
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
     let (acked, most) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
-    let times = Arc::new(Mutex::new(Vec::<Instant>::new()));
+    let messages = Arc::new(AtomicU64::new(0));
+    // before the attach: the shell's first prompt can come before the command is typed
+    let since = Instant::now();
     {
-        let (acked, most, times) = (acked.clone(), most.clone(), times.clone());
+        let (acked, most, messages) = (acked.clone(), most.clone(), messages.clone());
         let mut sent = 0u64;
         terms.attach(&s.id, Box::new(move |b| {
-            times.lock().unwrap().push(Instant::now());
+            messages.fetch_add(1, Ordering::SeqCst);
             sent += b.len() as u64;
             most.fetch_max(sent.saturating_sub(acked.load(Ordering::SeqCst)), Ordering::SeqCst);
             tx.send(b).is_ok()
@@ -510,6 +528,9 @@ fn fifty_megabytes_arrive_complete_and_in_order_through_a_slow_view_with_reading
     terms.input(&s.id, "echo ST''ART; awk 'BEGIN { for (i = 1; i <= 6000000; i++) print i }'; echo EN''D\n", false).unwrap();
     let (all, paused_at) = view.join().unwrap();
     let took = t.elapsed();
+    // in this order: the prompt after END can still come, and then it falls in the run too
+    let count = messages.load(Ordering::SeqCst);
+    let run = since.elapsed();
 
     assert!(paused_at > 500_000 && paused_at <= 500_000 + 64 * 1024, "reading paused above 500,000 unacknowledged bytes, at {paused_at}");
     let most = most.load(Ordering::SeqCst);
@@ -536,10 +557,11 @@ fn fifty_megabytes_arrive_complete_and_in_order_through_a_slow_view_with_reading
         }
     }
     assert_eq!(want - 1, 6_000_000, "every line, in order");
-    let times = times.lock().unwrap();
-    let closest = times.windows(2).map(|w| w[1] - w[0]).min().unwrap();
-    assert!(closest >= Duration::from_millis(7), "at most one message every 8 ms; {} messages, the closest {closest:?} apart", times.len());
-    eprintln!("{} bytes in {} messages in {took:?}", body.len(), times.len());
+    // At most one message every 8 ms, counted over the whole run: the gap between two calls of the view says nothing on a
+    // busy machine, where the sender can be held up between choosing its time and the call (GA-140).
+    let limit = run.as_nanos() / Duration::from_millis(8).as_nanos() + 1;
+    assert!(u128::from(count) <= limit, "at most one message every 8 ms: {count} messages in {run:?}, at most {limit}");
+    eprintln!("{} bytes in {count} messages in {took:?}", body.len());
     terms.close(&s.id).unwrap();
 }
 

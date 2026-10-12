@@ -3,14 +3,14 @@
 // data than the usual folder says so there. Editor (GA-113), Agents and Memory fold with the caret at the end of their
 // heading (GA-90).
 import {
-  Building2, ChartColumn, ChevronDown, ChevronUp, Crown, FlaskConical, FolderCode, FolderKanban, Inbox, Keyboard, Library, ListTodo, MessagesSquare, Network,
-  Plus, Search, Settings, SquarePen, Users, type LucideIcon,
+  Building2, ChartColumn, ChevronDown, ChevronUp, Crown, FlaskConical, FolderCode, FolderKanban, Inbox, Keyboard, Library, ListTodo, LoaderCircle, MessagesSquare,
+  Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { editorFolders, editorGit, getTeam, listChatThreads, listProjects, listTasks, memoryNotes } from "../api";
+import { editorFolders, editorGit, editorMain, getTeam, listChatThreads, listProjects, listTasks, memoryNotes, onEditorUpdated } from "../api";
 import { go, href, type Route } from "../router";
 import { leadOf, memoryHome, memoryScope, noteCount, sharersOf } from "../lib/memory";
-import type { EditorFolder, FolderGit, Member, MemoryNote, Task } from "../types";
+import type { EditorFolder, FolderGit, FolderMain, Member, MemoryNote, Task } from "../types";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -18,7 +18,8 @@ import { inboxCount } from "../lib/inbox";
 import { useDrawer } from "../lib/drawers";
 import { modKey } from "../lib/keys";
 import { liveTotal, useFolded, type Fold } from "../lib/sidebar";
-import { forgetFolder, standingTip, standingWord, useOpenedFolders } from "../lib/editor";
+import { forgetFolder, useOpenedFolders } from "../lib/editor";
+import { foldedBehind, onTold, rowTip, rowWord } from "../lib/behind";
 import { roleIcon } from "./Avatar";
 import { FolderPicker, workingWho } from "./editor/FolderPicker";
 import { ContextMenu, openInItems, useEditorApps, type MenuItem } from "./editor/Menus";
@@ -178,12 +179,15 @@ function MemorySection({ route, lead, agents, notes, folded, onFold, setUpLead }
 
 /** Editor (GA-113), between Projects and Agents: the folders you opened, newest first (at most 8), each with how it
  *  stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
- *  to a person, else how many files changed ("3 behind" comes with F3). + opens the folder picker; a right click has
- *  Open in, Copy path, Remove from the list and, on a card's row, Open card. */
+ *  to a person, "updating" while Update runs, else behind main ("3 behind", GA-114), else how many files changed, else
+ *  ahead. Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,
+ *  Copy path, Remove from the list and, on a card's row, Open card. How a folder stands against main is as last fetched
+ *  (the Editor page fetches); the row follows the page at once (Update started, a fetch) and an update's end. */
 function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: Task[]; folded: boolean; onFold: () => void }) {
   const opened = useOpenedFolders();
   const [folders, setFolders] = useState<EditorFolder[] | null>(null);
   const [gits, setGits] = useState<Record<string, FolderGit>>({});
+  const [mains, setMains] = useState<Record<string, FolderMain>>({});
   const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const apps = useEditorApps();
@@ -193,13 +197,27 @@ function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: 
     let alive = true;
     const load = () => {
       editorFolders().then((f) => { if (alive) setFolders(f); }).catch(() => {});
-      for (const id of opened) editorGit(id).then((g) => { if (alive) setGits((m) => ({ ...m, [id]: g })); }).catch(() => {});
+      for (const id of opened) {
+        editorGit(id).then((g) => { if (alive) setGits((m) => ({ ...m, [id]: g })); }).catch(() => {});
+        editorMain(id).then((s) => { if (alive) setMains((m) => ({ ...m, [id]: s })); }).catch(() => {});
+      }
     };
     load();
     const t = setInterval(() => { if (!document.hidden) load(); }, 30_000);
     window.addEventListener("focus", load);
     return () => { alive = false; clearInterval(t); window.removeEventListener("focus", load); };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | null = null;
+    const untell = onTold((id, s) => setMains((m) => ({ ...m, [id]: s })));
+    onEditorUpdated((e) => {
+      editorMain(e.folder).then((s) => { if (alive) setMains((m) => ({ ...m, [e.folder]: s })); }).catch(() => {});
+      editorGit(e.folder).then((g) => { if (alive) setGits((m) => ({ ...m, [e.folder]: g })); }).catch(() => {});
+    }).then((u) => { if (alive) stop = u; else u(); }).catch(() => {});
+    return () => { alive = false; untell(); stop?.(); };
+  }, []);
+  const behind = foldedBehind(opened.map((id) => ({ main: mains[id] ?? null, card: folders?.find((x) => x.id === id)?.kind === "card" })));
   const openPicker = (e: React.MouseEvent<HTMLElement>) => {
     const side = e.currentTarget.closest(".side")?.getBoundingClientRect();
     const r = e.currentTarget.getBoundingClientRect();
@@ -216,19 +234,23 @@ function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: 
     ];
   };
   return (
-    <FoldSection section="editor" name="Editor" label="Editor" folded={folded} onFold={onFold} add={{ label: "Open a folder", onClick: openPicker }}>
+    <FoldSection section="editor" name="Editor" label="Editor" folded={folded} onFold={onFold} add={{ label: "Open a folder", onClick: openPicker }}
+      tag={behind ? <span className="fold-tag" title={behind.tip}>{behind.word}</span> : null}>
       {opened.length === 0 && <button className="nav-item" onClick={openPicker}><FolderCode className="icon" /><span>Open a folder</span></button>}
       {opened.map((id) => {
         const f = folders?.find((x) => x.id === id);
         const task = f?.taskId ? tasks.find((t) => t.id === f.taskId) : undefined;
         const git = gits[id] ?? null;
+        const main = mains[id] ?? null;
         const name = f?.name ?? id.split(/[\\/]/).filter(Boolean).pop() ?? id;
+        const word = rowWord(main, git, f?.kind === "card");
         const stand = f?.readOnly ? <span className="stand"><span className="pulse" />read-only</span>
           : task?.byHand ? <span className="stand"><Keyboard className="icon sm" />by hand</span>
-          : standingWord(git) ? <span className="stand">{standingWord(git)}</span> : null;
+          : main?.updating ? <span className="stand"><LoaderCircle className="icon sm spin" />updating</span>
+          : word ? <span className="stand">{word}</span> : null;
         const tip = f?.readOnly ? `${workingWho(f.readOnlyWhy)} on ${f.name}: read-only until its run ends`
           : task?.byHand ? `${task.identifier} ${task.title}. Pinned to you: agents leave it alone`
-          : [f?.path ?? id, standingTip(git)].filter(Boolean).join("\n");
+          : rowTip(f?.path ?? id, main, git);
         return (
           <a key={id} className={`nav-item${route.page === "editor" && route.id === id ? " on" : ""}`} href={href({ page: "editor", id })} title={tip}
             onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id }); }}

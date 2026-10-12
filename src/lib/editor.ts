@@ -379,8 +379,8 @@ export function pickerGroups(folders: EditorFolder[], roots: string[], query: st
   return groups.filter((g) => g.folders.length > 0);
 }
 
-/** How a folder stands, in one word on its sidebar row ("4 changed"), from its git status; "" when there is nothing to
- *  say. Behind and ahead come with F3. */
+/** How many files changed, in one word ("4 changed"), from the folder's git status; "" when none did. The sidebar row
+ *  and the top bar say it after behind main (src/lib/behind.ts, GA-114). */
 export function standingWord(git: FolderGit | null): string {
   return git && git.uncommitted > 0 ? `${n(git.uncommitted)} changed` : "";
 }

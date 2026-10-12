@@ -47,6 +47,31 @@ and the drawer edge. Shadows only on things that float: `shadow-pop`, `shadow-dr
 - Labels and projects pick from the decorative `c-*` colours, always shown as a dot next to the
   name.
 
+**Code and diffs.** Code (the Changes view, the Editor, code in Markdown) has colours of its own: `syn-*` for syntax and
+`diff-*` for changes. They appear only inside code: never on buttons, badges, status, labels or charts.
+
+- **Changes are green and red of their own.** An added line has `diff-add-soft` behind it and a removed line
+  `diff-del-soft`; the characters that changed get `diff-add-strong` or `diff-del-strong` on top. The + and − marks, a
+  changed line's number, the A and D letters and the counts (`+964 −112`, in mono) are `diff-add` and `diff-del`. A fold
+  bar is `diff-fold` with `text-2`. They're near `success` and `danger` but separate: those mean run and form outcomes,
+  so neither stands in for the other.
+- **Syntax uses four hues and the greys.** Violet `syn-keyword` (and `syn-meta`), blue `syn-function` (and `syn-tag`),
+  gold `syn-type` (and `syn-attribute`), orange `syn-string` (and `syn-number`). Names stay `text`, operators and
+  punctuation `text-2`, comments `syn-comment`. `syn-invalid` is `danger` with a wavy underline.
+- **No teal or magenta in code**: they mean an agent at work and "needs you". **No green or red in syntax**: they mean
+  added and removed.
+- **Contrast:** every syntax and diff text colour is at least 4.5:1 on `bg` and `raised` in both themes, and on changed
+  lines; on a changed word every one but comments (3.4:1 in dark) and `syn-invalid`. Check a new value against all four
+  before it goes in.
+- **Never colour alone:** changed lines keep their + or −, removed lines their old number, status letters their word
+  (tooltip and screen readers), and "Not committed" is written in the file's header.
+- **Type:** code is `t-code` in `--font-mono`, which Settings → Appearance changes as everywhere. No italic or bold for
+  syntax: the bundled fonts have no italic, and colour already does the work. In text, write arrows with Lucide's
+  `arrow-right`: → isn't in Atkinson Hyperlegible's files (↑ and ↓ are).
+- **In the code:** `src/lib/codeTheme.ts` maps Lezer's highlighting tags to these tokens (the table in
+  `code-editor/README.md`) and gives CodeMirror the mono font; `src/lib/codeLanguages.ts` picks a file's language by
+  its name, and `src/lib/blade.ts` is Blade's.
+
 **Type.** One family, Atkinson Hyperlegible Next (`--font-sans`), chosen for long days of reading
 code-adjacent text; Atkinson Hyperlegible Mono (`--font-mono`) for machine values. Use the styles,
 not ad-hoc sizes: `t-body` (13.5px) for UI, `t-row` (14px, 500) for task titles in lists,

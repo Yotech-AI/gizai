@@ -230,6 +230,16 @@ export const editorApps = () => invoke<T.EditorApp[]>("editor_apps");
 export const openInApp = (app: T.EditorApp["id"], folder: string, path: string | null, line: number | null) =>
   invoke<void>("open_in_app", { app, folder, path, line });
 
+// ---- behind main in the Editor (GA-110, contract C3): how a folder stands against main, Fetch and Update ----
+/** How the folder stands against main as last fetched (local only). */
+export const editorMain = (folder: string) => invoke<T.FolderMain>("editor_main", { folder });
+/** Fetches main first (at most 60 s; not again within a minute), then as editorMain. */
+export const editorFetch = (folder: string) => invoke<T.FolderMain>("editor_fetch", { folder });
+/** Starts Update in the background: resolves with what it will do, or rejects with why not (nothing changed). */
+export const editorUpdate = (folder: string) => invoke<string>("editor_update", { folder });
+export const onEditorUpdated = (cb: (e: T.EditorUpdated) => void): Promise<UnlistenFn> =>
+  listen<T.EditorUpdated>("editor-updated", (m) => cb(m.payload));
+
 // ---- a person's card (GA-111, contract C4): a card you do by hand, in the Editor or your own editor ----
 /** Open in editor, on a card assigned to you: makes and prepares its worktree as for an agent, pins the card to you and moves
  *  it on from To do. Resolves with where it is (its folder is an EditorFolder id). */

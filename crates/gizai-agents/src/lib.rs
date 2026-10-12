@@ -3,6 +3,7 @@
 //! a card's changes from git, pull requests (gh, and Bitbucket's REST API), the connection to GitHub and Bitbucket (pushes over SSH or HTTPS, gh's
 //! login), prompts and process control,
 //! and Gizai's own updates (the release check, building and installing a release). Never imports Tauri.
+pub mod behind;
 pub mod bitbucket;
 pub mod browser;
 pub mod changes;

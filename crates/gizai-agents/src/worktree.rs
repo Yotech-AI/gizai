@@ -341,21 +341,34 @@ pub fn start_ref(remote: Option<&str>, branch: &str) -> String {
 }
 
 /// Fetches `branch` of the project's repository and returns the ref to start from (`start_ref`): through `remote` when
-/// the repository has one for it, else from `url`. Never asks for a password; each try gives up after `limit`.
+/// the repository has one for it, else from `url`. Never asks for a password, and gives up after `limit`.
 pub fn fetch_start(repo: &Path, remote: Option<&str>, url: &str, branch: &str, limit: Duration) -> Result<String, AgentError> {
     let from = remote.unwrap_or(url);
     let start = start_ref(remote, branch);
     let spec = format!("+refs/heads/{branch}:{start}");
     let mut last = String::new();
-    // a run starting at the same moment may hold the ref's lock: one retry
+    // a run starting at the same moment may hold the ref's lock: one retry. Not after no answer at all: a second try
+    // would only wait as long again
     for attempt in 0..2 {
-        match git_quiet(repo, &["fetch", "--quiet", "--no-tags", from, &spec], limit) {
+        match quiet(repo, &[], &["fetch", "--quiet", "--no-tags", from, &spec], limit) {
             Ok(_) => return Ok(start),
-            Err(e) => last = e,
+            Err(e @ Failure::NoAnswer(_)) => {
+                last = e.last_line();
+                break;
+            }
+            Err(e) => last = e.last_line(),
         }
         if attempt == 0 { std::thread::sleep(Duration::from_millis(500)); }
     }
     Err(AgentError::Git(format!("Couldn't fetch {branch} from {from}: {last}")))
+}
+
+/// The branch the remote `remote`'s HEAD points to (its default branch), asked over the network: never asks for a
+/// password, and gives up after `limit`. None when it has none (an empty repository). An error is git's last line.
+pub fn remote_head(repo: &Path, remote: &str, limit: Duration) -> Result<Option<String>, String> {
+    let out = git_quiet(repo, &["ls-remote", "--symref", remote, "HEAD"], limit)?;
+    // ref: refs/heads/main<TAB>HEAD
+    Ok(out.lines().find_map(|l| l.strip_prefix("ref: refs/heads/")?.strip_suffix("\tHEAD")).map(str::to_string))
 }
 
 /// How many commits `start` has that the checkout in `dir` doesn't.

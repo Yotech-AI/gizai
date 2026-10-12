@@ -491,6 +491,31 @@ async fn moving_an_agent_to_another_kind_of_cli_starts_from_that_clis_defaults()
     assert_eq!((m.adapter.as_deref(), m.permission_mode.as_deref(), m.effort.as_deref()), (Some("claude_code"), Some("acceptEdits"), None));
 }
 
+#[tokio::test]
+async fn no_tool_reaches_a_terminal() {
+    // GA-133: terminals are the window's only (contract CT). Gizai's MCP server offers this catalog to the Team Lead and
+    // the agents' chat turns, and none of its tools, nor the code behind them, reaches AppState.terminals.
+    for t in tools::catalog() {
+        let all = format!("{} {} {}", t.name, t.description, t.input_schema).to_lowercase();
+        assert!(!all.contains("terminal"), "{} mentions a terminal: {all}", t.name);
+    }
+    let t = setup();
+    for name in ["terminal_list", "terminal_open", "terminal_attach", "terminal_input", "terminal_resize", "terminal_ack", "terminal_rename",
+                 "terminal_close", "open_terminal", "run_in_terminal", "list_terminals"] {
+        let e = t.call(name, json!({"folder": "/tmp", "id": "x", "data": "ls\n"})).await.unwrap_err();
+        assert!(e.contains("unknown tool"), "{name}: {e}");
+    }
+    for (file, src) in [
+        ("tools/mod.rs", include_str!("../src/tools/mod.rs")), ("tools/read.rs", include_str!("../src/tools/read.rs")),
+        ("tools/write.rs", include_str!("../src/tools/write.rs")), ("tools/memory.rs", include_str!("../src/tools/memory.rs")),
+        ("tools/merge.rs", include_str!("../src/tools/merge.rs")), ("tools/preview.rs", include_str!("../src/tools/preview.rs")),
+        ("tools/resolve.rs", include_str!("../src/tools/resolve.rs")), ("mcp.rs", include_str!("../src/mcp.rs")),
+        ("gizai-mcp", include_str!("../../crates/gizai-mcp/src/lib.rs")),
+    ] {
+        assert!(!src.to_lowercase().contains("terminal"), "{file} reaches the terminals");
+    }
+}
+
 #[test]
 fn the_agent_tools_offer_runs_on() {
     let cat = tools::catalog();

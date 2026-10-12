@@ -3,6 +3,8 @@
 //! Agent's folder gets its notes and saves what it learned there with its name, and the Backend Agent's next run gets it.
 // Linux and macOS only: these tests run shell scripts as fake programs, which Windows can't start.
 #![cfg(unix)]
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::path::{Path, PathBuf};
 
 use gizai_core::clis::Cli;
@@ -288,6 +290,7 @@ async fn when_gizai_starts_a_group_whose_owner_was_removed_goes_on_with_its_next
         assert_eq!(team::agent(&st.db, &be2).unwrap().shares_memory_with.as_deref(), Some(be.as_str()));
         (be, be2)
     };
+    data_lock::released(&tmp.path().join("data")).await;
     let st = gizai_lib::test_state(tmp.path());
     assert_eq!(team::agent(&st.db, &be2).unwrap().shares_memory_with, None, "the Backend Agent 2 owns the folder now");
     assert_eq!(Who::of(&st.db, &be2).unwrap(), Who::Agent(be2.clone()));

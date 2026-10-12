@@ -66,7 +66,7 @@ const X = {
   sideAsk: say("Sidebar row, Close or a middle click", "A program runs in it", "npm is still running in gizai 2. Close it and end npm?", "Close · Cancel"),
   sideRename: say("Sidebar row, F2", "Renaming", "gizai 2", "The name, selected, in a box in its place. Enter keeps it, Escape cancels; an empty name gives gizai 2 back; at most 40 characters"),
   // 2. New terminal
-  pickTitle: say("Folder picker", "From + on Terminal, New terminal, ⋯ → New terminal", "New terminal in", "Its title, above the search box"),
+  pickTitle: say("Folder picker", "From + on the Terminal heading, or New terminal", "New terminal in", "Its title, above the search box"),
   pickFind: say("Folder picker", "Always", "Find a folder", "Placeholder; Enter starts a terminal in the chosen folder and opens its page"),
   pickGroups: say("Folder picker", "Group heads", "Projects · In ~/Herd · Cards", "The Editor's groups; the folder the page shows is on top, chosen"),
   pickMine: say("Folder picker, Cards", "A card pinned to you", "by hand"),
@@ -125,15 +125,15 @@ const COLORS = [
   ["term-yellow", "#e3bd3c", "#855600", "ANSI 3: warnings, git's commit hashes. The gold of syn-type."],
   ["term-blue", "#85adff", "#1e54c4", "ANSI 4: folders in ls, rustc's arrows and line numbers. The blue of syn-function."],
   ["term-magenta", "#c58af9", "#8a3cc2", "ANSI 5: images in ls. A violet: at least 35° of hue from needs (magenta, “needs you”)."],
-  ["term-cyan", "#56b8f0", "#0a6c9c", "ANSI 6: links in ls, git's @@ lines, URLs. A sky blue: at least 35° of hue from live (teal, an agent at work)."],
-  ["term-white", "#c4c7ce", "#d0d3da", "ANSI 7: a light grey, a little below term-fg in dark; in light a block (white text on a coloured block), lifted to 4.5:1 as text."],
+  ["term-cyan", "#56b8f0", "#0a6c9c", "ANSI 6: symbolic links in ls, git's @@ lines, URLs. A sky blue: at least 35° of hue from live (teal, an agent at work)."],
+  ["term-white", "#c4c7ce", "#d0d3da", "ANSI 7: light grey. In dark, text a little dimmer than term-fg; in light, white text on coloured blocks, and lifted to 4.5:1 when it is text on the background."],
   ["term-bright-black", "#7f838d", "#636772", "ANSI 8: grey text, such as hints, a shell's suggestions and dim lines. text-3's value."],
   ["term-bright-red", "#ff9590", "#962420", "ANSI 9: bold red (xterm.js draws bold text in the bright colours)."],
   ["term-bright-green", "#72dca6", "#0b5a36", "ANSI 10: bold green, such as executables in ls and cargo's Compiling."],
   ["term-bright-yellow", "#f5d56b", "#6a4400", "ANSI 11: bold yellow, such as rustc's warning."],
   ["term-bright-blue", "#a9c5ff", "#1440a0", "ANSI 12: bold blue, such as folders in ls."],
   ["term-bright-magenta", "#d6a7ff", "#6f22a6", "ANSI 13: bold magenta. As apart from needs as term-magenta."],
-  ["term-bright-cyan", "#86d1f7", "#06577f", "ANSI 14: bold cyan, such as links in ls. As apart from live as term-cyan."],
+  ["term-bright-cyan", "#86d1f7", "#06577f", "ANSI 14: bold cyan, such as symbolic links in ls. As apart from live as term-cyan."],
   ["term-bright-white", "#fafafb", "#f3f4f7", "ANSI 15: the brightest white in dark; in light a pale block, lifted to 4.5:1 as text."],
 ];
 // Bright colours are the stronger ones on each background: lighter in dark, darker in light (as GitHub's light terminal
@@ -600,7 +600,7 @@ section("page", "3. The Terminal page",
   p("<code>#/terminal/&lt;id&gt;</code>. The top bar says which terminal and where it runs; under it the terminals of <b>this terminal's folder</b> as tabs (the same set as that folder's Editor panel, §4), then the terminal, which fills the rest. <code>#/terminal</code> without one is an empty page with New terminal.")
   + notes(
     "<b>Top bar.</b> Terminal / <b>gizai 2</b>: a double-click (or F2) renames it in place. Then the folder in mono, the shell and its size in columns × rows, all in <code>text-3</code>; the size follows the place it shows in. Actions: <b>Show in Editor</b> (the folder in the Editor, with this terminal in its panel) and <b>⋯</b>: Rename (F2), Find (Ctrl+Shift+F), Clear (empties the scrollback), Copy folder path, Close.",
-    "<b>Tabs.</b> The folder's terminals, drawn as the Editor's file tabs, <code>size-term-tab</code> high: the <code>terminal</code> icon, the name, the program that runs in it in mono, and ×. <b>+</b> starts another terminal in the same folder, without a picker. A double-click renames a tab in place; a middle click or × closes it, asking under the tab when a program runs. Ctrl+PgDn and Ctrl+PgUp step through them; ← and → move between tabs that have the focus.",
+    "<b>Tabs.</b> The folder's terminals, drawn as the Editor's file tabs, <code>size-term-tab</code> high: the <code>terminal</code> icon, the name, the program that runs in it in mono, and ×. <b>+</b> starts another terminal in the same folder, without a picker. × shows on hover and on the open tab, as on file tabs. A double-click renames a tab in place; a middle click or × closes it, asking under the tab when a program runs. Ctrl+PgDn and Ctrl+PgUp step through them; ← and → move between tabs that have the focus.",
     "<b>The terminal</b> fills the rest: <code>term-bg</code> (the code's background), 8px above and below and 12px at the sides, the mono font at the code size, the <code>term-*</code> colours (§6). The cursor is a block while the terminal has the focus and an outline while it hasn't, and it doesn't blink: only the live pulse moves on its own.",
     "<b>Find</b> (Ctrl+Shift+F; Cmd+F on macOS): a small box at the top right, over the terminal, so the terminal keeps its size and full-screen programs don't redraw. The query in mono, Match case, Words and Regular expression inside the box, “3 of 12”, previous and next, close. Matches are marked as the Editor marks them: <code>term-selection</code>, the current one with an <code>accent</code> border.",
     "<b>Ended.</b> <code>exit</code> with code 0 closes the terminal and its tab. Any other end keeps it, read-only, with a bar under the tabs: “The shell ended with exit code 2.” with Start again (a new shell in the same folder, the same name and tab) and Close; the screen stays as it was, to read, select and find in. The tab and the sidebar row say “ended”. A shell that never started says why: “Couldn't start zsh in ~/Herd/gizai: /usr/bin/zsh wasn't found.”, with Try again and Close.")
@@ -681,11 +681,13 @@ section("two", "5. One terminal, two places",
 
 // 6. The terminal's colours -------------------------------------------------------------------------------------------------------------
 const ANSI = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+// text on a block: the background's colour, which reads on every block but black (dark) and white (light)
+const blockText = (n) => (n === "black" ? "x-bright-white" : n === "white" ? "x-black" : "x-fg-bg");
 const ansiGrid = `<div class="dz-ansi"><span class="head"></span>${ANSI.map((n) => `<span class="head">${n}</span>`).join("")}`
   + `<span class="head">Text</span>${ANSI.map((n) => `<span class="x-${n}">${n}</span>`).join("")}`
   + `<span class="head">Bright text</span>${ANSI.map((n) => `<span class="x-bright-${n}">bright ${n}</span>`).join("")}`
-  + `<span class="head">Background</span>${ANSI.map((n) => `<span class="x-bg-${n} ${n === "black" ? "x-white" : "x-black"}">${n}</span>`).join("")}`
-  + `<span class="head">Bright background</span>${ANSI.map((n) => `<span class="x-bg-bright-${n} ${n === "black" ? "x-bright-white" : "x-black"}">bright ${n}</span>`).join("")}`
+  + `<span class="head">Background</span>${ANSI.map((n) => `<span class="x-bg-${n} ${blockText(n)}">${n}</span>`).join("")}`
+  + `<span class="head">Bright background</span>${ANSI.map((n) => `<span class="x-bg-bright-${n} ${blockText(n === "black" ? "bright-black" : n)}">bright ${n}</span>`).join("")}`
   + `<span class="head">Selected, find</span><span class="x-sel">selected</span><span class="x-sel-off">not focused</span><span class="x-hit">a match</span><span class="x-now">the current</span><span><span class="x-cursor">c</span>ursor</span><span><span class="x-cursor-off">c</span>ursor, no focus</span><span class="x-dim">dim</span><span class="x-bold">bold</span></div>`;
 const sample = (lines, n) => `<div class="main"><div class="term-place" style="padding:8px 12px">${screen(lines)}</div></div>`;
 const swatch = (hex) => `<span class="dz-sw" style="background:${hex}"></span><code>${hex}</code>`;
@@ -711,7 +713,7 @@ section("colours", "6. The terminal's colours",
     "<b>Red and green are the Changes view's.</b> <code>term-red</code> is <code>diff-del</code> and <code>term-green</code> <code>diff-add</code>, so <code>git diff</code> in a terminal reads as a card's Changes. Yellow is the gold of <code>syn-type</code> and blue the blue of <code>syn-function</code>.",
     "<b>Cyan and magenta keep away from Gizai's two signals.</b> Teal <code>live</code> means an agent at work and magenta <code>needs</code> means “needs you”; a program's cyan and magenta are its own output. So <code>term-cyan</code> is a sky blue and <code>term-magenta</code> a violet: at least 35° of hue (OKLCH) and a ΔE2000 of at least 15 from both, in both themes. The generator refuses values that break this.",
     "<b>Contrast.</b> Every colour a program prints as text is at least 4.5:1 on <code>term-bg</code>. Bright colours are the stronger ones on each background: lighter in dark, darker in light. Three are block colours, under 4.5:1 by nature (black in dark; white and bright white in light); xterm.js's <code>minimumContrastRatio: 4.5</code> lifts any text that lands under 4.5:1, so a program's black text on the dark background still reads.",
-    "<b>Never colour alone</b> holds in the terminal too: programs print words with their colours (“ok”, “FAILED”, “modified:”), and Gizai adds no colour of its own to their output.")
+    "<b>Never colour alone</b> holds in the terminal too: programs print words with their colours (“ok”, “FAILED”, “modified:”), and Gizai adds no colour of its own to their output. Where a program's own pair lands under 4.5:1, such as ls's black on green in light, xterm.js draws the text lighter or darker until it reads.")
   + h3("The tokens")
   + p("Contrast (WCAG 2) on <code>term-bg</code> · on <code>term-selection</code>; grey numbers are under 4.5:1. <code>=</code> follows another token. For the selection, the number is <code>term-fg</code> on it.")
   + table(["Token", "Dark", "Contrast", "Light", "Contrast", "Used for"], TERM_ROWS)
@@ -721,7 +723,7 @@ section("colours", "6. The terminal's colours",
   + rows([{ label: "On term-bg", inner: `<div class="main">${ansiGrid}</div>`, w: 1100 }])
   + h3("Samples")
   + rows([
-    { label: "ls --color (folders bold blue, executables bold green, an archive bold red, an image bold magenta, a link bold cyan, a shared folder black on green)", inner: sample(LS), w: 900 },
+    { label: "ls --color (folders bold blue, executables bold green, an archive bold red, an image bold magenta, a symbolic link bold cyan, a shared folder black on green)", inner: sample(LS), w: 900 },
     { label: "git status", inner: sample(GIT_STATUS), w: 700 },
     { label: "git diff", inner: sample(GIT_DIFF), w: 760 },
     { label: "A test run: cargo test, a warning and a failure", inner: sample(CARGO), w: 820 },
@@ -844,6 +846,11 @@ section("specs", "7. Specs: sizes, states, the font, keys",
     ["↑ ↓; double-click", "the drag handle", "5% higher or lower; 30% again"],
     ["Enter, Escape", "the close question", "Close, Cancel"],
   ].map(([k, w, d]) => [`<span class="kbd-run">${k}</span>`, w, d]))
+  + h3("On a narrow window")
+  + notes(
+    "At the window's smallest, 900 × 600, 652px stay beside the sidebar. The Terminal page's top bar keeps its name and buttons; the folder's path gives way first (cut off, the whole of it in its tooltip), then the shell and size.",
+    "The Editor's top bar keeps Fetch, Terminal and Open in with their words; D2's standing gives way first, as it does now.",
+    "The panel's tab strip scrolls sideways when its tabs don't fit, with the open tab scrolled into view; Own page and Hide stay at its right end. At 600px high the column is 548px: the panel's 30% is 164px, within its limits.")
   + h3("For screen readers and the keyboard")
   + notes(
     "The sidebar's rows are links (“gizai 2, running npm”); the tabs a <code>tablist</code>, each × a button named “Close gizai 2”. The question under a row or tab is an <code>alertdialog</code> that takes the focus, Close first.",

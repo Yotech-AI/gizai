@@ -83,7 +83,7 @@
           "dark": "#56b8f0",
           "light": "#0a6c9c"
         },
-        "usage": "ANSI 6: links in ls, git's @@ lines, URLs. A sky blue: at least 35° of hue from live (teal, an agent at work)."
+        "usage": "ANSI 6: symbolic links in ls, git's @@ lines, URLs. A sky blue: at least 35° of hue from live (teal, an agent at work)."
       },
       {
         "name": "term-white",
@@ -91,7 +91,7 @@
           "dark": "#c4c7ce",
           "light": "#d0d3da"
         },
-        "usage": "ANSI 7: a light grey, a little below term-fg in dark; in light a block (white text on a coloured block), lifted to 4.5:1 as text."
+        "usage": "ANSI 7: light grey. In dark, text a little dimmer than term-fg; in light, white text on coloured blocks, and lifted to 4.5:1 when it is text on the background."
       },
       {
         "name": "term-bright-black",
@@ -147,7 +147,7 @@
           "dark": "#86d1f7",
           "light": "#06577f"
         },
-        "usage": "ANSI 14: bold cyan, such as links in ls. As apart from live as term-cyan."
+        "usage": "ANSI 14: bold cyan, such as symbolic links in ls. As apart from live as term-cyan."
       },
       {
         "name": "term-bright-white",

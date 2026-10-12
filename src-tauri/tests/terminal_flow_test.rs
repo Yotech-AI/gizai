@@ -41,7 +41,10 @@ fn linked_folder(st: &AppState, tmp: &Path) -> String {
     projects::create(&st.db, &st.you_id, ProjectInput { name: "Kade".into(), key: "KADE".into(), repo_path: Some(repo.display().to_string()),
         ..Default::default() }).unwrap();
     let f = editor::folders(st).unwrap().into_iter().find(|f| f.kind == Kind::Project).expect("the linked folder");
-    assert_eq!(f.id, repo.display().to_string());
+    // (Windows: the Editor's id is C:\…, the temp folder's real path \\?\C:\…)
+    if cfg!(unix) {
+        assert_eq!(f.id, repo.display().to_string());
+    }
     f.id
 }
 
@@ -228,11 +231,18 @@ fn quitting_gizai_ends_every_terminal_and_everything_it_started() {
     for _ in 0..2 {
         let s = terminal::open_with(&st, &folder, 80, 24, None, Some(test_shell())).unwrap();
         let got = view(&st, &s.id);
-        st.terminals.input(&s.id, "echo sh=$$; sleep 1000 & echo bg=$!; nohup sleep 1000 >/dev/null 2>&1 & echo nh=$!\n", false).unwrap();
-        let ids = until("the ids", || {
+        st.terminals.input(&s.id, "echo sh=$$\n", false).unwrap();
+        st.terminals.input(&s.id, "sleep 1000 & echo bg=$!\n", false).unwrap();
+        st.terminals.input(&s.id, "nohup sleep 1000 >/dev/null 2>&1 & echo nh=$!\n", false).unwrap();
+        let end = Instant::now() + Duration::from_secs(20);
+        let ids = loop {
             let text = String::from_utf8_lossy(&got.lock().unwrap()).into_owned();
-            Some([number_after(&text, "sh=")?, number_after(&text, "bg=")?, number_after(&text, "nh=")?])
-        });
+            if let (Some(sh), Some(bg), Some(nh)) = (number_after(&text, "sh="), number_after(&text, "bg="), number_after(&text, "nh=")) {
+                break [sh, bg, nh];
+            }
+            assert!(Instant::now() < end, "the shell's, the job's and the nohup program's ids never showed; got {text:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        };
         all.extend(ids);
     }
     let _started = Started(all.clone());

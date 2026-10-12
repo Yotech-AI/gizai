@@ -445,7 +445,8 @@ fn input_takes_a_1_mb_paste_and_binary_input_one_byte_per_character() {
     terms.input(&s.id, "stty raw -echo; echo bi''nary; head -c 4 | od -An -tx1; stty sane\n", false).unwrap();
     screen.shows("binary");
     terms.input(&s.id, "\u{1}\u{80}\u{ff}A", true).unwrap();
-    screen.shows("01 80 ff 41");
+    // (macOS's od puts two spaces between the bytes)
+    until("the four bytes, as od shows them", || screen.text().split_whitespace().collect::<Vec<_>>().join(" ").contains("01 80 ff 41").then_some(()));
     terms.close(&s.id).unwrap();
 }
 

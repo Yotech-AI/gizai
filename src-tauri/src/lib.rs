@@ -21,6 +21,7 @@ mod quit;
 pub mod runs;
 pub mod shell_path;
 pub mod tools;
+mod unsaved;
 pub mod update;
 pub mod worktrees;
 
@@ -103,8 +104,10 @@ fn selftest_report(json: String) -> Result<(), String> {
     }
 }
 
+/// The page quits Gizai (Settings' Quit Gizai completely, a self-test's end): it has no unsaved text to save first.
 #[tauri::command]
 fn exit_app(app: AppHandle, code: i32) {
+    unsaved::settle();
     app.exit(code);
 }
 
@@ -557,7 +560,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, selftest_report, exit_app,
+            app_info, selftest_report, exit_app, unsaved::set_unsaved_edits, unsaved::close_answer,
             commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
             commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
             commands::agent_mcp, commands::save_agent_mcp, commands::agent_cli_tools, commands::save_agent_cli_tools, commands::ask_cli_tools,
@@ -602,10 +605,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Gizai")
         .run(|app, event| {
-            // Quitting with agents at work (runs or a chat answer): stop them first, then quit (a second request
-            // quits at once).
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event
-                && quit::stop_agents_first(app)
+            // Quitting with unsaved text in the doc page's or the Memory page's editor: the page saves it first, or
+            // asks (see `unsaved`). Then, with agents at work (runs or a chat answer): stop them first, then quit (a
+            // second request quits at once).
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event
+                && (unsaved::quit_waits(app, code.unwrap_or(0)) || quit::stop_agents_first(app))
             {
                 api.prevent_exit();
             }
@@ -613,12 +617,15 @@ pub fn run() {
             // Gizai keeps running in the tray, with its agents, heartbeats, chat and MCP socket, and the hidden window
             // keeps its page. Quitting is the tray's or Settings' Quit Gizai completely, Cmd+Q on macOS or a signal; Exit
             // ends the page process (see `quit`). macOS's own Quit (the Dock's, logging out) and Windows logging off
-            // skip the first step and come straight to Exit, where agents at work end at once.
+            // skip the first step and come straight to Exit, where agents at work end at once. With unsaved text in an
+            // editor, the window hides once the page has saved it (or asked: see `unsaved`).
             if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
                 && label == "main"
             {
                 api.prevent_close();
-                if let Some(w) = app.get_webview_window("main") {
+                if !unsaved::close_waits(app)
+                    && let Some(w) = app.get_webview_window("main")
+                {
                     let _ = w.hide();
                 }
             }

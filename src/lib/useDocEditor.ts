@@ -1,9 +1,12 @@
 // Editing a doc or a memory note (the doc page and the Memory page): the text in the editor and the version it is
 // based on. Every save is a version, so the text saves on Ctrl+S / Ctrl+Enter and the Save button, after AUTOSAVE_MS
-// without typing, and on leaving the page; leaving the editor (a click on the title, the history or another window) does
-// not save (GA-118). A save based on an old version (an agent saved meanwhile) is a conflict, and the page asks what to do.
+// without typing, on leaving the page and when Gizai closes (GA-122: `closeSave`); leaving the editor (a click on the
+// title, the history or another window) does not save (GA-118). A save based on an old version (an agent saved meanwhile)
+// is a conflict, and the page asks what to do.
 import { useEffect, useRef, useState } from "react";
 import { getDoc, saveDoc } from "../api";
+import { editsChanged, registerEdit } from "./closeSave";
+import { titleOf } from "./memory";
 import { useData } from "./useData";
 
 export type SaveStatus = "saved" | "unsaved" | "saving" | "conflict";
@@ -31,10 +34,11 @@ export function useDocEditor(id: string) {
   const [base, setBase] = useState<number | null>(null);
   const [status, setStatus] = useState<SaveStatus>("saved");
   const [err, setErr] = useState<string | null>(null);
-  const live = useRef({ text, base, status });
-  live.current = { text, base, status };
+  const live = useRef({ text, base, status, doc });
+  live.current = { text, base, status, doc };
   const saved = useRef(""); // the text of version `base`
-  const inflight = useRef(false); // the Save button, a shortcut and the automatic save can meet: one save at a time
+  // The save under way, if any: the Save button, a shortcut and the automatic save can meet, so one save at a time.
+  const inflight = useRef<Promise<void> | null>(null);
   const auto = useRef<ReturnType<typeof autosaveTimer> | null>(null);
 
   const adopt = (body: string, version: number) => { saved.current = body; setText(body); setBase(version); setStatus("saved"); };
@@ -45,21 +49,27 @@ export function useDocEditor(id: string) {
     if (b === null || (doc.currentVersion !== b && s === "saved")) adopt(doc.bodyMd, doc.currentVersion);
   }, [doc]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const save = async (md: string, force = false) => {
+  /** Saves `md` as a version: true when it saved (or was saved already), false when it didn't (or another save was
+   *  under way). */
+  const save = async (md: string, force = false): Promise<boolean> => {
     const { base: b } = live.current;
-    if (b === null || !doc || inflight.current) return;
-    if (!force && md === saved.current) { setStatus("saved"); return; }
-    inflight.current = true;
+    if (b === null || !doc || inflight.current) return false;
+    if (!force && md === saved.current) { setStatus("saved"); return true; }
+    let done = () => {};
+    inflight.current = new Promise<void>((ok) => { done = ok; });
     auto.current?.cancel();
     setStatus("saving");
     try {
       const v = await saveDoc(id, md, force ? (await getDoc(id)).currentVersion : b);
       saved.current = md;
+      live.current.base = v; // before the next render, for a save right after this one (closing Gizai)
       setBase(v); setErr(null);
       setStatus(live.current.text === md ? "saved" : "unsaved");
+      return true;
     } catch (e) {
       if (String(e).includes("changed since")) setStatus("conflict"); else { setStatus("unsaved"); setErr(String(e)); }
-    } finally { inflight.current = false; }
+      return false;
+    } finally { inflight.current = null; done(); }
   };
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -78,6 +88,21 @@ export function useDocEditor(id: string) {
     const { text: t, status: s } = live.current;
     if (t !== null && s === "unsaved") saveRef.current(t);
   }, []);
+  // Closing Gizai saves unsaved text first (GA-122): the editor is listed while it is open, and until the save on leaving
+  // the page has ended. Unsaved is also a save under way and the conflict bar's text.
+  useEffect(() => {
+    const off = registerEdit({
+      title: () => { const d = live.current.doc; return d ? (d.kind === "memory" ? titleOf(d.path ?? d.title) : d.title) : "this doc"; },
+      unsaved: () => inflight.current !== null || (live.current.text !== null && live.current.text !== saved.current),
+      flush: async () => {
+        while (inflight.current) await inflight.current;
+        const t = live.current.text;
+        return t === null || t === saved.current || saveRef.current(t);
+      },
+    });
+    return () => { if (inflight.current) inflight.current.then(off); else off(); };
+  }, []);
+  useEffect(() => { editsChanged(); }, [status]);
 
   /** The editor's text changed: unsaved text waits AUTOSAVE_MS again before it saves on its own. */
   const edit = (md: string) => {

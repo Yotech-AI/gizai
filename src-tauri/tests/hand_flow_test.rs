@@ -438,3 +438,33 @@ async fn a_second_click_while_the_first_still_works_says_gizai_is_busy() {
     hand::start(&c.st, &c.task).await.unwrap();
     runs::stop_all(&c.st, Duration::from_secs(10)).await;
 }
+
+/// GA-115 QA: the card's Changes tab (`changes::of_card`, contract C1) shows what you changed by hand in its worktree,
+/// what isn't committed yet too, and the same files as committed once Commit… made them a commit.
+#[tokio::test]
+async fn the_cards_changes_tab_shows_what_you_changed_by_hand_committed_or_not() {
+    use gizai_lib::changes::{self, ChangeSource, FileStatus};
+    let files = |c: &changes::CardChanges| -> Vec<(String, FileStatus, bool)> {
+        c.files.iter().map(|f| (f.path.clone(), f.status, f.uncommitted)).collect()
+    };
+    let tmp = real_tempdir();
+    let c = yours(tmp.path());
+    hand::start(&c.st, &c.task).await.unwrap();
+    assert!(changes::of_card(&c.st, &c.task).unwrap().files.is_empty(), "nothing changed yet");
+
+    // you change a file and add one in the Editor, and commit nothing yet
+    std::fs::write(c.wt().join("README.md"), "# Shop\n\nCSV export.\n").unwrap();
+    std::fs::write(c.wt().join("export.csv"), "id,total\n1,10\n").unwrap();
+    let got = changes::of_card(&c.st, &c.task).unwrap();
+    assert_eq!(got.source, ChangeSource::Worktree, "from the card's worktree, where you work by hand");
+    assert_eq!(files(&got), [("README.md".to_string(), FileStatus::Modified, true), ("export.csv".to_string(), FileStatus::Added, true)]);
+    assert_eq!((got.additions, got.deletions), (4, 0));
+
+    // Commit…: the same files, now committed; a new change after it is uncommitted again
+    hand::commit(&c.st, &c.task, "KADE-1: Export invoices as CSV").await.unwrap();
+    std::fs::write(c.wt().join("notes.md"), "draft\n").unwrap();
+    let got = changes::of_card(&c.st, &c.task).unwrap();
+    assert_eq!(files(&got), [("README.md".to_string(), FileStatus::Modified, false), ("export.csv".to_string(), FileStatus::Added, false),
+                             ("notes.md".to_string(), FileStatus::Added, true)]);
+    runs::stop_all(&c.st, Duration::from_secs(10)).await;
+}

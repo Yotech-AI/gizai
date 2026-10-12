@@ -260,6 +260,8 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
       const text = file.text;
       const s = states.current.get(path);
       if (!s) { read(path); return; }
+      // typed in since the poll: ask, rather than reload over it
+      if (byItself && tabsRef.current.find((x) => x.path === path)?.dirty) { patch(path, { disk: "changed" }); return; }
       apply(path, (st) => {
         const tr = replaceText(st, text);
         saved.current.set(path, tr.state.doc);
@@ -335,7 +337,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     states.current.delete(path);
     saved.current.delete(path);
     if (shown.current === path) shown.current = null;
-    if (active === path) setActive(nextAfterClose(paths, path));
+    setActive((a) => (a === path ? nextAfterClose(paths, path) : a));
     setClosing(null);
   };
   const askClose = (path: string, el?: HTMLElement | null) => {
@@ -381,6 +383,9 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
         if (shown.current) shown.current = moved(shown.current);
         setTabs((ts) => ts.map((t) => ({ ...t, path: moved(t.path) })));
         setActive((a) => (a ? moved(a) : a));
+        // their versions on disk at the new path, so the next poll doesn't take the move for an outside change
+        const now = tabsRef.current.map((t) => moved(t.path)).filter((p, i) => p !== tabsRef.current[i]!.path);
+        if (now.length) editorVersions(id, now).then((vs) => now.forEach((p, i) => { if (vs[i]) patch(p, { version: vs[i]! }); })).catch(() => {});
         refreshGit();
         return null;
       } catch (e) { return why(e); }
@@ -637,6 +642,13 @@ function FileBar({ t, name, locked, folderBar, ignoredIn, size, reload, keepMine
       <TriangleAlert className="icon" />
       <span className="say"><span className="mono">{t.path}</span> was deleted on disk.</span>
       <span className="acts"><button className="btn sm" onClick={save}>Save it again</button><button className="btn sm" onClick={closeTab}>Close tab</button></span>
+    </div>
+  );
+  if (t.disk === "gone") return (
+    <div className="ed-bar file refused" role="status">
+      <TriangleAlert className="icon" />
+      <span className="say"><span className="mono">{t.path}</span> isn't there any more.</span>
+      <span className="acts"><button className="btn sm" onClick={closeTab}>Close tab</button></span>
     </div>
   );
   if (t.saveError) return (

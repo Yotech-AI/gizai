@@ -480,7 +480,22 @@ export type ChatThread = { id: string; agentId: string; title: string; sessionId
   /** The chat's own Runs on (a coding CLI's id); null: it follows the Team Lead's. */
   cli?: string | null;
   /** The coding CLI whose account holds the chat's session. */
-  sessionCli?: string | null };
+  sessionCli?: string | null;
+  /** GA-102: the Team Lead's calls that wait for your approval in it; while there are any, the chat waits for you in the Inbox. */
+  pendingActions?: number };
+/** One line of a preview's diff: in both texts (`same`), only in the new one (`add`) or only in the old one (`del`). */
+export type DiffLine = { kind: "same" | "add" | "del"; text: string };
+/** A label and the value a pending call gives; `from`: the value now, for a value that changes. */
+export type PreviewField = { label: string; value: string; from?: string | null };
+/** What a pending call does, as things are now: one plain line, what it is about and what changes, the text it saves or adds,
+ *  what changes against the current version (a note, an agent's instructions), and why approving fails, when Gizai can tell. */
+export type PendingPreview = { line: string; fields: PreviewField[]; text?: string | null; diff?: DiffLine[] | null; warning?: string | null };
+/** GA-102: a call of the Team Lead's that wasn't run because its answer (`runId`) used a tool from outside Gizai (`outsideTool`). It
+ *  waits under that answer until you approve it (it runs exactly as called, once) or discard it. status: pending, or running while
+ *  an approval runs it. */
+export type PendingAction = { id: string; threadId: string; runId?: string | null; actorId: string; tool: string; args: Record<string, unknown>;
+  outsideTool: string; status: "pending" | "running" | "approved" | "failed" | "discarded" | "replaced"; createdAt: number;
+  decidedAt?: number | null; resultMd?: string | null; preview?: PendingPreview };
 /** role: user | agent | tool | system. Tool messages carry `tool` = {id, input, result?, isError?}. */
 export type ChatMessage = { id: string; threadId: string; role: string; authorId?: string | null; authorName?: string | null;
   bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number;
@@ -494,7 +509,9 @@ export type FileCheck = { ok: string[]; failed: string[] };
 /** A chat the Archive found, with the newest of its messages (yours or the Team Lead's) whose text matches; none when only
  *  its title matches, or for an empty search. */
 export type ChatHit = { thread: ChatThread; message?: ChatMessage | null };
-export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
+/** kind "pending" (GA-102): what you decided on a call that waited for you, with `action` (its id), `tool`, `status` and `run`. */
+export type ChatNoteMeta = { kind: "switch" | "limit" | "pending" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[];
+  action?: string; tool?: string; status?: string; run?: string | null };
 /** `seq`: the last change to the text being written that `draft` holds. */
 export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
 /** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */

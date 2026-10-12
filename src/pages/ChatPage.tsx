@@ -8,7 +8,7 @@ import { useData } from "../lib/useData";
 import { useDrawer } from "../lib/drawers";
 import { useCurrentTeam } from "../lib/team";
 import { relTime } from "../lib/format";
-import { chatLabel } from "../lib/inbox";
+import { chatLabel, chatLabelTitle, chatWaits } from "../lib/inbox";
 import { RECENT_MAX } from "../lib/chat";
 import { Avatar } from "../components/Avatar";
 import { ChatArchive } from "../components/chat/ChatArchive";
@@ -73,7 +73,7 @@ export function ChatPage({ id, archive = false }: { id?: string; archive?: boole
               {recent.map((t) => (
                 <a key={t.id} className={`th${t.id === id ? " on" : ""}`} href={href({ page: "chat", id: t.id })} aria-current={t.id === id ? "page" : undefined}>
                   <span className="t">{live.some((l) => l.threadId === t.id) && <span className="pulse" />}
-                    {chatLabel(t) && <span className={`badge ${t.waiting ? "needs" : "outline"}`} title={t.waiting ? "The Team Lead asks you this" : "The Team Lead started this chat"}>{chatLabel(t)}</span>}
+                    {chatLabel(t) && <span className={`badge ${chatWaits(t) ? "needs" : "outline"}`} title={chatLabelTitle(t)}>{chatLabel(t)}</span>}
                     <span className="ellipsis">{t.title}</span></span>
                   <span className="when">{relTime(t.updatedAt)}</span>
                 </a>

@@ -302,6 +302,15 @@ export const chatClis = () => invoke<T.ChatCli[]>("chat_clis");
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
 /** × on a Team Lead chat in the Inbox: it no longer waits for you. */
 export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });
+/** GA-102: the Team Lead's calls that wait for your approval in a chat (after a tool from outside Gizai), each with its preview. */
+export const pendingActions = (threadId: string) => invoke<T.PendingAction[]>("pending_actions", { threadId });
+/** Approve: runs exactly that call, once, with every other rule in force; the chat gets a note with what happened. Fails for a call
+ *  that no longer waits (approved, discarded, or replaced by a newer one). */
+export const approvePendingAction = (id: string) => invoke<T.PendingAction>("approve_pending_action", { id });
+/** Approve all: the calls you saw, one after the other in the order given. */
+export const approvePendingActions = (ids: string[]) => invoke<T.PendingAction[]>("approve_pending_actions", { ids });
+/** Discard: nothing runs; the chat gets a note with what was discarded. */
+export const discardPendingAction = (id: string) => invoke<T.PendingAction>("discard_pending_action", { id });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
 export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));

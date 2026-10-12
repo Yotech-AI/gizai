@@ -61,6 +61,7 @@ class Mark extends GutterMarker {
 }
 class LineClass extends GutterMarker {
   constructor(readonly elementClass: string) { super(); }
+  eq(o: LineClass) { return o.elementClass === this.elementClass; }
 }
 /** Lucide's unfold-vertical (ISC), for the fold bar's place in the number column. */
 const UNFOLD = ["M12 22v-6", "M12 8V2", "M4 12H2", "M10 12H8", "M16 12h-2", "M22 12h-2", "m15 19-3 3-3-3", "m15 5-3-3-3 3"];
@@ -130,7 +131,7 @@ function foldField(initial: Fold[], hideLast: boolean, lines: number) {
         out.push(Decoration.replace({ widget: new FoldWidget(f), block: true }).range(doc.line(f.from).from, end));
       }
       if (hideLast && !lastCovered) out.push(Decoration.replace({}).range(doc.line(lines).to, doc.length));
-      return Decoration.set(out);
+      return Decoration.set(out, true);
     }),
   });
 }
@@ -198,7 +199,8 @@ export function diffState(input: DiffInput): { state: EditorState; digits: numbe
   const common: Extension[] = [
     EditorState.readOnly.of(true),
     EditorView.contentAttributes.of({ "aria-label": input.label }),
-    codeTheme, diffTheme,
+    // the diff's look over the code theme's (the number column, line padding)
+    codeTheme, Prec.high(diffTheme),
     input.language ?? [],
   ];
   if (input.oldText === null || input.newText === null) return wholeState(input, common);

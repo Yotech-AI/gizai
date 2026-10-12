@@ -2527,10 +2527,10 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     await sleep(200);
     const after = [...box.querySelectorAll<HTMLElement>(".cm-diffFold")].find((f) => f.textContent?.startsWith("10 unchanged lines"));
     check(after && !after.querySelector(".fold-step"), "↓ 20 leaves 10 unchanged lines, without steps");
-    const before = box.querySelectorAll(".cm-diffFold").length;
     after?.querySelector<HTMLElement>(".fold-all")?.click();
     await sleep(200);
-    check(box.querySelectorAll(".cm-diffFold").length === before - 1, "a click on the count shows all its lines");
+    const labels = foldLabels();
+    check(!labels.includes("10 unchanged lines") && labels[0] === "6 unchanged lines", `a click on the count shows all its lines: ${labels.slice(0, 3)}`);
     // the colours, in dark and in light
     const line = box.querySelector(".cm-changedLine"), deleted = box.querySelector(".cm-deletedChunk");
     const colours = () => ({ add: line && getComputedStyle(line).backgroundColor, del: deleted && getComputedStyle(deleted).backgroundColor,

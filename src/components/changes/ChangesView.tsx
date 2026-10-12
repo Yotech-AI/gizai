@@ -149,13 +149,19 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const unpin = () => { pinned.current = null; };
 
-  // the current file follows the scroll: the first box that reaches under the sticky headers' line
+  // the current file follows the scroll: the first box that reaches under the sticky headers' line (boxes are in order,
+  // so a binary search: 245 files stay quick)
   const onScroll = () => {
-    const d = diffs.current;
-    if (!d || pinned.current) return;
-    const top = d.getBoundingClientRect().top + 40;
-    const box = [...d.querySelectorAll<HTMLElement>(".chg-box")].find((b) => b.getBoundingClientRect().bottom > top);
-    if (box?.dataset.path && box.dataset.path !== current) setCurrent(box.dataset.path);
+    const d = diffs.current, boxes = inner.current?.children;
+    if (!d || !boxes?.length || pinned.current) return;
+    const line = d.scrollTop + 40;
+    let lo = 0, hi = boxes.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1, b = boxes[mid] as HTMLElement;
+      if (b.offsetTop + b.offsetHeight > line) hi = mid; else lo = mid + 1;
+    }
+    const path = (boxes[lo] as HTMLElement).dataset.path;
+    if (path && path !== current) setCurrent(path);
   };
   useLayoutEffect(() => {
     if (!current) return;
@@ -214,7 +220,8 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
   const total = <><Diffstat add={c.additions} del={c.deletions} /> · {query.trim() ? `${count(shown.length)} of ${filesText(c.files.length)}` : filesText(c.files.length)}</>;
   const head = run ? <RunHead task={task} c={c} run={run} total={total} foldList={foldList} /> : (
     <>
-      <div className="src"><span>{src.since ? <>Since <span className="mono">{src.since}</span></> : src.text}</span>{foldList}</div>
+      <div className="src"><span>{src.since ? <>Since <span className="mono">{src.since}</span></>
+        : c.source === "branch" && task.branch ? <>From branch <span className="mono">{task.branch}</span> (its worktree was removed)</> : src.text}</span>{foldList}</div>
       <div className="tot">{total}</div>
       {unc > 0 && <div className="unc"><span className="chg-dot" />{filesText(unc)} not committed yet</div>}
     </>

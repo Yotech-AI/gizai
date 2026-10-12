@@ -160,6 +160,8 @@ button.chg-file { width: 100%; border: 0; background: none; font: inherit; text-
 /* the task page under Card | Changes: the view fills what is left under the tabs */
 .task-tabs { flex: none; }
 .chg { position: relative; }
+/* the boxes measure their place from the top of the diffs column (a click in the list scrolls there) */
+.chg-diffs { position: relative; }
 /* a file's diff: CodeMirror draws the rows (numbers, marks, folds) and scrolls long lines sideways itself */
 .chg-code.cm-host { overflow: visible; padding: 0; }
 .chg-code.cm-host .cm-editor { border-radius: 0 0 calc(var(--radius-l) - 1px) calc(var(--radius-l) - 1px); }

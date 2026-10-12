@@ -564,3 +564,226 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .org-node.ghost .org-text b { color: var(--text-2); font-weight: 500; }
 .org-node.ghost:hover { border-color: var(--accent); color: var(--text); }
 .org-node.ghost:hover .org-icon { color: var(--accent); border-color: var(--accent); }
+
+/* ---------- the Editor (GA-105's design, D2 of the Code Editor; built in GA-113, F2) ---------- */
+/* From design/code-editor/editor.css, which the design page uses. The sidebar's Editor section, the folder picker, the file
+   tree, the tabs, the status bar, the bars over them, find in the file, search in the folder and Go to file. The behind bar
+   (.ed-bar.behind, .refused, .done, .failed, Update's output) is for F3, and a person's card bar (.ed-bar.hand, .ed-card-*,
+   Commit…, "By hand" on the board) for F4. Teal stays an agent at work (its pulse) and magenta "needs you"; the code itself
+   is CodeMirror with src/lib/codeTheme.ts. */
+
+/* ---------- sidebar: the Editor section, a FoldSection between Projects and Agents ---------- */
+/* How a folder stands, on the right of its row: one of "3 behind", "2 changed", "1 ahead", "By hand", "read-only" */
+.nav-item .stand { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
+.nav-item .card-id { font-family: var(--font-mono); font-size: var(--fs-sm); }
+/* Folded, the heading says how many folders are behind (Agents says how many agents are live) */
+.nav-label .fold-tag { margin: 0 6px 0 auto; color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: normal; text-transform: none; }
+
+/* ---------- menus: a row's right-click menu, Open in ---------- */
+.pop .opt:disabled, .pop .opt[aria-disabled="true"] { opacity: .45; cursor: default; }
+.pop .opt:disabled:hover { background: none; }
+.pop .opt .kbd { margin-left: auto; }
+.pop .pop-note { padding: 6px 8px 4px; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+
+/* ---------- the folder picker: a popover from + on the Editor heading, like the @ picker ---------- */
+.pop.ed-picker { display: flex; flex-direction: column; width: 380px; max-width: calc(100vw - 16px); max-height: 460px; padding: 0; overflow: hidden; }
+.ed-picker-in { position: relative; flex: none; padding: var(--space-2); border-bottom: 1px solid var(--line); }
+.ed-picker-in > .icon { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
+.ed-picker-in .input { height: calc(30px + var(--ui-box, 0px)); padding-left: 30px; }
+.ed-picker-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.ed-picker .opt > .icon, .ed-picker .opt > .st { flex: none; color: var(--text-3); }
+.ed-picker .opt > .st { color: inherit; }
+.ed-picker .opt .card-id { flex: none; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.ed-picker .opt .where { flex: 0 1 auto; margin-left: auto; min-width: 0; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-xs); }
+.ed-picker .opt .stand { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: var(--fs-xs); }
+.ed-picker-foot { flex: none; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+.ed-picker-foot a { color: var(--text-2); }
+
+/* ---------- the Editor page: top bar, at most one bar, the tree beside the tabs and the code, the status bar ---------- */
+.ed-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.ed { display: flex; flex: 1; min-height: 0; }
+.ed-main { display: flex; flex-direction: column; flex: 1; min-width: 0; background: var(--bg); }
+.ed-empty { display: grid; place-items: center; flex: 1; padding: var(--space-8); }
+.ed-empty .empty { max-width: 460px; }
+/* How the folder stands, in the top bar after the breadcrumbs: its branch, then behind, ahead and changed, in words */
+/* The Editor's breadcrumbs keep their width; the standing gives way on a narrow window */
+.crumbs.ed-crumbs { flex: none; }
+.ed-standing { display: flex; align-items: center; gap: var(--space-2); min-width: 0; overflow: hidden; color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; }
+.ed-standing > .icon { color: var(--text-3); }
+.ed-standing .branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); color: var(--text); }
+.ed-standing .sep { color: var(--text-3); }
+
+/* ---------- bars: one under the top bar for the folder (behind main and Update, read-only, a person's card), one under the
+   tabs for the open file (changed on disk, read-only, couldn't save). An icon, the sentence, then its buttons, which go to a
+   second line on a narrow window. ---------- */
+.ed-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); flex: none; min-height: var(--size-row); padding: var(--space-1) var(--space-5);
+  border-bottom: 1px solid var(--line); background: var(--raised); color: var(--text); font-size: var(--fs); line-height: 1.45; }
+.ed-bar > .icon, .ed-bar > .pulse { flex: none; color: var(--text-2); }
+.ed-bar > .pulse { margin: 0 4.5px; }
+.ed-bar .say { flex: 1 1 380px; min-width: 0; overflow-wrap: anywhere; }
+.ed-bar .say .faint { color: var(--text-3); }
+.ed-bar .mono { font-size: .93em; }
+.ed-bar .acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-left: auto; }
+.ed-bar.behind > .icon { color: var(--accent); }
+.ed-bar.refused > .icon { color: var(--warning); }
+.ed-bar.done > .icon { color: var(--success); }
+.ed-bar.failed { background: var(--danger-soft); }
+.ed-bar.failed > .icon { color: var(--danger); }
+.ed-bar.needs > .icon { color: var(--needs); }
+.ed-bar .update-output { flex-basis: 100%; margin: 0 0 var(--space-1); }
+/* The open file's bar: the editor's width, a tab's height */
+.ed-bar.file { min-height: var(--size-tab); padding: var(--space-1) var(--space-3); font-size: var(--fs-sm); }
+.ed-bar.file .say { flex-basis: 300px; }
+/* A person's card (F4; the class is hand, since .card is the board's), in the folder bar's place: its column, identifier, title and branch, how far it is, then Commit…, Push
+   and Hand over; the button of the next step is the primary one. */
+.ed-bar.hand .say { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--space-2); }
+.ed-card-id { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.ed-card-title { min-width: 0; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.ed-card-branch { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 360px; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-xs); }
+.ed-card-branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-card-state { color: var(--text-2); font-size: var(--fs-sm); white-space: nowrap; }
+
+/* ---------- the left panel: Files or Search, Go to file, then the tree (size-tree wide; Ctrl+B folds it) ---------- */
+.ed-side { display: flex; flex-direction: column; flex: none; width: var(--size-tree); min-height: 0; border-right: 1px solid var(--line); background: var(--side); }
+.ed-side[hidden] { display: none; }
+.ed-side-top { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-2) 0; }
+.ed-side-top .seg { flex: 1; }
+.ed-side-top .seg button { display: inline-flex; flex: 1; justify-content: center; align-items: center; gap: 5px; }
+.ed-goto { display: flex; align-items: center; gap: var(--space-2); width: calc(100% - 2 * var(--space-2)); height: calc(30px + var(--ui-box, 0px)); margin: var(--space-2) var(--space-2) 0; padding: 0 var(--space-2);
+  border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg); color: var(--text-3); font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer; }
+.ed-goto:hover { border-color: var(--text-3); color: var(--text-2); }
+.ed-goto .kbd { margin-left: auto; }
+/* The folder's name over its tree, with New file, New folder and Fold every folder */
+.ed-tree-head { display: flex; align-items: center; gap: 2px; height: calc(32px + var(--ui-box, 0px)); padding: 0 var(--space-1) 0 var(--space-3); color: var(--text-3);
+  font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.ed-tree-head > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-tree-head .btn.sm.icon-only { width: 24px; height: 24px; }
+.ed-tree { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--space-1) var(--space-4); }
+
+/* A row: size-tree-row high, 16px in a level (--depth on the row): the caret (a file has its room), its icon, the name, then
+   on the right a lock when it is read-only and git's mark. Ignored: greyed. The open file's row is selected. */
+.ed-row { display: flex; align-items: center; gap: var(--space-1); height: var(--size-tree-row); padding: 0 var(--space-2) 0 calc(var(--space-1) + var(--depth, 0) * var(--space-4));
+  border-radius: var(--radius); color: var(--text-2); font-size: var(--fs); white-space: nowrap; cursor: pointer; user-select: none; }
+.ed-row > .icon { flex: none; width: 14px; height: 14px; color: var(--text-3); }
+.ed-row > .room { flex: none; width: 14px; }
+.ed-row .name { flex: 1; min-width: 0; margin-left: var(--space-1); overflow: hidden; text-overflow: ellipsis; }
+.ed-row:hover { background: var(--hover); color: var(--text); }
+.ed-row[aria-selected="true"] { background: var(--selected); color: var(--text); }
+.ed-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ed-row.ignored { color: var(--text-3); }
+.ed-row.ignored:hover { color: var(--text-2); }
+.ed-row > .ro { flex: none; width: 12px; height: 12px; color: var(--text-3); }
+.ed-row .name-in.input { flex: 1; min-width: 0; height: calc(var(--size-tree-row) - 4px); margin-left: var(--space-1); padding: 0 6px; font-size: var(--fs-sm); }
+.ed-row-note { padding: 0 var(--space-2) var(--space-1) calc(var(--space-1) + var(--depth, 0) * var(--space-4) + 36px); color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+.ed-row-note.error { color: var(--danger); }
+/* Delete asks in place, under its row */
+.ed-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 2px var(--space-1) var(--space-2) calc(var(--depth, 0) * var(--space-4) + 22px); padding: var(--space-2) 10px;
+  border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: var(--fs-sm); line-height: 1.45; }
+.ed-confirm .grow { flex: 1 1 100%; }
+
+/* git's mark: a letter in its colour, the word in its tooltip (M modified, A added, R renamed, U untracked, C conflicted;
+   D deleted only shows in the status bar and a card's Changes, since the tree lists what is on disk). A folder that holds
+   changes gets a dot of the modified colour. */
+.ed-mark { flex: none; width: var(--space-3); font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600; line-height: 1; text-align: center; }
+.ed-mark.modified, .ed-mark.renamed { color: var(--git-modified); }
+.ed-mark.added, .ed-mark.untracked { color: var(--git-added); }
+.ed-mark.deleted, .ed-mark.conflicted { color: var(--git-deleted); }
+.ed-dot { flex: none; width: 6px; height: 6px; margin: 0 3px; border-radius: 50%; background: var(--git-modified); }
+
+/* ---------- tabs: one per open file, in a strip that scrolls sideways. The open tab joins the code below it, with an accent
+   line on top; a dot stands in for × while the file isn't saved, and × shows on hover. ---------- */
+.ed-tabs { display: flex; flex: none; height: var(--size-tab); overflow-x: auto; overflow-y: hidden; background: var(--side); box-shadow: inset 0 -1px 0 var(--line); scrollbar-width: none; }
+.ed-tabs > .btn { flex: none; align-self: center; margin: 0 var(--space-1); }
+.ed-tab { display: inline-flex; align-items: center; gap: var(--space-2); flex: none; max-width: 240px; height: 100%; padding: 0 var(--space-1) 0 var(--space-3); border-right: 1px solid var(--line);
+  color: var(--text-2); font-size: var(--fs); white-space: nowrap; cursor: pointer; user-select: none; }
+.ed-tab .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ed-tab .dir { flex: none; color: var(--text-3); font-size: var(--fs-xs); }
+.ed-tab > .ro { flex: none; width: 12px; height: 12px; margin-right: -2px; color: var(--text-3); }
+.ed-tab:hover { background: var(--hover); color: var(--text); }
+.ed-tab[aria-selected="true"] { background: var(--bg); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
+.ed-tab:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ed-tab.ignored .name { color: var(--text-3); }
+.ed-tab .x { display: grid; place-items: center; flex: none; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: pointer; visibility: hidden; }
+.ed-tab .x .icon { width: 14px; height: 14px; }
+.ed-tab:hover .x, .ed-tab:focus-within .x, .ed-tab[aria-selected="true"] .x, .ed-tab.unsaved .x { visibility: visible; }
+.ed-tab .x:hover { background: var(--selected); color: var(--text); }
+.ed-tab.unsaved .x::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); }
+.ed-tab.unsaved .x .icon { display: none; }
+.ed-tab.unsaved:hover .x::after, .ed-tab.unsaved .x:focus-visible::after { display: none; }
+.ed-tab.unsaved:hover .x .icon, .ed-tab.unsaved .x:focus-visible .icon { display: block; }
+
+/* ---------- find and replace in the file (Ctrl+F): @codemirror/search's panel, drawn with the app's controls, on top ---------- */
+.ed-find { display: grid; grid-template-columns: minmax(180px, 360px) auto 1fr; align-items: center; gap: 6px var(--space-2); flex: none; padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line); background: var(--raised); font-size: var(--fs-sm); }
+.ed-find .in { position: relative; min-width: 0; }
+.ed-find .input { height: calc(28px + var(--ui-box, 0px)); padding-right: 86px; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.ed-find .in.plain .input { padding-right: 10px; }
+.ed-find .row { display: flex; align-items: center; gap: 4px; }
+.ed-find .count { min-width: 76px; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ed-find .close { justify-self: end; }
+/* Match case, Words, Regular expression: small toggles inside the box, pressed like the Markdown toolbar's */
+.ed-toggles { position: absolute; top: 50%; right: 4px; display: flex; gap: 2px; transform: translateY(-50%); }
+.ed-toggle { display: grid; place-items: center; width: 24px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: pointer; }
+.ed-toggle .icon { width: 15px; height: 15px; }
+.ed-toggle:hover { background: var(--hover); color: var(--text); }
+.ed-toggle[aria-pressed="true"] { background: var(--selected); color: var(--text); }
+.ed-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+
+/* ---------- search in the folder (Ctrl+Shift+F), in the tree's place: the query, how many results, the results by file ---------- */
+.ed-search-in { position: relative; padding: var(--space-2) var(--space-2) 6px; }
+.ed-search-in .input { height: calc(30px + var(--ui-box, 0px)); padding-right: 86px; font-size: var(--fs-sm); }
+.ed-search-in .ed-toggles { right: 12px; top: calc(50% + 1px); }
+.ed-search-sum { display: flex; align-items: flex-start; gap: 6px; padding: 0 var(--space-3) var(--space-2); color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+.ed-search-sum .icon { flex: none; width: 14px; height: 14px; margin-top: 1px; }
+.ed-search-sum.error { color: var(--danger); }
+.ed-results { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--space-1) var(--space-4); }
+.ed-results .ed-row .count, .ed-tree .ed-row .count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--radius-pill); background: var(--selected); color: var(--text-2); font-size: 11px; font-weight: 600; display: inline-grid; place-items: center; }
+/* A result file's name keeps its room; its folder gives way first */
+.ed-results .ed-row .name { flex: 0 1 auto; }
+.ed-results .ed-row .where { flex: 1 1 0; min-width: 0; margin-left: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: var(--fs-xs); }
+.ed-hit { display: flex; align-items: baseline; gap: var(--space-2); min-height: 24px; padding: 2px var(--space-2) 2px calc(var(--space-1) + 34px); border-radius: var(--radius); color: var(--text-2);
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 20px; cursor: pointer; }
+.ed-hit .no { flex: none; min-width: 3ch; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+.ed-hit .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.ed-hit mark { border-radius: 2px; background: var(--accent-soft); color: var(--text); box-shadow: inset 0 -1px 0 var(--accent); }
+.ed-hit:hover { background: var(--hover); color: var(--text); }
+.ed-hit[aria-selected="true"] { background: var(--selected); color: var(--text); }
+.ed-hit:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+/* ---------- the status bar: the open file. Its path and git status on the left; its language, line endings, the cursor and
+   whether it is saved on the right. The cursor (go to line) and Not saved (save) are small buttons. ---------- */
+.ed-status { display: flex; align-items: center; gap: var(--space-2); flex: none; height: var(--size-statusbar); padding: 0 var(--space-2) 0 var(--space-3); border-top: 1px solid var(--line);
+  background: var(--side); color: var(--text-3); font-size: var(--fs-xs); white-space: nowrap; }
+.ed-status .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); color: var(--text-2); }
+.ed-status .grow { flex: 1; min-width: var(--space-4); }
+.ed-status .item { display: inline-flex; align-items: center; gap: 5px; height: calc(var(--size-statusbar) - 6px); padding: 0 6px; border: 0; border-radius: var(--radius-s); background: none;
+  color: inherit; font: inherit; white-space: nowrap; }
+.ed-status .item .icon { width: 14px; height: 14px; }
+.ed-status button.item { cursor: pointer; }
+.ed-status button.item:hover { background: var(--hover); color: var(--text); }
+.ed-status .item:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
+.ed-status .item.unsaved { color: var(--text); font-weight: 600; }
+.ed-status .item.unsaved::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ed-status .item.bad { color: var(--danger); font-weight: 600; }
+.ed-status .git.modified { color: var(--git-modified); }
+.ed-status .git.added, .ed-status .git.untracked { color: var(--git-added); }
+.ed-status .git.deleted, .ed-status .git.conflicted { color: var(--git-deleted); }
+
+/* ---------- Go to file (Ctrl+P): the command palette's look, with each file's folder after its name ---------- */
+.pal.ed-goto-pal .pal-item .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-xs); }
+.pal.ed-goto-pal .pal-item b { color: var(--text); font-weight: 700; }
+.pal.ed-goto-pal .pal-item > .icon { flex: none; color: var(--text-3); }
+
+/* ---------- small boxes from a button: Commit…, and closing a tab that isn't saved ---------- */
+.pop.ed-ask { width: 380px; padding: var(--space-3); }
+.pop.ed-commit { width: 420px; padding: var(--space-3); }
+.ed-ask p, .ed-commit p { margin: 0 0 var(--space-3); color: var(--text); font-size: var(--fs); line-height: 1.45; }
+.ed-ask .acts, .ed-commit .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.ed-commit .textarea { min-height: 74px; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.ed-commit ul { display: grid; gap: 2px; margin: 6px 0 var(--space-3); padding: 0; list-style: none; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-2); }
+.ed-commit li { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ed-commit li span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- a person's card on the board: "By hand" before the person's avatar ---------- */
+.card .meta .by-hand { margin-left: auto; }
+.card .meta .by-hand + .avatar { margin-left: 0; }

@@ -133,7 +133,9 @@ current version when the note exists (`memory_write`), the path, heading and tex
 (`memory_move`). **Approve** saves exactly that, once, as the Team Lead, with the usual version check: a note that
 changed since the Team Lead read it isn't saved, and the chat says why. **Discard** saves nothing. A newer
 `memory_write` or `memory_append` for the same note replaces the older one, and the Team Lead's next answer hears what
-you decided (`docs/agent-tools.md`, Safety rules).
+you decided. A card it creates or moves into an Auto column in such an answer, or whose description, acceptance
+criteria or assignee it changes there, waits on hold for your OK, and taking such a card off hold is refused
+(`docs/agent-tools.md`, Safety rules).
 
 Every chat answer and every board check has the Team Lead's Memory block at the end of its system prompt, in old chats
 and new ones: its own notes (`Team Lead/`, `Notes` first) in full, at most **6,000 characters** (a note that doesn't fit

@@ -3,10 +3,13 @@ import { useEffect, useState } from "react";
 
 export const PAGES_WITH_ID = ["task", "project", "client", "doc", "team", "agent", "chat"] as const;
 // chats: Chat → Archive, every chat with a search (chat/<id> is one chat).
-export const PAGES = ["chat", "chats", "inbox", "tasks", "board", "task", "projects", "project", "clients", "client", "doc", "team", "agent", "users", "settings", "usage", "memory"] as const;
+export const PAGES = ["chat", "chats", "inbox", "tasks", "board", "task", "projects", "project", "clients", "client", "doc", "team", "agent", "users", "settings", "usage", "memory", "editor"] as const;
 export type Page = (typeof PAGES)[number];
-/** `scope`: on the Memory page only, which notes it shows (`memoryScope`); `view` "graph": its graph (GA-69). */
-export type Route = { page: Page; id?: string; scope?: string; view?: "graph" };
+// The Editor (GA-113): #/editor is the Editor with no folder open, #/editor/<folder> a folder (an EditorFolder id, its
+// path, encoded as one part).
+/** `scope`: on the Memory page only, which notes it shows (`memoryScope`); `view` "graph": its graph (GA-69).
+ *  On a task, `view` "changes" is its Changes tab, and `run` one run's changes there (GA-112). */
+export type Route = { page: Page; id?: string; scope?: string; view?: "graph" | "changes"; run?: string };
 // Settings' tabs (GA-42): #/settings/<tab> opens one; #/settings, or a tab it doesn't know, opens General.
 export const SETTINGS_TABS = ["general", "appearance", "notifications", "agents", "mcp", "github"] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
@@ -31,6 +34,12 @@ export function parseHash(hash: string): Route {
   if (!PAGES.includes(page)) return { page: "tasks" };
   if (page === "settings") return (SETTINGS_TABS as readonly string[]).includes(parts[1] ?? "") ? { page, id: parts[1] } : { page };
   if (page === "memory") return memoryRoute(parts.slice(1));
+  // a card's changes (GA-112): #/task/<id>/changes, and one run's: #/task/<id>/changes/run/<run id>
+  if (page === "task" && parts[1] && parts[2] === "changes") {
+    const run = parts[3] === "run" && parts[4] ? { run: decodeURIComponent(parts[4]) } : {};
+    return { page, id: decodeURIComponent(parts[1]), view: "changes", ...run };
+  }
+  if (page === "editor") return parts[1] ? { page, id: decodeURIComponent(parts.slice(1).join("/")) } : { page };
   if ((PAGES_WITH_ID as readonly string[]).includes(page) && parts[1]) return { page, id: decodeURIComponent(parts[1]) };
   const LIST_OF: Record<string, Page> = { task: "tasks", project: "projects", client: "clients", doc: "projects", team: "team", agent: "team", chat: "chat" };
   if ((PAGES_WITH_ID as readonly string[]).includes(page)) return { page: LIST_OF[page] };
@@ -41,6 +50,9 @@ export function href(r: Route): string {
   if (r.page === "memory") {
     const scope = r.scope === "shared" ? "/shared" : r.scope ? `/agent/${encodeURIComponent(r.scope)}` : "";
     return `#/memory${scope}${r.view === "graph" ? "/graph" : r.id ? "/" + encodeURIComponent(r.id) : ""}`;
+  }
+  if (r.page === "task" && r.id && r.view === "changes") {
+    return `#/task/${encodeURIComponent(r.id)}/changes${r.run ? "/run/" + encodeURIComponent(r.run) : ""}`;
   }
   return `#/${r.page}${r.id ? "/" + encodeURIComponent(r.id) : ""}`;
 }

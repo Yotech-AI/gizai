@@ -23,11 +23,16 @@
   --fs-md: calc(15px + var(--ui-grow-head, 0px));
   --fs-lg: calc(20px + var(--ui-grow-head, 0px));
   --fs-xl: calc(26px + var(--ui-grow-head, 0px));
-  /* and the layout with it: rows and the top bar, the sidebar 6px and a board column 8px wider a step */
+  /* and the layout with it: rows and the top bar, the sidebar 6px and a board column 8px wider a step; in the Editor its
+     tree's rows, the tabs and the status bar like rows, and the file tree 6px wider a step like the sidebar */
   --size-row: calc(40px + var(--ui-box, 0px));
   --size-topbar: calc(52px + var(--ui-box, 0px));
   --size-side: calc(248px + 6 * var(--ui-grow, 0px));
   --size-board-col: calc(286px + 8 * var(--ui-grow, 0px));
+  --size-tree: calc(260px + 6 * var(--ui-grow, 0px));
+  --size-tree-row: calc(28px + var(--ui-box, 0px));
+  --size-tab: calc(36px + var(--ui-box, 0px));
+  --size-statusbar: calc(24px + var(--ui-box, 0px));
   /* tasks and docs: Markdown read and edited (descriptions, acceptance criteria, comments, docs); headings half */
   --fs-prose: calc(15px + var(--docs-grow, 0px));
   --prose-grow-head: var(--docs-grow-head, 0px);

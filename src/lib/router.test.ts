@@ -160,3 +160,52 @@ describe("Memory graph (GA-69)", () => {
     expect(parseHash("#/memory/agent/graph")).toEqual({ page: "memory", scope: "graph" });
   });
 });
+
+describe("a card's changes (GA-112)", () => {
+  it("opens the Changes tab at #/task/<id>/changes and one run's changes at …/changes/run/<run id>", () => {
+    expect(parseHash("#/task/0192-abc/changes")).toEqual({ page: "task", id: "0192-abc", view: "changes" });
+    expect(parseHash("#/task/0192-abc/changes/run/01HZRUN1")).toEqual({ page: "task", id: "0192-abc", view: "changes", run: "01HZRUN1" });
+    expect(href({ page: "task", id: "0192-abc", view: "changes" })).toBe("#/task/0192-abc/changes");
+    expect(href({ page: "task", id: "0192-abc", view: "changes", run: "01HZRUN1" })).toBe("#/task/0192-abc/changes/run/01HZRUN1");
+  });
+  it("keeps the card's own route, and ignores what it doesn't know after changes", () => {
+    expect(parseHash("#/task/0192-abc")).toEqual({ page: "task", id: "0192-abc" });
+    expect(parseHash("#/task/0192-abc/changes/run")).toEqual({ page: "task", id: "0192-abc", view: "changes" });
+    expect(parseHash("#/task/0192-abc/other")).toEqual({ page: "task", id: "0192-abc" });
+    expect(parseHash("#/task")).toEqual({ page: "tasks" });
+  });
+  it("round-trips, ids with odd characters too", () => {
+    const routes: Route[] = [
+      { page: "task", id: "0192-abc", view: "changes" },
+      { page: "task", id: "a/b #c", view: "changes" },
+      { page: "task", id: "0192-abc", view: "changes", run: "r/1 #2" },
+    ];
+    for (const r of routes) expect(parseHash(href(r)), JSON.stringify(r)).toEqual(r);
+  });
+});
+
+describe("the Editor's address (GA-113)", () => {
+  it("#/editor is the Editor with no folder open", () => {
+    expect(parseHash("#/editor")).toEqual({ page: "editor" });
+    expect(parseHash("#/editor/")).toEqual({ page: "editor" });
+    expect(href({ page: "editor" })).toBe("#/editor");
+  });
+  it("#/editor/<encoded id> opens that folder, its absolute path decoded", () => {
+    expect(parseHash("#/editor/%2Fhome%2Fyou%2FHerd%2Fkade-portal")).toEqual({ page: "editor", id: "/home/you/Herd/kade-portal" });
+  });
+  it("writes a folder's id as one encoded part, and round-trips it through parseHash", () => {
+    expect(href({ page: "editor", id: "/home/you/Herd/kade-portal" })).toBe("#/editor/%2Fhome%2Fyou%2FHerd%2Fkade-portal");
+    const routes: Route[] = [
+      { page: "editor" },
+      { page: "editor", id: "/home/you/Herd/kade-portal" },
+      { page: "editor", id: "/home/you/.gizai/worktrees/GA/GA-113" },
+      { page: "editor", id: "/home/you/My Projects/a#b?c%d" },
+      { page: "editor", id: "C:\\Users\\you\\Herd\\app" },
+    ];
+    for (const r of routes) expect(parseHash(href(r)), JSON.stringify(r)).toEqual(r);
+  });
+  it("leaves the other pages with an id as they were", () => {
+    expect(parseHash("#/task/a/b")).toEqual({ page: "task", id: "a" });
+    expect(parseHash("#/usage/x")).toEqual({ page: "usage" });
+  });
+});

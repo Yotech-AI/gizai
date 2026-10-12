@@ -142,7 +142,7 @@ async fn open_pull_request_pushes_the_cards_branch_and_opens_its_pull_request_wi
     assert_eq!(pr, PullInfo { url: format!("{LINK}/pull/7"), number: Some(7), state: "open".into(), note: None });
     assert_eq!(git(&c.bare, &["rev-parse", &c.branch]), git(&c.wt, &["rev-parse", "HEAD"]), "the branch is on GitHub with its commit");
     assert_eq!(gh_calls(&c.gh), [
-        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits", c.branch),
+        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits,mergeCommit", c.branch),
         format!("pr create --repo acme/shop --head {} --base main --title KADE-1: Export invoices as CSV --body-file -", c.branch),
     ]);
     assert_eq!(std::fs::read_to_string(c.gh.join("gh-stdin")).unwrap(),

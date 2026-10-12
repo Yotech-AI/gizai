@@ -636,3 +636,106 @@ async fn a_team_lead_without_servers_on_gets_only_gizai_and_no_untrusted_line() 
     assert!(!sys.contains(UNTRUSTED), "{sys}");
     assert!(core_mcp::last_runs(&st.db).unwrap().get(&t.lead).is_none(), "no servers of its own: nothing kept");
 }
+
+// ---- GA-120: a server Claude Code signs in to (Settings → MCP servers → Who signs in) ----
+
+const FIGMA_URL: &str = "https://mcp.figma.com/mcp";
+const FIGMA_HEADER: &str = "figma-header-SECRET-a11c";
+const FIGMA_CLAUDE_CODE: &str = "figma: Claude Code isn't signed in to it, so this run goes without it. In a terminal, run claude (for a second \
+                                 account with its CLAUDE_CONFIG_DIR), type /mcp, pick figma and Authenticate.";
+const DOCS_GIZAI: &str = "docs: needs sign-in, so this run goes without it. Sign in again in Settings → MCP servers.";
+
+/// `run_setup`, the fake's init line naming figma and docs as needs-auth and linear connected.
+fn run_setup_claude_code() -> RunSetup {
+    let t = run_setup(false);
+    let init = t.tmp.path().join("init.jsonl");
+    std::fs::write(&init, format!("{}\n", json!({"type": "system", "subtype": "init", "session_id": "S1", "model": "claude-opus-5-5",
+        "tools": ["Read", "Edit", "Bash"], "mcp_servers": [{"name": "gizai", "status": "connected"}, {"name": "figma", "status": "needs-auth"},
+        {"name": "docs", "status": "needs-auth"}, {"name": "linear", "status": "connected"}]}))).unwrap();
+    let env = vec![format!("FAKE_MCP_OUT={}", t.out.display()), format!("FAKE_MCP_INIT={}", init.display())];
+    let cli = add_cli(&t.st, "Claude Code (mcp, claude_code)", "claude_code", FAKE_RUN, &env);
+    put_agent_on(&t.st, &cli);
+    t
+}
+
+/// Sets Who signs in to Claude Code, keeping the server's header values.
+fn to_claude_code(st: &AppState, id: &str) {
+    let mut server = core_mcp::get(&st.db, id).unwrap();
+    server.sign_in_by = "claude_code".into();
+    let headers = server.header_names.iter().map(|n| SecretLine { name: n.clone(), value: None }).collect();
+    let v = app_mcp::save(st, ServerInput { server, env: vec![], headers }).unwrap();
+    assert_eq!(v.sign_in, "claude_code");
+}
+
+#[tokio::test]
+async fn a_server_claude_code_signs_in_to_goes_into_the_run_as_it_is_never_left_out_and_its_needs_auth_says_to_sign_claude_code_in() {
+    let t = run_setup_claude_code();
+    let st = &t.st;
+    // figma: signed in by Gizai and marked Needs sign-in with a problem, then switched to Claude Code; its tools listed,
+    // one switched off for the agent.
+    let figma = add_address(st, "figma", FIGMA_URL, &[("X-Figma-Region", Some(FIGMA_HEADER))]);
+    sign_in(st, &figma, FIGMA_URL, DOCS_TOKEN);
+    listed(st, &figma, &["get_file", "delete_file"]);
+    core_mcp::change_tool_list(&st.db, &figma, |c| { c.needs_sign_in = true; c.problem = Some("figma refused the refresh".into()); }).unwrap();
+    // linear: an SSE server Claude Code signs in to from the start.
+    let linear = app_mcp::save(st, ServerInput { server: McpServer { name: "linear".into(), transport: "sse".into(),
+        url: "https://mcp.linear.app/sse".into(), sign_in_by: "claude_code".into(), ..Default::default() }, ..Default::default() }).unwrap().server.id;
+    // docs: one Gizai signs in to, not signed in yet.
+    let docs = add_address(st, "docs", "https://docs.example.test/mcp", &[]);
+    switch(st, &t.agent, &[(&figma, true, &["delete_file"]), (&linear, true, &[]), (&docs, true, &[])]);
+    to_claude_code(st, &figma);
+    assert!(st.tokens.load(&figma).unwrap().is_none(), "Gizai signed out of it");
+
+    let s = gizai_lib::runs::run_once(st, &t.task, None, None).await.unwrap();
+    assert_eq!(s.status, "succeeded", "{:?}", s.error);
+    let config: Value = serde_json::from_str(&read(&t.out.join("mcp.json"))).unwrap();
+    let all = config["mcpServers"].as_object().unwrap();
+    assert_eq!(all.keys().collect::<Vec<_>>(), ["docs", "figma", "linear"], "{config}");
+    assert_eq!(all["figma"], json!({"type": "http", "url": FIGMA_URL, "headers": {"X-Figma-Region": FIGMA_HEADER}}),
+               "its type, url and header values, no Authorization from Gizai");
+    assert_eq!(all["linear"], json!({"type": "sse", "url": "https://mcp.linear.app/sse", "headers": {}}));
+    let argv = argv_of(&t.out);
+    let allowed = values(&argv, "--allowedTools");
+    assert!(has(&allowed, "mcp__figma") && has(&allowed, "mcp__linear"), "all of their tools: {allowed:?}");
+    assert!(!values(&argv, "--disallowedTools").iter().any(|x| x.starts_with("mcp__figma")), "{argv:?}");
+
+    // read back from the log, as the Run panel shows a finished run
+    let said = notes(&events(st, &s.run_id));
+    assert!(said.contains(&FIGMA_CLAUDE_CODE.to_string()), "{said:?}");
+    assert!(said.contains(&DOCS_GIZAI.to_string()), "a server Gizai signs in to keeps its note: {said:?}");
+    assert!(!said.iter().any(|n| n.starts_with("Left out") || n.starts_with("linear")), "{said:?}");
+    assert!(!said.iter().any(|n| n.starts_with("figma: needs sign-in")), "{said:?}");
+    let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    assert!(log_notes(&read(Path::new(&run.log_path))).is_empty(), "no Left out note in the log's head");
+
+    let v = app_mcp::agent_view(st, &t.agent).unwrap();
+    let f = v.servers.iter().find(|s| s.name == "figma").unwrap();
+    assert_eq!(f.sign_in, "claude_code");
+    assert_eq!(f.acts_as_you.as_deref(), Some("Claude Code signs in: its tools act as you in figma."));
+    assert_eq!(f.last_run.as_ref().map(|l| l.status.as_str()), Some("needs-auth"));
+    let d = v.servers.iter().find(|s| s.name == "docs").unwrap();
+    assert_eq!(d.acts_as_you, None);
+}
+
+#[tokio::test]
+async fn a_chat_turn_gets_a_server_claude_code_signs_in_to_without_gizais_token_and_its_needs_auth_says_to_sign_claude_code_in() {
+    let t = chat_setup();
+    let st = &t.st;
+    let figma = add_address(st, "figma", FIGMA_URL, &[("X-Figma-Region", Some(FIGMA_HEADER))]);
+    sign_in(st, &figma, FIGMA_URL, DOCS_TOKEN);
+    core_mcp::change_tool_list(&st.db, &figma, |c| c.needs_sign_in = true).unwrap();
+    to_claude_code(st, &figma);
+    let docs = add_address(st, "docs", "https://docs.example.test/mcp", &[]);
+    switch(st, &t.lead, &[(&figma, true, &[]), (&docs, true, &[])]);
+
+    let (thread, s) = t.turn("Check the design, mcp-status:figma=needs-auth mcp-status:docs=needs-auth").await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let call = &t.calls()[0];
+    let config = call["config"].as_object().unwrap();
+    assert_eq!(config.keys().collect::<Vec<_>>(), ["docs", "figma", "gizai"], "{config:?}");
+    assert_eq!(config["figma"], json!({"type": "http", "url": FIGMA_URL, "headers": {"X-Figma-Region": FIGMA_HEADER}}));
+    assert!(has(&values(&argv_in(call), "--allowedTools"), "mcp__figma"));
+    let mut said = t.system_notes(&thread);
+    said.sort();
+    assert_eq!(said, [DOCS_GIZAI, FIGMA_CLAUDE_CODE], "no Left out note, and each server's own needs-auth note");
+}

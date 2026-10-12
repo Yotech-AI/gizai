@@ -88,6 +88,15 @@ impl Places {
     /// folder, and where the installed Gizai keeps its data: `$XDG_DATA_HOME/gizai` or `~/.local/share/gizai`, on macOS
     /// also `~/Library/Application Support/Gizai`, on Windows `%APPDATA%\Gizai`) and the projects' main checkouts.
     pub fn of(db: &Db) -> Places {
+        let checkouts = crate::projects::list(db).unwrap_or_default().into_iter()
+            .filter_map(|p| Some((p.name, PathBuf::from(p.repo_path.filter(|r| !r.trim().is_empty())?))))
+            .collect();
+        Places { checkouts, ..Places::without_checkouts(db) }
+    }
+
+    /// `of` without the projects' main checkouts, which only the agent form's warnings need: the Editor checks its
+    /// folders against the rest on every call (`editor`).
+    pub fn without_checkouts(db: &Db) -> Places {
         let home = if cfg!(windows) { std::env::home_dir() } else { std::env::var_os("HOME").map(PathBuf::from) };
         let home = home.filter(|h| h.is_absolute()).unwrap_or_default();
         let mut data: Vec<PathBuf> = db.dir().map(Path::to_path_buf).into_iter().collect();
@@ -103,10 +112,7 @@ impl Places {
         if cfg!(windows) {
             data.extend(std::env::var_os("APPDATA").map(PathBuf::from).filter(|a| a.is_absolute()).map(|a| a.join("Gizai")));
         }
-        let checkouts = crate::projects::list(db).unwrap_or_default().into_iter()
-            .filter_map(|p| Some((p.name, PathBuf::from(p.repo_path.filter(|r| !r.trim().is_empty())?))))
-            .collect();
-        Places { home, data, checkouts }
+        Places { home, data, checkouts: vec![] }
     }
 
     /// `~/…` (on Windows `~\…`) for a path in your home folder, else the path.
@@ -177,7 +183,7 @@ fn fold(p: &Path) -> Cow<'_, Path> {
 
 /// The folder as it is on disk (links followed), or None when it isn't there. On Windows written as `normalize` writes
 /// it, without the `\\?\` that `canonicalize` puts before it, as the coding CLIs take it.
-fn on_disk(p: &Path) -> Option<PathBuf> {
+pub fn on_disk(p: &Path) -> Option<PathBuf> {
     let real = p.canonicalize().ok()?;
     if cfg!(windows) {
         return normalize(&real.to_string_lossy(), Path::new(""));
@@ -187,16 +193,22 @@ fn on_disk(p: &Path) -> Option<PathBuf> {
 
 /// Why the folder `p` (absolute, normalized) can't be an agent's, or None.
 pub fn refusal(p: &Path, places: &Places) -> Option<String> {
+    refusal_in(p, places, "the folder the agent needs")
+}
+
+/// `refusal` with the same rules for another use of a folder (the Editor's, `editor`): `wanted` is what to pick instead
+/// of the whole disk or your home folder ("the folder the agent needs").
+pub fn refusal_in(p: &Path, places: &Places, wanted: &str) -> Option<String> {
     let (said, p, home) = (p, &*fold(p), &*fold(&places.home));
     let has_home = !home.as_os_str().is_empty();
     if p.parent().is_none() {
-        return Some(format!("that's the whole disk ({}): pick the folder the agent needs", said.display()));
+        return Some(format!("that's the whole disk ({}): pick {wanted}", said.display()));
     }
     if has_home && p == home {
-        return Some("that's your home folder: pick the folder the agent needs inside it".into());
+        return Some(format!("that's your home folder: pick {wanted} inside it"));
     }
     if has_home && home.starts_with(p) {
-        return Some(format!("it holds your home folder ({}): pick the folder the agent needs", places.home.display()));
+        return Some(format!("it holds your home folder ({}): pick {wanted}", places.home.display()));
     }
     for d in &places.data {
         let folded = fold(d);

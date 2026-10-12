@@ -1,9 +1,9 @@
-// A thread's messages plus what the Team Lead is writing right now, kept live from the backend's events, and the
-// messages queued while it answers.
+// A thread's messages plus what the Team Lead is writing right now, kept live from the backend's events, the messages
+// queued while it answers, and the Team Lead's calls that wait for your approval (GA-102).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { chatLive, chatMessages, chatQueue, onChatChanged, onChatEvent } from "../../api";
+import { chatLive, chatMessages, chatQueue, onChatChanged, onChatEvent, onRowsChanged, pendingActions } from "../../api";
 import { applyDraft, withSnapshot, type DraftChange, type LiveDraft } from "../../lib/chat";
-import type { ChatMessage, ChatStatus, QueuedMessage } from "../../types";
+import type { ChatMessage, ChatStatus, PendingAction, QueuedMessage } from "../../types";
 
 /** Every chat turn running right now (any thread), refreshed when one starts or ends. */
 export function useChatLive(): ChatStatus[] {
@@ -35,15 +35,24 @@ export function useChat(threadId: string | null) {
   const [tool, setTool] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  // GA-102: the calls of the Team Lead's in this chat that wait for your approval, with what each would do.
+  const [pending, setPending] = useState<PendingAction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const current = useRef(threadId);
   current.current = threadId;
   // The changes to the text being written heard since its last block: a snapshot gets those after it added.
   const heard = useRef<DraftChange[]>([]);
 
+  const reloadPending = useCallback(() => {
+    const id = current.current;
+    if (!id) { setPending([]); return; }
+    pendingActions(id).then((p) => { if (current.current === id) setPending(p); }).catch(() => {});
+  }, []);
+
   const reload = useCallback(() => {
     const id = current.current;
-    if (!id) { setMessages([]); setWorking(false); setLive(EMPTY); setTool(null); setQueue([]); return; }
+    if (!id) { setMessages([]); setWorking(false); setLive(EMPTY); setTool(null); setQueue([]); setPending([]); return; }
+    reloadPending();
     chatMessages(id).then((m) => { if (current.current === id) { setMessages(m); setError(null); } }).catch((e) => setError(String(e)));
     chatQueue(id).then((q) => { if (current.current === id) setQueue(q); }).catch(() => {});
     chatLive().then((l) => {
@@ -58,7 +67,7 @@ export function useChat(threadId: string | null) {
         return joined.seq >= d.seq ? joined : d;
       });
     }).catch(() => {});
-  }, []);
+  }, [reloadPending]);
 
   useEffect(() => { heard.current = []; setLive(EMPTY); reload(); }, [threadId, reload]);
 
@@ -81,8 +90,10 @@ export function useChat(threadId: string | null) {
       }
     }).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
     onChatChanged(reload).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
+    // A call was kept for you, approved or discarded (in this chat or another).
+    onRowsChanged((table) => { if (table === "pending_actions") reloadPending(); }).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
     return () => { alive = false; uns.forEach((u) => u()); };
-  }, [reload]);
+  }, [reload, reloadPending]);
 
-  return { messages, draft: live.text, tool, working, queue, error, setWorking, reload };
+  return { messages, draft: live.text, tool, working, queue, pending, error, setWorking, reload };
 }

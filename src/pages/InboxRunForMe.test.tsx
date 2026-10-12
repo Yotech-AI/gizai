@@ -33,7 +33,7 @@ const team = { id: "team", name: "Software", labels: [],
            { id: "dn", name: "Done", category: "done", sortKey: "d" }] };
 const card = (id: string, over: Partial<Task>): Task => ({ id, identifier: id.toUpperCase(), title: `Card ${id}`, descriptionMd: "", stateId: "ip",
   stateName: "In progress", stateCategory: "in_progress", priority: 0, assigneeId: "be2", assigneeName: "Backend Agent 2", assigneeKind: "agent",
-  labels: [], hold: null, bounceCount: 0, failCount: 0, sortKey: "a", testing: true, createdAt: 0, updatedAt: 0, projectId: "p1", ...over });
+  labels: [], hold: null, bounceCount: 0, failCount: 0, sortKey: "a", testing: true, createdAt: 0, updatedAt: 0, projectId: "p1", byHand: false, ...over });
 const cards = [
   card("ga-31", { title: "Tray icon", hold: "needs_decision", holdReason: "The tray needs a system library.", runForMe: CMDS, updatedAt: 5 }),
   // the push after the run failed: held blocked, the commands still asked

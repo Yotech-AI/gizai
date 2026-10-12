@@ -149,7 +149,9 @@ fn serve(mut s: TcpStream) {
     let seen = Seen { method, path, query, authorization: header("authorization").unwrap_or_default(), body: String::from_utf8_lossy(&body).into() };
     SEEN.lock().unwrap_or_else(|e| e.into_inner()).push(seen.clone());
     if let Some((status, json)) = answer(&seen) {
-        let _ = s.write_all(format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
+        // a redirect: the answer is where it leads
+        let (location, json) = if (300..400).contains(&status) { (format!("Location: {json}\r\n"), String::new()) } else { (String::new(), json) };
+        let _ = s.write_all(format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{location}Content-Length: {}\r\nConnection: close\r\n\r\n{json}",
                                     json.len()).as_bytes());
         let _ = s.flush();
     }
@@ -168,6 +170,15 @@ fn pull(id: u64, state: &str, draft: bool, hash: &str) -> Value {
         "destination": {"branch": {"name": "master"}, "commit": {"hash": "0f0f0f0f0f0f"}},
     })
 }
+
+/// Merged pull request #3 of acme/merged, with its merge commit as Bitbucket gives it (12 characters).
+fn merged_pull() -> Value {
+    let mut p = pull(3, "MERGED", false, &"c3".repeat(6));
+    p["merge_commit"] = json!({"hash": "f00dfeed1234", "type": "commit"});
+    p
+}
+
+const MERGED_DIFF: &str = "diff --git a/a.txt b/a.txt\nindex 1111111..2222222 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+ONE\n";
 
 /// What the fake API answers: None hangs up.
 fn answer(r: &Seen) -> Option<(u16, String)> {
@@ -195,6 +206,27 @@ fn answer(r: &Seen) -> Option<(u16, String)> {
             {"hash": format!("{}{}", "c3".repeat(6), "d4".repeat(14)), "message": "the last one"},
             {"hash": "e5".repeat(20), "message": "an earlier one"},
         ]}).to_string()),
+        // GA-106: a merged pull request's merge commit and diff, in a repository of their own
+        ("GET", "/repositories/acme/merged/pullrequests") => (200, json!({"pagelen": 20, "values": [
+            pull(5, "OPEN", false, OPEN_HEAD), merged_pull(),
+        ]}).to_string()),
+        ("GET", "/repositories/acme/merged/pullrequests/3/commits") => (200, json!({"pagelen": 100, "values": []}).to_string()),
+        ("GET", "/repositories/acme/merged/pullrequests/3") => (200, merged_pull().to_string()),
+        ("GET", "/repositories/acme/merged/pullrequests/5") => {
+            let mut open = pull(5, "OPEN", false, OPEN_HEAD);
+            open["merge_commit"] = Value::Null;
+            (200, open.to_string())
+        }
+        // Bitbucket sends a pull request's diff to the repository's own: absolute, relative, elsewhere, round and round
+        ("GET", "/repositories/acme/merged/pullrequests/3/diff") => (302, format!("{}/repositories/acme/merged/diff/c3c3?from_pullrequest_id=3", server())),
+        ("GET", "/repositories/acme/merged/pullrequests/4/diff") => (302, "/2.0/repositories/acme/merged/diff/d4d4".to_string()),
+        ("GET", "/repositories/acme/merged/pullrequests/6/diff") => (302, "https://evil.example/steal?token=x".to_string()),
+        ("GET", "/repositories/acme/merged/pullrequests/7/diff") => {
+            let origin = server().trim_end_matches("/2.0");
+            (302, format!("{origin}.evil.example/2.0/repositories/acme/merged/diff/c3c3"))
+        }
+        ("GET", "/repositories/acme/merged/pullrequests/8/diff") => (302, "/2.0/repositories/acme/merged/pullrequests/8/diff".to_string()),
+        ("GET", p) if p.starts_with("/repositories/acme/merged/diff/") => (200, MERGED_DIFF.to_string()),
         ("GET", "/repositories/acme/gone/pullrequests") => (404, error("Repository acme/gone not found")),
         ("GET", "/repositories/acme/locked/pullrequests") => (403, error("Your credentials lack one or more required privilege scopes.")),
         ("POST", "/repositories/acme/bad/pullrequests") => (400, error("There are no changes to be pulled")),
@@ -421,6 +453,39 @@ fn bitbucket_refusing_a_pull_request_gives_its_own_message_without_the_token() {
     no_secret(&e);
     let e = bitbucket::create_pull(&login(REFUSED), "acme/refused-create", "gizai/ga-1-x", "master", "t", "b").unwrap_err();
     assert!(e.contains("log in to Bitbucket again in Settings → Bitbucket"), "{e}");
+    no_secret(&e);
+}
+
+#[test]
+fn a_merged_pull_requests_merge_commit_and_diff_come_from_bitbucket_and_the_login_goes_nowhere_else() {
+    server();
+    // GA-106: the merge commit, in the list's answer and on its own
+    let pulls = bitbucket::pulls_for_branch(&login(GOOD), "acme/merged", "gizai/ga-1-x").unwrap();
+    let merges: Vec<(u64, Option<&str>)> = pulls.iter().map(|p| (p.number, p.merge_commit.as_ref().map(|c| c.oid.as_str()))).collect();
+    assert_eq!(merges, [(5, None), (3, Some("f00dfeed1234"))]);
+    assert_eq!(bitbucket::merge_commit(&login(GOOD), "acme/merged", 3), Ok(Some("f00dfeed1234".to_string())));
+    assert_eq!(bitbucket::merge_commit(&login(GOOD), "acme/merged", 5), Ok(None), "not merged");
+    let e = bitbucket::merge_commit(&login(REFUSED), "acme/merged", 3).unwrap_err();
+    assert!(e.contains("log in to Bitbucket again"), "{e}");
+    no_secret(&e);
+
+    // the diff: Bitbucket's redirect to the repository's own diff is followed on its API, written in full or not
+    assert_eq!(bitbucket::pull_diff(&login(GOOD), "acme/merged", 3).as_deref(), Ok(MERGED_DIFF));
+    assert_eq!(bitbucket::pull_diff(&login(GOOD), "acme/merged", 4).as_deref(), Ok(MERGED_DIFF));
+    let followed = requests(|r| r.path.starts_with("/2.0/repositories/acme/merged/diff/"));
+    let got: Vec<(&str, &str)> = followed.iter().map(|r| (r.path.as_str(), r.query.as_str())).collect();
+    assert_eq!(got, [("/2.0/repositories/acme/merged/diff/c3c3", "from_pullrequest_id=3"), ("/2.0/repositories/acme/merged/diff/d4d4", "")]);
+    assert!(followed.iter().all(|r| r.authorization == basic(GOOD)));
+    // never anywhere else with the login, not even a host that merely starts like the API's
+    let e = bitbucket::pull_diff(&login(GOOD), "acme/merged", 6).unwrap_err();
+    assert_eq!(e, "Bitbucket sent Gizai elsewhere for that diff (https://evil.example/steal), and Gizai only takes your login to Bitbucket's API");
+    let e = bitbucket::pull_diff(&login(GOOD), "acme/merged", 7).unwrap_err();
+    assert!(e.starts_with("Bitbucket sent Gizai elsewhere for that diff (http://127.0.0.1:") && e.contains(".evil.example/"), "{e}");
+    let e = bitbucket::pull_diff(&login(GOOD), "acme/merged", 8).unwrap_err();
+    assert_eq!(e, "Bitbucket kept sending Gizai elsewhere for that diff");
+    assert_eq!(requests(|r| r.path == "/2.0/repositories/acme/merged/pullrequests/8/diff").len(), 3, "three tries");
+    let e = bitbucket::pull_diff(&login(REFUSED), "acme/merged", 3).unwrap_err();
+    assert!(e.contains("log in to Bitbucket again"), "{e}");
     no_secret(&e);
 }
 

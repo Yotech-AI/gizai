@@ -227,6 +227,13 @@ pub fn prepare_temp(wt: &Path) -> Result<PathBuf, AgentError> {
 /// Adds `/.gizai-tmp/` to `info/exclude` in the repository's common git folder `common` (shared by the main checkout
 /// and every worktree, so none of them shows the folder), unless a line already says it. `.gitignore` is never touched.
 pub fn exclude_temp(common: &Path) -> Result<(), AgentError> {
+    exclude(common, TEMP_EXCLUDE)
+}
+
+/// Adds the line `line` (`/.gizai-tmp/`, the Editor's `/.idea/`) to `info/exclude` in the repository's common git folder
+/// `common`, unless a line already says it: git status of the main checkout and of every worktree leaves out what it
+/// names. `.gitignore` is never touched.
+pub fn exclude(common: &Path, line: &str) -> Result<(), AgentError> {
     let _one = EXCLUDING.lock().unwrap_or_else(|e| e.into_inner());
     let info = common.join("info");
     std::fs::create_dir_all(&info)?;
@@ -236,13 +243,13 @@ pub fn exclude_temp(common: &Path) -> Result<(), AgentError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e.into()),
     };
-    if text.lines().any(|l| l.trim() == TEMP_EXCLUDE) {
+    if text.lines().any(|l| l.trim() == line) {
         return Ok(());
     }
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&file)?;
     let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
-    write!(f, "{sep}{TEMP_EXCLUDE}\n")?;
+    write!(f, "{sep}{line}\n")?;
     Ok(())
 }
 
@@ -334,21 +341,34 @@ pub fn start_ref(remote: Option<&str>, branch: &str) -> String {
 }
 
 /// Fetches `branch` of the project's repository and returns the ref to start from (`start_ref`): through `remote` when
-/// the repository has one for it, else from `url`. Never asks for a password; each try gives up after `limit`.
+/// the repository has one for it, else from `url`. Never asks for a password, and gives up after `limit`.
 pub fn fetch_start(repo: &Path, remote: Option<&str>, url: &str, branch: &str, limit: Duration) -> Result<String, AgentError> {
     let from = remote.unwrap_or(url);
     let start = start_ref(remote, branch);
     let spec = format!("+refs/heads/{branch}:{start}");
     let mut last = String::new();
-    // a run starting at the same moment may hold the ref's lock: one retry
+    // a run starting at the same moment may hold the ref's lock: one retry. Not after no answer at all: a second try
+    // would only wait as long again
     for attempt in 0..2 {
-        match git_quiet(repo, &["fetch", "--quiet", "--no-tags", from, &spec], limit) {
+        match quiet(repo, &[], &["fetch", "--quiet", "--no-tags", from, &spec], limit) {
             Ok(_) => return Ok(start),
-            Err(e) => last = e,
+            Err(e @ Failure::NoAnswer(_)) => {
+                last = e.last_line();
+                break;
+            }
+            Err(e) => last = e.last_line(),
         }
         if attempt == 0 { std::thread::sleep(Duration::from_millis(500)); }
     }
     Err(AgentError::Git(format!("Couldn't fetch {branch} from {from}: {last}")))
+}
+
+/// The branch the remote `remote`'s HEAD points to (its default branch), asked over the network: never asks for a
+/// password, and gives up after `limit`. None when it has none (an empty repository). An error is git's last line.
+pub fn remote_head(repo: &Path, remote: &str, limit: Duration) -> Result<Option<String>, String> {
+    let out = git_quiet(repo, &["ls-remote", "--symref", remote, "HEAD"], limit)?;
+    // ref: refs/heads/main<TAB>HEAD
+    Ok(out.lines().find_map(|l| l.strip_prefix("ref: refs/heads/")?.strip_suffix("\tHEAD")).map(str::to_string))
 }
 
 /// How many commits `start` has that the checkout in `dir` doesn't.
@@ -441,6 +461,60 @@ pub fn push_new_commits(repo: &Path, to: &str, branch: &str, base: &str, over: &
         0 => Ok(Pushed::Nothing),
         n => push_branch_over(repo, to, branch, over).map(|_| Pushed::Commits(n)),
     }
+}
+
+/// How many commits the local `branch` has that neither `base` (the main branch it started from, as last fetched,
+/// `start_ref`) nor `pushed` (the remote's copy of the branch as this repository last saw it, such as
+/// `refs/remotes/origin/<branch>`, which a push through that remote updates) has: what a push would still send, as far
+/// as this computer knows, without asking the remote. A ref that isn't there counts as nothing.
+pub fn unpushed(repo: &Path, branch: &str, base: &str, pushed: Option<&str>) -> Result<u32, AgentError> {
+    let ours = rev_parse(repo, &format!("refs/heads/{branch}"))
+        .map_err(|_| AgentError::Git(format!("{branch} isn't in {} any more", repo.display())))?;
+    let theirs: Vec<String> = std::iter::once(base).chain(pushed)
+        .filter_map(|r| rev_parse(repo, &format!("{r}^{{commit}}")).ok()).collect();
+    new_commits(repo, &ours, &theirs)
+}
+
+/// The branch checked out in the checkout at `dir`, if it is on one (not `--short`: that says `heads/<name>` when a tag
+/// has the same name).
+pub fn branch_of(dir: &Path) -> Option<String> {
+    git(dir, &["symbolic-ref", "--quiet", "HEAD"]).ok()?.strip_prefix("refs/heads/").filter(|b| !b.is_empty()).map(String::from)
+}
+
+/// Commit…, on a person's card (GA-111): commits every change in the checkout at `dir`, untracked files included
+/// (`git add --all`; what git ignores stays out), with `message`, the way `git commit` in a terminal does: the
+/// repository's own hooks run, and the author is who your git config says. Returns the new commit. Refuses an empty
+/// message and a checkout with nothing to commit, and says in plain words why git refused.
+pub fn commit_all(dir: &Path, message: &str) -> Result<Commit, AgentError> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(AgentError::Git("Write a commit message first".into()));
+    }
+    if uncommitted(dir)? == 0 {
+        return Err(AgentError::Git("There is nothing to commit: no file has changed".into()));
+    }
+    git(dir, &["add", "--all"])?;
+    let out = crate::os::command("git").arg("-C").arg(dir).args(["commit", "--quiet", "-m", message])
+        .stdin(std::process::Stdio::null()).env("GIT_TERMINAL_PROMPT", "0").output()
+        .map_err(|e| AgentError::Git(format!("can't run git: {e}")))?;
+    if !out.status.success() {
+        let said = format!("{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+        return Err(AgentError::Git(commit_refusal(said.trim())));
+    }
+    let sha = git(dir, &["rev-parse", "HEAD"])?;
+    let subject = git(dir, &["log", "-1", "--format=%s", "HEAD"])?;
+    Ok(Commit { sha, subject })
+}
+
+/// Why `git commit` refused, in plain words where Gizai knows them, else git's (or a hook's) last lines.
+fn commit_refusal(said: &str) -> String {
+    if said.contains("Please tell me who you are") || said.contains("unable to auto-detect email address") {
+        return "git doesn't know who you are: set your name and email with git config --global user.name \"Your Name\" and \
+                git config --global user.email you@example.com, then commit again".into();
+    }
+    let lines: Vec<&str> = said.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(5)..].join(" · ");
+    if tail.is_empty() { "git couldn't commit".into() } else { format!("git couldn't commit: {tail}") }
 }
 
 /// How many commits `ours` has that none of `theirs` has (commit ids).

@@ -1,14 +1,16 @@
 // The sidebar (design system: Sidebar): quick actions, work areas, projects, the team's agents and their memory scroll;
 // the company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
-// data than the usual folder says so there. Agents and Memory fold with the caret at the end of their heading (GA-90).
+// data than the usual folder says so there. Editor (GA-113), Agents and Memory fold with the caret at the end of their
+// heading (GA-90).
 import {
-  Building2, ChartColumn, ChevronDown, ChevronUp, Crown, FlaskConical, FolderKanban, Inbox, Library, ListTodo, MessagesSquare, Network, Plus, Search,
-  Settings, SquarePen, Users, type LucideIcon,
+  Building2, ChartColumn, ChevronDown, ChevronUp, Crown, FlaskConical, FolderCode, FolderKanban, Inbox, Keyboard, Library, ListTodo, LoaderCircle, MessagesSquare,
+  Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon,
 } from "lucide-react";
-import { getTeam, listChatThreads, listProjects, listTasks, memoryNotes } from "../api";
+import { useEffect, useState } from "react";
+import { editorFolders, editorGit, editorMain, getTeam, listChatThreads, listProjects, listTasks, memoryNotes, onEditorUpdated } from "../api";
 import { go, href, type Route } from "../router";
 import { leadOf, memoryHome, memoryScope, noteCount, sharersOf } from "../lib/memory";
-import type { Member, MemoryNote } from "../types";
+import type { EditorFolder, FolderGit, FolderMain, Member, MemoryNote, Task } from "../types";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -16,7 +18,11 @@ import { inboxCount } from "../lib/inbox";
 import { useDrawer } from "../lib/drawers";
 import { modKey } from "../lib/keys";
 import { liveTotal, useFolded, type Fold } from "../lib/sidebar";
+import { forgetFolder, useOpenedFolders } from "../lib/editor";
+import { foldedBehind, onTold, rowTip, rowWord } from "../lib/behind";
 import { roleIcon } from "./Avatar";
+import { FolderPicker, workingWho } from "./editor/FolderPicker";
+import { ContextMenu, openInItems, useEditorApps, type MenuItem } from "./editor/Menus";
 import { useChatLive } from "./chat/useChat";
 import { UpdateNotice } from "./UpdateNotice";
 
@@ -72,6 +78,8 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
         ))}
       </div>
 
+      <EditorSection route={route} tasks={allTasks.data ?? []} folded={folded("editor")} onFold={() => fold("editor")} />
+
       <FoldSection section="agents" name="Agents" folded={folded("agents")} onFold={() => fold("agents")} tag={allLive > 0 ? liveTag(allLive) : null}>
         {agents.length === 0 && <a className="nav-item" href={href({ page: "team" })}><span className="faint">No agents yet</span></a>}
         {agents.map((a) => {
@@ -111,8 +119,11 @@ const liveTag = (n: number) => <span className="live-tag"><span className="pulse
 
 /** A section that folds (GA-90): a click on its heading's text or on the caret at the heading's end leaves only the
  *  heading, another shows its list again. `tag` shows on the heading while it is folded. */
-function FoldSection({ section, name, label, folded, onFold, tag, children }: {
-  section: Fold; name: string; label?: string; folded: boolean; onFold: () => void; tag?: React.ReactNode; children: React.ReactNode;
+function FoldSection({ section, name, label, folded, onFold, tag, add, children }: {
+  section: Fold; name: string; label?: string; folded: boolean; onFold: () => void; tag?: React.ReactNode;
+  /** A + on the heading, before the caret (Editor's Open a folder). */
+  add?: { label: string; onClick: (e: React.MouseEvent<HTMLButtonElement>) => void };
+  children: React.ReactNode;
 }) {
   const does = `${folded ? "Show" : "Fold"} ${name}`;
   const Caret = folded ? ChevronUp : ChevronDown;
@@ -120,6 +131,7 @@ function FoldSection({ section, name, label, folded, onFold, tag, children }: {
     <div className="nav-section" aria-label={label}>
       <div className="nav-label">
         <span className="fold" onClick={onFold}>{name}{folded && tag}</span>
+        {add && <button aria-label={add.label} title={add.label} onClick={add.onClick}><Plus className="icon sm" /></button>}
         <button aria-expanded={!folded} aria-controls={`side-${section}`} aria-label={does} title={does} onClick={onFold}><Caret className="icon sm" /></button>
       </div>
       <div className="nav-list" id={`side-${section}`} hidden={folded}>{!folded && children}</div>
@@ -161,6 +173,96 @@ function MemorySection({ route, lead, agents, notes, folded, onFold, setUpLead }
           </a>
         );
       })}
+    </FoldSection>
+  );
+}
+
+/** Editor (GA-113), between Projects and Agents: the folders you opened, newest first (at most 8), each with how it
+ *  stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
+ *  to a person, "updating" while Update runs, else behind main ("3 behind", GA-114), else how many files changed, else
+ *  ahead. Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,
+ *  Copy path, Remove from the list and, on a card's row, Open card. How a folder stands against main is as last fetched
+ *  (the Editor page fetches); the row follows the page at once (Update started, a fetch) and an update's end. */
+function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: Task[]; folded: boolean; onFold: () => void }) {
+  const opened = useOpenedFolders();
+  const [folders, setFolders] = useState<EditorFolder[] | null>(null);
+  const [gits, setGits] = useState<Record<string, FolderGit>>({});
+  const [mains, setMains] = useState<Record<string, FolderMain>>({});
+  const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const apps = useEditorApps();
+  const key = opened.join("\n");
+  useEffect(() => {
+    if (!opened.length) return;
+    let alive = true;
+    const load = () => {
+      editorFolders().then((f) => { if (alive) setFolders(f); }).catch(() => {});
+      for (const id of opened) {
+        editorGit(id).then((g) => { if (alive) setGits((m) => ({ ...m, [id]: g })); }).catch(() => {});
+        editorMain(id).then((s) => { if (alive) setMains((m) => ({ ...m, [id]: s })); }).catch(() => {});
+      }
+    };
+    load();
+    const t = setInterval(() => { if (!document.hidden) load(); }, 30_000);
+    window.addEventListener("focus", load);
+    return () => { alive = false; clearInterval(t); window.removeEventListener("focus", load); };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | null = null;
+    const untell = onTold((id, s) => setMains((m) => ({ ...m, [id]: s })));
+    onEditorUpdated((e) => {
+      editorMain(e.folder).then((s) => { if (alive) setMains((m) => ({ ...m, [e.folder]: s })); }).catch(() => {});
+      editorGit(e.folder).then((g) => { if (alive) setGits((m) => ({ ...m, [e.folder]: g })); }).catch(() => {});
+    }).then((u) => { if (alive) stop = u; else u(); }).catch(() => {});
+    return () => { alive = false; untell(); stop?.(); };
+  }, []);
+  const behind = foldedBehind(opened.map((id) => ({ main: mains[id] ?? null, card: folders?.find((x) => x.id === id)?.kind === "card" })));
+  const openPicker = (e: React.MouseEvent<HTMLElement>) => {
+    const side = e.currentTarget.closest(".side")?.getBoundingClientRect();
+    const r = e.currentTarget.getBoundingClientRect();
+    setPicker({ x: (side?.right ?? r.right) + 6, y: r.top });
+  };
+  const items = (id: string): MenuItem[] => {
+    const f = folders?.find((x) => x.id === id);
+    return [
+      ...openInItems(apps, id, null, null, () => {}),
+      { sep: true },
+      { label: "Copy path", run: () => { navigator.clipboard?.writeText(f?.path ?? id).catch(() => {}); } },
+      { label: "Remove from the list", run: () => forgetFolder(id) },
+      ...(f?.taskId ? [{ label: "Open card", run: () => go({ page: "task", id: f.taskId! }) }] : []),
+    ];
+  };
+  return (
+    <FoldSection section="editor" name="Editor" label="Editor" folded={folded} onFold={onFold} add={{ label: "Open a folder", onClick: openPicker }}
+      tag={behind ? <span className="fold-tag" title={behind.tip}>{behind.word}</span> : null}>
+      {opened.length === 0 && <button className="nav-item" onClick={openPicker}><FolderCode className="icon" /><span>Open a folder</span></button>}
+      {opened.map((id) => {
+        const f = folders?.find((x) => x.id === id);
+        const task = f?.taskId ? tasks.find((t) => t.id === f.taskId) : undefined;
+        const git = gits[id] ?? null;
+        const main = mains[id] ?? null;
+        const name = f?.name ?? id.split(/[\\/]/).filter(Boolean).pop() ?? id;
+        const word = rowWord(main, git, f?.kind === "card");
+        const stand = f?.readOnly ? <span className="stand"><span className="pulse" />read-only</span>
+          : task?.byHand ? <span className="stand"><Keyboard className="icon sm" />by hand</span>
+          : main?.updating ? <span className="stand"><LoaderCircle className="icon sm spin" />updating</span>
+          : word ? <span className="stand">{word}</span> : null;
+        const tip = f?.readOnly ? `${workingWho(f.readOnlyWhy)} on ${f.name}: read-only until its run ends`
+          : task?.byHand ? `${task.identifier} ${task.title}. Pinned to you: agents leave it alone`
+          : rowTip(f?.path ?? id, main, git);
+        return (
+          <a key={id} className={`nav-item${route.page === "editor" && route.id === id ? " on" : ""}`} href={href({ page: "editor", id })} title={tip}
+            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id }); }}
+            onKeyDown={(e) => { if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left + 24, y: r.bottom, id }); } }}>
+            <FolderCode className="icon" />
+            {f?.kind === "card" ? <><span className="card-id">{f.name}</span>{task && <span className="faint" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{task.title}</span>}</> : <span>{name}</span>}
+            {stand && <span className="meta">{stand}</span>}
+          </a>
+        );
+      })}
+      {picker && <FolderPicker at={picker} onClose={() => setPicker(null)} />}
+      {menu && <ContextMenu at={menu} label="Folder" items={items(menu.id)} onClose={() => setMenu(null)} />}
     </FoldSection>
   );
 }

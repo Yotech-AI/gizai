@@ -4,7 +4,7 @@ import { Fragment, useEffect, useState } from "react";
 import { onRowsChanged, searchChatThreads } from "../../api";
 import { href } from "../../router";
 import { relTime } from "../../lib/format";
-import { chatLabel } from "../../lib/inbox";
+import { chatLabel, chatLabelTitle, chatWaits } from "../../lib/inbox";
 import { highlight, hitAuthor, snippet } from "../../lib/chat";
 import type { ChatHit, ChatStatus } from "../../types";
 
@@ -60,7 +60,7 @@ export function ChatArchive({ live }: { live: ChatStatus[] }) {
                 <a key={t.id} role="listitem" className="archive-row" href={href({ page: "chat", id: t.id })}>
                   <span className="top">
                     {live.some((l) => l.threadId === t.id) && <span className="pulse" />}
-                    {chatLabel(t) && <span className={`badge ${t.waiting ? "needs" : "outline"}`} title={t.waiting ? "The Team Lead asks you this" : "The Team Lead started this chat"}>{chatLabel(t)}</span>}
+                    {chatLabel(t) && <span className={`badge ${chatWaits(t) ? "needs" : "outline"}`} title={chatLabelTitle(t)}>{chatLabel(t)}</span>}
                     <span className="title" title={t.title}><Marked text={t.title} query={q} /></span>
                     <span className="when" title={new Date(t.updatedAt).toLocaleString("en-GB")}>{relTime(t.updatedAt)}</span>
                   </span>

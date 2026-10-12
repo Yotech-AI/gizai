@@ -1,6 +1,9 @@
 // CodeMirror 6 Markdown editor with a live preview: headings sized, bold/italic styled, syntax marks
 // (# ** ` > and link URLs) dimmed except on the line you're editing, task-list boxes clickable,
-// task refs (KADE-12) and @mentions shown as chips, and links to Gizai items (gizai:) as one chip each. A toolbar formats
+// task refs (KADE-12) and @mentions shown as chips, and links to Gizai items (gizai:) as one chip each. `marks` (GA-118)
+// changes how the marks show, without a remount: "dim" is that live preview (every editor but the doc page's), "hide"
+// formats the text and hides the marks except on the lines you're editing (the doc page's Editor), and "show" shows the
+// text exactly as stored, in the mono font (the doc page's Markdown). A toolbar formats
 // the selection (design system: MarkdownEditor). Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+K format; Ctrl+Enter or Ctrl+S saves
 // (Cmd on macOS), Escape cancels. Typing @ opens the item picker at the cursor, which links a task, project, client,
 // agent, person or doc. Ctrl+click on a task ref (KADE-12) opens its card. In a memory note (`wiki`, GA-68) typing [[
@@ -17,7 +20,7 @@ import { ItemPicker, type PickerAt } from "./ItemPicker";
 import { WikiPicker } from "./memory/WikiPicker";
 import { findWikiTrigger, TASK_REF, wikilinks, wikiRows, type WikiLink, type WikiRow, type WikiTrigger } from "../lib/memory";
 import type { MemoryNote } from "../types";
-import { Compartment, EditorState, Prec, RangeSetBuilder, StateEffect } from "@codemirror/state";
+import { Compartment, EditorState, Prec, RangeSetBuilder, StateEffect, type Extension, type Range } from "@codemirror/state";
 import {
   Decoration, EditorView, MatchDecorator, ViewPlugin, WidgetType, drawSelection, keymap, placeholder as cmPlaceholder,
   type DecorationSet, type ViewUpdate,
@@ -68,8 +71,12 @@ class BulletWidget extends WidgetType {
 const bullet = Decoration.replace({ widget: new BulletWidget() });
 const hide = Decoration.replace({});
 
-function buildPreview(view: EditorView): DecorationSet {
-  const b = new RangeSetBuilder<Decoration>();
+/** How the editor shows Markdown's marks (GA-118): "dim" dims them except on the lines you're editing (the live preview),
+ *  "hide" formats the text and hides them except on those lines, "show" shows the text as stored, in the mono font. */
+export type Marks = "dim" | "hide" | "show";
+
+/** The lines with the cursor or the selection while the editor has the focus: their marks show. */
+function activeLines(view: EditorView): Set<number> {
   const { state } = view;
   const active = new Set<number>();
   if (view.hasFocus) {
@@ -77,6 +84,13 @@ function buildPreview(view: EditorView): DecorationSet {
       for (let l = state.doc.lineAt(r.from).number; l <= state.doc.lineAt(r.to).number; l++) active.add(l);
     }
   }
+  return active;
+}
+
+function buildPreview(view: EditorView): DecorationSet {
+  const b = new RangeSetBuilder<Decoration>();
+  const { state } = view;
+  const active = activeLines(view);
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
       from, to,
@@ -101,6 +115,104 @@ const livePreview = ViewPlugin.fromClass(class {
   constructor(view: EditorView) { this.decorations = buildPreview(view); }
   update(u: ViewUpdate) {
     if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged) this.decorations = buildPreview(u.view);
+  }
+}, { decorations: (v) => v.decorations });
+
+/** A divider (`---`) drawn as a line. A click on it puts the cursor there, which shows the dashes again. */
+class RuleWidget extends WidgetType {
+  eq() { return true; }
+  toDOM() { const s = document.createElement("span"); s.className = "cm-md-hr"; return s; }
+  ignoreEvent() { return false; }
+}
+const rule = Decoration.replace({ widget: new RuleWidget() });
+const quoteLine = Decoration.line({ class: "cm-md-quote" });
+const codeText = Decoration.mark({ class: "cm-md-code" });
+const linkText = Decoration.mark({ class: "cm-md-link" });
+
+type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
+
+/** For a link `[text](url)` on one line that is not to a Gizai item (that one is a chip), its `]` mark: "hide" shows only
+ *  the text. Null for any other node, and for `[text]` alone (no URL). */
+function plainLinkClose(state: EditorState, link: SyntaxNode | null): SyntaxNode | null {
+  if (link?.name !== "Link") return null;
+  const url = link.getChild("URL");
+  if (!url || state.sliceDoc(url.from, url.to).startsWith("gizai:")) return null;
+  if (state.doc.lineAt(link.from).number !== state.doc.lineAt(link.to).number) return null;
+  const close = link.getChildren("LinkMark")[1];
+  return close && state.sliceDoc(close.from, close.to) === "]" ? close : null;
+}
+
+/** "hide" (the doc page's Editor): the text formatted. Except on the lines you're editing, Markdown's marks are hidden
+ *  (`# `, `**`, `*`, `~~`, the backticks, `> `, and a link's `[` and `](url)`), a divider is a line, and bullets and task
+ *  boxes show as in the live preview; the marks it doesn't hide (a code block's fences) are dimmed. On every line, also
+ *  the ones you're editing, a quote has its bar and inline code its background. */
+function buildFormatted(view: EditorView): DecorationSet {
+  const { state } = view;
+  const { doc } = state;
+  const active = activeLines(view);
+  const decos: Range<Decoration>[] = [];
+  const hidden: [number, number][] = [];
+  const quoted = new Set<number>();
+  const blank = (pos: number) => /[ \t]/.test(state.sliceDoc(pos, pos + 1));
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(state).iterate({
+      from, to,
+      enter: (node) => {
+        const { name } = node;
+        if (name === "Blockquote") {
+          for (let l = doc.lineAt(node.from).number; l <= doc.lineAt(node.to).number; l++) {
+            if (!quoted.has(l)) { quoted.add(l); decos.push(quoteLine.range(doc.line(l).from)); }
+          }
+          return;
+        }
+        if (name === "InlineCode") {
+          const open = node.node.firstChild, close = node.node.lastChild;
+          if (open?.name === "CodeMark" && close?.name === "CodeMark" && open.to < close.from) decos.push(codeText.range(open.to, close.from));
+        }
+        if (active.has(doc.lineAt(node.from).number)) return;
+        if (name === "ListMark" && /^[-*+]$/.test(state.sliceDoc(node.from, node.to))) {
+          decos.push((node.node.nextSibling?.name === "Task" ? hide : bullet).range(node.from, node.to));
+        } else if (name === "TaskMarker") {
+          decos.push(Decoration.replace({ widget: new CheckboxWidget(/x/i.test(state.sliceDoc(node.from, node.to))) }).range(node.from, node.to));
+        } else if (name === "HorizontalRule") {
+          decos.push(rule.range(node.from, node.to));
+        } else if (name === "Link") {
+          const close = plainLinkClose(state, node.node);
+          if (close) { hidden.push([node.from, node.from + 1], [close.from, node.to]); decos.push(linkText.range(node.from + 1, close.from)); }
+        } else if (name === "HeaderMark") {
+          const heading = node.node.parent;
+          if (heading?.name.startsWith("Setext")) hidden.push([node.from, node.to]); // the === or --- under the heading
+          else if (node.from === heading?.from) { let end = node.to; while (blank(end)) end++; hidden.push([node.from, end]); }
+          else { let start = node.from; while (start > 0 && blank(start - 1)) start--; hidden.push([start, node.to]); } // `# Title ##`
+        } else if (name === "QuoteMark") {
+          hidden.push([node.from, node.to + (blank(node.to) ? 1 : 0)]);
+        } else if (name === "EmphasisMark" || name === "StrikethroughMark" || (name === "CodeMark" && node.node.parent?.name === "InlineCode")) {
+          hidden.push([node.from, node.to]);
+        } else if ((name === "LinkMark" || name === "URL") && plainLinkClose(state, node.node.parent)) {
+          // hidden with its link
+        } else if (MARKS.has(name) || (name === "URL" && node.node.parent?.name === "Link")) {
+          decos.push(dim.range(node.from, node.to));
+        }
+      },
+    });
+  }
+  // The hidden ranges in order, none over another (a heading's closing #s after an empty heading).
+  hidden.sort((a, b) => a[0] - b[0]);
+  let done = 0;
+  for (const [a, b] of hidden) {
+    const from = Math.max(a, done);
+    if (from < b) { decos.push(hide.range(from, b)); done = b; }
+  }
+  return Decoration.set(decos, true);
+}
+
+const formatted = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = buildFormatted(view); }
+  update(u: ViewUpdate) {
+    if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
+      this.decorations = buildFormatted(u.view);
+    }
   }
 }, { decorations: (v) => v.decorations });
 
@@ -129,8 +241,9 @@ class ItemChip extends WidgetType {
 const refMark = Decoration.mark({ class: "cm-chip cm-chip-ref" });
 const mentionMark = Decoration.mark({ class: "cm-chip cm-chip-mention" });
 // A gizai: link is matched first and whole, so the task ref inside it (GA-12) gets no chip of its own.
+const CHIPS = `${ITEM_LINK_SOURCE}|\\b[A-Z][A-Z0-9]{1,5}-\\d+\\b|(?<=^|\\s)@[a-zA-Z0-9_-]{2,32}`;
 const chipMatcher = new MatchDecorator({
-  regexp: new RegExp(`${ITEM_LINK_SOURCE}|\\b[A-Z][A-Z0-9]{1,5}-\\d+\\b|(?<=^|\\s)@[a-zA-Z0-9_-]{2,32}`, "g"),
+  regexp: new RegExp(CHIPS, "g"),
   decorate: (add, from, to, m) => {
     if (m[2]) {
       const target = parseItemUrl(`gizai:${m[2]}/${m[3]}`);
@@ -155,6 +268,34 @@ const chips = ViewPlugin.fromClass(class {
   decorations: (v) => v.decorations,
   provide: (p) => EditorView.atomicRanges.of((view) => view.plugin(p)?.items ?? Decoration.none),
 });
+
+// "show" (the doc page's Markdown): task refs and @mentions keep their colour, a link to a Gizai item stays its Markdown.
+const refMatcher = new MatchDecorator({
+  regexp: new RegExp(CHIPS, "g"),
+  decorate: (add, from, to, m) => { if (!m[2]) add(from, to, m[0].startsWith("@") ? mentionMark : refMark); },
+});
+const refColours = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = refMatcher.createDeco(view); }
+  update(u: ViewUpdate) { this.decorations = refMatcher.updateDeco(u, this.decorations); }
+}, { decorations: (v) => v.decorations });
+
+/** "show": the text as stored, in the mono font (`.cm-md-source`). Nothing is hidden, dimmed or replaced, and headings
+ *  keep the text's size. */
+const sourceHighlight = HighlightStyle.define([
+  { tag: [t.heading1, t.heading2, t.heading3, t.heading4, t.heading5, t.heading6, t.strong], fontWeight: "700" },
+  { tag: t.emphasis, fontStyle: "italic" },
+  { tag: t.strikethrough, textDecoration: "line-through" },
+  { tag: [t.link, t.url], color: "var(--accent)" },
+]);
+
+/** What each `Marks` adds, in the editor's marks compartment: changing it keeps the text, the cursor and undo. */
+const styled = syntaxHighlighting(highlight);
+const MARKS_EXTENSIONS: Record<Marks, Extension> = {
+  dim: [styled, livePreview, chips],
+  hide: [styled, formatted, chips],
+  show: [EditorView.editorAttributes.of({ class: "cm-md-source" }), syntaxHighlighting(sourceHighlight), refColours],
+};
 
 /** Wikilinks in a memory note (GA-68): what the editor needs from the Memory page. */
 export type WikiSupport = {
@@ -247,6 +388,14 @@ const theme = EditorView.theme({
   ".cm-wikilink.missing *": { color: "inherit !important" },
   ".cm-frontmatter": { fontFamily: "var(--font-mono)", fontSize: "0.86em", lineHeight: "1.55", color: "var(--text-2)" },
   ".cm-frontmatter *": { fontSize: "inherit !important", fontWeight: "inherit !important", color: "inherit !important", fontStyle: "inherit !important" },
+  // "hide": a quote, inline code, a link and a divider as the reading view (.prose) shows them.
+  ".cm-line.cm-md-quote": { borderLeft: "3px solid var(--line-2)", paddingLeft: "14px", color: "var(--text-2)" },
+  ".cm-md-code": { fontFamily: "var(--font-mono)", padding: "1px 5px", borderRadius: "var(--radius-s)", background: "var(--selected)" },
+  ".cm-md-link": { color: "var(--accent)" },
+  ".cm-md-hr": { display: "inline-block", width: "100%", verticalAlign: "middle", borderTop: "1px solid var(--line)" },
+  // "show": every character in the mono font; a task ref or @mention keeps only its colour.
+  "&.cm-md-source .cm-content": { fontFamily: "var(--font-mono)", fontSize: "0.92em" },
+  "&.cm-md-source .cm-chip": { padding: "0", background: "none", fontSize: "inherit" },
 });
 
 // `key` is the shortcut's letter, shown with the modifier: Ctrl+B, or Cmd+B on macOS.
@@ -322,7 +471,7 @@ export type EditorHandle = { focus: () => void; clear: () => void; startLink: ()
 type Pick = { from: number; query: string; at: PickerAt | null };
 
 export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEnter, placeholder, autoFocus, ariaLabel, minHeight, hint, toolbar = true,
-  disabled = false, pickerUp, handle, className, wiki }: {
+  disabled = false, pickerUp, handle, className, wiki, marks = "dim" }: {
   value: string;
   onChange?: (md: string) => void;
   onSave?: (md: string) => void;
@@ -345,6 +494,8 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
   className?: string;
   /** A memory note's editor: [[ links notes (GA-68). */
   wiki?: WikiSupport;
+  /** How Markdown's marks show (`Marks`): "dim" (the live preview) unless the doc page says otherwise. */
+  marks?: Marks;
 }) {
   const [active, setActive] = useState<Set<FormatCmd>>(new Set());
   const activeKey = useRef("");
@@ -353,7 +504,8 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
   const hovered = useRef<string | null>(null); // the wikilink the mouse is on
   const cb = useRef({ onChange, onSave, onBlur, onCancel, onEnter });
   cb.current = { onChange, onSave, onBlur, onCancel, onEnter };
-  const conf = useRef({ editable: new Compartment(), placeholder: new Compartment() });
+  const conf = useRef({ editable: new Compartment(), placeholder: new Compartment(), marks: new Compartment() });
+  const shownMarks = useRef(marks);
 
   // The item picker: open while the cursor is in an `@…` (unless Escape closed that one), with the items asked for when it opens.
   const [pick, setPick] = useState<Pick | null>(null);
@@ -457,7 +609,7 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
             { key: "Mod-k", run: (v) => run(v, "link") },
           ])),
           history(), drawSelection(), EditorView.lineWrapping,
-          markdown({ base: markdownLanguage }), syntaxHighlighting(highlight), livePreview, chips, wikiPlugin(() => wikiRef.current), frontmatterPlugin(() => !!wikiRef.current), theme,
+          markdown({ base: markdownLanguage }), conf.current.marks.of(MARKS_EXTENSIONS[marks]), wikiPlugin(() => wikiRef.current), frontmatterPlugin(() => !!wikiRef.current), theme,
           EditorView.domEventHandlers({
             // Ctrl+click (Cmd+click on macOS) on a wikilink opens it, on a task ref its card.
             mousedown: (e, v) => {
@@ -533,6 +685,12 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
     if (v && !v.hasFocus && v.state.doc.toString() !== value) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
   }, [value]);
 
+  // Another way to show the marks (the doc page's Editor | Markdown): the same editor, its text, cursor and undo kept.
+  useEffect(() => {
+    if (shownMarks.current === marks) return;
+    shownMarks.current = marks;
+    viewRef.current?.dispatch({ effects: conf.current.marks.reconfigure(MARKS_EXTENSIONS[marks]) });
+  }, [marks]);
   useEffect(() => {
     viewRef.current?.dispatch({ effects: conf.current.placeholder.reconfigure(cmPlaceholder(placeholder ?? "")) });
   }, [placeholder]);
@@ -587,7 +745,7 @@ export function MarkdownEditor({ value, onChange, onSave, onBlur, onCancel, onEn
       <div className="md-toolbar" role="toolbar" aria-label="Formatting">
         {TOOLS.map((t, i) => t === "sep" ? <span key={i} className="sep" /> : (
           <button key={t.cmd} type="button" title={t.key ? `${t.label} (${modKey()}+${t.key})` : t.label} aria-label={t.label} aria-pressed={active.has(t.cmd)}
-            onMouseDown={(e) => e.preventDefault() /* keep the editor focused: leaving it saves */}
+            onMouseDown={(e) => e.preventDefault() /* keep the editor focused (leaving a task's description saves it) */}
             onClick={() => viewRef.current && run(viewRef.current, t.cmd)}>
             <t.icon className="icon" />
           </button>

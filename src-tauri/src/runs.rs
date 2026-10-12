@@ -46,6 +46,8 @@ pub enum Note {
     ChatChanged,
     /// The release check or an update moved on (see `update`).
     UpdateChanged,
+    /// The Editor's Update of a folder ended (see `editor`): the `editor-updated` event.
+    EditorUpdated(gizai_agents::behind::EditorUpdated),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -195,9 +197,14 @@ pub struct Settings {
     /// Desktop notifications, a switch per kind (Settings → Notifications); all on by default.
     #[serde(default)]
     pub notifications: crate::notifications::Switches,
+    /// Settings → General → Editor folders (GA-107): the Editor may open every folder in these. `~/Herd` until you set
+    /// your own (`gizai_core::editor::roots`).
+    #[serde(default = "default_editor_roots")]
+    pub editor_roots: Vec<String>,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
+fn default_editor_roots() -> Vec<String> { gizai_core::editor::DEFAULT_ROOTS.map(String::from).to_vec() }
 fn default_tool_calls() -> u32 { DEFAULT_MAX_RUN_TOOL_CALLS }
 fn default_chat_minutes() -> u64 { DEFAULT_MAX_CHAT_MINUTES }
 fn default_chat_tool_calls() -> u32 { DEFAULT_MAX_CHAT_TOOL_CALLS }
@@ -217,6 +224,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         gh_bin: settings::get(&st.db, "gh_bin").ok().flatten(),
         push_over: crate::github::push_over_name(st),
         notifications: crate::notifications::switches(&st.db),
+        editor_roots: gizai_core::editor::roots(&st.db),
     }
 }
 
@@ -242,6 +250,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !crate::github::PUSH_OVER_NAMES.contains(&s.push_over.as_str()) {
         return Err("pushes go over ssh or https".into());
     }
+    let editor_roots = gizai_core::editor::clean_roots(&s.editor_roots, &gizai_core::folders::Places::without_checkouts(&st.db)).map_err(|e| e.to_string())?;
     let bin = s.claude_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
     settings::set(&st.db, "claude_bin", &bin).map_err(|e| e.to_string())?;
     let gh = s.gh_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
@@ -255,6 +264,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     settings::set(&st.db, "max_chat_tool_calls", &s.max_chat_tool_calls).map_err(|e| e.to_string())?;
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
+    settings::set(&st.db, gizai_core::editor::ROOTS, &editor_roots).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -364,6 +374,11 @@ pub fn working_on(st: &AppState, task_id: &str) -> bool {
     st.runs.starting.lock().unwrap().contains(task_id) || st.runs.live.lock().unwrap().values().any(|l| l.task_id == task_id)
 }
 
+/// The cards whose run is getting its worktree ready now (with `live`, the cards of `working_on`).
+pub fn starting(st: &AppState) -> Vec<String> {
+    st.runs.starting.lock().unwrap().iter().cloned().collect()
+}
+
 pub fn live(st: &AppState) -> Vec<LiveRun> {
     st.runs.live.lock().unwrap().iter()
         .map(|(id, l)| LiveRun { run_id: id.clone(), task_id: l.task_id.clone(), agent_id: l.agent_id.clone() })
@@ -439,6 +454,12 @@ pub fn kill_all(st: &AppState) -> usize {
 /// quit.
 pub fn mark_closing(st: &AppState) {
     st.runs.closing.store(true, Ordering::SeqCst);
+}
+
+/// Gizai isn't quitting after all (Stay, when quitting asked about unsaved text: see `unsaved`): runs and chat answers
+/// start again.
+pub fn unmark_closing(st: &AppState) {
+    st.runs.closing.store(false, Ordering::SeqCst);
 }
 
 pub fn is_closing(st: &AppState) -> bool {
@@ -518,8 +539,8 @@ impl ContinueNote {
     }
 }
 
-/// An actor's name (a person or an agent), for a prompt.
-fn actor_name(st: &AppState, actor_id: &str) -> String {
+/// An actor's name (a person or an agent), for a prompt or a comment.
+pub(crate) fn actor_name(st: &AppState, actor_id: &str) -> String {
     team::agent(&st.db, actor_id).map(|m| m.name).ok()
         .or_else(|| gizai_core::users::list(&st.db).ok()?.into_iter().find(|p| p.id == actor_id).map(|p| p.name))
         .filter(|n| !n.trim().is_empty())
@@ -718,8 +739,10 @@ fn open_worktree(st: &AppState, project: &Project, task: &Task, repo: &Path, sta
 
 /// Prepares a new or taken-over worktree before the agent starts: the project's copies, the install of what is still
 /// missing, then its setup command (`gizai_agents::prepare`). A command that fails puts the card on hold "blocked"
-/// with its output; no run starts, so it doesn't count as a failed run, and the next start prepares again.
-async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
+/// with its output, as `holder` (the agent that was to start); no run starts, so it doesn't count as a failed run, and
+/// the next start prepares again. Without `holder` (a person's start by hand, GA-111) the card gets no hold: the error
+/// says why.
+async fn prepare_worktree(st: &AppState, holder: Option<&str>, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
                           todo: worktree::Unprepared) -> Result<(), StartError> {
     let plan = Prepare { copy: project.worktree_copy.clone(), install: project.worktree_install, setup: project.worktree_setup.clone() };
     // Not while the project's own folder is being updated from chat (`code::start_update`), and the other way round:
@@ -742,8 +765,13 @@ async fn prepare_worktree(st: &AppState, agent_id: &str, task: &Task, project: &
         }
         Err(failed) => {
             let reason = format!("Preparing its worktree failed: {failed}");
-            hold_card(st, agent_id, &task.id, &reason);
-            Err(StartError::Held(reason))
+            match holder {
+                Some(agent_id) => {
+                    hold_card(st, agent_id, &task.id, &reason);
+                    Err(StartError::Held(reason))
+                }
+                None => Err(StartError::Card(reason)),
+            }
         }
     }
 }
@@ -833,7 +861,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     wait_if_paused()?;
     let wt = open_worktree(st, &project, &task, Path::new(&repo), &start)?;
     if let Some(todo) = worktree::unprepared(&wt.path) {
-        prepare_worktree(st, &agent_id, &task, &project, Path::new(&repo), &wt, todo).await?;
+        prepare_worktree(st, Some(&agent_id), &task, &project, Path::new(&repo), &wt, todo).await?;
     }
     let base = project.repo_url.as_ref().map(|_| BaseInfo {
         from: start.strip_prefix("refs/remotes/").or_else(|| start.strip_prefix("refs/")).unwrap_or(&start).to_string(),
@@ -941,6 +969,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     // keychain) is left out, and the log says why.
     let mut allowed_tools = allowed_tools;
     let (mut mcp_config, mut mcp_refused) = (None, vec![]);
+    // The servers Claude Code signs in to: a needs-auth in the init line then says to sign Claude Code in, not Gizai.
+    let mut claude_code_signs_in: Vec<String> = vec![];
     if agent.tools.servers_on().next().is_some() {
         if spec.kind == Kind::ClaudeCode {
             let (st2, a2, cap) = (st.clone(), agent.clone(), std::time::Duration::from_secs(limits.minutes * 60));
@@ -954,6 +984,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                         allowed_tools.extend(allow);
                         mcp_refused = refuse;
                         mcp_config = Some(path);
+                        claude_code_signs_in = crate::mcp_servers::claude_code_names(st, &servers);
                     }
                     Err(e) => notes.push(format!("Couldn't write this run's MCP config, so it goes without its MCP servers: {e}")),
                 }
@@ -1001,9 +1032,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         folders, temp_dir, git_config,
     };
     let exec = agent_cli::task_exec(&spec, &run);
-    // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then
-    // Gizai's notes.
+    // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then which
+    // MCP servers Claude Code signs in to, then Gizai's notes.
     let head: String = (spec.kind != Kind::ClaudeCode).then(|| agent_cli::log_header(spec.kind)).into_iter()
+        .chain((!claude_code_signs_in.is_empty()).then(|| agent_cli::claude_code_line(&claude_code_signs_in)))
         .chain(notes.iter().map(|n| agent_cli::note_line(n)))
         .map(|l| format!("{l}\n")).collect();
     let drop_config = || if let Some(p) = &mcp_config { let _ = std::fs::remove_file(p); };
@@ -1014,8 +1046,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             return Err(StartError::Other(e.to_string()));
         }
     }
+    let mut parser = agent_cli::Parser::new(spec.kind);
+    parser.claude_code_signs_in(claude_code_signs_in);
     let mut handle = match process::spawn_exec::<RunEvent, _>(&exec, &wt.path, &log_path,
-        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, agent_cli::Parser::new(spec.kind)) {
+        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, parser) {
         Ok(h) => h,
         Err(e) => {
             drop_config();
@@ -1395,11 +1429,7 @@ async fn push_after_run(st: &AppState, run_id: &str, dir: &Path) -> Option<After
     let link = gizai_core::repo_url::normalize(project.repo_url.as_deref()?).ok().flatten()?;
     let (st2, dir) = (st.clone(), dir.to_path_buf());
     let after = tokio::task::spawn_blocking(move || {
-        let push = crate::pulls::push_over_for(&st2, &link.provider).map_err(|e| format!("Couldn't push {branch}: {e}")).and_then(|over| {
-            // the main branch the card started from, as fetched for this run: the remote has its commits
-            let base = crate::git::start_point(&project, &repo, None).map_err(crate::pulls::plain)?;
-            worktree::push_new_commits(&repo, &crate::pulls::push_to(&repo, &link.url), &branch, &base, &over).map_err(crate::pulls::plain)
-        });
+        let push = push_card(&st2, &project, &repo, &link, &branch);
         AfterRun { uncommitted: worktree::uncommitted(&dir).unwrap_or(0), branch, push }
     }).await;
     match after {
@@ -1414,6 +1444,61 @@ async fn push_after_run(st: &AppState, run_id: &str, dir: &Path) -> Option<After
             None
         }
     }
+}
+
+/// Gizai's push of a card's `branch` (GA-56), after a run and for a person's card (GA-111, `hand::push`): to the
+/// project's link `link`, through your remote for it (where Open pull request pushes, `pulls::push_to`) and over the same
+/// Push over setting (`pulls::push_over_for`), only when the branch has commits that remote doesn't have
+/// (`worktree::push_new_commits`), never forced, tried once. Blocking: it talks to the remote.
+pub(crate) fn push_card(st: &AppState, project: &Project, repo: &Path, link: &gizai_core::repo_url::RepoUrl, branch: &str)
+    -> Result<worktree::Pushed, String> {
+    let over = crate::pulls::push_over_for(st, &link.provider).map_err(|e| format!("Couldn't push {branch}: {e}"))?;
+    // the main branch the card started from, as last fetched: the remote has its commits
+    let base = crate::git::start_point(project, repo, None).map_err(crate::pulls::plain)?;
+    worktree::push_new_commits(repo, &crate::pulls::push_to(repo, &link.url), branch, &base, &over).map_err(crate::pulls::plain)
+}
+
+/// GA-111: Open in editor, on a card assigned to you (contract C4's start). Its worktree is made, or taken over, and
+/// prepared from main just fetched, as for an agent's run (`open_worktree`, `prepare_worktree`); meanwhile the card
+/// counts as starting (`working_on`), so no agent's run starts on it. Then, in one write, it is pinned to you, you become
+/// its implementer and it moves on from To do as you (`workflow::start_by_hand`). A preparation that fails puts no hold
+/// on the card: the error says why, and the next Open in editor prepares again. Refused, in a plain sentence, while an
+/// agent works on the card or its run starts, as `workflow::start_by_hand_check` says (an archived card, one not
+/// assigned to you, one in Deploy, Done or Cancelled), and when the card's worktree is on another branch than the card's.
+/// On a card that is yours by hand already it makes sure the worktree is there and ready. Returns the worktree.
+pub async fn start_by_hand(st: &AppState, task_id: &str) -> Result<worktree::Worktree, String> {
+    if is_closing(st) {
+        return Err("Gizai is quitting".into());
+    }
+    let task = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?;
+    let busy = || format!("An agent is working on {}: wait for its run to end", task.identifier);
+    if working_on(st, task_id) {
+        return Err(busy());
+    }
+    workflow::start_by_hand_check(&st.db, &st.you_id, task_id).map_err(|e| e.to_string())?;
+    let _starting = Starting::take(st, task_id).ok_or_else(busy)?;
+    let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
+    let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| format!("Link a git repository to {} first (project page → Edit)", project.name))?;
+    let start = {
+        let (p, dir) = (project.clone(), PathBuf::from(&repo));
+        tokio::task::spawn_blocking(move || crate::git::start_point(&p, &dir, Some(crate::git::START_FETCH_LIMIT)))
+            .await.map_err(|e| e.to_string())?.map_err(crate::pulls::plain)?
+    };
+    if project.repo_url.is_some() {
+        crate::code::fetched(st, &project.key);
+    }
+    let wt = open_worktree(st, &project, &task, Path::new(&repo), &start).map_err(StartError::message)?;
+    // Commit, Push and Hand over work on the card's branch (`hand`): its worktree must have it checked out.
+    if let Some(b) = task.branch.as_deref().filter(|b| !b.trim().is_empty() && *b != wt.branch) {
+        return Err(format!("{}'s worktree is on branch {}, not on the card's branch {b}: switch it back first", task.identifier, wt.branch));
+    }
+    if let Some(todo) = worktree::unprepared(&wt.path) {
+        prepare_worktree(st, None, &task, &project, Path::new(&repo), &wt, todo).await.map_err(StartError::message)?;
+    }
+    workflow::start_by_hand(&st.db, &st.you_id, task_id, &wt.branch).map_err(|e| e.to_string())?;
+    (st.notify)(Note::RowsChanged("tasks"));
+    Ok(wt)
 }
 
 /// Gizai's note on a run that is ending: in its log, where Show output reads it later, and in the Run panel now.

@@ -41,6 +41,7 @@ let liveChats: ChatStatus[] = [];
 vi.mock("../lib/useLiveRuns", () => ({ useLiveRuns: () => liveRuns }));
 vi.mock("../components/chat/useChat", () => ({ useChatLive: () => liveChats }));
 vi.mock("../components/UpdateSettings", () => ({ UpdateSettings: () => <section className="form-section"><h3>Updates</h3></section> }));
+vi.mock("../components/EditorFoldersSetting", () => ({ EditorFoldersSetting: () => null }));
 vi.mock("../components/CliSettings", () => ({ CliSettings: () => null }));
 vi.mock("../components/GithubSettings", () => ({ GithubSettings: () => null }));
 vi.mock("../components/BitbucketSettings", () => ({ BitbucketSettings: () => null }));
@@ -57,7 +58,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 const SETTINGS: Settings = {
   claudeBin: "/usr/bin/claude", dataDir: "/home/you/.local/share/gizai", maxConcurrentRuns: 4, agentsPaused: false, maxRunUsd: null,
   maxRunMinutes: 45, maxRunToolCalls: 400, maxChatMinutes: 15, maxChatToolCalls: 60, pushOver: "ssh",
-  notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true },
+  notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true }, editorRoots: ["~/Herd"],
 };
 const AGENTS: CardAgent[] = [{ name: "Backend Agent", cardsAtOnce: 3 }, { name: "QA Agent", cardsAtOnce: 1 }, { name: "Frontend Agent", cardsAtOnce: 2 }];
 const run = (n: number): LiveRun => ({ runId: `r${n}`, taskId: `t${n}`, agentId: "be" });

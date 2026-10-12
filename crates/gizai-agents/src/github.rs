@@ -22,6 +22,10 @@ pub struct PullRequest {
     pub head_ref_oid: String,
     #[serde(default)]
     pub commits: Vec<Commit>,
+    /// The commit that merged it into its base branch, once merged: after a squash the squashed commit, after a rebase
+    /// the last rebased commit (GA-106 saves the card's range with it).
+    #[serde(default)]
+    pub merge_commit: Option<Commit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -49,7 +53,7 @@ impl PullRequest {
 }
 
 /// The fields Gizai asks gh for.
-pub const FIELDS: &str = "number,url,state,isDraft,headRefOid,commits";
+pub const FIELDS: &str = "number,url,state,isDraft,headRefOid,commits,mergeCommit";
 const LIMIT: Duration = Duration::from_secs(60);
 
 /// What the Team Lead's merge_pull_request (GA-86) checks before a merge, as `gh pr view --json` gives it.
@@ -174,6 +178,33 @@ pub fn pulls_for_branch(gh: &Path, dir: &Path, repo: &str, branch: &str) -> Resu
     serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))
 }
 
+/// The commit that merged pull request `number` of `repo` ("owner/name"), as GitHub has it (`mergeCommit`); None while
+/// it isn't merged. `dir` is where gh runs.
+pub fn merge_commit(gh: &Path, dir: &Path, repo: &str, number: u64) -> Result<Option<String>, String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Merged {
+        #[serde(default)]
+        merge_commit: Option<Commit>,
+    }
+    let n = number.to_string();
+    let out = run_gh(gh, dir, &["pr", "view", &n, "--repo", repo, "--json", "mergeCommit"], None)?;
+    let merged: Merged = serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))?;
+    Ok(merged.merge_commit.map(|c| c.oid).filter(|oid| !oid.is_empty()))
+}
+
+/// Pull request `number`'s diff, as GitHub has it: every file's patch, without colours, and with the files' own
+/// characters (gh neutralises escape sequences in it unless told not to; a gh too old for that flag doesn't). `dir` is
+/// where gh runs.
+pub fn pull_diff(gh: &Path, dir: &Path, repo: &str, number: u64) -> Result<String, String> {
+    let n = number.to_string();
+    let args = ["pr", "diff", &n, "--repo", repo, "--color", "never", "--allow-escape-sequences"];
+    match run_gh(gh, dir, &args, None) {
+        Err(e) if e.contains("unknown flag") && e.contains("allow-escape-sequences") => run_gh(gh, dir, &args[..args.len() - 1], None),
+        done => done,
+    }
+}
+
 /// Opens a pull request from `branch` into `base` and returns its link; when the branch already has an open one, its
 /// link. The body goes in on stdin, so its length and quotes never matter.
 pub fn create_pull(gh: &Path, dir: &Path, repo: &str, branch: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
@@ -233,7 +264,8 @@ fn run_gh(gh: &Path, dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<S
 }
 
 /// Runs `cmd` with `stdin` and returns (succeeded, stdout, stderr). Both outputs are read while it runs (a long
-/// answer can't fill a pipe and hang it); after `limit` it is killed (an error of kind `TimedOut`).
+/// answer can't fill a pipe and hang it), and kept when they aren't all UTF-8 (a pull request's diff of a Latin-1
+/// file); after `limit` it is killed (an error of kind `TimedOut`).
 pub(crate) fn run(mut cmd: Command, stdin: Option<&str>, limit: Duration) -> std::io::Result<(bool, String, String)> {
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
@@ -242,9 +274,9 @@ pub(crate) fn run(mut cmd: Command, stdin: Option<&str>, limit: Duration) -> std
         std::thread::spawn(move || { let _ = pipe.write_all(text.as_bytes()); });
     }
     let read = |pipe: Option<Box<dyn Read + Send>>| std::thread::spawn(move || {
-        let mut s = String::new();
-        if let Some(mut p) = pipe { let _ = p.read_to_string(&mut s); }
-        s
+        let mut bytes = vec![];
+        if let Some(mut p) = pipe { let _ = p.read_to_end(&mut bytes); }
+        String::from_utf8_lossy(&bytes).into_owned()
     });
     let out = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let err = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));

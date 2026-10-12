@@ -600,8 +600,11 @@ async fn after_a_chat_answer_used_a_web_tool_or_the_browser_the_acting_tools_are
         }).collect();
         assert_eq!(msgs.iter().map(|m| m.0.as_str()).collect::<Vec<_>>(), [tool, "mcp__gizai__set_agent_status"], "{msgs:?}");
         let (_, is_error, text) = &msgs[1];
-        assert!(*is_error && text.starts_with("set_agent_status is refused for the rest of this answer") && text.contains(tool)
-                && text.contains("confirm it in a new message"), "{tool}: {msgs:?}");
+        // GA-102: not run, but kept for the user to approve with one click
+        assert!(*is_error && text == &format!("set_agent_status wasn't run: this answer used {tool}, a tool from outside Gizai. Gizai keeps \
+                the call for the user to approve with one click. Tell them in a sentence what it does."), "{tool}: {msgs:?}");
+        let kept = gizai_lib::pending::list(st, &thread).unwrap();
+        assert!(kept.len() == 1 && kept[0].action.tool == "set_agent_status" && kept[0].action.outside_tool == tool, "{tool}: {kept:?}");
         assert_eq!(gizai_core::team::agent(&st.db, &t.backend).unwrap().status, "active", "{tool}: nothing paused");
         assert_eq!(app_chat::used_outside(st, &thread).as_deref(), Some(tool));
     }

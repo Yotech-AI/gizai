@@ -5,6 +5,8 @@
 //! `FAKE_GATE` waits for a fake-go file first (it writes fake-waiting), `FAKE_HANG` hangs until it is stopped.
 // Linux and macOS only: these tests run shell scripts as fake programs, which Windows can't start.
 #![cfg(unix)]
+#[path = "support/data_lock.rs"]
+mod data_lock;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -169,6 +171,7 @@ async fn chat_answer_limits_are_15_minutes_and_60_tool_calls_unless_changed_and_
         assert_eq!((s.max_chat_minutes, s.max_chat_tool_calls, s.max_run_minutes, s.max_run_tool_calls), (120, 300, 90, 200));
     }
     // Gizai starts again on the same data folder
+    data_lock::released(&tmp.path().join("data")).await;
     let st = gizai_lib::test_state(tmp.path());
     let s = runs::get_settings(&st);
     assert_eq!((s.max_chat_minutes, s.max_chat_tool_calls), (120, 300), "saved");
@@ -189,6 +192,7 @@ async fn one_save_keeps_the_run_limits_and_the_chat_answer_limits_together() {
         runs::save_settings(&st, &Settings { max_run_tool_calls: 1000, ..runs::get_settings(&st) }).unwrap();
     }
     // Gizai starts again on the same data folder
+    data_lock::released(&tmp.path().join("data")).await;
     let st = gizai_lib::test_state(tmp.path());
     let s = runs::get_settings(&st);
     assert_eq!((s.max_run_minutes, s.max_run_tool_calls, s.max_chat_minutes, s.max_chat_tool_calls), (30, 1000, 10, 450));

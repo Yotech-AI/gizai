@@ -1,5 +1,6 @@
 // Self-test probes, used only when Gizai runs with GIZAI_SELFTEST (headless cage, test data).
 import { EditorView } from "@codemirror/view";
+import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { emit } from "@tauri-apps/api/event";
 import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, setAgentStatus } from "./api";
 import { isMac } from "./lib/keys";
@@ -180,6 +181,77 @@ export async function docProbe(
   const d3 = await until((d) => d.currentVersion === v0 + 3);
   const kept = d3.bodyMd.includes("Probe two.") && d3.bodyMd.includes("Probe one.");
   return { ok: first && !!banner && kept, first_save: first, conflict_shown: !!banner, kept_mine: kept, versions: [v0, d1.currentVersion, d3.currentVersion] };
+}
+
+/** GA-122: closing Gizai with unsaved text in the doc page's or the Memory page's editor. scripts/close-save-test.sh quits
+ * Gizai from outside (SIGTERM, as scripts/quit-test.sh does) and reads the database afterwards; Gizai doesn't quit itself.
+ * Each report overwrites the last one. `step`:
+ *  - "type": types a line and leaves it unsaved, then leaves the editor and the window (a click on the title, the window's
+ *    blur and hidden: switching windows or minimising) and checks that no version was made; reports `typed`.
+ *  - "none": types nothing; reports `typed: false`.
+ *  - "secret": types an API key into a memory note (Memory refuses to save it), reports `typed`, then waits for the question
+ *    the quit brings, checks Stay is focused and answers Stay (phase "stayed": the window, the text and "Unsaved changes"
+ *    are still there); on the next quit it reports phase "asked-again" and answers Close. */
+export const CLOSE_LINE = "Typed before closing, GA-122.";
+export const CLOSE_SECRET = "sk-a1B2c3D4e5F6g7H8i9J0kLmN";
+export async function closeSaveProbe(
+  step: string,
+  docId: string,
+  api: { getDoc: (id: string) => Promise<{ bodyMd: string; currentVersion: number }>; report: (r: unknown) => Promise<void> },
+) {
+  const out: Record<string, unknown> = { ready: true, step, doc: docId };
+  const report = (more: Record<string, unknown>) => { Object.assign(out, more); return api.report(out); };
+  const status = () => textOf(q(".mem-note-bar [role=status], .topbar .actions [role=status]"));
+  let content = await waitFor(() => q(".doc-editor .cm-content"), 4000);
+  if (!content) {
+    // A memory note opens to read: its Edit switch shows the editor.
+    [...document.querySelectorAll<HTMLButtonElement>(".mem-note-bar .seg button")].find((b) => textOf(b) === "Edit")?.click();
+    content = await waitFor(() => q(".doc-editor .cm-content"), 4000);
+  }
+  if (!content) return report({ error: "no editor", typed: false });
+  const v0 = (await api.getDoc(docId)).currentVersion;
+  out.v0 = v0;
+  out.status_before = status();
+  if (step === "none") return report({ typed: false });
+
+  const view = EditorView.findFromDOM(content as HTMLElement)!;
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  view.focus();
+  await sleep(100);
+  const typed = step === "secret" ? ` ${CLOSE_SECRET}` : ` ${CLOSE_LINE}`;
+  document.execCommand("insertText", false, typed);
+  out.status_typed = await waitFor(() => (status().startsWith("Unsaved changes") ? status() : null), 3000);
+  // Leaving the editor and the window: no version (GA-118 and GA-122).
+  q<HTMLInputElement>(".title-input")?.focus();
+  window.dispatchEvent(new Event("blur"));
+  Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+  await sleep(1500);
+  Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+  window.dispatchEvent(new Event("focus"));
+  out.version_after_blur = (await api.getDoc(docId)).currentVersion;
+  out.status_after_blur = status();
+  await report({ typed: docOf(content).endsWith(typed) });
+  if (step !== "secret") return;
+
+  const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>(".ask button")].find((b) => textOf(b) === name);
+  const asked = await waitFor(() => q(".ask"), 30000);
+  if (!asked) return report({ phase: "stayed", error: "no question" });
+  const question = textOf(q(".ask h2"));
+  const stayFocused = document.activeElement === button("Stay");
+  button("Stay")?.click();
+  await sleep(500);
+  const saved = await api.getDoc(docId);
+  await report({
+    phase: "stayed", question, stay_focused: stayFocused, asked_gone: !q(".ask"), text_kept: docOf(content).endsWith(typed),
+    status_stayed: status(), error_shown: textOf(q(".mem-note .error-banner, .main > .error-banner")), version_stayed: saved.currentVersion,
+    visible: document.visibilityState,
+  });
+  const again = await waitFor(() => q(".ask"), 60000);
+  if (!again) return report({ phase: "asked-again", error: "no second question" });
+  await report({ phase: "asked-again", question_again: textOf(q(".ask h2")) });
+  button("Close")?.click();
 }
 
 function typeInto(el: HTMLInputElement | HTMLTextAreaElement, text: string) {
@@ -2443,4 +2515,260 @@ async function graphPartD(agentId: string) {
 
   const ok = missingOk && card && agent && tagOk && textOf(q(".graph-count")) === "" && notes0.startsWith("502 notes");
   return { ok, part: "d", missing_ok: missingOk, card, agent, tag_ok: tagOk, notes0, ...out };
+}
+
+// ---- GA-112: a card's Changes view (prep_changes' cards) ----
+
+/** Waits frame by frame (for timings finer than waitFor's 50 ms). */
+async function waitFrames<T>(f: () => T | null | undefined, ms = 5000): Promise<T | null> {
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) { const v = f(); if (v) return v; await nextFrame(); }
+  return null;
+}
+const key = (el: Element, k: string, mods: KeyboardEventInit = {}) =>
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...mods }));
+const textIn = (sel: string, root: ParentNode = document) => (root.querySelector(sel)?.textContent ?? "").replace(/\s+/g, " ").trim();
+/** A colour token as the browser computes it, for comparing with an element's computed colour. */
+function tokenColour(name: string) {
+  const el = document.body.appendChild(document.createElement("div"));
+  el.style.backgroundColor = `var(${name})`;
+  const c = getComputedStyle(el).backgroundColor;
+  el.remove();
+  return c;
+}
+/** The first box's code drawn: the first screen of the Changes view. */
+const firstScreen = () => {
+  const box = document.querySelector(".chg-diffs .chg-box");
+  return box?.querySelector(".cm-content .cm-line, .chg-note:not(.faint)") ?? null;
+};
+
+/** GIZAI_SELFTEST_MODE=changes-a:<ids> (the view on the worktree card, its folds, numbers, colours, keys, a run's changes
+ *  and each state) or changes-b:<ids> (speed: the 2,000-line and the 15,000-line, 245-file cards). <ids> as prep_changes
+ *  prints them. */
+export async function changesProbe(part: "a" | "b", ids: string[]) {
+  const [card, noBranch, branchOnly, merged, none, e2000, f15000, run1, run2] = ids;
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const open = async (hash: string, ready: () => Element | null | undefined, ms = 8000) => {
+    window.location.hash = hash;
+    await sleep(150); // the page before has gone
+    return waitFor(ready, ms);
+  };
+  if (part === "a") {
+    await open(`#/task/${card}/changes`, () => document.querySelector(".chg .chg-file"));
+    const rows = [...document.querySelectorAll<HTMLElement>(".chg-file")];
+    out.files = rows.length;
+    check(rows.length === 9, `9 changed files in the list, not ${rows.length}`);
+    check(textIn(".chg-sum .src") === "Since main", `heading: ${textIn(".chg-sum .src")}`);
+    check(document.querySelectorAll(".chg-file .chg-dot").length === 2 && /2 files not committed yet/.test(textIn(".chg-sum .unc")), "2 files not committed yet");
+    const tab = textIn(".task-tabs .tab[aria-selected=true]");
+    // a diffstat is two spans side by side, spaced by CSS (D1): its text has no space between the counts
+    check(/^Changes \+\d+−\d+$/.test(tab), `the tab's counts: ${tab}`);
+    // a click in the list scrolls its file to the top
+    const diffs = document.querySelector<HTMLElement>(".chg-diffs")!;
+    // the view opens on the first file shown (folders first, the top level last), not README.md, git's first path; its box
+    // is at the top of the diffs, and n and p go forward and back from it at once
+    const first = rows[0]?.getAttribute("data-path");
+    out.opensOn = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(first === "assets/logo.png" && out.opensOn === first, `the view opens on the first file shown, assets/logo.png: ${out.opensOn} (first row ${first})`);
+    const firstBox = document.querySelector<HTMLElement>(".chg-diffs .chg-box");
+    check(firstBox?.getAttribute("data-path") === first && diffs.scrollTop === 0
+      && Math.abs(firstBox.getBoundingClientRect().top - diffs.getBoundingClientRect().top) <= 16, "the first file's box is at the top of the diffs");
+    const chg0 = document.querySelector<HTMLElement>(".chg")!;
+    key(chg0, "n");
+    await sleep(300);
+    out.nFromStart = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.nFromStart === rows[1]?.getAttribute("data-path") && out.nFromStart === "src/added.rs", `n from the start goes to the second file shown: ${out.nFromStart}`);
+    key(chg0, "p");
+    await sleep(300);
+    check(document.querySelector(".chg-file.on")?.getAttribute("data-path") === first, "p from there comes back to the first file");
+    document.querySelector<HTMLElement>('.chg-file[data-path="src/big.ts"]')!.click();
+    const big = await waitFor(() => document.querySelector<HTMLElement>('.chg-box[data-path="src/big.ts"] .cm-editor'));
+    await sleep(600);
+    const box = document.querySelector<HTMLElement>('.chg-box[data-path="src/big.ts"]')!;
+    out.boxTop = Math.round(box.getBoundingClientRect().top - diffs.getBoundingClientRect().top);
+    check(Math.abs(out.boxTop as number) <= 16, `a click in the list puts src/big.ts at the top (${out.boxTop}px off)`);
+    check(document.querySelector('.chg-file.on')?.getAttribute("data-path") === "src/big.ts", "src/big.ts is the current file");
+    // git's diff: 40 scattered one-line changes, not big blocks, and the list's +40 −40
+    const view = big && EditorView.findFromDOM(big);
+    const chunks = view ? getChunks(view.state)?.chunks ?? [] : [];
+    const orig = view ? getOriginalDoc(view.state) : null;
+    let add = 0, del = 0, widest = 0;
+    for (const c of chunks) {
+      const a = c.toA > c.fromA ? orig!.lineAt(c.endA).number - orig!.lineAt(c.fromA).number + 1 : 0;
+      const b = c.toB > c.fromB ? view!.state.doc.lineAt(c.endB).number - view!.state.doc.lineAt(c.fromB).number + 1 : 0;
+      add += b; del += a; widest = Math.max(widest, a, b);
+    }
+    out.bigTs = { chunks: chunks.length, add, del, widest, list: textIn('.chg-file[data-path="src/big.ts"] .diffstat') };
+    check(chunks.length === 40 && widest === 1, `src/big.ts: 40 one-line changes, not ${chunks.length} (widest ${widest} lines)`);
+    check(textIn('.chg-file[data-path="src/big.ts"] .diffstat') === `+${add}−${del}` && add === 40 && del === 40, `src/big.ts shows +${add} −${del}, the list ${textIn('.chg-file[data-path="src/big.ts"] .diffstat')}`);
+    // removed lines show their old numbers (the first change is line 10)
+    out.oldNumber = textIn(".cm-lineNumbers .cm-diffStack", box);
+    check(out.oldNumber === "10", `the first removed line's old number: ${out.oldNumber}`);
+    // folds: 3 lines around changes; the one between lines 10 and 47 hides 30, ↓ 20 shows 20, a click all
+    const foldLabels = () => [...box.querySelectorAll(".cm-diffFold .fold-all")].map((b) => b.textContent);
+    out.folds = foldLabels().slice(0, 3);
+    check(foldLabels()[0] === "6 unchanged lines" && foldLabels()[1] === "30 unchanged lines", `fold labels: ${foldLabels().slice(0, 2).join(", ")}`);
+    const fold = [...box.querySelectorAll<HTMLElement>(".cm-diffFold")].find((f) => f.textContent?.startsWith("30 unchanged lines"));
+    fold?.querySelector<HTMLElement>('[data-how="down"]')?.click();
+    await sleep(200);
+    const after = [...box.querySelectorAll<HTMLElement>(".cm-diffFold")].find((f) => f.textContent?.startsWith("10 unchanged lines"));
+    check(after && !after.querySelector(".fold-step"), "↓ 20 leaves 10 unchanged lines, without steps");
+    after?.querySelector<HTMLElement>(".fold-all")?.click();
+    await sleep(200);
+    const labels = foldLabels();
+    check(!labels.includes("10 unchanged lines") && labels[0] === "6 unchanged lines", `a click on the count shows all its lines: ${labels.slice(0, 3)}`);
+    // the colours, in dark and in light
+    const line = box.querySelector(".cm-changedLine"), deleted = box.querySelector(".cm-deletedChunk");
+    const colours = () => ({ add: line && getComputedStyle(line).backgroundColor, del: deleted && getComputedStyle(deleted).backgroundColor,
+      addSoft: tokenColour("--diff-add-soft"), delSoft: tokenColour("--diff-del-soft") });
+    const dark = colours();
+    const theme = document.documentElement.dataset.theme;
+    document.documentElement.dataset.theme = "light";
+    await nextFrame();
+    const light = colours();
+    if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+    out.colours = { dark, light };
+    check(dark.add === dark.addSoft && dark.del === dark.delSoft && light.add === light.addSoft && light.del === light.delSoft && dark.add !== light.add,
+      `diff-add-soft and diff-del-soft on changed lines in dark and light: ${JSON.stringify({ dark, light })}`);
+    // keys: n and p, Alt+↓, [ and Esc
+    const chg = document.querySelector<HTMLElement>(".chg")!;
+    chg.focus();
+    key(chg, "n");
+    await sleep(300);
+    out.afterN = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.afterN === "src/folder_rules.rs", `n goes to the next file: ${out.afterN}`);
+    key(chg, "p");
+    await sleep(300);
+    check(document.querySelector(".chg-file.on")?.getAttribute("data-path") === "src/big.ts", "p goes back");
+    // a filter, cleared again: n and p still work
+    const filter = document.querySelector<HTMLInputElement>(".chg-filter input")!;
+    typeInto(filter, "big");
+    await sleep(200);
+    out.filtered = [[...document.querySelectorAll(".chg-file")].map((r) => r.getAttribute("data-path")).join(), textIn(".chg-sum .tot")];
+    check((out.filtered as string[])[0] === "src/big.ts" && /1 of 9 files$/.test(textIn(".chg-sum .tot")), `the filter "big": ${out.filtered}`);
+    typeInto(filter, "");
+    await sleep(300);
+    check(document.querySelectorAll(".chg-file").length === 9, "clearing the filter shows the 9 files again");
+    key(chg, "n");
+    await sleep(300);
+    const nAfterClear = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    key(chg, "p");
+    await sleep(300);
+    out.afterClear = [nAfterClear, document.querySelector(".chg-file.on")?.getAttribute("data-path")];
+    check(nAfterClear === "src/folder_rules.rs" && (out.afterClear as string[])[1] === "src/big.ts", `n and p after the filter is cleared: ${out.afterClear}`);
+    await sleep(2100); // the click's pin ends
+    // the highlight follows the scroll. A scroll that isn't the wheel (the scrollbar dragged), 2 s after n and p: src/added.rs
+    // (120 added lines) at the top
+    const addedBox = document.querySelector<HTMLElement>('.chg-box[data-path="src/added.rs"]')!;
+    diffs.scrollTop = addedBox.offsetTop + 10;
+    await sleep(300);
+    out.followsScrollbar = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.followsScrollbar === "src/added.rs", `2 s after p, the highlight follows a scroll that isn't the wheel (the scrollbar) to src/added.rs: ${out.followsScrollbar}`);
+    // the wheel's scroll, back to the top: the first file
+    diffs.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    diffs.scrollTop = 0;
+    await sleep(300);
+    out.followsWheel = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.followsWheel === "assets/logo.png", `the highlight follows the wheel's scroll to assets/logo.png: ${out.followsWheel}`);
+    // within a click's 2 s: a click on a fold's arrows in a box keeps the pin, so a scroll that isn't the wheel leaves the
+    // clicked file current; a press on the scrollbar (the diffs' own element) or the wheel ends it at once, and the
+    // highlight follows the scroll without the view jumping back to the clicked file
+    const onFile = () => document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    const bigRow = document.querySelector<HTMLElement>('.chg-file[data-path="src/big.ts"]')!;
+    bigRow.click();
+    await sleep(300);
+    const arrow = box.querySelector<HTMLElement>(".cm-diffFold .fold-step") ?? box.querySelector<HTMLElement>(".cm-diffFold [data-how]");
+    arrow?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    arrow?.click();
+    await sleep(100);
+    diffs.scrollTop = addedBox.offsetTop + 10;
+    await sleep(300);
+    out.pinAfterFold = onFile();
+    check(arrow && out.pinAfterFold === "src/big.ts", `within 2 s of a click on src/big.ts, a click on a fold's arrows in its box keeps the pin: ${arrow ? out.pinAfterFold : "no fold arrows"}`);
+    for (const [how, end] of [["scrollbar", () => diffs.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }))],
+      ["wheel", () => diffs.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }))]] as const) {
+      bigRow.click();
+      await sleep(300);
+      end();
+      const to = addedBox.offsetTop + 10;
+      diffs.scrollTop = to;
+      await sleep(300);
+      out[`within2s_${how}`] = [onFile(), Math.round(diffs.scrollTop - to)];
+      check(onFile() === "src/added.rs" && Math.abs(diffs.scrollTop - to) <= 2,
+        `within 2 s of a click on src/big.ts, the ${how} ends the pin: the highlight follows to src/added.rs and the view stays (${out[`within2s_${how}`]})`);
+    }
+    // Alt+↓ from src/big.ts at the top, as after the click
+    diffs.scrollTop = box.offsetTop - 8;
+    await sleep(300);
+    const top0 = diffs.scrollTop;
+    key(chg, "ArrowDown", { altKey: true });
+    await sleep(700);
+    out.altDown = Math.round(diffs.scrollTop - top0);
+    check(diffs.scrollTop > top0, "Alt+↓ scrolls to the next change");
+    key(chg, "[");
+    await sleep(100);
+    check(chg.classList.contains("list-folded"), "[ folds the file list");
+    key(chg, "[");
+    key(chg, "Escape");
+    await sleep(300);
+    check(window.location.hash === `#/task/${encodeURIComponent(card)}`, `Esc goes back to Card: ${window.location.hash}`);
+    // Show changes in the Runs tab, and one run's changes
+    const runsTab = await waitFor(() => [...document.querySelectorAll<HTMLElement>(".doc .tabs .tab")].find((t) => t.textContent?.startsWith("Runs")));
+    runsTab?.click();
+    const shows = await waitFor(() => { const s = document.querySelectorAll(".run-line a.btn"); return s.length === 2 ? s : null; });
+    check(shows, "Show changes beside both runs");
+    await open(`#/task/${card}/changes/run/${run1}`, () => (textIn(".chg-run .src").startsWith("Run by Backend Agent") ? document.querySelector(".chg-file") : null));
+    out.run1 = [...document.querySelectorAll(".chg-file")].map((r) => r.getAttribute("data-path"));
+    check((out.run1 as string[]).join() === "src/added.rs,src/big.ts", `run 1 shows only its commit's files: ${out.run1}`);
+    check(document.querySelectorAll(".chg-commits li").length === 1, "run 1's one commit");
+    await open(`#/task/${card}/changes/run/${run2}`, () => (document.querySelectorAll(".chg-file").length === 5 ? document.querySelector(".chg-file") : null));
+    out.run2 = document.querySelectorAll(".chg-file").length;
+    check(out.run2 === 5, `run 2 shows its 5 files, not ${out.run2}`);
+    // each state
+    await open(`#/task/${noBranch}/changes`, () => document.querySelector(".chg-empty"));
+    out.noBranch = textIn(".chg-empty b");
+    check(out.noBranch === "No changes yet" && !document.querySelector(".task-tabs .diffstat, .task-tabs .n"), `no branch: ${out.noBranch}`);
+    await open(`#/task/${branchOnly}/changes`, () => document.querySelector(".chg-sum .src") && document.querySelector(".chg-file"));
+    out.branchOnly = textIn(".chg-sum .src");
+    check(out.branchOnly === "From branch gizai/kade-changes-branch (its worktree was removed)", `branch only: ${out.branchOnly}`);
+    await open(`#/task/${merged}/changes`, () => (textIn(".chg-sum .src").startsWith("As merged") ? document.querySelector(".chg-file") : null));
+    out.merged = textIn(".chg-sum .src");
+    check(out.merged === "As merged into main (pull request #81)" && document.querySelectorAll(".chg-file").length === 2, `merged: ${out.merged}`);
+    await open(`#/task/${none}/changes`, () => document.querySelector(".chg-empty"));
+    out.none = [textIn(".chg-empty b"), textIn(".task-tabs .tab .n")];
+    check(textIn(".chg-empty b") === "No changes" && textIn(".task-tabs .tab .n") === "No changes", `no changes: ${out.none}`);
+  } else {
+    // speed: from Card to the first screen of Changes, then scrolling the whole column
+    for (const [name, id] of [["d2000", e2000], ["d15000", f15000]] as const) {
+      await open(`#/task/${id}`, () => document.querySelector(".task-tabs .tab .diffstat"), 15000);
+      const t0 = performance.now();
+      document.querySelectorAll<HTMLElement>(".task-tabs .tab")[1].click();
+      const shown = await waitFrames(firstScreen, 5000);
+      const first = Math.round(performance.now() - t0);
+      const diffs = document.querySelector<HTMLElement>(".chg-diffs");
+      // scroll by 60 px a frame for 3 seconds, and time every frame
+      const gaps: number[] = [];
+      let last = performance.now();
+      const end = last + 3000;
+      while (diffs && performance.now() < end) {
+        diffs.scrollTop += 60;
+        await nextFrame();
+        const now = performance.now();
+        gaps.push(now - last);
+        last = now;
+      }
+      gaps.sort((x, y) => x - y);
+      const longest = Math.round(gaps[gaps.length - 1] ?? 0);
+      const fps = Math.round((gaps.length * 1000) / gaps.reduce((n, g) => n + g, 0));
+      const editors = document.querySelectorAll(".chg-box .cm-editor").length;
+      out[name] = { files: document.querySelectorAll(".chg-file").length, firstScreenMs: first, longestFrameMs: longest, fps, editors, scrolled: diffs?.scrollTop };
+      check(shown, `${name}: the first file shows`);
+      check(first <= 300, `${name}: the first screen took ${first} ms (at most 300)`);
+      check(longest <= 100 && fps >= 30, `${name}: scrolling stalled (longest frame ${longest} ms, ${fps} fps)`);
+      check(editors > 3, `${name}: files load as they come into sight (${editors} editors)`);
+    }
+  }
+  return { ok: errors.length === 0, errors, ...out };
 }

@@ -41,6 +41,8 @@ vi.mock("../lib/useLiveRuns", () => ({ useLiveRuns: () => [] }));
 vi.mock("../components/chat/useChat", () => ({ useChatLive: () => [] }));
 const stub = (title: string) => () => <section className="form-section"><header><h3>{title}</h3></header></section>;
 vi.mock("../components/UpdateSettings", () => ({ UpdateSettings: stub("Updates") }));
+// GA-113: Settings → General → Editor folders keeps its own state; EditorFoldersSetting.test.tsx tests it
+vi.mock("../components/EditorFoldersSetting", () => ({ EditorFoldersSetting: stub("Editor folders") }));
 vi.mock("../components/GithubSettings", () => ({ GithubSettings: stub("GitHub") }));
 vi.mock("../components/BitbucketSettings", () => ({ BitbucketSettings: stub("Bitbucket") }));
 vi.mock("../components/CliSettings", () => ({ CliSettings: () => <i>the CLI list</i> }));
@@ -56,7 +58,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 const SETTINGS: Settings = {
   claudeBin: "/usr/bin/claude", dataDir: "/home/you/.local/share/gizai", maxConcurrentRuns: 4, agentsPaused: false, maxRunUsd: null,
   maxRunMinutes: 45, maxRunToolCalls: 400, maxChatMinutes: 15, maxChatToolCalls: 60, pushOver: "ssh",
-  notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true },
+  notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true }, editorRoots: ["~/Herd"],
 };
 const states = (s: Settings = SETTINGS, budget = "") => [s, budget, null, false, 0, []];
 
@@ -143,8 +145,8 @@ describe("Settings' tabs", () => {
 describe("what each tab has", () => {
   const html = render();
   const of = (label: string) => panels(html).find((p) => p.label === label)?.html ?? "";
-  it("General: Quit Gizai completely at the top, Updates, then Data with the folders and the old worktrees", () => {
-    expect(sections(of("General"))).toEqual(["Quit", "Updates", "Data"]);
+  it("General: Quit Gizai completely at the top, Updates, Editor folders (GA-113), then Data with the folders and the old worktrees", () => {
+    expect(sections(of("General"))).toEqual(["Quit", "Updates", "Editor folders", "Data"]);
     const t = text(of("General"));
     for (const s of ["Data folder", "/home/you/.local/share/gizai/worktrees", "Run logs", "Worktrees of finished cards", "the old worktrees"]) expect(t).toContain(s);
   });
@@ -175,7 +177,7 @@ describe("what each tab has", () => {
   });
   it("every section is on exactly one tab", () => {
     const all = sections(html);
-    expect(all).toEqual(["Quit", "Updates", "Data", "Font", "Text size", "Theme and density", "Notifications", "Coding CLIs", "Runs", "MCP servers", "GitHub", "Bitbucket"]);
+    expect(all).toEqual(["Quit", "Updates", "Editor folders", "Data", "Font", "Text size", "Theme and density", "Notifications", "Coding CLIs", "Runs", "MCP servers", "GitHub", "Bitbucket"]);
   });
 });
 

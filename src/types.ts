@@ -51,6 +51,7 @@ export type Task = {
   runForMe?: string[];
   /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
   withLead?: boolean;
+  byHand: boolean;         // pinned to a person: agents leave it alone
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -243,6 +244,44 @@ export type MemoryChange = { note: MemoryNote; version: number; at: number; auth
 export type Refusal = { tool: string; input: string; reason?: string };
 /** A commit a run made: its id and the first line of its message. */
 export type Commit = { sha: string; subject: string };
+/** Where a card's changes come from (§3.2 Q1). "merge": the range saved at the merge, or the merge commit against its first
+ *  parent. "pull": GitHub's or Bitbucket's diff, without the files' texts. */
+export type ChangeSource = "worktree" | "branch" | "merge" | "pull" | "run" | "none";
+export type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange";
+export type FileChange = {
+  path: string;
+  oldPath: string | null;     // renamed or copied from
+  status: FileStatus;
+  additions: number | null;   // null for a binary file
+  deletions: number | null;
+  binary: boolean;
+  uncommitted: boolean;       // not committed yet (worktree only); an untracked file is "added" and uncommitted
+};
+export type CardChanges = {
+  source: ChangeSource;
+  from: string | null;        // the commit the changes are measured from: the merge base, the saved base, or the merge commit's first parent
+  to: string | null;          // the commit they end at; null for the worktree as it is on disk
+  baseLabel: string;          // "origin/main", or "main" for a project without a link
+  additions: number;
+  deletions: number;
+  files: FileChange[];        // in path order
+  note: string | null;        // why there is nothing to show, or where the changes come from when not the worktree
+};
+/** One hunk as git prints it with -U0: "@@ -oldStart,oldLines +newStart,newLines @@". Lines count from 1; when a side has
+ *  0 lines, its start is the line before the change (0 at the top), as in git. */
+export type DiffHunk = { oldStart: number; oldLines: number; newStart: number; newLines: number };
+export type FileDiff = {
+  path: string;
+  oldText: string | null;     // null when added, binary or too large
+  newText: string | null;     // null when deleted, binary or too large
+  hunks: DiffHunk[];          // git's hunks between oldText and newText, in order; [] when binary, too large or source "pull"
+  patch: string | null;       // only for source "pull": this file's part of the diff
+  binary: boolean;
+  tooLarge: boolean;          // over 1 MB on a side
+  oldSize: number;
+  newSize: number;
+  crlf: boolean;
+};
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
   /** Settings → Runs: the limits of an answer of the Team Lead (also a board check and its look at a question). */
@@ -252,7 +291,9 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   /** How Open pull request and Push branch reach GitHub. */
   pushOver: PushOver;
   /** Settings → Notifications: a desktop notification per kind, on or off. */
-  notifications: NotificationSwitches };
+  notifications: NotificationSwitches;
+  editorRoots: string[];   // Settings → General → Editor folders; default ["~/Herd"]
+};
 /** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
  *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
 export type NotificationSwitches = { hold: boolean; waiting: boolean; leadAsks: boolean; leadAnswered: boolean };
@@ -262,6 +303,67 @@ export type OldWorktree = {
   bytes: number; uncommitted: number; live: boolean;
 };
 export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
+
+// ---- the Editor (GA-107, contract C2) ----
+export type EditorFolder = {
+  id: string;                 // the folder's canonical path
+  path: string;               // as shown, ~ for the home folder
+  name: string;               // its own name, or the card's identifier
+  kind: "project" | "root" | "card";
+  projectId: string | null;
+  taskId: string | null;
+  readOnly: boolean;          // a card an agent is working on now
+  readOnlyWhy: string | null;
+};
+export type GitMark = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+export type DirEntry = {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+  ignored: boolean;           // git ignores it: greyed; read-only inside an ignored folder
+  git: GitMark | null;        // for a folder: whether something inside it changed ("modified")
+};
+export type OpenedFile = {
+  path: string;
+  text: string | null;        // null when binary or too large
+  binary: boolean;
+  tooLarge: boolean;          // over 5 MB
+  readOnly: boolean;
+  readOnlyWhy: string | null; // "Over 1 MB", "Ignored by git", "Backend Agent is working on GA-12"
+  crlf: boolean;
+  bom: boolean;
+  version: string;            // what editorWrite checks
+};
+export type SearchHit = { path: string; line: number; column: number; text: string };
+export type SearchResult = { hits: SearchHit[]; truncated: boolean };
+export type FolderGit = { branch: string | null; files: Record<string, GitMark>; uncommitted: number };
+export type EditorApp = { id: "vscode" | "zed" | "phpstorm"; name: string };
+
+// ---- behind main in the Editor (GA-110, contract C3) ----
+export type FolderMain = {
+  mainLabel: string;          // "origin/main"
+  fetchedAt: number | null;   // ms since 1970; null: never fetched
+  fetchError: string | null;
+  branch: string | null;
+  onDefault: boolean;         // on the default branch
+  behind: number;
+  ahead: number;
+  uncommitted: number;
+  canUpdate: boolean;
+  updateSays: string;         // what Update will do (the plan's sentence), or why it can't
+  updating: boolean;
+};
+export type EditorUpdated = {
+  folder: string;
+  ok: boolean;
+  said: string;               // "Moved main 3 commits to 319bf0b and ran npm ci."
+  output: string;             // what git and the install printed, for Show output; "" when nothing
+};
+
+// ---- a person's card (GA-111, contract C4) ----
+/** Where your card by hand is: its worktree (an EditorFolder id), its branch, files with uncommitted changes, commits not pushed. */
+export type HandCard = { taskId: string; folder: string; branch: string; changed: number; unpushed: number };
 
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */
@@ -378,7 +480,22 @@ export type ChatThread = { id: string; agentId: string; title: string; sessionId
   /** The chat's own Runs on (a coding CLI's id); null: it follows the Team Lead's. */
   cli?: string | null;
   /** The coding CLI whose account holds the chat's session. */
-  sessionCli?: string | null };
+  sessionCli?: string | null;
+  /** GA-102: the Team Lead's calls that wait for your approval in it; while there are any, the chat waits for you in the Inbox. */
+  pendingActions?: number };
+/** One line of a preview's diff: in both texts (`same`), only in the new one (`add`) or only in the old one (`del`). */
+export type DiffLine = { kind: "same" | "add" | "del"; text: string };
+/** A label and the value a pending call gives; `from`: the value now, for a value that changes. */
+export type PreviewField = { label: string; value: string; from?: string | null };
+/** What a pending call does, as things are now: one plain line, what it is about and what changes, the text it saves or adds,
+ *  what changes against the current version (a note, an agent's instructions), and why approving fails, when Gizai can tell. */
+export type PendingPreview = { line: string; fields: PreviewField[]; text?: string | null; diff?: DiffLine[] | null; warning?: string | null };
+/** GA-102: a call of the Team Lead's that wasn't run because its answer (`runId`) used a tool from outside Gizai (`outsideTool`). It
+ *  waits under that answer until you approve it (it runs exactly as called, once) or discard it. status: pending, or running while
+ *  an approval runs it. */
+export type PendingAction = { id: string; threadId: string; runId?: string | null; actorId: string; tool: string; args: Record<string, unknown>;
+  outsideTool: string; status: "pending" | "running" | "approved" | "failed" | "discarded" | "replaced"; createdAt: number;
+  decidedAt?: number | null; resultMd?: string | null; preview?: PendingPreview };
 /** role: user | agent | tool | system. Tool messages carry `tool` = {id, input, result?, isError?}. */
 export type ChatMessage = { id: string; threadId: string; role: string; authorId?: string | null; authorName?: string | null;
   bodyMd?: string | null; runId?: string | null; toolName?: string | null; tool?: Record<string, unknown> | null; createdAt: number;
@@ -392,7 +509,9 @@ export type FileCheck = { ok: string[]; failed: string[] };
 /** A chat the Archive found, with the newest of its messages (yours or the Team Lead's) whose text matches; none when only
  *  its title matches, or for an empty search. */
 export type ChatHit = { thread: ChatThread; message?: ChatMessage | null };
-export type ChatNoteMeta = { kind: "switch" | "limit" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[] };
+/** kind "pending" (GA-102): what you decided on a call that waited for you, with `action` (its id), `tool`, `status` and `run`. */
+export type ChatNoteMeta = { kind: "switch" | "limit" | "pending" | string; cli?: string; cliName?: string; limit?: string; resets?: string | null; messageIds?: string[];
+  action?: string; tool?: string; status?: string; run?: string | null };
 /** `seq`: the last change to the text being written that `draft` holds. */
 export type ChatStatus = { threadId: string; runId: string; draft: string; tool?: string | null; seq: number };
 /** A message sent while the Team Lead answers; `held`: it waits for Send now instead of going when the answer is done. */
@@ -418,6 +537,9 @@ export type McpServer = {
   url: string; headerNames: string[];
   /** A client id for sign-in, for a server that doesn't let Gizai register itself. */
   clientId: string;
+  /** Who signs in to an address server: "" Gizai (it registers itself), "claude_code" Claude Code with its own sign-in.
+   * Always "" for a command. */
+  signInBy: string;
   /** Where it was imported from; empty when added by hand. */
   source: string;
 };
@@ -435,7 +557,7 @@ export type McpToolView = {
 };
 export type McpListed = { serverName: string; serverVersion: string; listedAt: number; tools: McpToolView[] };
 export type McpServerView = McpServer & {
-  /** signed_in | needs_sign_in | "" */
+  /** signed_in | needs_sign_in | claude_code (Claude Code signs in, not Gizai) | "" */
   signIn: string;
   problem?: string | null;
   /** Lines whose value isn't in the keychain. */

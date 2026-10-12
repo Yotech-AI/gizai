@@ -195,6 +195,9 @@ pub struct Task {
     /// isn't in the Inbox meanwhile (`questions`).
     #[serde(default)]
     pub with_lead: bool,
+    /// GA-111: pinned to a person, who does it by hand (`workflow::start_by_hand`): agents leave it alone.
+    #[serde(default)]
+    pub by_hand: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

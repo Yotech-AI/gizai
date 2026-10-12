@@ -1,0 +1,151 @@
+<!doctype html>
+<!-- The source of changes.html: node design/code-editor/gen-changes.mjs fills in the {{…}} parts (see its usage). -->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gizai · The Changes view, and colours for code and diffs (GA-104, Code Editor D1)</title>
+<link rel="stylesheet" href="../../src/styles/fonts.css">
+<link rel="stylesheet" href="../../src/styles/tokens.css">
+<link rel="stylesheet" href="../../src/styles/appearance.css">
+<link rel="stylesheet" href="../../src/styles/components.css">
+<link rel="stylesheet" href="../../src/styles/app.css">
+<style>
+{{TOKENS_CSS}}
+</style>
+<link rel="stylesheet" href="changes.css">
+<script src="changes.js" defer></script>
+</head>
+<body data-mode="dark">
+{{SPRITE}}
+<div class="dp">
+<header class="dp-head">
+  <div class="titles">
+    <h1>The Changes view, and colours for code and diffs</h1>
+    <p>GA-104 · Code Editor D1 · design for Jefsev's review, 11 Oct 2026 · from GA-91's research, §5.1 and §5.2 (<span class="mono">docs/research/code-editor.md</span>)</p>
+  </div>
+  <div class="dp-mode">Show
+    <div class="seg" role="group" aria-label="Theme"><button data-mode="dark">Dark</button><button data-mode="light">Light</button><button data-mode="both">Both</button></div>
+    <span><span class="kbd">t</span> switches</span>
+  </div>
+  <ul class="dp-toc">
+    <li><a href="#decisions">Decisions</a></li><li><a href="#card">1. The card</a></li><li><a href="#changes">2. Changes</a></li>
+    <li><a href="#run">3. One run</a></li><li><a href="#states">4. Empty and errors</a></li><li><a href="#sources">5. Where changes come from</a></li>
+    <li><a href="#parts">6. Parts</a></li><li><a href="#diff-colours">7. Diff colours</a></li><li><a href="#code-colours">8. Code colours</a></li>
+    <li><a href="#samples">9. PHP, Blade, TSX, Rust</a></li><li><a href="#rules">10. Rules for design/README.md</a></li><li><a href="#build">11. For F0 and F1</a></li>
+  </ul>
+</header>
+
+<section class="dp-sec" id="decisions">
+  <h2>Decisions</h2>
+  <p>Everything here is drawn with the app's own stylesheets (<span class="mono">src/styles/</span>), its components (top bar, tabs, rows, badges, Empty, the error banner) and type styles; the new parts use tokens only. The code is parsed with Lezer's own grammars and coloured with the new tokens, so it shows what CodeMirror will show.</p>
+  <ol class="why">
+    <li><b>Changes is a tab at the top of the card, full width.</b> Card | Changes sit right under the top bar, so you see at a glance whether a card changed anything and how much (+{{TOTAL_ADD}} −{{TOTAL_DEL}}). A tab next to Comments would put the diff at the bottom of a 920px column; a panel beside the card leaves about 55 characters of code. Full width gives about 110 characters at the usual 1440px window. Properties closes on Changes; <span class="kbd">]</span> still brings it back. The address is <span class="mono">#/task/GA-118/changes</span>.</li>
+    <li><b>The file list is the Memory page's explorer.</b> 260px on <code>side</code>, rows of 28px like the Memory tree, files under their folder (the folder's full path, folders first, then files at the top level), each with a status letter, its counts and a dot when it isn't committed yet. Where the changes come from sits on top, in a sentence. It folds with <span class="kbd">[</span> (the twin of <span class="kbd">]</span> for Properties).</li>
+    <li><b>Every file below each other, in boxes.</b> Each file is a box with a header that sticks while its diff is in sight: path, counts, why it's folded, Open. Boxes make the edge between two files obvious in a long scroll (the largest card here changed 245 files).</li>
+    <li><b>One line-number column.</b> As the research found, CodeMirror's unified view has one; an added or unchanged line shows its number now, a removed line its old number, in red. With the + and − marks that reads without a second column, and it leaves room for code.</li>
+    <li><b>Folds say what they hide and step by 20.</b> "37 unchanged lines" shows them all; ↓ 20 continues down from the change above, ↑ 20 up from the change below. Short folds (20 lines or fewer) have only the count. A fold that can't open (GitHub's diff) says why.</li>
+    <li><b>Big, lock, deleted and binary files say what they are.</b> Lock files, diffs over 3,000 lines and deleted files over 40 lines come folded with a Show button and a word in the header; a file over 1 MB says it's too big and offers your editor; a binary file gives its sizes; a rename without changes is one line.</li>
+    <li><b>Colours: four hues for code, green and red only for changes.</b> Violet keywords, blue functions and tags, gold types and attributes, orange strings and numbers; names in <code>text</code>, punctuation in <code>text-2</code>, comments grey. No teal or magenta (an agent at work, needs you), and no green or red in syntax, so a green line always means added. The values come from the decorative <code>c-*</code> colours where they pass 4.5:1, and every text colour passes 4.5:1 on <code>bg</code> and <code>raised</code> in both themes, and on changed lines too.</li>
+    <li><b>Nothing relies on colour alone.</b> + and − marks, old numbers on removed lines, A M D R letters with their word in a tooltip and for screen readers, "Not committed" in words in the file header, a wavy underline under code the parser can't read.</li>
+  </ol>
+</section>
+
+<section class="dp-sec" id="card">
+  <h2>1. The card, with its Changes tab</h2>
+  <p>The page as it is now, under two new tabs: <b>Card</b> (Lucide <span class="mono">square-kanban</span>) and <b>Changes</b> (<span class="mono">file-diff</span>) with the counts, which load with the card (<span class="mono">card_changes</span>, the file list only). The Pull request panel gets the same counts and <b>Show changes</b>; each run with commits gets <b>Show changes</b> in the Runs tab (the row becomes two buttons side by side: open the run, show its changes).</p>
+  {{SCREEN1}}
+  {{TAB_VARIANTS}}
+</section>
+
+<section class="dp-sec" id="changes">
+  <h2>2. Changes</h2>
+  <p>GA-118, a Gizai card in Review: {{TOTAL_FILES}} files with one of each kind. Try the carets, the folds (the top one in <span class="mono">sidebar.ts</span>, the long one in <span class="mono">Sidebar.tsx</span>), Show on the folded files, a click in the list, the filter, and the keys after a click in the frame: <span class="kbd">n</span> <span class="kbd">p</span>, <span class="kbd">Alt ↓</span> <span class="kbd">Alt ↑</span>, <span class="kbd">[</span>.</p>
+  {{SCREEN2}}
+  <h3>How it behaves</h3>
+  <ul class="why">
+    <li><b>Scrolling.</b> The list and the diffs scroll on their own. The current file in the list (<code>selected</code>) follows the scroll; a click in the list scrolls its file to the top. A file mounts its editor only when it comes near the screen; until then its box has its header and the height its rows will take.</li>
+    <li><b>Keys</b> (while the view has the focus): <span class="kbd">n</span> and <span class="kbd">p</span> the next and previous file; <span class="kbd">Alt ↓</span> and <span class="kbd">Alt ↑</span> the next and previous change (F1 binds <span class="mono">goToNextChunk</span> and <span class="mono">goToPreviousChunk</span>); <span class="kbd">[</span> folds the file list; <span class="kbd">Esc</span> goes back to Card; <span class="kbd">]</span> shows Properties.</li>
+    <li><b>The filter</b> narrows the list and the diffs to paths that hold its text; with no match: "No file matches “…”. Clear the filter". The heading then reads "3 of 10 files".</li>
+    <li><b>Open</b> opens the file in the Editor at that change. It shows only while the card's worktree is there and the Editor (F2) is built; Open in on the top bar offers VS Code, Zed or PhpStorm (D2, B2).</li>
+    <li><b>Long lines</b> scroll sideways inside their file; the numbers stay put (CodeMirror's gutter). A removed block of more than 3,000 characters shows without syntax colours: CodeMirror skips them to stay quick (<span class="mono">syntaxHighlightDeletionsMaxLength</span>).</li>
+    <li><b>Changed words</b> are marked when the old and new line share enough (CodeMirror's own diff on the hunk); a line rewritten from scratch is just removed and added.</li>
+  </ul>
+</section>
+
+<section class="dp-sec" id="run">
+  <h2>3. One run's changes</h2>
+  <p>Show changes on a run opens the same view, limited to what that run committed (<span class="mono">run_changes</span>: from the commit it started at to the one it ended at). The list's heading says whose run and when, lists its commits, and <b>All changes</b> goes back. The tab keeps the card's own counts. The address could be <span class="mono">#/task/KADE-41/changes/run/&lt;run id&gt;</span>.</p>
+  {{SCREEN3}}
+</section>
+
+<section class="dp-sec" id="states">
+  <h2>4. Empty states and errors</h2>
+  <p>Each says what is going on and, where there is one, offers the one thing to do. A failure goes in the error banner, as everywhere in the app. While the file list loads, the heading says so; a file that is still loading, or failed, says it in its own box, with Try again.</p>
+  {{STATES}}
+</section>
+
+<section class="dp-sec" id="sources">
+  <h2>5. Where the changes come from</h2>
+  <p>The list's heading names the source when it isn't the card's own worktree (research §3.2 Q1), so a merged card never looks like work in progress.</p>
+  {{SOURCES}}
+  {{PULL_FOLD}}
+</section>
+
+<section class="dp-sec" id="parts">
+  <h2>6. Parts</h2>
+  {{PARTS_LIST}}
+  {{PARTS_HEADERS}}
+</section>
+
+<section class="dp-sec" id="diff-colours">
+  <h2>7. Colours for diffs</h2>
+  <p>Contrast is worked out from the values (WCAG 2): on <code>bg</code> and <code>raised</code>, which the card asks for, and on the changed-line and changed-word backgrounds, which a diff needs. The tints are drawn over <code>bg</code>; the word tint over the line tint.</p>
+  {{DIFF_TABLE}}
+</section>
+
+<section class="dp-sec" id="code-colours">
+  <h2>8. Colours for code</h2>
+  <p>Fourteen names, five values of their own and nine that follow another token (written <code>= …</code>), so a later card can split them without touching code. Every one is at least 4.5:1 on <code>bg</code> and <code>raised</code> in both themes and on the changed-line tints; on the changed-word tint every colour keeps 4.5:1 except comments in dark (3.4:1) and <code>syn-invalid</code>. None is teal or magenta.</p>
+  {{SYN_TABLE}}
+  <h3>Which Lezer tags get which token</h3>
+  <p>For F0's <span class="mono">HighlightStyle</span> in <span class="mono">src/lib/codeTheme.ts</span>. A tag not listed falls back to its parent (Lezer's own rule), and anything else is <code>text</code>.</p>
+  {{MAP_TABLE}}
+</section>
+
+<section class="dp-sec" id="samples">
+  <h2>9. PHP, Blade, TSX and Rust</h2>
+  <p>Parsed with <span class="mono">@lezer/php</span>, <span class="mono">@lezer/html</span>, <span class="mono">@lezer/javascript</span> (JSX and TypeScript) and <span class="mono">@lezer/rust</span>. Blade is HTML with PHP inside <code>{{ }}</code>, <code>{!! !!}</code>, a directive's brackets and <code>@php</code>, the way F0's Blade language will read it: directives as keywords, the delimiters as meta, <code>{{-- --}}</code> as a comment.</p>
+  {{SAMPLES}}
+</section>
+
+<section class="dp-sec" id="rules">
+  <h2>10. Rules for design/README.md</h2>
+  <p>F0 adds this under Visual foundations, after "Colour carries meaning, never decoration". The same text is in <span class="mono">design/code-editor/README.md</span>.</p>
+  <div class="rules">
+    <h4>Code and diffs</h4>
+    <p>Code (the Changes view, the Editor, code in Markdown) has colours of its own: <code>syn-*</code> for syntax and <code>diff-*</code> for changes. They appear only inside code: never on buttons, badges, status, labels or charts.</p>
+    <ul class="why">
+      <li><b>Changes are green and red of their own.</b> An added line has <code>diff-add-soft</code> behind it and a removed line <code>diff-del-soft</code>; the characters that changed get <code>diff-add-strong</code> or <code>diff-del-strong</code> on top. The + and − marks, a changed line's number, the A and D letters and the counts (<code>+964 −112</code>, in mono) are <code>diff-add</code> and <code>diff-del</code>. A fold bar is <code>diff-fold</code> with <code>text-2</code>. They're near <code>success</code> and <code>danger</code> but separate: those mean run and form outcomes, so neither stands in for the other.</li>
+      <li><b>Syntax uses four hues and the greys.</b> Violet <code>syn-keyword</code> (and <code>syn-meta</code>), blue <code>syn-function</code> (and <code>syn-tag</code>), gold <code>syn-type</code> (and <code>syn-attribute</code>), orange <code>syn-string</code> (and <code>syn-number</code>). Names stay <code>text</code>, operators and punctuation <code>text-2</code>, comments <code>syn-comment</code>. <code>syn-invalid</code> is <code>danger</code> with a wavy underline.</li>
+      <li><b>No teal or magenta in code</b>: they mean an agent at work and "needs you". <b>No green or red in syntax</b>: they mean added and removed.</li>
+      <li><b>Contrast:</b> every syntax and diff text colour is at least 4.5:1 on <code>bg</code> and <code>raised</code> in both themes, and on changed lines; on a changed word every one but comments (3.4:1 in dark) and <code>syn-invalid</code>. Check a new value against all four before it goes in.</li>
+      <li><b>Never colour alone:</b> changed lines keep their + or −, removed lines their old number, status letters their word (tooltip and screen readers), and "Not committed" is written in the file's header.</li>
+      <li><b>Type:</b> code is <code>t-code</code> in <code>--font-mono</code>, which Settings → Appearance changes as everywhere. No italic or bold for syntax: the bundled fonts have no italic, and colour already does the work. In text, write arrows with Lucide's <code>arrow-right</code>: → isn't in Atkinson Hyperlegible's files (↑ and ↓ are).</li>
+    </ul>
+  </div>
+</section>
+
+<section class="dp-sec" id="build">
+  <h2>11. For F0 and F1</h2>
+  <ul class="why">
+    <li><b>F0:</b> <span class="mono">design/code-editor/new-tokens.json</span> holds the 21 tokens in <span class="mono">design/tokens.json</span>'s format (after <code>c-grey</code>); then <span class="mono">node scripts/tokens-css.ts</span>. The aliases (<code>{text}</code>, <code>{syn-string}</code>…) work on <code>:root</code> as <code>st-review</code> does. The tag map is in section 8; Blade as in section 9.</li>
+    <li><b>F1:</b> the first part of <span class="mono">design/code-editor/changes.css</span> is the view's CSS, all tokens. Sizes: tabs as <code>.tabs</code> with 16px sides; file list 260px on <code>side</code>; folder rows 26px and file rows 28px (+ <code>--ui-box</code>); file header 40px (+ <code>--ui-box</code>) on <code>raised</code>, sticky; boxes <code>radius-l</code>, 12px apart, the column padded 12px 20px; code <code>t-code</code> (12.5px/20px); the number column as wide as the file's longest number plus 20px, then 18px for the mark; fold bar at least 28px.</li>
+    <li><b>Thresholds</b> (research §3.2 Q2): 3 lines of context; folds of 4 lines or more; steps of 20; folded from the start: lock files (<span class="mono">package-lock.json</span>, <span class="mono">composer.lock</span>, <span class="mono">Cargo.lock</span>, <span class="mono">yarn.lock</span>, <span class="mono">pnpm-lock.yaml</span>), built files (<span class="mono">dist/</span>, <span class="mono">build/</span>, <span class="mono">*.min.js</span>, <span class="mono">*.map</span>, <span class="mono">linguist-generated</span> in <span class="mono">.gitattributes</span>), diffs over 3,000 lines, deleted files over 40 lines; too big over 1 MB a side (<span class="mono">tooLarge</span>).</li>
+    <li><b>Rebuild this page</b> with <span class="mono">node design/code-editor/gen-changes.mjs</span> (its first lines say how until F0 installs the PHP and Rust grammars).</li>
+  </ul>
+  <p class="dp-note">Not in this card: the Editor's screens (D2, which uses these token names), side by side diffs, comments on lines.</p>
+</section>
+</div>
+</body>
+</html>

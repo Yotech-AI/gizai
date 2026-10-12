@@ -1,21 +1,41 @@
 type Card = { hold?: string | null; stateCategory: string; assigneeId?: string | null; runForMe?: string[]; withLead?: boolean };
-type Chat = { kind?: string | null; waiting?: boolean; updatedAt: number };
+type Chat = { kind?: string | null; waiting?: boolean; updatedAt: number; pendingActions?: number };
 
-/** The chats the Team Lead started that still wait for you, newest first: they head the Inbox. */
-export function waitingChats<T extends Chat>(threads: T[]): T[] {
-  return threads.filter((t) => !!t.kind && !!t.waiting).sort((a, b) => b.updatedAt - a.updatedAt);
+/** GA-102: calls of the Team Lead's wait for your approval in the chat (it couldn't make them after a tool from outside Gizai). */
+export function hasPending(t: Chat): boolean {
+  return (t.pendingActions ?? 0) > 0;
 }
 
-/** The Inbox count: the cards that need you and the Team Lead's chats that wait for you. */
+/** Whether a chat waits for you: one the Team Lead started that you haven't answered or dismissed, or one with calls of the Team
+ *  Lead's that wait for your approval, whoever started it. */
+export function chatWaits(t: Chat): boolean {
+  return (!!t.kind && !!t.waiting) || hasPending(t);
+}
+
+/** The chats that wait for you (`chatWaits`), newest first: they head the Inbox. */
+export function waitingChats<T extends Chat>(threads: T[]): T[] {
+  return threads.filter(chatWaits).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** The Inbox count: the cards that need you and the chats that wait for you. */
 export function inboxCount(tasks: Card[], threads: Chat[], youId: string): number {
   return tasks.filter((t) => needsYou(t, youId)).length + waitingChats(threads).length;
 }
 
-/** "Question" or "Approval" while the chat waits for you; "Team Lead" after. */
+/** "Approval" while calls of the Team Lead's wait for your approval in the chat; else "Question" or "Approval" while a chat the Team
+ *  Lead started waits for you, "Team Lead" after; nothing for your own chats. */
 export function chatLabel(t: Chat): string | null {
+  if (hasPending(t)) return "Approval";
   if (!t.kind) return null;
   if (!t.waiting) return "Team Lead";
   return t.kind === "approval" ? "Approval" : "Question";
+}
+
+/** What the label says when you point at it. */
+export function chatLabelTitle(t: Chat): string {
+  const n = t.pendingActions ?? 0;
+  if (n > 0) return n === 1 ? "A call of the Team Lead's waits for your approval here" : `${n} calls of the Team Lead's wait for your approval here`;
+  return t.waiting ? "The Team Lead asks you this" : "The Team Lead started this chat";
 }
 
 /** The Inbox: open cards on hold (an agent or a gate needs a person), except a card whose question is with the Team Lead

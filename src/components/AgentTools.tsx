@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { agentMcp, listMcpServers } from "../api";
-import { actsAsYou, lastRunLabel, npmWarning, RISK_BADGE, RISK_LABEL, signInLabel, switchServer, switchTool, toolsSummary, TRANSPORT_LABEL } from "../lib/mcp";
+import { actsAsYou, CLAUDE_CODE_NO_LIST, lastRunLabel, npmWarning, RISK_BADGE, RISK_LABEL, signInLabel, switchServer, switchTool, toolsSummary, TRANSPORT_LABEL } from "../lib/mcp";
 import type { AgentMcpView, AgentServer, CliKind, McpServerView } from "../types";
 import { Field } from "./Form";
 import { McpToolList } from "./McpTools";
@@ -46,6 +46,8 @@ export function AgentToolsField({ agentId, kind, allowedTools, value, onChange }
             const last = view?.servers.find((v) => v.serverId === s.id)?.lastRun;
             const lr = last ? lastRunLabel(last.status) : null;
             const you = actsAsYou(s);
+            // Claude Code signs in to it: Gizai can't list its tools, so a run gives the agent all of them.
+            const claude = s.signIn === "claude_code";
             const off = sw?.toolsOff ?? [];
             const nOn = tools.filter((t) => !off.includes(t.name)).length;
             return (
@@ -58,14 +60,14 @@ export function AgentToolsField({ agentId, kind, allowedTools, value, onChange }
                   {lr && <span className={`badge ${lr.badge}`} title={`At ${new Date(last!.at).toLocaleString()}`}>{lr.text}</span>}
                   <span className={`badge ${RISK_BADGE[sum.risk]}`}>{RISK_LABEL[sum.risk]}</span>
                 </div>
-                <span className="ma-line">{sum.text}{on && tools.length > 0 && off.length > 0 ? ` ${nOn} of ${tools.length} on.` : ""}</span>
+                <span className="ma-line">{claude ? CLAUDE_CODE_NO_LIST : sum.text}{on && tools.length > 0 && off.length > 0 ? ` ${nOn} of ${tools.length} on.` : ""}</span>
                 {you && <span className="warn">{you} Switch it on only for an agent you trust with that.</span>}
                 {s.signIn === "needs_sign_in" && <span className="warn">Needs sign-in: a run leaves it out until you sign in in Settings → MCP servers.</span>}
                 {s.missing.length > 0 && <span className="warn">No value saved for {s.missing.join(", ")}: a run leaves it out until you enter it in Settings → MCP servers.</span>}
                 {on && tools.length > 0 && (
                   <McpToolList tools={tools} disabled={disabled} isOn={(name) => !off.includes(name)} onSwitch={(name, v) => onChange(switchTool(value, s.id, name, v))} />
                 )}
-                {on && !s.listed && <span className="hint">List its tools in Settings → MCP servers to switch them one by one; until then, all its tools are on.</span>}
+                {on && !s.listed && !claude && <span className="hint">List its tools in Settings → MCP servers to switch them one by one; until then, all its tools are on.</span>}
               </li>
             );
           })}

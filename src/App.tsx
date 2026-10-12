@@ -4,6 +4,7 @@ import { useRoute } from "./router";
 import type { AppInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
+import { CloseGuard } from "./components/CloseGuard";
 import { Placeholder } from "./pages/Placeholder";
 import { ClientsPage } from "./pages/ClientsPage";
 import { ClientPage } from "./pages/ClientPage";
@@ -19,8 +20,9 @@ import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { MemoryPage } from "./pages/MemoryPage";
+import { EditorPage } from "./pages/EditorPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 
 export default function App() {
@@ -74,6 +76,13 @@ export default function App() {
         }
         document.body.dataset.ready = "1";
         if (i.selftest) {
+          // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the
+          // probe types in the editor and reports; the script quits Gizai from outside, so the page doesn't.
+          if (i.selftest_mode?.startsWith("close-save:")) {
+            const docId = decodeURIComponent((i.start_route ?? "").replace(/^(doc|memory)\//, ""));
+            await closeSaveProbe(i.selftest_mode.slice(11), docId, { getDoc, report: selftestReport });
+            return;
+          }
           const errors: string[] = [];
           const probe = async <X,>(name: string, f: () => Promise<X>) => { try { return await f(); } catch (err) { errors.push(`${name}: ${err}`); return null; } };
           const team = await probe("getTeam", () => getTeam());
@@ -89,7 +98,13 @@ export default function App() {
           }
           let editor: Awaited<ReturnType<typeof editorProbe>> | undefined;
           let run: Awaited<ReturnType<typeof runProbe>> | undefined;
-          if (i.start_route?.startsWith("task/") && i.selftest_mode === "run") {
+          // GA-112: GIZAI_SELFTEST_MODE=changes-a:<ids> or changes-b:<ids> (prep_changes' cards) on a task route
+          let changes: Awaited<ReturnType<typeof changesProbe>> | undefined;
+          if (i.start_route?.startsWith("task/") && /^changes-[ab]:/.test(i.selftest_mode ?? "")) {
+            const [kind, list = ""] = i.selftest_mode!.split(":");
+            changes = await changesProbe(kind === "changes-a" ? "a" : "b", list.trim().split(/\s+/));
+            if (!changes.ok) errors.push(`changes probe: ${JSON.stringify(changes)}`);
+          } else if (i.start_route?.startsWith("task/") && i.selftest_mode === "run") {
             run = await runProbe(i.start_route.slice(5), {
               getTask,
               clearHang: async (id) => { const t = await getTask(id); await updateTask(id, { descriptionMd: t.descriptionMd.replace("FAKE_HANG", "").trim() }); },
@@ -141,7 +156,7 @@ export default function App() {
             memory = await memoryEmptyProbe();
             if (!memory.ok) errors.push(`memory empty probe: ${JSON.stringify(memory)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory });
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes });
           await exitApp(0);
         }
       })
@@ -158,7 +173,7 @@ export default function App() {
           {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
             : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
             : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
-            : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} />
+            : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} view={route.view === "changes" ? "changes" : "card"} run={route.run} youId={info?.you_id ?? ""} />
             : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />
             : route.page === "agent" && route.id ? <AgentPage key={route.id} id={route.id} />
             : route.page === "team" ? <TeamPage />
@@ -168,11 +183,13 @@ export default function App() {
             : route.page === "users" ? <UsersPage />
             : route.page === "usage" ? <UsagePage />
             : route.page === "memory" ? <MemoryPage key={route.scope ?? "all"} route={route} youId={info?.you_id ?? ""} />
+            : route.page === "editor" ? <EditorPage id={route.id} youId={info?.you_id ?? ""} />
             : route.page === "projects" ? <ProjectsPage />
             : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
             : <Placeholder route={route} info={info} />}
         </main>
         <CommandPalette open={palette} onClose={() => setPalette(false)} onNewTask={() => newTask()} />
+        <CloseGuard />
       </div>
     </DrawerHost>
   );

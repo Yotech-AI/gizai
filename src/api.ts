@@ -1,11 +1,23 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type * as T from "./types";
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const selftestReport = (json: unknown) => invoke<void>("selftest_report", { json: JSON.stringify(json) });
 export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
+
+// Closing Gizai with unsaved text in an editor (GA-122). The page says when it has some; then closing the window or
+// quitting waits for the page's answer: "asking" (the question shows), "close" (go on closing) or "stay".
+export type CloseAnswer = "asking" | "close" | "stay";
+export const setUnsavedEdits = (unsaved: boolean) => invoke<void>("set_unsaved_edits", { unsaved });
+export const closeAnswer = (answer: CloseAnswer) => invoke<void>("close_answer", { answer });
+/** The window's close button. Gizai hides the window itself (or waits for `closeAnswer`), so Tauri's own close never runs. */
+export const onCloseRequested = (cb: () => void): Promise<UnlistenFn> =>
+  getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); cb(); });
+/** A request to quit while the page has unsaved text: Gizai waits for `closeAnswer`. */
+export const onQuitRequested = (cb: () => void): Promise<UnlistenFn> => listen("quit-requested", () => cb());
 
 export const listClients = () => invoke<T.Client[]>("list_clients");
 export const getClient = (id: string) => invoke<T.Client>("get_client", { id });
@@ -165,6 +177,16 @@ export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEve
   listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
+/** A card's changed files with their counts: its worktree (uncommitted changes included) against its merge base with main,
+ *  else its branch, else the range saved at its merge, else its merge commit on main, else the pull request's diff.
+ *  Each file's texts and hunks come from cardFileDiff. */
+export const cardChanges = (taskId: string) => invoke<T.CardChanges>("card_changes", { taskId });
+/** One changed file: its text at `from` and at `to` (null: the worktree as it is on disk), and git's hunks between them. */
+export const cardFileDiff = (taskId: string, path: string, oldPath: string | null, from: string, to: string | null) =>
+  invoke<T.FileDiff>("card_file_diff", { taskId, path, oldPath, from, to });
+/** The changes one run committed: from the commit it started at to the one it ended at. */
+export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes", { runId });
+
 /** Pushes a Review card's branch and opens its pull request: with gh on GitHub, through Bitbucket's API on Bitbucket (keeps an open one). */
 export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
 /** Asks GitHub or Bitbucket about the card's pull request now; a merge moves the card to Done. */
@@ -193,6 +215,55 @@ export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
+
+// ---- the Editor (GA-107, contract C2): `folder` is always an EditorFolder.id, `path` always relative to it, with / ----
+/** The folders the Editor may open: projects' linked folders, the folders under Settings → Editor folders, card worktrees. */
+export const editorFolders = () => invoke<T.EditorFolder[]>("editor_folders");
+/** One folder level, folders first; `dir` "" for the top. */
+export const editorList = (folder: string, dir: string) => invoke<T.DirEntry[]>("editor_list", { folder, dir });
+export const editorRead = (folder: string, path: string) => invoke<T.OpenedFile>("editor_read", { folder, path });
+/** Saves; refuses with "changed on disk" when the file's version isn't `version` any more. Resolves with the new version. */
+export const editorWrite = (folder: string, path: string, text: string, version: string) =>
+  invoke<string>("editor_write", { folder, path, text, version });
+export const editorCreate = (folder: string, path: string, dir: boolean) => invoke<void>("editor_create", { folder, path, dir });
+export const editorRename = (folder: string, from: string, to: string) => invoke<void>("editor_rename", { folder, from, to });
+export const editorDelete = (folder: string, path: string) => invoke<void>("editor_delete", { folder, path });
+/** Go to file: tracked and untracked files git doesn't ignore. */
+export const editorFiles = (folder: string) => invoke<string[]>("editor_files", { folder });
+export const editorSearch = (folder: string, query: string, caseSensitive: boolean, wholeWord: boolean, regex: boolean) =>
+  invoke<T.SearchResult>("editor_search", { folder, query, caseSensitive, wholeWord, regex });
+/** The branch and each changed file's git status (local, no fetch). */
+export const editorGit = (folder: string) => invoke<T.FolderGit>("editor_git", { folder });
+/** The current version of each path ("" for a file that is gone), to notice outside changes. */
+export const editorVersions = (folder: string, paths: string[]) => invoke<string[]>("editor_versions", { folder, paths });
+/** VS Code, Zed and PhpStorm, those found on this computer (under any of their names, such as zeditor). */
+export const editorApps = () => invoke<T.EditorApp[]>("editor_apps");
+/** Opens the folder, or a file in it (at a line when given), in that editor. */
+export const openInApp = (app: T.EditorApp["id"], folder: string, path: string | null, line: number | null) =>
+  invoke<void>("open_in_app", { app, folder, path, line });
+
+// ---- behind main in the Editor (GA-110, contract C3): how a folder stands against main, Fetch and Update ----
+/** How the folder stands against main as last fetched (local only). */
+export const editorMain = (folder: string) => invoke<T.FolderMain>("editor_main", { folder });
+/** Fetches main first (at most 60 s; not again within a minute), then as editorMain. */
+export const editorFetch = (folder: string) => invoke<T.FolderMain>("editor_fetch", { folder });
+/** Starts Update in the background: resolves with what it will do, or rejects with why not (nothing changed). */
+export const editorUpdate = (folder: string) => invoke<string>("editor_update", { folder });
+export const onEditorUpdated = (cb: (e: T.EditorUpdated) => void): Promise<UnlistenFn> =>
+  listen<T.EditorUpdated>("editor-updated", (m) => cb(m.payload));
+
+// ---- a person's card (GA-111, contract C4): a card you do by hand, in the Editor or your own editor ----
+/** Open in editor, on a card assigned to you: makes and prepares its worktree as for an agent, pins the card to you and moves
+ *  it on from To do. Resolves with where it is (its folder is an EditorFolder id). */
+export const startByHand = (taskId: string) => invoke<T.HandCard>("start_by_hand", { taskId });
+export const handCard = (taskId: string) => invoke<T.HandCard>("hand_card", { taskId });
+/** Commits every change in the card's worktree with this message. */
+export const handCommit = (taskId: string, message: string) => invoke<T.Commit>("hand_commit", { taskId, message });
+/** Pushes the card's branch like Gizai's push after a run; resolves with what it did ("Pushed gizai/ga-123-… (2 commits)."). */
+export const handPush = (taskId: string) => invoke<string>("hand_push", { taskId });
+/** Refuses uncommitted changes; pushes, moves the card to Testing (Review with its Testing switch off) and takes the pin off.
+ *  Resolves with the column's name. */
+export const handOver = (taskId: string) => invoke<string>("hand_over", { taskId });
 
 // ---- updates: the release check and Update to <version> ----
 /** This version, what the release check found, and the update that runs (or ran). */
@@ -243,6 +314,15 @@ export const chatClis = () => invoke<T.ChatCli[]>("chat_clis");
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
 /** × on a Team Lead chat in the Inbox: it no longer waits for you. */
 export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });
+/** GA-102: the Team Lead's calls that wait for your approval in a chat (after a tool from outside Gizai), each with its preview. */
+export const pendingActions = (threadId: string) => invoke<T.PendingAction[]>("pending_actions", { threadId });
+/** Approve: runs exactly that call, once, with every other rule in force; the chat gets a note with what happened. Fails for a call
+ *  that no longer waits (approved, discarded, or replaced by a newer one). */
+export const approvePendingAction = (id: string) => invoke<T.PendingAction>("approve_pending_action", { id });
+/** Approve all: the calls you saw, one after the other in the order given. */
+export const approvePendingActions = (ids: string[]) => invoke<T.PendingAction[]>("approve_pending_actions", { ids });
+/** Discard: nothing runs; the chat gets a note with what was discarded. */
+export const discardPendingAction = (id: string) => invoke<T.PendingAction>("discard_pending_action", { id });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
 export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));

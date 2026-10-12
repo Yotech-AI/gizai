@@ -15,7 +15,8 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
       WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
     CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') IN ('asking','answering') FROM runs r
       WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
-      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
+      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person')
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -34,6 +35,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         pr_url: r.get(23)?, pr_state: r.get(24)?, testing: r.get::<_, i64>(25)? != 0, archived_at: r.get(26)?, archived_by: r.get(27)?,
         run_for_me: crate::runs::commands_of(r.get(29)?),
         with_lead: r.get::<_, Option<i64>>(30)?.unwrap_or(0) != 0,
+        by_hand: r.get::<_, i64>(31)? != 0,
     })
 }
 
@@ -220,6 +222,12 @@ fn actor_kind(c: &Connection, id: &str) -> Result<Option<String>> {
 }
 
 pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
+    create_held(db, actor, input, None)
+}
+
+/// `create`, with the card on hold from the start when `hold` (the hold and its reason) is given: in the same write, so no
+/// agent picks it up first (GA-101).
+pub fn create_held(db: &Db, actor: &str, input: TaskInput, hold: Option<(&str, &str)>) -> Result<String> {
     let title = input.title.trim().to_string();
     if title.is_empty() {
         return Err(Error::Invalid("task title is required".into()));
@@ -258,6 +266,9 @@ pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
         w.insert("tasks", &id, serde_json::json!({"identifier": identifier, "title": title}))?;
         if !input.label_ids.is_empty() {
             set_labels_in(w, &id, &input.label_ids)?;
+        }
+        if let Some((hold, reason)) = hold {
+            crate::workflow::set_hold(w, &id, hold, reason)?;
         }
         Ok(id)
     })
@@ -375,6 +386,12 @@ fn update_in(w: &Writer, actor: &str, id: &str, patch: &TaskPatch) -> Result<()>
 /// answers the hold: it comes off (with fresh tries), so the queue or the next board check starts the card. Gates move
 /// cards with `move_in` and keep their holds.
 pub fn move_to(db: &Db, actor: &str, id: &str, state_id: &str, sort_key: &str) -> Result<()> {
+    move_to_held(db, actor, id, state_id, sort_key, None)
+}
+
+/// `move_to`, and then on hold when `hold` (the hold and its reason) is given: in the same write, so no agent picks the
+/// card up first (GA-101).
+pub fn move_to_held(db: &Db, actor: &str, id: &str, state_id: &str, sort_key: &str, hold: Option<(&str, &str)>) -> Result<()> {
     db.write(Some(actor), |w| {
         move_in(w, actor, id, state_id, Some(sort_key))?;
         let c = w.conn();
@@ -385,6 +402,9 @@ pub fn move_to(db: &Db, actor: &str, id: &str, state_id: &str, sort_key: &str) -
             c.execute("UPDATE tasks SET hold=NULL, hold_reason=NULL, hold_at=NULL, fail_count=0, updated_at=?2, version=version+1 WHERE id=?1",
                       rusqlite::params![id, ids::now_ms()])?;
             w.update("tasks", id, serde_json::json!({"hold": null, "released": "moved by hand"}))?;
+        }
+        if let Some((hold, reason)) = hold {
+            crate::workflow::set_hold(w, id, hold, reason)?;
         }
         Ok(())
     })

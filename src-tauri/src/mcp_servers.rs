@@ -19,6 +19,8 @@ use crate::AppState;
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a sign-in waits for the browser to come back.
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// Why List tools is refused (and off in Settings) for a server Claude Code signs in to.
+pub const CLAUDE_CODE_NO_LIST: &str = "Claude Code signs in to this server, so Gizai can't list its tools. An agent that has it on gets all of them.";
 
 /// A secret line from the form: its value only when typed in now (None keeps the one in the keychain).
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -53,7 +55,7 @@ pub struct Listed {
 pub struct ServerView {
     #[serde(flatten)]
     pub server: McpServer,
-    /// signed_in | needs_sign_in | "" (no sign-in asked for so far)
+    /// signed_in | needs_sign_in | claude_code (Claude Code signs in, not Gizai) | "" (no sign-in asked for so far)
     pub sign_in: String,
     /// What went wrong last (List tools, sign-in, a refresh), in plain words.
     pub problem: Option<String>,
@@ -100,10 +102,12 @@ fn view(st: &AppState, s: McpServer, lists: &std::collections::BTreeMap<String, 
         Ok((_, _, m)) => (m, None),
         Err(e) => (vec![], Some(e)),
     };
-    let signed_in = s.transport != "stdio" && st.tokens.load(&s.id).ok().flatten().is_some();
-    let sign_in = if signed_in { "signed_in" } else if cached.is_some_and(|c| c.needs_sign_in) { "needs_sign_in" } else { "" };
+    // Claude Code signs in to it: Gizai's own sign-in and a tool list from before don't apply (an agent gets all its tools).
+    let claude = s.claude_code_signs_in();
+    let signed_in = !claude && s.transport != "stdio" && st.tokens.load(&s.id).ok().flatten().is_some();
+    let sign_in = if claude { core_mcp::CLAUDE_CODE_SIGNS_IN } else if signed_in { "signed_in" } else if cached.is_some_and(|c| c.needs_sign_in) { "needs_sign_in" } else { "" };
     problem = problem.or_else(|| cached.and_then(|c| c.problem.clone()));
-    let listed = cached.filter(|c| c.listed_at > 0).map(|c| Listed {
+    let listed = cached.filter(|c| c.listed_at > 0 && !claude).map(|c| Listed {
         server_name: c.server_name.clone(), server_version: c.server_version.clone(), listed_at: c.listed_at, tools: mcp_tools::describe_all(&c.tools),
     });
     let used_by = agents.iter().filter(|a| a.tools.servers_on().any(|o| o.server_id == s.id)).map(|a| a.name.clone()).collect();
@@ -123,13 +127,19 @@ pub fn get(st: &AppState, id: &str) -> Result<ServerView, String> {
 }
 
 /// Adds or saves a server: the names in the settings, the values typed in now in the keychain. A line taken out loses its
-/// value from the keychain too.
+/// value from the keychain too. Saved as one Claude Code signs in to, Gizai first signs out of it (revoking where the
+/// server offers it), as Remove does, and its Needs sign-in mark and last problem go.
 pub fn save(st: &AppState, input: ServerInput) -> Result<ServerView, String> {
     let k = st.keychain.as_ref();
     let mut s = input.server;
     s.env_names = input.env.iter().map(|l| l.name.trim().to_string()).filter(|n| !n.is_empty()).collect();
     s.header_names = input.headers.iter().map(|l| l.name.trim().to_string()).filter(|n| !n.is_empty()).collect();
-    let old = core_mcp::list(&st.db).map_err(|e| e.to_string())?.into_iter().find(|o| !s.id.is_empty() && o.id == s.id);
+    let all = core_mcp::list(&st.db).map_err(|e| e.to_string())?;
+    let old = all.iter().find(|o| !s.id.is_empty() && o.id == s.id).cloned();
+    let s = core_mcp::clean(&all, s).map_err(|e| e.to_string())?;
+    if s.claude_code_signs_in() && st.tokens.load(&s.id).ok().flatten().is_some() {
+        st.tokens.sign_out(&s.id)?;
+    }
     let saved = core_mcp::save(&st.db, s).map_err(|e| e.to_string())?;
     let id = saved.id.clone();
     // Only the lines the server keeps: a command has no headers and an address no environment.
@@ -152,6 +162,9 @@ pub fn save(st: &AppState, input: ServerInput) -> Result<ServerView, String> {
             let _ = core_mcp::change_tool_list(&st.db, &id, |t| *t = Default::default());
         }
     }
+    if saved.claude_code_signs_in() {
+        core_mcp::change_tool_list(&st.db, &id, |t| { t.needs_sign_in = false; t.problem = None; }).map_err(|e| e.to_string())?;
+    }
     get(st, &id)
 }
 
@@ -172,7 +185,7 @@ pub fn remove(st: &AppState, id: &str) -> Result<(), String> {
 }
 
 /// What Gizai starts or calls for a server, secrets filled in; a signed-in server gets an access token valid for at least
-/// `min_valid` (refreshed when needed).
+/// `min_valid` (refreshed when needed). A server Claude Code signs in to never gets one from Gizai.
 fn target(st: &AppState, s: &McpServer, min_valid: Duration) -> Result<Target, String> {
     let (env, headers, missing) = secrets(st.keychain.as_ref(), s)?;
     if let Some(n) = missing.first() {
@@ -184,7 +197,7 @@ fn target(st: &AppState, s: &McpServer, min_valid: Duration) -> Result<Target, S
         transport, command: gizai_core::clis::expand_home(&s.command, &home), args: s.args.clone(), env, cwd: None,
         url: s.url.clone(), headers,
     };
-    if transport != Transport::Stdio && st.tokens.load(&s.id).ok().flatten().is_some() {
+    if transport != Transport::Stdio && !s.claude_code_signs_in() && st.tokens.load(&s.id).ok().flatten().is_some() {
         let token = st.tokens.access_token(&s.id, min_valid).map_err(|p| token_problem(st, s, p))?;
         return Ok(with_bearer(t, &token));
     }
@@ -219,8 +232,12 @@ fn token_problem(st: &AppState, s: &McpServer, p: TokenProblem) -> String {
 }
 
 /// List tools: starts or calls the server, asks for its tools, stops it, and keeps what it found (by the server's version).
+/// Refused for a server Claude Code signs in to: Gizai has no sign-in to call it with, so it calls nothing and marks nothing.
 pub fn list_tools(st: &AppState, id: &str) -> Result<ServerView, String> {
     let s = core_mcp::get(&st.db, id).map_err(|e| e.to_string())?;
+    if s.claude_code_signs_in() {
+        return Err(CLAUDE_CODE_NO_LIST.to_string());
+    }
     let t = match target(st, &s, Duration::from_secs(5 * 60)) {
         Ok(t) => t,
         Err(e) => {
@@ -266,12 +283,21 @@ pub fn list_tools(st: &AppState, id: &str) -> Result<ServerView, String> {
     get(st, id)
 }
 
+/// Why Gizai doesn't sign in to the server: Claude Code does. None when Gizai signs in to it.
+fn claude_code_refusal(s: &McpServer) -> Option<String> {
+    s.claude_code_signs_in().then(|| format!("Claude Code signs in to {}: sign Claude Code in, not Gizai.", s.name))
+}
+
 /// Starts a sign-in: finds the server's authorization server, registers Gizai there (or uses the entered client id) and
-/// gives the address to open, with the sign-in waiting for its answer.
+/// gives the address to open, with the sign-in waiting for its answer. Refused for a server Claude Code signs in to,
+/// before anything is asked of it.
 pub fn begin_sign_in(st: &AppState, id: &str) -> Result<oauth::Pending, String> {
     let s = core_mcp::get(&st.db, id).map_err(|e| e.to_string())?;
     if s.transport == "stdio" {
         return Err(format!("{} is a command: only a server with an address signs in", s.name));
+    }
+    if let Some(why) = claude_code_refusal(&s) {
+        return Err(why);
     }
     let www = core_mcp::tool_lists(&st.db).map_err(|e| e.to_string())?.get(id).map(|c| c.www_authenticate.clone()).filter(|w| !w.is_empty());
     let d = oauth::discover(&s.url, www.as_deref())?;
@@ -295,15 +321,21 @@ pub fn finish_sign_in(st: &AppState, id: &str, pending: oauth::Pending, timeout:
 
 /// The whole sign-in: `open` gets the address of the sign-in page (the app opens it in your default browser; a test reads it).
 pub fn sign_in(st: &AppState, id: &str, open: impl FnOnce(&str) -> Result<(), String>, timeout: Duration) -> Result<ServerView, String> {
+    // Claude Code signs in to it: refused, and not kept as its problem, as nothing is wrong with the server.
+    if let Some(why) = core_mcp::get(&st.db, id).ok().and_then(|s| claude_code_refusal(&s)) {
+        return Err(why);
+    }
     let pending = begin_sign_in(st, id).inspect_err(|e| { let _ = core_mcp::change_tool_list(&st.db, id, |c| c.problem = Some(e.clone())); })?;
     open(&pending.authorize_url)?;
     finish_sign_in(st, id, pending, timeout)
 }
 
-/// Sign out: revokes where the server offers it and forgets the tokens.
+/// Sign out: revokes where the server offers it and forgets the tokens. A server Claude Code signs in to isn't marked as
+/// needing Gizai's sign-in.
 pub fn sign_out(st: &AppState, id: &str) -> Result<ServerView, String> {
+    let gizai_signs_in = !core_mcp::get(&st.db, id).is_ok_and(|s| s.claude_code_signs_in());
     st.tokens.sign_out(id)?;
-    core_mcp::change_tool_list(&st.db, id, |c| { c.needs_sign_in = true; c.problem = None; }).map_err(|e| e.to_string())?;
+    core_mcp::change_tool_list(&st.db, id, |c| { c.needs_sign_in = gizai_signs_in; c.problem = None; }).map_err(|e| e.to_string())?;
     get(st, id)
 }
 
@@ -432,7 +464,7 @@ pub struct AgentServerView {
     pub on: bool,
     pub tools_off: Vec<String>,
     pub sign_in: String,
-    /// For a signed-in server: its tools act as you in that service.
+    /// For a signed-in server, or one Claude Code signs in to: its tools act as you in that service.
     pub acts_as_you: Option<String>,
     /// Its state in the agent's last run (connected, failed, needs-auth), if it was in one.
     pub last_run: Option<LastRun>,
@@ -489,12 +521,17 @@ pub fn agent_view(st: &AppState, agent_id: &str) -> Result<AgentMcpView, String>
     let servers = list(st)?.into_iter().map(|v| {
         let mine = agent.tools.mcp.iter().find(|o| o.server_id == v.server.id);
         let tools = v.listed.map(|l| l.tools).unwrap_or_default();
-        let (risk, summary) = summary(&tools);
+        let claude = v.sign_in == core_mcp::CLAUDE_CODE_SIGNS_IN;
+        let (risk, summary) = if claude { ("unknown".into(), CLAUDE_CODE_NO_LIST.to_string()) } else { summary(&tools) };
+        let acts_as_you = match v.sign_in.as_str() {
+            "signed_in" => Some(format!("Signed in: its tools act as you in {}.", v.server.name)),
+            core_mcp::CLAUDE_CODE_SIGNS_IN => Some(format!("Claude Code signs in: its tools act as you in {}.", v.server.name)),
+            _ => None,
+        };
         AgentServerView {
             server_id: v.server.id.clone(), name: v.server.name.clone(), transport: v.server.transport.clone(),
             on: mine.is_some_and(|m| m.on), tools_off: mine.map(|m| m.tools_off.clone()).unwrap_or_default(),
-            acts_as_you: (v.sign_in == "signed_in").then(|| format!("Signed in: its tools act as you in {}.", v.server.name)),
-            sign_in: v.sign_in, last_run: last.get(&v.server.name).cloned(), tools, summary, risk,
+            acts_as_you, sign_in: v.sign_in, last_run: last.get(&v.server.name).cloned(), tools, summary, risk,
         }
     }).collect::<Vec<_>>();
     let allowed = if agent.allowed_tools.is_empty() { crate::runs::DEFAULT_TOOLS.iter().map(|s| s.to_string()).collect() } else { agent.allowed_tools.clone() };
@@ -512,7 +549,8 @@ pub fn save_agent(st: &AppState, agent_id: &str, tools: AgentTools) -> Result<Ag
 
 /// The agent's MCP servers for one Claude Code run or chat turn, and a plain note for each one left out (signed out, a
 /// refused refresh, a secret missing from the keychain). A signed-in server's token must last `min_valid` (the run's time
-/// cap), else it is refreshed first.
+/// cap), else it is refreshed first. A server Claude Code signs in to goes in as it is (its address and header lines), for
+/// Claude Code's own sign-in: never left out for Gizai's, and with all its tools, as Gizai can't list them.
 pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunServer>, Vec<String>) {
     let (mut out, mut notes) = (vec![], vec![]);
     let on: Vec<_> = agent.tools.servers_on().collect();
@@ -541,8 +579,9 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
             continue;
         }
         let cached = lists.get(&s.id);
-        let signed_in = s.transport != "stdio" && st.tokens.load(&s.id).ok().flatten().is_some();
-        if !signed_in && cached.is_some_and(|c| c.needs_sign_in) {
+        let claude = s.claude_code_signs_in();
+        let signed_in = !claude && s.transport != "stdio" && st.tokens.load(&s.id).ok().flatten().is_some();
+        if !claude && !signed_in && cached.is_some_and(|c| c.needs_sign_in) {
             notes.push(format!("Left out {}: signed out. Sign in again in Settings → MCP servers.", s.name));
             continue;
         }
@@ -558,10 +597,21 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
             Transport::Stdio => mcp_run::stdio(&t.command, &t.args, &t.env),
             other => mcp_run::remote(other.key(), &t.url, &t.headers),
         };
+        if claude {
+            out.push(RunServer { name: s.name.clone(), entry, tools_off: vec![], known_tools: vec![] });
+            continue;
+        }
         let known_tools = cached.map(|c| c.tools.iter().filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string)).collect()).unwrap_or_default();
         out.push(RunServer { name: s.name.clone(), entry, tools_off: a.tools_off.clone(), known_tools });
     }
     (out, notes)
+}
+
+/// The names of the run's servers that Claude Code signs in to: when the run's init line says one needs sign-in, the run
+/// says to sign Claude Code in (`mcp_run::claude_code_not_connected`), not Gizai.
+pub fn claude_code_names(st: &AppState, servers: &[RunServer]) -> Vec<String> {
+    let all = core_mcp::list(&st.db).unwrap_or_default();
+    servers.iter().filter(|r| all.iter().any(|s| s.name == r.name && s.claude_code_signs_in())).map(|r| r.name.clone()).collect()
 }
 
 /// Keeps each server's state from a run's init line on the agent (its state in the last run).

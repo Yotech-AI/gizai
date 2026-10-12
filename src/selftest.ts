@@ -2906,7 +2906,10 @@ export async function terminalProbe(folder: string) {
     "Ctrl+K, n, t and d do nothing in Gizai while the terminal has the focus");
   term.input("\x05\x15", true); // the line empty again
 
-  // 7. find (Ctrl+Shift+F; Cmd+F on macOS): a box at the top right, the terminal keeps its size
+  // 7. find (Ctrl+Shift+F; Cmd+F on macOS): a box at the top right, the terminal keeps its size. seq pushed the first
+  // gizai-probe out of the 5,000 lines, so it is printed again
+  termType(term, "echo gizai-probe\r");
+  await waitFor(() => termLines(term, true).some((l) => l.trim() === "gizai-probe"), 3000);
   const size = `${term.cols} × ${term.rows}`;
   if (isMac()) term.textarea?.dispatchEvent(termKeyEvent("keydown", { key: "f", code: "KeyF", keyCode: 70 }));
   else termCtrl(term, "f", { shiftKey: true });
@@ -2969,18 +2972,22 @@ export async function terminalProbe(folder: string) {
   await waitFor(() => (probeView(id)?.renderer === (out.webgl2 ? "webgl" : "dom") ? true : null), 2000);
   out.renderer = probeView(id)?.renderer;
   check(out.renderer === (out.webgl2 ? "webgl" : "dom"), `WebGL draws where hardware WebGL2 exists (webgl2 ${out.webgl2}, drawn by ${out.renderer})`);
-  if (out.webgl2) check(first.host.querySelector(".xterm-screen canvas"), "WebGL draws on a canvas");
-  const screen = termLines(term, true);
+  if (out.webgl2) check(first.host.querySelector(".xterm-screen canvas:not(.xterm-link-layer)"), "WebGL draws on a canvas");
+  const screen = termLines(term, true).map((l) => l.trimEnd());
   setWebglAllowed(false);
   const dom = await waitFor(() => { const rows = domRows(first.host); return probeView(id)?.renderer === "dom" && rows.length === term.rows ? rows : null; }, 3000);
   check(dom && JSON.stringify(dom) === JSON.stringify(screen), "with WebGL off the DOM renderer draws the same screen");
   setWebglAllowed(true);
   if (out.webgl2) {
     await waitFor(() => (probeView(id)?.renderer === "webgl" ? true : null), 2000);
-    const canvas = first.host.querySelector<HTMLCanvasElement>(".xterm-screen canvas");
+    const canvas = first.host.querySelector<HTMLCanvasElement>(".xterm-screen canvas:not(.xterm-link-layer)"); // not the links' 2D layer
     canvas?.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext();
     const lost = await waitFor(() => { const rows = domRows(first.host); return probeView(id)?.renderer === "dom" && rows.length === term.rows ? rows : null; }, 6000);
-    check(lost && JSON.stringify(lost) === JSON.stringify(termLines(term, true)), "after the WebGL context is lost the DOM renderer draws the same screen");
+    check(lost && JSON.stringify(lost) === JSON.stringify(termLines(term, true).map((l) => l.trimEnd())), "after the WebGL context is lost the DOM renderer draws the same screen");
+    // WebGL again (as the next time the view shows), so yes runs on the renderer people get
+    setWebglAllowed(false);
+    setWebglAllowed(true);
+    await waitFor(() => (probeView(id)?.renderer === "webgl" ? true : null), 2000);
   }
 
   // 11. yes for 10 s: the window keeps drawing, and Ctrl+C stops it within a second
@@ -2991,7 +2998,7 @@ export async function terminalProbe(folder: string) {
   const ws = term.onWriteParsed(() => { parsed = performance.now(); });
   await sleep(10000);
   going = false;
-  out.yes = { frames, longestFrameMs: Math.round(gap), screen: termLines(term, true).filter((l) => l === "y").length };
+  out.yes = { frames, longestFrameMs: Math.round(gap), screen: termLines(term, true).filter((l) => l === "y").length, renderer: probeView(id)?.renderer };
   check(frames >= 100 && gap < 1000, `the window kept drawing while yes ran (${frames} frames in 10 s, the longest ${Math.round(gap)} ms)`);
   check((out.yes as { screen: number }).screen > term.rows / 2, "yes filled the screen");
   const stop = performance.now();

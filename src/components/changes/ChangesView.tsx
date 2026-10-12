@@ -97,7 +97,12 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
   const [query, setQuery] = useState("");
   const [listFolded, setListFolded] = useState(false);
   const [closedDirs, setClosedDirs] = useState<Set<string>>(new Set());
-  const [current, setCurrent] = useState<string | null>(c.files[0]?.path ?? null);
+  const shown = useMemo(() => filterFiles(c.files, query), [c.files, query]);
+  const groups = useMemo(() => groupFiles(shown), [shown]);
+  // the boxes in the list's order: folders first, then the top level
+  const order = useMemo(() => groups.flatMap((g) => g.files), [groups]);
+  // the view opens on the first file shown, the one at the top of the diffs (not the first in git's path order)
+  const [current, setCurrent] = useState<string | null>(() => order[0]?.path ?? null);
   const [near, setNear] = useState<Set<string>>(new Set());
   const root = useRef<HTMLDivElement>(null);
   const diffs = useRef<HTMLDivElement>(null);
@@ -106,10 +111,6 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
   // a click in the list keeps its file at the top while the files above it load and grow, until you scroll yourself
   const pinned = useRef<{ path: string; until: number } | null>(null);
 
-  const shown = useMemo(() => filterFiles(c.files, query), [c.files, query]);
-  const groups = useMemo(() => groupFiles(shown), [shown]);
-  // the boxes in the list's order: folders first, then the top level
-  const order = useMemo(() => groups.flatMap((g) => g.files), [groups]);
   const source: DiffSource = useMemo(() => ({ taskId: task.id, from: c.source === "pull" ? "" : c.from ?? "", to: c.to }), [task.id, c]);
   const onView = useCallback((path: string, view: EditorView | null) => { if (view) views.current.set(path, view); else views.current.delete(path); }, []);
 
@@ -267,7 +268,7 @@ function FileRow({ f, on, onClick }: { f: FileChange; on: boolean; onClick: () =
   const was = f.oldPath ? f.oldPath.slice(f.oldPath.lastIndexOf("/") + 1) : null;
   const renameOnly = (f.status === "renamed" || f.status === "copied") && !f.binary && !f.additions && !f.deletions;
   const counts = f.binary ? <span className="bin">Binary</span> : renameOnly ? <span className="bin">{f.status === "copied" ? "Copied" : "Renamed"}</span>
-    : <Diffstat add={f.status === "deleted" ? null : f.additions ?? 0} del={f.deletions ?? 0} />;
+    : <Diffstat add={f.additions ?? 0} del={f.deletions ?? 0} />;
   return (
     <button className={`chg-file${on ? " on" : ""}`} data-path={f.path} title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path} onClick={onClick} aria-current={on || undefined}>
       <StatusLetter f={f} />

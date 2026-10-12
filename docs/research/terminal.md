@@ -551,7 +551,7 @@ Rust: `src-tauri/src/terminal.rs`, one `#[tauri::command]` per function below, w
 // event "terminals-changed", payload Vec<TerminalSession>: after open, rename, close, a shell's end, and a change of `busy`
 ```
 
-`src/api.ts` (with `import { Channel, invoke } from "@tauri-apps/api/core"`):
+`src/api.ts` (with `import { Channel, invoke } from "@tauri-apps/api/core"`; `Channel`'s constructor takes the handler for its messages [V `@tauri-apps/api` 2.12.1 as installed, `core.d.ts:103-121`]):
 
 ```ts
 /** Every open terminal, in the order they were opened. */

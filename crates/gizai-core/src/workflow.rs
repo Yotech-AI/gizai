@@ -375,7 +375,8 @@ fn set_fields(w: &Writer, task_id: &str, sql_set: &str, params: &[&dyn rusqlite:
 /// - the role's done answer (`ready_for_testing` for builders, `qa_pass` for QA, `deployed` for DevOps on a Deploy card)
 ///   moves it to its column's next column, past Testing columns when its Testing switch is off; without a next column
 ///   it stays. A card a run moves into Review is assigned to the person who reviews; one it moves elsewhere loses its
-///   agent assignee, so the next column's agents pick it up.
+///   agent assignee, so the next column's agents pick it up. A builder's done answer on a card done by hand (GA-111)
+///   takes the person's pin off: the agent built it.
 /// - `qa_fail` sends it back to the column it came from, to the agent that built it; three bounces hold it. A card a
 ///   person built by hand (GA-111, `start_by_hand`) goes back to that person, pinned to them again.
 /// - `needs_decision` holds it where it is. The Team Lead looks at the question first when it can (GA-70,
@@ -409,6 +410,11 @@ pub fn apply_outcome_with(db: &Db, run_id: &str, outcome: Option<&Outcome>, run_
         let go = |to: Option<(String, String, String)>, implementer: bool, g: &mut GateResult| -> Result<()> {
             if implementer {
                 set_fields(w, &task_id, "implementer_actor_id=?2", &[&agent], serde_json::json!({"implementer": agent}))?;
+                // GA-111: an agent built a card that was done by hand (a person's Run on it): it isn't any more, so the
+                // next column's agents take it.
+                if let Some(person) = t.pinned.as_ref() && is_person(c, person)? {
+                    set_fields(w, &task_id, "pinned_actor_id=NULL", &[], serde_json::json!({"byHand": false}))?;
+                }
             }
             let Some((sid, name, category)) = to else { return Ok(()) };
             if sid != t.state_id {
@@ -678,8 +684,11 @@ pub fn start_by_hand(db: &Db, person: &str, task_id: &str, branch: &str) -> Resu
     db.write(Some(person), |w| {
         let c = w.conn();
         let t = startable(c, person, task_id)?;
-        set_fields(w, task_id, "pinned_actor_id=?2, implementer_actor_id=?2, updated_at=?3, updated_by=?2", &[&person, &ids::now_ms()],
-                   serde_json::json!({"byHand": true}))?;
+        // Open in editor again on a card that is yours by hand already changes nothing here.
+        if t.pinned.as_deref() != Some(person) || t.implementer.as_deref() != Some(person) {
+            set_fields(w, task_id, "pinned_actor_id=?2, implementer_actor_id=?2, updated_at=?3, updated_by=?2", &[&person, &ids::now_ms()],
+                       serde_json::json!({"byHand": true}))?;
+        }
         release_hold(w, task_id, "started by hand")?;
         c.execute("UPDATE tasks SET branch=COALESCE(NULLIF(branch, ''), ?2) WHERE id=?1", rusqlite::params![task_id, branch])?;
         if let Some(to) = start_target(c, &t.state_id)?.filter(|to| *to != t.state_id) {

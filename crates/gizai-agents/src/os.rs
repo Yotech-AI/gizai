@@ -1,7 +1,8 @@
 //! What differs between Linux, macOS and Windows when Gizai starts a program: finding it, starting it without a
 //! console window, and ending it with everything it started (`Tree`) (docs/PLATFORMS.md). On Linux and macOS these are
-//! the plain std calls and process groups.
-use std::ffi::OsStr;
+//! the plain std calls and process groups. And for terminals (`terminal`): your shell, the processes in a terminal's
+//! session, and on Windows the terminal's Job Object.
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -326,10 +327,11 @@ fn start_flags(low: bool) -> u32 {
     CREATE_NO_WINDOW | CREATE_SUSPENDED | if low { BELOW_NORMAL_PRIORITY_CLASS } else { 0 }
 }
 
-/// Windows: a Job Object's handle, closed on drop, which ends what still runs in the job.
+/// Windows: a Job Object's handle, closed on drop, which ends what still runs in the job. An agent's `Tree` and a
+/// terminal's shell (`terminal`) each have one.
 #[cfg(windows)]
 #[derive(Debug)]
-struct Job(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct Job(windows_sys::Win32::Foundation::HANDLE);
 
 // SAFETY: a kernel handle may be used, and closed, on any thread.
 #[cfg(windows)]
@@ -341,7 +343,7 @@ unsafe impl Sync for Job {}
 impl Job {
     /// A new job that ends everything in it when its last handle closes. Its handle isn't inherited, so only Gizai holds
     /// it, and it allows no breakaway: a program in it can't start anything outside it.
-    fn new() -> io::Result<Job> {
+    pub(crate) fn new() -> io::Result<Job> {
         use windows_sys::Win32::System::JobObjects::{
             CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
             SetInformationJobObject,
@@ -412,11 +414,78 @@ impl Job {
     }
 
     /// Ends every process in the job.
-    fn terminate(&self) {
+    pub(crate) fn terminate(&self) {
         // SAFETY: a plain call with a valid handle.
         unsafe {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, ENDED);
         }
+    }
+
+    /// Puts the running process `process` in the job (a terminal's shell, which portable-pty starts itself, not
+    /// suspended): what it starts from then on is in the job too.
+    pub(crate) fn add(&self, process: windows_sys::Win32::Foundation::HANDLE) -> io::Result<()> {
+        // SAFETY: a plain call with valid handles.
+        if unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.0, process) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// The ids of the processes in the job now (none when Windows doesn't say).
+    fn processes(&self) -> Vec<u32> {
+        use windows_sys::Win32::System::JobObjects::{JOBOBJECT_BASIC_PROCESS_ID_LIST, JobObjectBasicProcessIdList, QueryInformationJobObject};
+        // the list's two counts, then up to 1,023 ids, in words the size of an id (ULONG_PTR)
+        let mut words = vec![0usize; 1024];
+        let size = (words.len() * std::mem::size_of::<usize>()) as u32;
+        // SAFETY: the buffer is `size` bytes, aligned for the list; Windows fills in at most that many.
+        unsafe {
+            let list = words.as_mut_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+            if QueryInformationJobObject(self.0, JobObjectBasicProcessIdList, list.cast(), size, std::ptr::null_mut()) == 0 {
+                return vec![];
+            }
+            let n = (*list).NumberOfProcessIdsInList as usize;
+            let first = std::ptr::addr_of!((*list).ProcessIdList).cast::<usize>();
+            let room = (size as usize - (first as usize - list as usize)) / std::mem::size_of::<usize>();
+            std::slice::from_raw_parts(first, n.min(room)).iter().map(|&id| id as u32).collect()
+        }
+    }
+
+    /// The program started last in the job, other than `except` (a terminal's shell) and the console hosts (conhost,
+    /// OpenConsole): its name without `.exe` ("node", "cargo"). None when only those run.
+    pub(crate) fn newest(&self, except: u32) -> Option<String> {
+        use std::os::windows::ffi::OsStringExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+        use windows_sys::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW};
+        let mut newest: Option<(u64, String)> = None;
+        for pid in self.processes().into_iter().filter(|&p| p != except && p != 0) {
+            let mut path = [0u16; 1024];
+            let mut len = path.len() as u32;
+            let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+            // SAFETY: plain calls with buffers of the sizes given; the handle opened here is closed here.
+            let found = unsafe {
+                let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if process.is_null() {
+                    continue;
+                }
+                let named = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, path.as_mut_ptr(), &mut len) != 0;
+                let timed = GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) != 0;
+                CloseHandle(process);
+                named && timed
+            };
+            if !found {
+                continue;
+            }
+            let file = PathBuf::from(OsString::from_wide(&path[..len as usize]));
+            let Some(name) = file.file_stem().map(|s| s.to_string_lossy().to_string()) else { continue };
+            if ["conhost", "openconsole"].contains(&name.to_ascii_lowercase().as_str()) {
+                continue;
+            }
+            let at = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+            if newest.as_ref().is_none_or(|(t, _)| at > *t) {
+                newest = Some((at, name));
+            }
+        }
+        newest.map(|(_, name)| name)
     }
 }
 
@@ -427,5 +496,147 @@ impl Drop for Job {
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0);
         }
+    }
+}
+
+// ---- terminals (GA-133, see `terminal`) ----
+
+/// The shell a terminal starts, with its arguments (docs/research/terminal.md §3.2 Q1):
+/// - Linux: `$SHELL`, else your entry in the password database, else `/bin/sh`, with no arguments. On a
+///   pseudo-terminal that is an interactive shell, as GNOME Terminal and Konsole start it, so ~/.bashrc or ~/.zshrc
+///   runs (Gizai itself started from your login shell).
+/// - macOS: the same, as a login shell (`-l`), as Terminal.app starts it, so /etc/zprofile and ~/.zprofile set up PATH.
+/// - Windows: PowerShell 7 (`pwsh.exe`) when it is on `path`, else Windows PowerShell (`powershell.exe`), both without
+///   their banner (`-NoLogo`); else `%ComSpec%` (cmd.exe).
+pub fn user_shell(path: &OsStr) -> (PathBuf, Vec<OsString>) {
+    #[cfg(unix)]
+    {
+        let shell = std::env::var_os("SHELL")
+            .filter(|s| !s.is_empty())
+            .and_then(|s| find_in(&s.to_string_lossy(), path))
+            .or_else(password_shell)
+            .unwrap_or_else(|| PathBuf::from("/bin/sh"));
+        let args = if cfg!(target_os = "macos") { vec![OsString::from("-l")] } else { vec![] };
+        (shell, args)
+    }
+    #[cfg(windows)]
+    {
+        for name in ["pwsh.exe", "powershell.exe"] {
+            if let Some(p) = find_in(name, path) {
+                return (p, vec![OsString::from("-NoLogo")]);
+            }
+        }
+        let cmd = std::env::var_os("ComSpec").map(PathBuf::from).filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("cmd.exe"));
+        (cmd, vec![])
+    }
+}
+
+/// Linux and macOS: your login shell from the password database, when it is a program.
+#[cfg(unix)]
+fn password_shell() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = vec![0 as libc::c_char; 16 * 1024];
+    // SAFETY: getpwuid_r fills `entry` with pointers into `buf`, which outlives their use here.
+    let shell = unsafe {
+        let mut entry: libc::passwd = std::mem::zeroed();
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        if libc::getpwuid_r(libc::getuid(), &mut entry, buf.as_mut_ptr(), buf.len(), &mut found) != 0 || found.is_null() || entry.pw_shell.is_null() {
+            return None;
+        }
+        std::ffi::CStr::from_ptr(entry.pw_shell).to_bytes().to_vec()
+    };
+    let p = PathBuf::from(OsStr::from_bytes(&shell));
+    (p.is_absolute() && executable(&p)).then_some(p)
+}
+
+/// Linux and macOS: the processes in the session `session` that still run (a zombie has ended), each with its process
+/// group. A terminal's shell leads a session of its own, so these are the processes on that terminal: what runs in the
+/// foreground, background jobs and `nohup` programs. When the shell ends, the kernel takes the terminal away from what
+/// it left (their tty in /proc/<pid>/stat becomes 0), but not their session, and the session's id can't go to another
+/// process while the shell isn't reaped (`terminal` reaps it last). A process that left on purpose (`setsid`, a
+/// daemon) isn't in it. Never pid 0 or 1, nor Gizai itself.
+#[cfg(unix)]
+pub fn in_session(session: u32) -> Vec<(u32, u32)> {
+    if session <= 1 {
+        return vec![];
+    }
+    session_processes(session)
+}
+
+/// Linux: from /proc/<pid>/stat.
+#[cfg(target_os = "linux")]
+fn session_processes(session: u32) -> Vec<(u32, u32)> {
+    let me = std::process::id();
+    let Ok(dir) = std::fs::read_dir("/proc") else { return vec![] };
+    dir.flatten().filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok()).filter(|&pid| pid > 1 && pid != me).filter_map(|pid| {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // after "pid (comm) " come: state, ppid, pgrp, session, tty_nr, …
+        let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+        let (state, group, sid) = (*fields.first()?, fields.get(2)?.parse::<u32>().ok()?, fields.get(3)?.parse::<u32>().ok()?);
+        (sid == session && !matches!(state, "Z" | "X")).then_some((pid, group))
+    }).collect()
+}
+
+/// macOS, which has no /proc: every process (proc_listallpids), its session (getsid) and its group and state from the
+/// kernel's proc_pidinfo (PROC_PIDTBSDINFO).
+#[cfg(target_os = "macos")]
+fn session_processes(session: u32) -> Vec<(u32, u32)> {
+    let me = std::process::id();
+    let mut pids = vec![0 as libc::c_int; 4096];
+    let n = loop {
+        let size = (pids.len() * std::mem::size_of::<libc::c_int>()) as libc::c_int;
+        // SAFETY: the buffer holds `size` bytes; the kernel writes at most that many and returns how many ids it wrote.
+        let n = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), size) };
+        if n < 0 {
+            return vec![];
+        }
+        if (n as usize) < pids.len() || pids.len() >= 1 << 20 {
+            break (n as usize).min(pids.len());
+        }
+        pids.resize(pids.len() * 2, 0);
+    };
+    pids[..n].iter().filter_map(|&pid| {
+        let p = u32::try_from(pid).ok().filter(|&p| p > 1 && p != me)?;
+        // SAFETY: plain syscalls; proc_pidinfo writes at most `size` bytes into `info`, a plain C struct.
+        unsafe {
+            if libc::getsid(pid) != session as libc::pid_t {
+                return None;
+            }
+            let mut info: libc::proc_bsdinfo = std::mem::zeroed();
+            let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+            if libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) != size || info.pbi_status == libc::SZOMB {
+                return None;
+            }
+            Some((p, info.pbi_pgid))
+        }
+    }).collect()
+}
+
+/// Linux and macOS: the name the kernel keeps for the process `pid` ("sleep", "npm"; on Linux at most 15 characters).
+#[cfg(target_os = "linux")]
+pub fn process_name(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().map(|n| n.trim_end().to_string()).filter(|n| !n.is_empty())
+}
+
+/// Linux and macOS: the name the kernel keeps for the process `pid` ("sleep", "npm").
+#[cfg(target_os = "macos")]
+pub fn process_name(pid: u32) -> Option<String> {
+    let mut name = [0u8; 256];
+    // SAFETY: proc_name writes at most the size given into `name` and returns the name's length.
+    let n = unsafe { libc::proc_name(libc::pid_t::try_from(pid).ok()?, name.as_mut_ptr().cast(), name.len() as u32) };
+    (n > 0).then(|| String::from_utf8_lossy(&name[..(n as usize).min(name.len())]).to_string())
+}
+
+/// Linux and macOS: sends `signal` to the process `pid`, or with `group` to the process group it names. Never to 0 or
+/// 1, nor to Gizai or its own group.
+#[cfg(unix)]
+pub(crate) fn send_signal(pid: u32, group: bool, signal: libc::c_int) {
+    let Ok(id) = libc::pid_t::try_from(pid) else { return };
+    // SAFETY: plain syscalls; getpid and getpgrp only read.
+    unsafe {
+        if id <= 1 || id == libc::getpid() || id == libc::getpgrp() {
+            return;
+        }
+        libc::kill(if group { -id } else { id }, signal);
     }
 }

@@ -2601,6 +2601,33 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     await sleep(300);
     out.followsWheel = document.querySelector(".chg-file.on")?.getAttribute("data-path");
     check(out.followsWheel === "assets/logo.png", `the highlight follows the wheel's scroll to assets/logo.png: ${out.followsWheel}`);
+    // within a click's 2 s: a click on a fold's arrows in a box keeps the pin, so a scroll that isn't the wheel leaves the
+    // clicked file current; a press on the scrollbar (the diffs' own element) or the wheel ends it at once, and the
+    // highlight follows the scroll without the view jumping back to the clicked file
+    const onFile = () => document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    const bigRow = document.querySelector<HTMLElement>('.chg-file[data-path="src/big.ts"]')!;
+    bigRow.click();
+    await sleep(300);
+    const arrow = box.querySelector<HTMLElement>(".cm-diffFold .fold-step") ?? box.querySelector<HTMLElement>(".cm-diffFold [data-how]");
+    arrow?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    arrow?.click();
+    await sleep(100);
+    diffs.scrollTop = addedBox.offsetTop + 10;
+    await sleep(300);
+    out.pinAfterFold = onFile();
+    check(arrow && out.pinAfterFold === "src/big.ts", `within 2 s of a click on src/big.ts, a click on a fold's arrows in its box keeps the pin: ${arrow ? out.pinAfterFold : "no fold arrows"}`);
+    for (const [how, end] of [["scrollbar", () => diffs.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }))],
+      ["wheel", () => diffs.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }))]] as const) {
+      bigRow.click();
+      await sleep(300);
+      end();
+      const to = addedBox.offsetTop + 10;
+      diffs.scrollTop = to;
+      await sleep(300);
+      out[`within2s_${how}`] = [onFile(), Math.round(diffs.scrollTop - to)];
+      check(onFile() === "src/added.rs" && Math.abs(diffs.scrollTop - to) <= 2,
+        `within 2 s of a click on src/big.ts, the ${how} ends the pin: the highlight follows to src/added.rs and the view stays (${out[`within2s_${how}`]})`);
+    }
     // Alt+↓ from src/big.ts at the top, as after the click
     diffs.scrollTop = box.offsetTop - 8;
     await sleep(300);

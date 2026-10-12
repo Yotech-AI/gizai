@@ -6,7 +6,7 @@ import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { PENDING_MS } from "../lib/usePending";
-import { asksToRun, chatLabel, needsYou, waitingChats } from "../lib/inbox";
+import { asksToRun, chatLabel, chatLabelTitle, hasPending, needsYou, waitingChats } from "../lib/inbox";
 import { relTime } from "../lib/format";
 import { modKey } from "../lib/keys";
 import type { ChatThread } from "../types";
@@ -29,7 +29,9 @@ function usePref<T>(k: string, fallback: T): [T, (v: T) => void] {
   return [v, (n: T) => { setV(n); writePref(k, n); }];
 }
 
-/** The top of the Inbox: the chats the Team Lead started that wait for you. A click opens the chat; × dismisses it. */
+/** The top of the Inbox: the chats that wait for you (the Team Lead's questions and approvals, and chats with calls of the Team
+ *  Lead's that wait for your approval). A click opens the chat; × dismisses a Team Lead chat. A chat with calls that wait stays
+ *  until you approved or discarded each, in the chat. */
 function LeadChats({ chats, onDismiss }: { chats: ChatThread[]; onDismiss: (id: string) => void }) {
   return (
     <section className="lead-chats" aria-label="From the Team Lead">
@@ -37,10 +39,11 @@ function LeadChats({ chats, onDismiss }: { chats: ChatThread[]; onDismiss: (id: 
       <div className="panel">
         {chats.map((c) => (
           <div key={c.id} className="panel-row lead-chat">
-            <a className="grow ellipsis" href={href({ page: "chat", id: c.id })}><span className="badge needs">{chatLabel(c)}</span> {c.title}</a>
+            <a className="grow ellipsis" href={href({ page: "chat", id: c.id })}><span className="badge needs" title={chatLabelTitle(c)}>{chatLabel(c)}</span> {c.title}</a>
+            {hasPending(c) && <span className="faint">{c.pendingActions === 1 ? "1 to approve" : `${c.pendingActions} to approve`}</span>}
             {(c.tasks ?? []).map((t) => <span key={t} className="id">{t}</span>)}
             <span className="faint">{relTime(c.updatedAt)}</span>
-            <button className="btn ghost sm icon-only" aria-label={`Dismiss ${c.title}`} title="Dismiss" onClick={() => onDismiss(c.id)}><X className="icon" /></button>
+            {c.kind && c.waiting && <button className="btn ghost sm icon-only" aria-label={`Dismiss ${c.title}`} title="Dismiss" onClick={() => onDismiss(c.id)}><X className="icon" /></button>}
           </div>
         ))}
       </div>
@@ -209,7 +212,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
           {chats.length > 0 && <div className="page-pad lead-chats-pad"><LeadChats chats={chats} onDismiss={dismiss} /></div>}
           {asks.length > 0 && <div className="page-pad lead-chats-pad"><RunForMeCards tasks={asks} agentOf={(t) => (t.assigneeKind === "agent" ? t.assigneeName ?? null : null)} /></div>}
           <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
-            empty={inbox ? (chats.length + asks.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, and the Team Lead's questions show up here.</span></div>)
+            empty={inbox ? (chats.length + asks.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, the Team Lead's questions and the calls it waits for your OK on show up here.</span></div>)
               : <div className="empty"><b>No tasks here.</b><span>{nFilters ? "Nothing matches these filters." : "Press N to add one."}</span></div>} />
         </div>
       ) : (

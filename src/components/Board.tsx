@@ -15,7 +15,8 @@ import { hostName } from "../lib/provider";
 import { pullBadge, pullLabel } from "../lib/pulls";
 import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
-import { Archive, Plus } from "lucide-react";
+import { byHandTip } from "../lib/hand";
+import { Archive, Keyboard, Plus } from "lucide-react";
 
 const CAP = 50;
 const RAIL_CATEGORIES = new Set(["backlog", "done", "cancelled"]);
@@ -44,9 +45,10 @@ const Card = memo(function Card({ task, onOpen, onArchive, working }: {
         )}</div>
       <div className="title">{task.title}</div>
       {working && <div className="working"><span className="pulse" aria-hidden />{working} is working</div>}
-      {(task.labels.length > 0 || task.assigneeName) && (
+      {(task.labels.length > 0 || task.assigneeName || task.byHand) && (
         <div className="meta">
           {task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>)}
+          {task.byHand && <span className="badge by-hand" title={byHandTip(task)}><Keyboard className="icon sm" />By hand</span>}
           {task.assigneeName && <Avatar name={task.assigneeName} kind={task.assigneeKind} size="sm" />}
         </div>
       )}

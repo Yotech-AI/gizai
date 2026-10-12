@@ -1,11 +1,23 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type * as T from "./types";
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const selftestReport = (json: unknown) => invoke<void>("selftest_report", { json: JSON.stringify(json) });
 export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
+
+// Closing Gizai with unsaved text in an editor (GA-122). The page says when it has some; then closing the window or
+// quitting waits for the page's answer: "asking" (the question shows), "close" (go on closing) or "stay".
+export type CloseAnswer = "asking" | "close" | "stay";
+export const setUnsavedEdits = (unsaved: boolean) => invoke<void>("set_unsaved_edits", { unsaved });
+export const closeAnswer = (answer: CloseAnswer) => invoke<void>("close_answer", { answer });
+/** The window's close button. Gizai hides the window itself (or waits for `closeAnswer`), so Tauri's own close never runs. */
+export const onCloseRequested = (cb: () => void): Promise<UnlistenFn> =>
+  getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); cb(); });
+/** A request to quit while the page has unsaved text: Gizai waits for `closeAnswer`. */
+export const onQuitRequested = (cb: () => void): Promise<UnlistenFn> => listen("quit-requested", () => cb());
 
 export const listClients = () => invoke<T.Client[]>("list_clients");
 export const getClient = (id: string) => invoke<T.Client>("get_client", { id });
@@ -302,6 +314,15 @@ export const chatClis = () => invoke<T.ChatCli[]>("chat_clis");
 export const stopChat = (threadId: string) => invoke<void>("stop_chat", { threadId });
 /** × on a Team Lead chat in the Inbox: it no longer waits for you. */
 export const dismissChat = (threadId: string) => invoke<void>("dismiss_chat", { threadId });
+/** GA-102: the Team Lead's calls that wait for your approval in a chat (after a tool from outside Gizai), each with its preview. */
+export const pendingActions = (threadId: string) => invoke<T.PendingAction[]>("pending_actions", { threadId });
+/** Approve: runs exactly that call, once, with every other rule in force; the chat gets a note with what happened. Fails for a call
+ *  that no longer waits (approved, discarded, or replaced by a newer one). */
+export const approvePendingAction = (id: string) => invoke<T.PendingAction>("approve_pending_action", { id });
+/** Approve all: the calls you saw, one after the other in the order given. */
+export const approvePendingActions = (ids: string[]) => invoke<T.PendingAction[]>("approve_pending_actions", { ids });
+/** Discard: nothing runs; the chat gets a note with what was discarded. */
+export const discardPendingAction = (id: string) => invoke<T.PendingAction>("discard_pending_action", { id });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
 export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));

@@ -89,6 +89,14 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 @keyframes gz-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .drawer, .scrim { animation: none; } }
 
+/* ---------- a question to answer before anything else (closing Gizai with unsaved text, GA-122) ---------- */
+.ask-scrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: var(--scrim); animation: gz-fade .16s ease-out; }
+.ask { width: min(460px, 100%); padding: 20px 22px 16px; border: 1px solid var(--line-2); border-radius: var(--radius-xl); background: var(--overlay); box-shadow: var(--shadow-pop); }
+.ask h2 { margin: 0 0 6px; font-size: var(--fs-lg); font-weight: 650; letter-spacing: -.01em; line-height: 1.35; overflow-wrap: anywhere; }
+.ask p { margin: 0; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.45; }
+.ask-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+@media (prefers-reduced-motion: reduce) { .ask-scrim { animation: none; } }
+
 /* ---------- sidebar ---------- */
 .side { display: flex; flex-direction: column; width: var(--size-side); height: 100%; background: var(--side); border-right: 1px solid var(--line); overflow: hidden; }
 .side-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; padding: 10px 10px 14px; overflow-y: auto; }
@@ -480,6 +488,35 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .chat-queue .q-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .chat-note.has-actions { margin-bottom: 8px; }
 .chat-note-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 auto 22px; }
+/* GA-102: the Team Lead's calls that wait for your OK, under the answer that tried them (magenta: they need you) */
+.pending-actions { display: flex; flex-direction: column; gap: 8px; max-width: calc(560px * var(--chat-scale, 1)); margin-top: 2px; padding: 10px; border: 1px solid var(--needs); border-radius: var(--radius-l); background: var(--needs-soft); font-size: var(--fs-sm); }
+.chat-col > .pending-actions { margin: 0 0 22px 30px; }
+.pending-actions .pa-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pending-actions .pa-head .badge { flex: none; }
+.pending-actions .pa-why { flex: 1; min-width: 200px; color: var(--text-2); }
+.pending-actions .pa-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--raised); }
+.pending-actions .pa-line { display: flex; align-items: baseline; gap: 8px; color: var(--text); }
+.pending-actions .pa-line b { font-weight: 600; overflow-wrap: anywhere; }
+.pending-actions .pa-tool { margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; }
+.pending-actions .pa-fields { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
+.pending-actions .pa-fields > div { display: contents; }
+.pending-actions .pa-fields dt { color: var(--text-3); }
+.pending-actions .pa-fields dd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.pending-actions .pa-fields dd .icon { color: var(--text-3); flex: none; }
+.pending-actions .pa-from { color: var(--text-3); text-decoration: line-through; }
+.pending-actions .pa-warn { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border-radius: var(--radius-s); background: var(--warning-soft); color: var(--warning); }
+.pending-actions .pa-warn .icon { flex: none; margin-top: 2px; }
+.pending-actions .pa-text, .pending-actions .pa-diff { margin: 0; max-height: 280px; overflow: auto; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--radius-s); background: var(--bg); font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.55; }
+.pending-actions .pa-text { padding: 6px 8px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pending-actions .pa-dl { display: flex; padding: 0 8px 0 0; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pending-actions .pa-dl.add { background: var(--diff-add-soft); color: var(--text); }
+.pending-actions .pa-dl.del { background: var(--diff-del-soft); color: var(--text-2); }
+.pending-actions .pa-sign { flex: none; width: 18px; text-align: center; user-select: none; }
+.pending-actions .pa-dl.add .pa-sign { color: var(--diff-add); }
+.pending-actions .pa-dl.del .pa-sign { color: var(--diff-del); }
+.pending-actions .pa-fold { display: block; width: 100%; padding: 1px 8px 1px 18px; border: 0; background: var(--diff-fold); color: var(--text-3); font: inherit; text-align: left; cursor: pointer; }
+.pending-actions .pa-fold:hover { color: var(--text); }
+.pending-actions .pa-actions { display: flex; align-items: center; gap: 8px; }
 .chat-banner { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; padding: 8px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--raised); font-size: var(--fs-sm); color: var(--text-2); }
 .chat-banner .btn { margin-left: auto; }
 .chat-banner.bad { border-color: var(--danger-soft); color: var(--danger); }
@@ -600,7 +637,7 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .ed-bar.done > .icon { color: var(--success); }
 .ed-bar.failed { background: var(--danger-soft); }
 .ed-bar.failed > .icon { color: var(--danger); }
-.ed-bar.needs > .icon { color: var(--needs); }
+.ed-bar.needs > .icon, .ed-bar.needs > .st { color: var(--needs); } /* QA sent your card by hand back: the column's glyph too */
 .ed-bar .update-output { flex-basis: 100%; margin: 0 0 var(--space-1); }
 /* The open file's bar: the editor's width, a tab's height */
 .ed-bar.file { min-height: var(--size-tab); padding: var(--space-1) var(--space-3); font-size: var(--fs-sm); }

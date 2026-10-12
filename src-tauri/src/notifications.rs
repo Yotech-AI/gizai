@@ -2,7 +2,8 @@
 //! is hidden. Four kinds, each with its own switch, all on by default:
 //! - a card goes on hold, and a card lands in Review or Deploy assigned to you: the cards in the Inbox
 //!   (`tasks::needs_you`);
-//! - the Team Lead starts a Question or Approval chat: the chats at the top of the Inbox (`chat::waiting_lead_chats`);
+//! - the Team Lead starts a Question or Approval chat: the chats at the top of the Inbox (`chat::waiting_lead_chats`),
+//!   and a chat gets calls of the Team Lead's that wait for your approval (GA-102, `chat::chats_with_pending`);
 //! - an answer in a chat ends while Gizai's window is hidden or not focused (`answered`).
 //!
 //! The Team Lead merging a card's pull request (`lead_merged`, GA-86) notifies too, under the switch for cards waiting
@@ -158,7 +159,9 @@ pub fn new_items(seen: &HashSet<String>, now: Vec<Item>) -> (Vec<Item>, HashSet<
 
 /// What is in the Inbox now, as items: a card on hold (keyed by when its hold was set, so a new hold is a new item),
 /// a card waiting for you in Review or Deploy (keyed by the column's kind, so the merge that moves it to Deploy is new),
-/// and a chat the Team Lead started that waits for you. A card in Review that is also on hold is both.
+/// a chat the Team Lead started that waits for you, and a chat with calls of the Team Lead's that wait for your approval
+/// (GA-102: keyed by the chat, so it notifies again only after its calls were all approved or discarded and new ones came).
+/// A card in Review that is also on hold is both.
 pub fn inbox(db: &Db, you_id: &str) -> Result<Vec<Item>, String> {
     let mut items = vec![];
     for t in tasks::needs_you(db, you_id).map_err(|e| e.to_string())? {
@@ -194,6 +197,16 @@ pub fn inbox(db: &Db, you_id: &str) -> Result<Vec<Item>, String> {
         items.push(Item {
             key: format!("chat:{}", c.id),
             notice: Notice { kind: Kind::LeadAsks, title: format!("The Team Lead asks: {}", c.title), body, route: format!("#/chat/{}", c.id) },
+        });
+    }
+    // GA-102: a chat with calls of the Team Lead's that wait for your approval (after a tool from outside Gizai).
+    for c in chat::chats_with_pending(db).map_err(|e| e.to_string())? {
+        let n = c.pending_actions;
+        items.push(Item {
+            key: format!("pending:{}", c.id),
+            notice: Notice { kind: Kind::LeadAsks, title: format!("The Team Lead waits for your OK: {}", c.title),
+                             body: if n == 1 { "1 action to approve or discard".into() } else { format!("{n} actions to approve or discard") },
+                             route: format!("#/chat/{}", c.id) },
         });
     }
     Ok(items)

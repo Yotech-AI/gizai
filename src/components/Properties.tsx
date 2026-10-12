@@ -4,11 +4,13 @@ import { listTasks, moveTask, setTaskLabels, updateTask } from "../api";
 import { href } from "../router";
 import { relTime, textEnd } from "../lib/format";
 import { keyBetween } from "../lib/sortKey";
-import type { Person, Task, Team } from "../types";
+import { files } from "../lib/changes";
+import type { CardChanges, Person, Task, Team } from "../types";
 import { PRIORITY_NAMES, PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
 import { Popover } from "./Popover";
 import { NewLabel } from "./NewLabel";
+import { Diffstat } from "./changes/Diffstat";
 
 const HOLD_NAMES: Record<string, string> = {
   needs_decision: "Needs your decision", stalled: "Stalled", merge_conflict: "Merge conflict",
@@ -19,9 +21,10 @@ const date = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "nu
 const REASON_CHARS = 60;
 
 /** `readOnly` (an archived card): the values show, but nothing can be changed. `onReadComments`: the Hold row's "Read in
- *  comments" under a shortened reason. */
-export function Properties({ task, team, people, onError, onClose, onReadComments, readOnly }: {
+ *  comments" under a shortened reason. `changes`: the card's changes, counted under its branch (GA-112). */
+export function Properties({ task, team, people, onError, onClose, onReadComments, readOnly, changes }: {
   task: Task; team: Team; people: Person[]; onError: (msg: string) => void; onClose: () => void; onReadComments?: () => void; readOnly?: boolean;
+  changes?: CardChanges | null;
 }) {
   const run = (p: Promise<unknown>) => p.catch((e) => onError(String(e)));
   // A value that opens its picker, or only shows when the card is read-only.
@@ -80,6 +83,8 @@ export function Properties({ task, team, people, onError, onClose, onReadComment
           {reasonEnd && onReadComments && <button className="link" style={{ color: "var(--accent)" }} onClick={onReadComments}>Read in comments</button>}
           {!readOnly && <button className="btn sm" onClick={() => run(updateTask(task.id, { hold: "" }))}>Clear hold</button>}</span>)}
         {row("Branch", task.branch ? <span className="v"><span className="id" style={{ color: "var(--text-2)", whiteSpace: "normal", wordBreak: "break-all" }}>{task.branch}</span></span> : <span className="v none">Set when an agent starts</span>)}
+        {changes && changes.files.length > 0 && row("Changes", <a className="v" href={href({ page: "task", id: task.id, view: "changes" })} title="Show what this card changed">
+          <Diffstat add={changes.additions} del={changes.deletions} /><span className="faint" style={{ fontSize: "var(--fs-sm)" }}>{files(changes.files.length)}</span></a>)}
         <div className="props-sep" />
         {row("Created", <span className="v" title={new Date(task.createdAt).toLocaleString("en-GB")}>{date(task.createdAt)}</span>)}
         {row("Updated", <span className="v" title={new Date(task.updatedAt).toLocaleString("en-GB")}>{relTime(task.updatedAt)}</span>)}

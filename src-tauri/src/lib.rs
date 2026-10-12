@@ -16,11 +16,13 @@ pub mod mcp;
 pub mod mcp_servers;
 pub mod memory;
 pub mod notifications;
+pub mod pending;
 pub mod pulls;
 mod quit;
 pub mod runs;
 pub mod shell_path;
 pub mod tools;
+mod unsaved;
 pub mod update;
 pub mod worktrees;
 
@@ -103,8 +105,10 @@ fn selftest_report(json: String) -> Result<(), String> {
     }
 }
 
+/// The page quits Gizai (Settings' Quit Gizai completely, a self-test's end): it has no unsaved text to save first.
 #[tauri::command]
 fn exit_app(app: AppHandle, code: i32) {
+    unsaved::settle();
     app.exit(code);
 }
 
@@ -256,11 +260,15 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let mcp_socket = mcp::socket_path(&dir);
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
-    Ok(AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
+    let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
-                  desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()) })
+                  desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()) };
+    // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
+    // failed, so it never runs twice, and its chat says so.
+    pending::at_start(&st);
+    Ok(st)
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -557,7 +565,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, selftest_report, exit_app,
+            app_info, selftest_report, exit_app, unsaved::set_unsaved_edits, unsaved::close_answer,
             commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
             commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
             commands::agent_mcp, commands::save_agent_mcp, commands::agent_cli_tools, commands::save_agent_cli_tools, commands::ask_cli_tools,
@@ -586,6 +594,7 @@ pub fn run() {
             commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
             commands::check_files, commands::item_id,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
+            commands::pending_actions, commands::approve_pending_action, commands::approve_pending_actions, commands::discard_pending_action,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             changes::card_changes, changes::card_file_diff, changes::run_changes,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
@@ -602,10 +611,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Gizai")
         .run(|app, event| {
-            // Quitting with agents at work (runs or a chat answer): stop them first, then quit (a second request
-            // quits at once).
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event
-                && quit::stop_agents_first(app)
+            // Quitting with unsaved text in the doc page's or the Memory page's editor: the page saves it first, or
+            // asks (see `unsaved`). Then, with agents at work (runs or a chat answer): stop them first, then quit (a
+            // second request quits at once).
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event
+                && (unsaved::quit_waits(app, code.unwrap_or(0)) || quit::stop_agents_first(app))
             {
                 api.prevent_exit();
             }
@@ -613,12 +623,15 @@ pub fn run() {
             // Gizai keeps running in the tray, with its agents, heartbeats, chat and MCP socket, and the hidden window
             // keeps its page. Quitting is the tray's or Settings' Quit Gizai completely, Cmd+Q on macOS or a signal; Exit
             // ends the page process (see `quit`). macOS's own Quit (the Dock's, logging out) and Windows logging off
-            // skip the first step and come straight to Exit, where agents at work end at once.
+            // skip the first step and come straight to Exit, where agents at work end at once. With unsaved text in an
+            // editor, the window hides once the page has saved it (or asked: see `unsaved`).
             if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
                 && label == "main"
             {
                 api.prevent_close();
-                if let Some(w) = app.get_webview_window("main") {
+                if !unsaved::close_waits(app)
+                    && let Some(w) = app.get_webview_window("main")
+                {
                     let _ = w.hide();
                 }
             }

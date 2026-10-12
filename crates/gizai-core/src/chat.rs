@@ -43,6 +43,9 @@ pub struct ChatThread {
     pub cli: Option<String>,
     /// The coding CLI whose account holds `session_id`: another one can't resume it.
     pub session_cli: Option<String>,
+    /// GA-102: the Team Lead's calls that wait for your approval in it (`pending`). While there are any, the chat waits
+    /// for you in the Inbox, whoever started it.
+    pub pending_actions: i64,
 }
 
 impl ChatThread {
@@ -140,7 +143,8 @@ pub fn title_from(text: &str) -> String {
 }
 
 const THREAD_COLS: &str = "id, agent_actor_id, COALESCE(title, 'New chat'), session_id, created_at, updated_at, cost_usd_micros, input_tokens, output_tokens,
-    created_by, kind, task_ids_json, answered_at, dismissed_at, cli, session_cli";
+    created_by, kind, task_ids_json, answered_at, dismissed_at, cli, session_cli,
+    (SELECT count(*) FROM pending_actions p WHERE p.thread_id = chat_threads.id AND p.status = 'pending')";
 
 fn thread_row(r: &rusqlite::Row) -> rusqlite::Result<ChatThread> {
     let task_ids: Vec<String> = serde_json::from_str(&r.get::<_, String>(11)?).unwrap_or_default();
@@ -148,7 +152,13 @@ fn thread_row(r: &rusqlite::Row) -> rusqlite::Result<ChatThread> {
     Ok(ChatThread { id: r.get(0)?, agent_id: r.get(1)?, title: r.get(2)?, session_id: r.get(3)?, created_at: r.get(4)?, updated_at: r.get(5)?,
                     cost_usd_micros: r.get(6)?, input_tokens: r.get(7)?, output_tokens: r.get(8)?, created_by: r.get(9)?,
                     waiting: kind.is_some() && answered_at.is_none() && dismissed_at.is_none(), kind, task_ids, tasks: vec![], answered_at, dismissed_at,
-                    cli: r.get(14)?, session_cli: r.get(15)? })
+                    cli: r.get(14)?, session_cli: r.get(15)?, pending_actions: r.get(16)? })
+}
+
+/// The chats with calls of the Team Lead's that wait for your approval (GA-102), newest activity first: they wait for
+/// you in the Inbox.
+pub fn chats_with_pending(db: &Db) -> Result<Vec<ChatThread>> {
+    Ok(list_threads(db)?.into_iter().filter(|t| t.pending_actions > 0).collect())
 }
 
 /// Fills in the identifiers of the cards Team Lead chats are about.
@@ -275,7 +285,7 @@ pub fn search_threads(db: &Db, query: &str) -> Result<Vec<ThreadHit>> {
                ON hit.thread_id = chat_threads.id
              WHERE chat_threads.deleted_at IS NULL AND (COALESCE(title, 'New chat') LIKE ?1 ESCAPE '\\' OR hit.message_rowid IS NOT NULL)
              ORDER BY chat_threads.updated_at DESC, chat_threads.rowid DESC"))?;
-        let found = st.query_map([&pattern], |r| Ok((thread_row(r)?, r.get::<_, Option<i64>>(16)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let found = st.query_map([&pattern], |r| Ok((thread_row(r)?, r.get::<_, Option<i64>>(17)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let (threads, rowids): (Vec<_>, Vec<_>) = found.into_iter().unzip();
         let mut msg = c.prepare(&format!("{MSG_SELECT} WHERE m.rowid=?1"))?;
         with_tasks(c, threads)?.into_iter().zip(rowids).map(|(thread, rowid)| -> Result<ThreadHit> {
@@ -525,12 +535,23 @@ fn tool_target(input: &Value) -> String {
     }
 }
 
-/// One message in the hand-over; None for Gizai's own notes.
+/// What a note of Gizai's in a chat is about when it says what you decided on a call of the Team Lead's that waited for
+/// you (GA-102): `meta.kind`.
+pub const DECISION_NOTE: &str = "pending";
+
+/// Whether `m` is a note of Gizai's that says what you decided on a call of the Team Lead's that waited for you.
+pub fn is_decision_note(m: &ChatMessage) -> bool {
+    m.role == "system" && m.meta.as_ref().and_then(|v| v.get("kind")).and_then(Value::as_str) == Some(DECISION_NOTE)
+}
+
+/// One message in the hand-over; None for Gizai's own notes, except those that say what you decided on a call that
+/// waited for you.
 fn handover_entry(m: &ChatMessage) -> Option<String> {
     let body = || m.body_md.clone().unwrap_or_default().trim().to_string();
     match m.role.as_str() {
         "user" => Some(format!("User: {}", body())),
         "agent" => Some(format!("You: {}", body())),
+        "system" if is_decision_note(m) => Some(format!("(Gizai: {})", body())),
         "tool" => {
             let name = m.tool_name.clone().unwrap_or_default();
             let name = name.trim_start_matches("mcp__gizai__");
@@ -552,7 +573,8 @@ fn handover_entry(m: &ChatMessage) -> Option<String> {
 /// The conversation so far, for a new session that can't resume the chat's old one (the chat moved to another coding
 /// CLI, whose account doesn't have it, or the session is gone): your messages and the Team Lead's, oldest first, and per
 /// tool call its name, what it was called on (the card, doc or file) and the start of its result, so the new session
-/// knows what was looked up and can look it up again. Gizai's own notes are left out. When it is longer than `cap`
+/// knows what was looked up and can look it up again. Gizai's own notes are left out, except those that say what you
+/// decided on a call of the Team Lead's that waited for you (`is_decision_note`). When it is longer than `cap`
 /// characters, the oldest messages go first and the first line says how many went.
 pub fn handover(messages: &[ChatMessage], cap: usize) -> String {
     let entries: Vec<String> = messages.iter().filter_map(handover_entry).map(|e| shorten_keep_lines(&e, cap)).collect();

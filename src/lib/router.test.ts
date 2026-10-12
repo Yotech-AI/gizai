@@ -161,6 +161,29 @@ describe("Memory graph (GA-69)", () => {
   });
 });
 
+describe("a card's changes (GA-112)", () => {
+  it("opens the Changes tab at #/task/<id>/changes and one run's changes at …/changes/run/<run id>", () => {
+    expect(parseHash("#/task/0192-abc/changes")).toEqual({ page: "task", id: "0192-abc", view: "changes" });
+    expect(parseHash("#/task/0192-abc/changes/run/01HZRUN1")).toEqual({ page: "task", id: "0192-abc", view: "changes", run: "01HZRUN1" });
+    expect(href({ page: "task", id: "0192-abc", view: "changes" })).toBe("#/task/0192-abc/changes");
+    expect(href({ page: "task", id: "0192-abc", view: "changes", run: "01HZRUN1" })).toBe("#/task/0192-abc/changes/run/01HZRUN1");
+  });
+  it("keeps the card's own route, and ignores what it doesn't know after changes", () => {
+    expect(parseHash("#/task/0192-abc")).toEqual({ page: "task", id: "0192-abc" });
+    expect(parseHash("#/task/0192-abc/changes/run")).toEqual({ page: "task", id: "0192-abc", view: "changes" });
+    expect(parseHash("#/task/0192-abc/other")).toEqual({ page: "task", id: "0192-abc" });
+    expect(parseHash("#/task")).toEqual({ page: "tasks" });
+  });
+  it("round-trips, ids with odd characters too", () => {
+    const routes: Route[] = [
+      { page: "task", id: "0192-abc", view: "changes" },
+      { page: "task", id: "a/b #c", view: "changes" },
+      { page: "task", id: "0192-abc", view: "changes", run: "r/1 #2" },
+    ];
+    for (const r of routes) expect(parseHash(href(r)), JSON.stringify(r)).toEqual(r);
+  });
+});
+
 describe("the Editor's address (GA-113)", () => {
   it("#/editor is the Editor with no folder open", () => {
     expect(parseHash("#/editor")).toEqual({ page: "editor" });

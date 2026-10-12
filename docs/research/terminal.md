@@ -167,3 +167,154 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 | every other key | in a terminal | goes to the shell: Ctrl+W, Ctrl+P, Ctrl+B, Ctrl+K, Ctrl+R and Escape do what the shell or the program wants, not what the Editor or Gizai would (`EditorPage.tsx:407-423`, `App.tsx:36-43`) |
 
 The key for Ctrl+\` is read by where it is (`KeyboardEvent.code === "Backquote"`, the key left of 1), so it works on keyboards where that key has another character. [I]
+
+---
+
+## 6. Proposed cards
+
+Five cards, each one pull request that fits in one agent run (the Editor's F2, PR #96, was 5,201 added lines in 35 files in one run [V `gh pr list`]). "Builds on" names the cards that must be merged first. The contract between the backend card and the frontend cards is below the list, word for word.
+
+| # | Card | Starts in | Role | Builds on |
+|---|---|---|---|---|
+| TD | Design: the terminal, in the sidebar, on its page and in the Editor | Design | design | – |
+| TB | Terminals in the backend: your shell in a pseudo-terminal on Linux, macOS and Windows | To do | backend | – |
+| TF0 | The terminal view: xterm.js in Gizai's colours, one view per terminal | To do | frontend | TD, TB |
+| TF1 | Terminals in the sidebar and on their own page | To do | frontend | TF0 |
+| TF2 | The terminal panel in the Editor | To do | frontend | TF0 |
+
+At the same time: **TD and TB** first (the design and the backend need nothing else); then **TF0**; then **TF1 and TF2** together (both build on TF0's view and store, and touch different files: the sidebar and the Terminal page, or the Editor page). "Show in the Editor" on a terminal's row needs TF2's panel, so whichever of TF1 and TF2 merges last wires it.
+
+### TD. Design: the terminal, in the sidebar, on its page and in the Editor
+
+- **Column, role:** Design, design.
+- **Builds:** the design of §5 as a page in the repository, made like D2's (`design/terminal/terminal.html` from `design/terminal/gen-terminal.mjs`, drawn with the app's own stylesheets, every screen in dark and then light, a Specs section and an "Every text" table): the sidebar's Terminal section (open, folded with "3 open", none open, a row with a running program, an ended row, the row menu, the close question under a row), New terminal (the folder picker), the Terminal page with its tabs (find, ended, couldn't start, the two-places placeholder), the Editor with its panel (closed, at 30%, dragged higher, the drag handle's hover, focus and drag states, the Terminal button pressed, and off for a folder an agent works on); and the terminal's colours.
+- **Acceptance criteria:**
+  - [ ] Every screen and state of §5.1 in dark and light, with the app's components and D2's Editor around the panel.
+  - [ ] Terminal colours for dark and light: the 16 colours programs ask for (black, red, green, yellow, blue, magenta, cyan, white and their bright forms), plus foreground, background, cursor and selection, as tokens (`term-*`); each colour's contrast on the terminal background listed; cyan and magenta clearly apart from `--live` and `--needs`; a sample of `git status`, `git log --oneline --graph`, `ls --color`, a failing test run and htop in both themes.
+  - [ ] The panel, its drag handle, the tabs and the Terminal button specified (sizes in tokens; the 30% start and the limits; hover, focus, pressed, dragging).
+  - [ ] Every text written out in sentence case, and the keys of §5.2.
+  - [ ] Jefsev approved it on the card.
+
+### TB. Terminals in the backend
+
+- **Column, role:** To do, backend.
+- **Builds:** `crates/gizai-agents/src/terminal.rs` (new): the sessions, on `portable-pty` 0.9 (§4); your shell and environment (§3.2 Q1); reading on a thread per terminal, batched, with flow control and 256 KB kept in memory for a view that attaches again; writing on a thread of its own; resize; the program running now; ending a terminal and everything it started (§3.2 Q3). `crates/gizai-agents/src/os.rs`: the user's shell; on Windows the shell's Job Object; on Unix the processes still attached to a terminal. `src-tauri/src/terminal.rs` (new) with the commands and the event of contract CT, `AppState.terminals`, registered in `lib.rs`; every terminal ended at quit (`quit.rs`). The start folder is checked with `editor::find` (`crates/gizai-core/src/editor.rs:150-168`). `src/api.ts` and `src/types.ts` as in CT. `docs/PLATFORMS.md`: a row for the terminal (shells, ConPTY, how it ends). No database change, no new Tauri plugin, the same security policy and capabilities.
+- **Acceptance criteria:**
+  - [ ] `terminal_open` starts your shell in one of the Editor's folders and refuses any other folder with the Editor's own sentence; it refuses a card's worktree while an agent works on it.
+  - [ ] On Linux and macOS the shell is `$SHELL` (else your entry in the password database, else `/bin/sh`), a login shell on macOS; on Windows `pwsh.exe` when it is found, else `powershell.exe`, else `cmd.exe`. The environment has `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=gizai` and `TERM_PROGRAM_VERSION`, and no `GIZAI_*` variables (tested).
+  - [ ] Output reaches the attached channel as bytes, in order, at most one message per terminal every 8 ms; 50 MB of output arrives complete, while reading pauses above 1 MB not yet acknowledged and goes on below 256 KB (tested with a fake listener that acknowledges slowly).
+  - [ ] Input, a paste of 1 MB and resize work (`stty size` on Unix and `$Host.UI.RawUI.WindowSize` on Windows report the new size).
+  - [ ] `terminal_close` ends the shell, a program in the foreground (`sleep 1000`), a background job (`sleep 1000 &`) and a `nohup` one within 3 s on Linux and macOS, and on Windows the shell and its children (`ping -t`), through the Job Object.
+  - [ ] Every terminal ends when Gizai quits, and when it is killed (Linux: closing the pseudo-terminal; Windows: the job), tested with a scratch process.
+  - [ ] `busy` names the program in the foreground within a second; `terminals-changed` comes on open, rename, busy, end and close.
+  - [ ] Nothing a terminal shows or is sent is written to disk, to the database, a log, Memory or a card; no MCP tool reaches terminals (the catalog test lists none).
+  - [ ] `cargo test --workspace`, `npm test` and `npm run build` pass, and CI passes on Linux, macOS and Windows.
+
+### TF0. The terminal view: xterm.js in Gizai's colours, one view per terminal
+
+- **Column, role:** To do, frontend.
+- **Builds:** TD's `term-*` tokens in `design/tokens.json` and `src/styles/tokens.css` (with `scripts/tokens-css.ts`) and their rule in `design/README.md`; the packages of §4 (`@xterm/xterm` and its addons); `src/lib/terminals.ts` (the store of sessions from `terminalList` and `onTerminalsChanged`, and one xterm.js `Terminal` per session for its whole life, attached once to its output, moved between places, §5.3); `src/components/terminal/TerminalView.tsx` (places the view, fits it, sends the size, recolours it on a theme change, the keys of §5.2, copy and paste, links, find, acknowledging what it drew); `src/styles/terminal.css` (xterm's own stylesheet, imported, and Gizai's); `src/pages/TerminalPage.tsx` with `#/terminal` (New terminal, with the folder picker) and `#/terminal/<id>` (the terminal under its top bar), and the route in `src/router.ts`; a UI probe in `src/selftest.ts` and `scripts/ui-test.sh`.
+- **Acceptance criteria:**
+  - [ ] A terminal opens in a folder from `#/terminal`; typing `echo gizai-probe` shows it (UI probe in `cage`).
+  - [ ] Leaving the page and coming back shows the same terminal, with what it printed meanwhile and its scrollback (5,000 lines).
+  - [ ] Colours come from the tokens; `t` and Settings → Appearance recolour and refont open terminals at once; box-drawing characters line up (`tree`, htop).
+  - [ ] Copy, paste and find with the keys of §5.2 on each system; Ctrl+click opens an http(s) link with the opener, nothing else opens.
+  - [ ] In a terminal, Ctrl+K, Ctrl+W, Ctrl+P, Ctrl+B, `n`, `t` and `d` reach the shell and do nothing in Gizai (probe).
+  - [ ] `yes` running for 10 s doesn't freeze the window, and Ctrl+C stops it within a second (probe).
+  - [ ] The security policy is unchanged; `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### TF1. Terminals in the sidebar and on their own page
+
+- **Column, role:** To do, frontend.
+- **Builds:** the Terminal section in the sidebar above Editor (`"terminal"` in `Fold`), its rows, New terminal, the row menu (Rename, Show in the Editor, Copy folder path, Close), middle click, the close question; the Terminal page's tabs (the folder's terminals, `+`, ×, rename, Ctrl+PgDn and Ctrl+PgUp), its top bar and ⋯ menu, the ended and couldn't-start states with Start again; the note at 20 terminals; "the terminal" in `docs/PAID-FEATURES.md`'s free list and table, and in README.md.
+- **Acceptance criteria:**
+  - [ ] Ten terminals open at once show as ten rows under Terminal, above Editor; a click opens each on its page; closing them leaves "New terminal".
+  - [ ] Rename (F2 on the row, double click on a tab) shows the new name on the row, the tab and the page; an empty name gives the default back.
+  - [ ] Close on a terminal running a program asks under the row first; Close ends the shell and the row goes.
+  - [ ] `exit` closes the terminal; a shell that ends with another code shows why, with Start again.
+  - [ ] The section folds like Editor and remembers it; folded it says how many are open.
+  - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### TF2. The terminal panel in the Editor
+
+- **Column, role:** To do, frontend.
+- **Builds:** the Terminal button between Fetch and Open in; `src/components/editor/TerminalPanel.tsx` between the code and the status bar, with its tabs (the folder's terminals), Own page and Hide; the drag handle; the height as a share in `localStorage` and whether the panel shows per folder; Ctrl+\` and Ctrl+Shift+\`; the Editor's keys (`EditorPage.tsx:407-423`) left alone while a terminal has the focus; Own page and Show in the Editor moving the one view.
+- **Acceptance criteria:**
+  - [ ] The button opens the panel at 30% of the column with a terminal in the folder's root (`pwd` prints it, probe); pressed again or Ctrl+\`, it hides, and the shell keeps running.
+  - [ ] Dragging the handle changes the height between the limits; a double click gives 30% back; the height is the same after a reload and in another folder.
+  - [ ] A terminal opened in the panel is a row under Terminal and opens on its own page with the same screen; one opened from the sidebar in the same folder is a tab in the panel.
+  - [ ] With the focus in the terminal, Ctrl+W, Ctrl+P, Ctrl+B and Ctrl+Shift+F go to the shell, not to the Editor; Ctrl+\` still hides the panel.
+  - [ ] For a folder an agent works on, the button is off and says why.
+  - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+
+### Contract CT: TB → TF0, TF1, TF2 (terminals)
+
+Rust: `src-tauri/src/terminal.rs`, one `#[tauri::command]` per function below, with the same names in snake case and the arguments in snake case; registered in `lib.rs`; types with `#[serde(rename_all = "camelCase")]`. `folder` is always an `EditorFolder.id` (`editorFolders()`), checked with `editor::find` on every `terminal_open`.
+
+```rust
+#[tauri::command] pub fn terminal_list(st: State<'_, AppState>) -> Vec<TerminalSession>
+#[tauri::command] pub async fn terminal_open(st: State<'_, AppState>, folder: String, cols: u16, rows: u16,
+                                             name: Option<String>) -> Result<TerminalSession, String>
+#[tauri::command] pub fn terminal_attach(st: State<'_, AppState>, id: String,
+                                         output: tauri::ipc::Channel<tauri::ipc::Response>) -> Result<(), String>
+#[tauri::command] pub fn terminal_input(st: State<'_, AppState>, id: String, data: String, binary: bool) -> Result<(), String>
+#[tauri::command] pub fn terminal_resize(st: State<'_, AppState>, id: String, cols: u16, rows: u16) -> Result<(), String>
+#[tauri::command] pub fn terminal_ack(st: State<'_, AppState>, id: String, bytes: u32) -> Result<(), String>
+#[tauri::command] pub fn terminal_rename(st: State<'_, AppState>, id: String, name: String) -> Result<TerminalSession, String>
+#[tauri::command] pub async fn terminal_close(st: State<'_, AppState>, id: String) -> Result<(), String>
+// event "terminals-changed", payload Vec<TerminalSession>: after open, rename, close, a shell's end, and a change of `busy`
+```
+
+`src/api.ts` (with `import { Channel, invoke } from "@tauri-apps/api/core"`):
+
+```ts
+/** Every open terminal, in the order they were opened. */
+export const terminalList = () => invoke<T.TerminalSession[]>("terminal_list");
+/** Starts your shell in one of the Editor's folders (an EditorFolder id), at this size. Refuses, with the Editor's reason,
+ *  a folder the Editor can't open or a card's worktree an agent is working on. `name` null: the folder's name, numbered. */
+export const terminalOpen = (folder: string, cols: number, rows: number, name: string | null) =>
+  invoke<T.TerminalSession>("terminal_open", { folder, cols, rows, name });
+/** Sends the terminal's output to `onBytes`: first what it kept in memory (at most 256 KB), then everything new, in order.
+ *  One listener per terminal: attaching again replaces the last one. */
+export function terminalAttach(id: string, onBytes: (bytes: Uint8Array) => void): Promise<void> {
+  const output = new Channel<ArrayBuffer>((b) => onBytes(new Uint8Array(b)));
+  return invoke<void>("terminal_attach", { id, output });
+}
+/** What you typed or pasted (xterm's onData), or with `binary` xterm's onBinary: one byte per character. */
+export const terminalInput = (id: string, data: string, binary = false) => invoke<void>("terminal_input", { id, data, binary });
+export const terminalResize = (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows });
+/** The view has drawn this many more bytes (send it every 64 KB or so). Above 1 MB not yet drawn, the backend stops reading
+ *  until it is back under 256 KB, and the program waits, as in any terminal. */
+export const terminalAck = (id: string, bytes: number) => invoke<void>("terminal_ack", { id, bytes });
+/** An empty name gives the default back. */
+export const terminalRename = (id: string, name: string) => invoke<T.TerminalSession>("terminal_rename", { id, name });
+/** Ends the shell and everything it started; resolves when they are gone (at most about 3 s). */
+export const terminalClose = (id: string) => invoke<void>("terminal_close", { id });
+export const onTerminalsChanged = (cb: (list: T.TerminalSession[]) => void): Promise<UnlistenFn> =>
+  listen<T.TerminalSession[]>("terminals-changed", (m) => cb(m.payload));
+```
+
+`src/types.ts`:
+
+```ts
+export type TerminalSession = {
+  id: string;                  // for as long as Gizai runs
+  name: string;                // "gizai", "gizai 2", "GA-123", or the name given with Rename
+  folder: string;              // the EditorFolder id it started in: which Editor panel shows it
+  folderPath: string;          // as shown, ~ for the home folder
+  taskId: string | null;       // when it started in a card's worktree
+  shell: string;               // "zsh", "bash", "fish", "sh", "pwsh", "powershell", "cmd"
+  busy: string | null;         // the program running in it now ("npm"); null while the shell waits for a command
+  ended: TerminalEnd | null;   // null while the shell runs
+  cols: number;
+  rows: number;
+  openedAt: number;            // ms since 1970
+};
+export type TerminalEnd = {
+  code: number | null;         // the shell's exit code; null when a signal ended it
+  at: number;                  // ms since 1970
+  why: string | null;          // "Couldn't start zsh: …", or null
+};
+```
+
+Errors are plain sentences, like the rest of the app ("The Editor can't open ~/.ssh: …", "QA Agent is working on GA-118: a terminal there waits until its run ends").

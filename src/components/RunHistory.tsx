@@ -1,11 +1,13 @@
 // The Runs tab of a card (design system: RunHistory): one row per run, with how many commits it made. A row opens to
 // show why the run ended, in full, the agent's last message, the commits, the facts (model, time, tool calls, tokens,
-// branch, worktree) and its whole output.
+// branch, worktree) and its whole output. A run that committed has Show changes beside it: only what it committed, in
+// the card's Changes view (GA-112).
 import { useEffect, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, FileDiff } from "lucide-react";
 import { runCommits, runEvents } from "../api";
 import { commitCount, elapsed, formatCost, formatTokens, lastAgentText, leadText, resumeCommand, runReason, toolCalls, triggerName } from "../lib/runs";
 import { relTime } from "../lib/format";
+import { href } from "../router";
 import type { Commit, Run, SeqEvent } from "../types";
 import { MarkdownView } from "./MarkdownView";
 import { outcomeBadge, Stream } from "./RunPanel";
@@ -49,15 +51,18 @@ function RunRow({ r }: { r: Run }) {
   const model = init && init.kind === "init" ? init.model : null;
   return (
     <div className={`run-row${open ? " open" : ""}`}>
-      <button className="panel-row" aria-expanded={open} onClick={toggle}>
+      <div className="panel-row run-line"><button className="run-open" aria-expanded={open} onClick={toggle}>
         <ChevronRight className="icon sm chev" />{outcomeBadge(r)}<span className="chip-id">{r.id.slice(-8)}</span>
         <span className="grow">{r.agentName} <span className="faint">· {r.roleKey} · {triggerName(r)}</span>
           {commits && commits.length > 0 && <span className="faint"> · {commitCount(commits.length)}</span>}{reason && <span className="faint"> · {reason}</span>}
           {/* The badge says it while the Team Lead has the question, or answered it. */}
           {r.lead && !["asking", "answering", "answered"].includes(r.lead.state)
             && <span className="faint"> · {leadText({ ...r.lead, reason: r.lead.state === "escalated" ? null : r.lead.reason })}</span>}</span>
-        <span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" title={when(r.createdAt)}>{relTime(r.createdAt)}</span>
       </button>
+        {r.taskId && commits && commits.length > 0 && <a className="btn ghost sm" href={href({ page: "task", id: r.taskId, view: "changes", run: r.id })}
+          title="Only what this run committed"><FileDiff className="icon" />Show changes</a>}
+        <span className="faint">{formatCost(r.costUsdMicros)}</span><span className="faint" title={when(r.createdAt)}>{relTime(r.createdAt)}</span>
+      </div>
       {open && (
         <div className="run-detail">
           {reason && <><h4>Why it ended</h4><p className="run-reason">{reason}</p></>}

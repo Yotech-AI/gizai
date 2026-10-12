@@ -70,6 +70,16 @@
 #     and light; n, p, Alt+↓, [ and Esc; Show changes beside both runs, and each run's changes only; no branch, branch
 #     only, merged and no changes. (b) speed: the 2,000-line (32 files) and the 15,000-line (245 files) cards show their
 #     first screen within 300 ms of the Changes tab and scroll for 3 s without a frame over 100 ms.
+# 15. terminal (GA-135), in KADE-1's worktree, with /bin/sh in a scratch home folder: #/terminal's New terminal opens the
+#     folder picker titled "New terminal in", and picking KADE-1 starts a terminal on its page, fitted, with the focus;
+#     typing echo gizai-probe prints it; leaving the page and coming back shows the same view with what it printed
+#     meanwhile (off screen it holds no WebGL context); seq 1 6000 keeps 5,000 lines of scrollback; the colours are the
+#     term-* tokens and follow the theme at once, the font follows Settings → Appearance and the view fits again;
+#     Ctrl+K, Ctrl+W, Ctrl+P, Ctrl+B, n, t and d reach the shell and do nothing in Gizai; Ctrl+Shift+F finds and Escape
+#     closes; Ctrl+Shift+C and Ctrl+Shift+V copy and paste (when the cage has a clipboard); a second place takes the view
+#     and the page offers Show here, which takes it back; WebGL draws where hardware WebGL2 exists, and the DOM renderer
+#     draws the same screen with WebGL off and after its context is lost; yes for 10 s keeps the window drawing and
+#     Ctrl+C stops it within a second; closing the terminal disposes of its view.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -133,4 +143,9 @@ rm -rf .devdata/uitest-changes .devdata/uitest-changes.wt && mkdir -p .devdata/u
 CHG=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_changes -- .devdata/uitest "$PWD/.devdata/uitest-changes")
 DATA=$PWD/.devdata/uitest ROUTE="task/${CHG%% *}/changes" MODE="changes-a:$CHG" scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE="task/${CHG%% *}" MODE="changes-b:$CHG" scripts/smoke-cage.sh || fail=1
+fresh
+# KADE-1 gets a branch and its worktree folder, so it is one of the Editor's folders (a card's worktree)
+KADE1=$(python3 -c "import sqlite3; c=sqlite3.connect('.devdata/uitest/gizai.db'); c.execute(\"update tasks set branch='gizai/kade-1-terminal' where identifier='KADE-1'\"); c.commit(); print(c.execute(\"select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='KADE-1'\").fetchone()[0])")
+mkdir -p ".devdata/uitest/worktrees/$KADE1/KADE-1" && rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
 exit $fail

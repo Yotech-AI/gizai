@@ -23,7 +23,7 @@ import { MemoryPage } from "./pages/MemoryPage";
 import { EditorPage } from "./pages/EditorPage";
 import { TerminalPage } from "./pages/TerminalPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, terminalProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 import { startTerminals } from "./lib/terminals";
 
@@ -161,7 +161,13 @@ export default function App() {
             memory = await memoryEmptyProbe();
             if (!memory.ok) errors.push(`memory empty probe: ${JSON.stringify(memory)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes });
+          // GA-135: GIZAI_SELFTEST_MODE=terminal:<folder> on route terminal: a terminal in that folder (see terminalProbe)
+          let terminal: Awaited<ReturnType<typeof terminalProbe>> | undefined;
+          if (i.start_route === "terminal" && i.selftest_mode?.startsWith("terminal:")) {
+            terminal = await terminalProbe(i.selftest_mode.slice(9));
+            if (!terminal.ok) errors.push(`terminal probe: ${JSON.stringify(terminal)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes, terminal });
           await exitApp(0);
         }
       })

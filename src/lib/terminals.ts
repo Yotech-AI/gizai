@@ -416,8 +416,9 @@ function restyle() {
     for (const v of views.values()) {
       if (v.term.options.fontFamily !== fontFamily) v.term.options.fontFamily = fontFamily;
       if (v.term.options.fontSize !== fontSize) v.term.options.fontSize = fontSize;
-      if (v.el) fitView(v.id);
     }
+    // xterm.js measures the new cell, then the views on screen fit again (their places kept their size)
+    requestAnimationFrame(() => { for (const v of views.values()) if (v.el) fitView(v.id); });
   });
 }
 

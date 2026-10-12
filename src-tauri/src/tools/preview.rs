@@ -89,6 +89,14 @@ fn note(cx: &Cx, r: &str) -> Option<memory::Note> {
     memory::get(cx.db(), &who, r).ok()
 }
 
+/// The note memory_write would save over, found as it finds it: by its path (case ignored, `.md` allowed) or its id, never
+/// by its title.
+fn note_at(cx: &Cx, r: &str) -> Option<memory::Note> {
+    let p = r.trim().trim_matches('/');
+    let p = p.strip_suffix(".md").unwrap_or(p);
+    memory::find(cx.db(), p).ok().flatten().or_else(|| note(cx, r).filter(|n| n.id == r.trim()))
+}
+
 /// memory_write and memory_append: which note a call is for, so a newer pending call for the same note replaces the
 /// older one: its id when it exists, else its path in lower case.
 pub(crate) fn note_key(st: &crate::AppState, actor: &str, thread: &str, tool: &str, args: &Map<String, Value>) -> Option<String> {
@@ -99,7 +107,8 @@ pub(crate) fn note_key(st: &crate::AppState, actor: &str, thread: &str, tool: &s
     };
     let r = args.get(key)?.as_str()?.trim();
     let cx = Cx { st, actor, thread: Some(thread), check: None };
-    Some(match note(&cx, r) {
+    let found = if tool == "memory_write" { note_at(&cx, r) } else { note(&cx, r) };
+    Some(match found {
         Some(n) => n.id,
         None => {
             let p = r.trim_matches('/');
@@ -112,7 +121,7 @@ fn memory_write(cx: &Cx, a: &Args) -> Result<Preview, String> {
     let path = a.req("path")?;
     let body = a.text("body_md").unwrap_or_default();
     let version = a.int("version")?;
-    Ok(match note(cx, &path) {
+    Ok(match note_at(cx, &path) {
         Some(n) => {
             let warning = match version {
                 None | Some(0) => Some(format!("{} exists and the call gives no version, so approving fails and nothing is saved.", n.path)),
@@ -170,6 +179,8 @@ fn start_run(cx: &Cx, a: &Args) -> Result<Preview, String> {
                 let name = gizai_core::team::agent(cx.db(), &id).map_err(err)?.name;
                 (name.clone(), format!("{name} (the card's agent)"), None)
             }
+            None if t.hold.is_some() => ("an agent".to_string(), "none chosen".to_string(),
+                                        Some(format!("{} is on hold, so approving fails unless the hold is cleared first.", t.identifier))),
             None => ("an agent".to_string(), "none".to_string(),
                      Some(format!("No agent is assigned to {} or on its column, so approving fails.", t.identifier))),
         },

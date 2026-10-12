@@ -1,0 +1,39 @@
+/* The band (GA-139): Gizai's mountains along the bottom of the window, under the sidebar and the main column, behind
+   everything in them. The frontend card moves this into src/styles (band-tokens.css shows the tokens until they are in
+   design/tokens.json). In the app the window is .app, with data-band="on" on <html> while Settings → Appearance →
+   Mountains is on; on the design page each frame (.win) carries data-band with its strength.
+
+   The layers, from the bottom up, all inside the window's own stacking context:
+     1. the canvas colour: body's bg, and side under the sidebar's own ::before (z-index -2), and the chat's threads and
+        the Editor's tree under theirs;
+     2. the band (z-index -1): the glow, then the lines;
+     3. everything else: the canvases are see-through, so the band shows between rows and cards; what holds content keeps
+        its own background (cards, panels, inputs, the composer, code, the status bar, menus, drawers). */
+
+/* The window: the band's layer stays inside it */
+.app, .win[data-band] { position: relative; isolation: isolate; }
+
+/* The layer: the window's width, at its bottom. The lines are currentColor (band-line) on a glow that rises from band-glow
+   at the bottom edge to nothing at the band's top. It takes no clicks, no focus and no text selection, and screen readers
+   skip it (aria-hidden on the element). */
+.band { position: absolute; left: 0; right: 0; bottom: 0; z-index: -1; height: clamp(var(--size-band-min), 14vh, var(--size-band));
+  overflow: hidden; pointer-events: none; user-select: none; color: var(--band-line); background: linear-gradient(transparent, var(--band-glow)); }
+/* The artwork keeps its height and is cut at the sides (xMidYMax slice): its middle under the window's middle, its lines
+   1px at every width (non-scaling-stroke) */
+.band > svg { display: block; width: 100%; height: 100%; }
+
+/* Gizai's smallest window is 900 × 600, where the band is 84px; a tiling window manager can make it shorter, and there the
+   band goes. It goes too with the system's high contrast, in forced colours and on paper. */
+@media (max-height: 559px), (prefers-contrast: more), (forced-colors: active), print { .app > .band { display: none; } }
+
+/* ---------- see-through: the canvases near the bottom ---------- */
+/* The sidebar, the chat's threads and the Editor's tree: their colour moves to a ::before under the band */
+[data-band] .side, [data-band] .chat-threads, [data-band] .ed-side { position: relative; background: none; }
+[data-band] .side::before, [data-band] .chat-threads::before, [data-band] .ed-side::before { content: ""; position: absolute; inset: 0; z-index: -2;
+  background: var(--side); pointer-events: none; }
+/* The main column, the chat's composer strip (the box in it stays solid) and the properties panel: body's bg is theirs */
+[data-band] .main, [data-band] .chat-composer, [data-band] .props { background: none; }
+
+/* Everything else keeps its background and so stays solid over the band: cards and panels, inputs and buttons, the composer
+   box and its banners, the Editor's code, tabs, status bar and terminal panel, the Terminal page, the Changes view, sticky
+   table heads, menus, popovers, the palette, drawers and toasts. A row's hover and selected fill is solid too. */

@@ -747,7 +747,7 @@ section("specs", "7. Specs: sizes, states, the font, keys",
   p("Sizes are tokens: the five new ones are in <code>new-tokens.json</code> (and <code>terminal-tokens.css</code>, which shows how they grow with the density and the Interface text size, as <code>size-tab</code> does); the rest are the app's spacing, text and radius tokens. States follow the design system: hover the <code>hover</code> fill, selected the <code>selected</code> fill, focus a 2px <code>focus</code> ring, off at 45%.")
   + h3("The sidebar's rows")
   + sizeTable([
-    ["Row", "The app's <code>.nav-item</code>: 32px high (grows with the density), 8px sides, 10px between icon and name", c(".nav-item"), ""],
+    ["Row", "The app's <code>.nav-item</code>, as the Editor's rows: <code>calc(32px + var(--ui-box))</code> high, 8px sides, 10px between icon and name", "none: the sidebar's rows have no size token; no new one, so the Terminal section can't drift from Editor's", ""],
     ["Icon", "16px Lucide <code>terminal</code>, <code>text-3</code>; <code>text</code> on hover and selected", c(".icon"), ""],
     ["Name", "13.5px, 500, <code>text-2</code>; <code>text</code> on hover and selected. A card: its identifier mono 12.5px, its title <code>text-3</code>", `${c("--fs")}, ${c("--fs-sm")}`, ""],
     ["What runs", "11.5px <code>text-3</code>: the program in mono, “ended” in the interface font", c("--fs-xs"), ""],

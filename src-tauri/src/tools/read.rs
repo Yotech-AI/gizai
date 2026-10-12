@@ -18,6 +18,10 @@ fn task_line(t: &Task) -> Value {
         v["archived_on"] = json!(ymd(at));
         v["archived_by"] = json!(t.archived_by);
     }
+    // GA-111: a person does it by hand, so no agent takes it
+    if t.by_hand {
+        v["by_hand"] = json!(true);
+    }
     v
 }
 
@@ -173,6 +177,8 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
         "hold_reason": t.hold_reason, "testing": t.testing, "description_md": t.description_md, "acceptance_md": t.acceptance_md, "branch": t.branch,
         // GA-70: its question is with you (the Team Lead's run on it answers or asks the user).
         "with_team_lead": t.with_lead,
+        // GA-111: pinned to a person who does it by hand (Open in editor): no agent takes it until they hand it over.
+        "by_hand": t.by_hand,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
         "archived": t.archived_at.is_some(), "archived_on": t.archived_at.map(ymd), "archived_by": t.archived_by,
     }, "comments": comments, "runs": runs, "files": file_lines(files::list(cx.db(), "task", &t.id).map_err(err)?)}))

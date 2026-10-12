@@ -51,6 +51,7 @@ export type Task = {
   runForMe?: string[];
   /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
   withLead?: boolean;
+  byHand: boolean;         // pinned to a person: agents leave it alone
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -338,6 +339,10 @@ export type SearchHit = { path: string; line: number; column: number; text: stri
 export type SearchResult = { hits: SearchHit[]; truncated: boolean };
 export type FolderGit = { branch: string | null; files: Record<string, GitMark>; uncommitted: number };
 export type EditorApp = { id: "vscode" | "zed" | "phpstorm"; name: string };
+
+// ---- a person's card (GA-111, contract C4) ----
+/** Where your card by hand is: its worktree (an EditorFolder id), its branch, files with uncommitted changes, commits not pushed. */
+export type HandCard = { taskId: string; folder: string; branch: string; changed: number; unpushed: number };
 
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */

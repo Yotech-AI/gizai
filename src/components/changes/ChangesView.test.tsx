@@ -179,3 +179,79 @@ describe("a deleted file's counts", () => {
     expect(html.match(/<header class="chg-fh">(?:(?!<\/header>).)*<\/header>/)?.[0]).toContain(stat);
   });
 });
+
+// GA-112 QA, fix round: the counts of every kind of file, and the first file shown with top-level files first in git's order
+describe("each file's counts, in the list and in its header", () => {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  const row = (html: string, path: string) => html.match(new RegExp(`<button class="chg-file[^"]*" data-path="${esc(path)}"(?:(?!</button>).)*</button>`))![0];
+  const header = (html: string, path: string) =>
+    html.match(new RegExp(`<section class="chg-box[^"]*" data-path="${esc(path)}"[^>]*><header class="chg-fh">(?:(?!</header>).)*</header>`))![0];
+  const stat = (html: string) => html.match(/<span class="diffstat">(?:(?!<\/span><\/span>).)*<\/span><\/span>|<span class="diffstat">(?:(?!<\/span>).)*<\/span>/)?.[0] ?? null;
+  const html = view(changes());
+
+  it("an added file reads +35 alone: no −0", () => {
+    const path = "crates/gizai-agents/src/editor.rs";
+    expect(row(html, path)).toContain('<span class="diffstat"><span class="add">+35</span></span>');
+    expect(header(html, path)).toContain('<span class="diffstat"><span class="add">+35</span></span>');
+    expect(row(html, path)).not.toContain("−");
+  });
+
+  it("a deleted file reads +0 −45, a changed one +7 −2, in the list and in its header alike", () => {
+    for (const [path, add, del] of [["crates/gizai-agents/src/old_folders.rs", "+0", "−45"], ["src/components/Sidebar.tsx", "+7", "−2"]]) {
+      const want = `<span class="diffstat"><span class="add">${add}</span><span class="del">${del}</span></span>`;
+      expect(stat(row(html, path))).toBe(want);
+      expect(stat(header(html, path))).toBe(want);
+    }
+  });
+
+  it("a binary file reads Binary and a rename without changes Renamed (Copied for a copy), without counts", () => {
+    expect(row(html, "src/assets/editor-empty.png")).toContain('<span class="bin">Binary</span>');
+    expect(row(html, "src/assets/editor-empty.png")).not.toContain('class="add"');
+    expect(header(html, "src/assets/editor-empty.png")).toContain('<span class="diffstat"><span class="bin">Binary</span></span>');
+    expect(row(html, "crates/gizai-core/src/folder_rules.rs")).toContain('<span class="bin">Renamed</span>');
+    expect(header(html, "crates/gizai-core/src/folder_rules.rs")).not.toContain("diffstat");
+    const copied = view(changes({ files: [file("src/b.ts", { status: "copied", oldPath: "src/a.ts", additions: 0, deletions: 0 })] }));
+    expect(row(copied, "src/b.ts")).toContain('<span class="bin">Copied</span>');
+  });
+
+  it("a rename with changes shows its counts, not Renamed", () => {
+    const h = view(changes({ files: [file("src/new.ts", { status: "renamed", oldPath: "src/old.ts", additions: 3, deletions: 1 })] }));
+    expect(row(h, "src/new.ts")).toContain('<span class="diffstat"><span class="add">+3</span><span class="del">−1</span></span>');
+    expect(row(h, "src/new.ts")).not.toContain("Renamed</span>");
+  });
+
+  it("the heading's total writes the added count also when nothing was added", () => {
+    const h = view(changes({ additions: 0, deletions: 45, files: [file("src/gone.ts", { status: "deleted", additions: 0, deletions: 45 })] }));
+    expect(h).toContain('<div class="tot"><span class="diffstat"><span class="add">+0</span><span class="del">−45</span></span> · 1 file</div>');
+  });
+});
+
+describe("the current file when the view opens, more cases", () => {
+  const current = (html: string) => html.match(/class="chg-file on" data-path="([^"]+)"/)?.[1];
+  const boxes = (html: string) => [...html.matchAll(/<section class="chg-box[^"]*" data-path="([^"]+)"/g)].map((m) => m[1]);
+  const rows = (html: string) => [...html.matchAll(/<button class="chg-file[^"]*" data-path="([^"]+)"/g)].map((m) => m[1]);
+
+  it("Cargo.toml and README.md come first in git's order, the first folder's first file is current", () => {
+    // as git sorts them: upper case before lower case
+    const html = view(changes({ files: [file("Cargo.toml"), file("README.md"), file("crates/a/src/lib.rs"), file("package.json"), file("src/main.ts")] }));
+    expect(rows(html)).toEqual(["crates/a/src/lib.rs", "src/main.ts", "Cargo.toml", "README.md", "package.json"]);
+    expect(boxes(html)).toEqual(rows(html));
+    expect(current(html)).toBe("crates/a/src/lib.rs");
+    // only one file is current
+    expect(html.match(/class="chg-file on"/g)).toHaveLength(1);
+    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+  });
+
+  it("with only top-level files, the first of them; with one file, that file", () => {
+    expect(current(view(changes({ files: [file("Cargo.toml"), file("README.md")] })))).toBe("Cargo.toml");
+    expect(current(view(changes({ files: [file("README.md")] })))).toBe("README.md");
+  });
+
+  it("one run's changes open on the first file shown too", () => {
+    // the prep_changes card: README.md is first in git's order, assets/logo.png first in the list
+    const files = [file("README.md"), file("assets/logo.png", { binary: true, additions: null, deletions: null }), file("package-lock.json"), file("src/big.ts")];
+    const html = view(changes({ files }));
+    expect(current(html)).toBe("assets/logo.png");
+    expect(boxes(html)[0]).toBe("assets/logo.png");
+  });
+});

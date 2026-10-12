@@ -2496,6 +2496,22 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     check(/^Changes \+\d+−\d+$/.test(tab), `the tab's counts: ${tab}`);
     // a click in the list scrolls its file to the top
     const diffs = document.querySelector<HTMLElement>(".chg-diffs")!;
+    // the view opens on the first file shown (folders first, the top level last), not README.md, git's first path; its box
+    // is at the top of the diffs, and n and p go forward and back from it at once
+    const first = rows[0]?.getAttribute("data-path");
+    out.opensOn = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(first === "assets/logo.png" && out.opensOn === first, `the view opens on the first file shown, assets/logo.png: ${out.opensOn} (first row ${first})`);
+    const firstBox = document.querySelector<HTMLElement>(".chg-diffs .chg-box");
+    check(firstBox?.getAttribute("data-path") === first && diffs.scrollTop === 0
+      && Math.abs(firstBox.getBoundingClientRect().top - diffs.getBoundingClientRect().top) <= 16, "the first file's box is at the top of the diffs");
+    const chg0 = document.querySelector<HTMLElement>(".chg")!;
+    key(chg0, "n");
+    await sleep(300);
+    out.nFromStart = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.nFromStart === rows[1]?.getAttribute("data-path") && out.nFromStart === "src/added.rs", `n from the start goes to the second file shown: ${out.nFromStart}`);
+    key(chg0, "p");
+    await sleep(300);
+    check(document.querySelector(".chg-file.on")?.getAttribute("data-path") === first, "p from there comes back to the first file");
     document.querySelector<HTMLElement>('.chg-file[data-path="src/big.ts"]')!.click();
     const big = await waitFor(() => document.querySelector<HTMLElement>('.chg-box[data-path="src/big.ts"] .cm-editor'));
     await sleep(600);
@@ -2555,7 +2571,39 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     key(chg, "p");
     await sleep(300);
     check(document.querySelector(".chg-file.on")?.getAttribute("data-path") === "src/big.ts", "p goes back");
+    // a filter, cleared again: n and p still work
+    const filter = document.querySelector<HTMLInputElement>(".chg-filter input")!;
+    typeInto(filter, "big");
+    await sleep(200);
+    out.filtered = [[...document.querySelectorAll(".chg-file")].map((r) => r.getAttribute("data-path")).join(), textIn(".chg-sum .tot")];
+    check((out.filtered as string[])[0] === "src/big.ts" && /1 of 9 files$/.test(textIn(".chg-sum .tot")), `the filter "big": ${out.filtered}`);
+    typeInto(filter, "");
+    await sleep(300);
+    check(document.querySelectorAll(".chg-file").length === 9, "clearing the filter shows the 9 files again");
+    key(chg, "n");
+    await sleep(300);
+    const nAfterClear = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    key(chg, "p");
+    await sleep(300);
+    out.afterClear = [nAfterClear, document.querySelector(".chg-file.on")?.getAttribute("data-path")];
+    check(nAfterClear === "src/folder_rules.rs" && (out.afterClear as string[])[1] === "src/big.ts", `n and p after the filter is cleared: ${out.afterClear}`);
     await sleep(2100); // the click's pin ends
+    // the highlight follows the scroll. A scroll that isn't the wheel (the scrollbar dragged), 2 s after n and p: src/added.rs
+    // (120 added lines) at the top
+    const addedBox = document.querySelector<HTMLElement>('.chg-box[data-path="src/added.rs"]')!;
+    diffs.scrollTop = addedBox.offsetTop + 10;
+    await sleep(300);
+    out.followsScrollbar = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.followsScrollbar === "src/added.rs", `2 s after p, the highlight follows a scroll that isn't the wheel (the scrollbar) to src/added.rs: ${out.followsScrollbar}`);
+    // the wheel's scroll, back to the top: the first file
+    diffs.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true }));
+    diffs.scrollTop = 0;
+    await sleep(300);
+    out.followsWheel = document.querySelector(".chg-file.on")?.getAttribute("data-path");
+    check(out.followsWheel === "assets/logo.png", `the highlight follows the wheel's scroll to assets/logo.png: ${out.followsWheel}`);
+    // Alt+↓ from src/big.ts at the top, as after the click
+    diffs.scrollTop = box.offsetTop - 8;
+    await sleep(300);
     const top0 = diffs.scrollTop;
     key(chg, "ArrowDown", { altKey: true });
     await sleep(700);

@@ -10,9 +10,10 @@
 // only lines you see, in currentColor, and the page and the app give them their colour (the band-* tokens).
 // It writes mountains.svg (the app's band) and mountains-hero.svg (the website's hero, the same land seen closer up).
 //
-// The band's colours live in BAND below, once: this file checks them (contrast of the text over the band, the band apart
-// from --live, --needs and --accent) before it writes anything, then writes new-tokens.json (design/tokens.json's format),
-// band-tokens.css (the same tokens for this page) and the tables in README.md.
+// The band's colours live in BASE and STRENGTHS below, once: this file checks them (contrast of the text and the focus ring
+// over the band, the band apart from --live, --needs and --accent) and the SVGs' size before it writes anything, then
+// writes new-tokens.json (design/tokens.json's format), band-tokens.css (the same tokens for this page) and the tables in
+// README.md.
 // usage: node design/branding/gen-bottom-band.mjs
 import fs from "node:fs";
 import path from "node:path";
@@ -908,7 +909,7 @@ ${STRENGTHS.map((s) => `[data-band="${s.key}"] { --band-line: var(--band-${s.key
   <div class="dz-kicker"><span class="badge outline">GA-139</span><span>Branding</span><span class="faint">for Jefsev's review</span></div>
   <h1>Mountains along the bottom</h1>
   <p class="dz-lead">Gizai's own wireframe landscape as a band along the bottom of the window, from the left edge to the right edge, under the sidebar and the main column: more visible than what Omarchy lets through the window now, and never in the way of text or controls. Three strengths to pick from, on the board, the chat and the Editor, in dark and light.</p>
-  <p class="dz-p">Every screen is drawn with the app's own stylesheets (<code>src/styles</code>), so it looks as the app will; the band is <code>band.css</code> with its tokens in <code>band-tokens.css</code> (from <code>new-tokens.json</code>). Each screen shows dark, then light; the switches show one theme or one strength. The proposal is <span class="dz-pick">${S[PICK].name}</span>: the band reads at a glance, and all three text colours keep 4.5:1 over it. Built by <code>node design/branding/gen-bottom-band.mjs</code>.</p>
+  <p class="dz-p">Every screen is drawn with the app's own stylesheets (<code>src/styles</code>), so it looks as the app will; the band is <code>band.css</code> with its tokens in <code>band-tokens.css</code> (from <code>new-tokens.json</code>). Each screen shows dark, then light; the switches show one theme or one strength. The proposal is <span class="dz-pick">${S[PICK].name}</span>: the band reads at a glance, and all three text colours keep 4.5:1 over it. <b>To pick</b>, write Subtle, Medium or Strong on the card; the frontend card builds that one. Built by <code>node design/branding/gen-bottom-band.mjs</code>.</p>
   <div class="dz-switches">
     <div class="dz-show" role="group" aria-label="Theme"><span class="faint">Theme</span><div class="seg" data-key="show"><button data-v="both">Dark and light</button><button data-v="dark">Dark</button><button data-v="light">Light</button></div></div>
     <div class="dz-show" role="group" aria-label="Strength"><span class="faint">Strength</span><div class="seg" data-key="strength-show"><button data-v="all">All three</button>${STRENGTHS.map((s) => `<button data-v="${s.key}">${s.name}</button>`).join("")}</div></div>

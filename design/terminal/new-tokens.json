@@ -1,0 +1,191 @@
+{
+  "note": "GA-132 (the terminal's design, TD): the new tokens for design/tokens.json, in its format. TF0 adds the colours to color.tokens after git-deleted and the sizes to size.tokens after size-statusbar, runs node scripts/tokens-css.ts, and gives size-term-tab and size-term-panel-min their growth in src/styles/appearance.css (terminal-tokens.css shows how). Made by gen-terminal.mjs.",
+  "color": {
+    "tokens": [
+      {
+        "name": "term-fg",
+        "value": "{text}",
+        "usage": "Text a program prints without a colour, and the prompt; as the code's text."
+      },
+      {
+        "name": "term-bg",
+        "value": "{bg}",
+        "usage": "The terminal's background: the code's, so the Editor's panel and the code above it are one surface."
+      },
+      {
+        "name": "term-cursor",
+        "value": "{text}",
+        "usage": "The cursor: a block while the terminal has the focus, its outline while it hasn't; it doesn't blink."
+      },
+      {
+        "name": "term-cursor-text",
+        "value": "{bg}",
+        "usage": "The character under the block cursor."
+      },
+      {
+        "name": "term-selection",
+        "value": {
+          "dark": "#283350",
+          "light": "#dae1f9"
+        },
+        "usage": "The selection, and find's matches (the current one with an accent border): accent at 26% (dark) and 18% (light) on bg, opaque so xterm.js's search can use it."
+      },
+      {
+        "name": "term-selection-inactive",
+        "value": "{selected}",
+        "usage": "The selection while the terminal hasn't the focus."
+      },
+      {
+        "name": "term-black",
+        "value": {
+          "dark": "#30333a",
+          "light": "#24272e"
+        },
+        "usage": "ANSI 0. Dark: a block a little above the background (ls's fifos, htop's bars), and black text on coloured blocks; as text on the background xterm.js lifts it to 4.5:1."
+      },
+      {
+        "name": "term-red",
+        "value": "{diff-del}",
+        "usage": "ANSI 1: errors, failed tests, git's removed lines and unstaged files. diff-del's value, so git diff reads as the Changes view."
+      },
+      {
+        "name": "term-green",
+        "value": "{diff-add}",
+        "usage": "ANSI 2: success, passed tests, git's added lines and staged files. diff-add's value."
+      },
+      {
+        "name": "term-yellow",
+        "value": {
+          "dark": "#e3bd3c",
+          "light": "#855600"
+        },
+        "usage": "ANSI 3: warnings, git's commit hashes. The gold of syn-type."
+      },
+      {
+        "name": "term-blue",
+        "value": {
+          "dark": "#85adff",
+          "light": "#1e54c4"
+        },
+        "usage": "ANSI 4: folders in ls, rustc's arrows and line numbers. The blue of syn-function."
+      },
+      {
+        "name": "term-magenta",
+        "value": {
+          "dark": "#c58af9",
+          "light": "#8a3cc2"
+        },
+        "usage": "ANSI 5: images in ls. A violet: at least 35° of hue from needs (magenta, “needs you”)."
+      },
+      {
+        "name": "term-cyan",
+        "value": {
+          "dark": "#56b8f0",
+          "light": "#0a6c9c"
+        },
+        "usage": "ANSI 6: links in ls, git's @@ lines, URLs. A sky blue: at least 35° of hue from live (teal, an agent at work)."
+      },
+      {
+        "name": "term-white",
+        "value": {
+          "dark": "#c4c7ce",
+          "light": "#d0d3da"
+        },
+        "usage": "ANSI 7: a light grey, a little below term-fg in dark; in light a block (white text on a coloured block), lifted to 4.5:1 as text."
+      },
+      {
+        "name": "term-bright-black",
+        "value": {
+          "dark": "#7f838d",
+          "light": "#636772"
+        },
+        "usage": "ANSI 8: grey text, such as hints, a shell's suggestions and dim lines. text-3's value."
+      },
+      {
+        "name": "term-bright-red",
+        "value": {
+          "dark": "#ff9590",
+          "light": "#962420"
+        },
+        "usage": "ANSI 9: bold red (xterm.js draws bold text in the bright colours)."
+      },
+      {
+        "name": "term-bright-green",
+        "value": {
+          "dark": "#72dca6",
+          "light": "#0b5a36"
+        },
+        "usage": "ANSI 10: bold green, such as executables in ls and cargo's Compiling."
+      },
+      {
+        "name": "term-bright-yellow",
+        "value": {
+          "dark": "#f5d56b",
+          "light": "#6a4400"
+        },
+        "usage": "ANSI 11: bold yellow, such as rustc's warning."
+      },
+      {
+        "name": "term-bright-blue",
+        "value": {
+          "dark": "#a9c5ff",
+          "light": "#1440a0"
+        },
+        "usage": "ANSI 12: bold blue, such as folders in ls."
+      },
+      {
+        "name": "term-bright-magenta",
+        "value": {
+          "dark": "#d6a7ff",
+          "light": "#6f22a6"
+        },
+        "usage": "ANSI 13: bold magenta. As apart from needs as term-magenta."
+      },
+      {
+        "name": "term-bright-cyan",
+        "value": {
+          "dark": "#86d1f7",
+          "light": "#06577f"
+        },
+        "usage": "ANSI 14: bold cyan, such as links in ls. As apart from live as term-cyan."
+      },
+      {
+        "name": "term-bright-white",
+        "value": {
+          "dark": "#fafafb",
+          "light": "#f3f4f7"
+        },
+        "usage": "ANSI 15: the brightest white in dark; in light a pale block, lifted to 4.5:1 as text."
+      }
+    ]
+  },
+  "size": {
+    "tokens": [
+      {
+        "name": "size-term-tab",
+        "value": "32px",
+        "usage": "The terminal tabs' strip, on the Terminal page and in the Editor's panel (28px compact)."
+      },
+      {
+        "name": "size-term-panel",
+        "value": "30%",
+        "usage": "The Editor's terminal panel the first time: a share of the code column (.ed-main), kept as a share."
+      },
+      {
+        "name": "size-term-panel-min",
+        "value": "120px",
+        "usage": "The panel's least height: its tabs (32px) and 4 lines (4 × 20px), with 4px above and below."
+      },
+      {
+        "name": "size-term-code-min",
+        "value": "120px",
+        "usage": "The code's least height while the panel shows (6 lines)."
+      },
+      {
+        "name": "size-handle",
+        "value": "6px",
+        "usage": "The drag handle's grab area, centred on the panel's 1px top border."
+      }
+    ]
+  }
+}

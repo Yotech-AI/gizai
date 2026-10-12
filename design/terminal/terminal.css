@@ -1,0 +1,86 @@
+/* The terminal's components (GA-132, TD of the terminal; docs/research/terminal.md §5.1 and §5.4). The design page
+   (terminal.html) uses this file; TF0 moves it into src/styles/terminal.css next to xterm.js's own stylesheet, and TF1 and
+   TF2 use it for the sidebar, the Terminal page and the Editor's panel. Every value is a token: the app's own, or a new one
+   from new-tokens.json (terminal-tokens.css until TF0 adds them to design/tokens.json). Teal and magenta appear only where
+   the app already puts them (the Editor's bar for an agent at work); the terminal's own colours are term-*.
+
+   What it reuses as it is: the sidebar's FoldSection (.nav-section, .nav-label, .fold-tag) and rows (.nav-item, .stand,
+   .card-id), the folder picker (.ed-picker), the right-click menu (.pop, .opt, .kbd), the Editor's tab strip (.ed-tabs,
+   .ed-tab, .x), its bars (.ed-bar, .ed-bar.file), its questions (.ed-confirm under a row, .pop.ed-ask under a tab) and its
+   find toggles (.ed-toggles, .ed-toggle). */
+
+/* ---------- the sidebar's Terminal section: rows like the Editor's folders ---------- */
+/* What runs in the terminal now, on the right of its row and its tab: the program in mono ("npm"), or "ended" in words */
+.nav-item .stand .prog, .ed-tab .prog { font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 400; }
+/* Rename (F2) types in the name's place, on a row and on a tab */
+.nav-item .name-in.input, .ed-tab .name-in.input { flex: 1; min-width: 0; height: calc(var(--size-row) - 16px); padding: 0 6px; font-size: var(--fs-sm); }
+.ed-tab .name-in.input { width: 120px; flex: none; height: calc(var(--size-term-tab) - 10px); }
+/* The close question under a row: the tree's .ed-confirm, in the sidebar's width */
+.nav-list .ed-confirm { margin: 2px 0 var(--space-1) var(--space-6); }
+/* The note at 20 open, on top of the folder picker's list */
+.ed-picker-note { display: flex; align-items: flex-start; gap: var(--space-2); flex: none; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line);
+  color: var(--text-2); font-size: var(--fs-xs); line-height: 1.45; }
+.ed-picker-note .icon { flex: none; width: 14px; height: 14px; margin-top: 1px; color: var(--text-3); }
+/* The picker's title: "New terminal in", over its search box (a card an agent works on is off, with why as its tooltip) */
+.ed-picker-title { flex: none; padding: var(--space-3) var(--space-3) 0; color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+
+/* ---------- the Terminal page (#/terminal/<id>): top bar, the folder's terminals as tabs, the terminal ---------- */
+.term-page { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* After the breadcrumbs: the folder in mono, the shell and its size, in text-3 */
+.term-where { display: flex; align-items: center; gap: var(--space-2); min-width: 0; overflow: hidden; color: var(--text-3); font-size: var(--fs-sm); white-space: nowrap; }
+.term-where .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-2); }
+.term-where .sep { color: var(--text-3); }
+.term-where .size { font-variant-numeric: tabular-nums; }
+.crumbs .name-in.input { width: 180px; height: 28px; padding: 0 8px; font-size: var(--fs); font-weight: 600; }
+
+/* The tabs: the Editor's file tabs, size-term-tab high, on the page and in the panel alike. A tab: the terminal icon, its
+   name, what runs in it, ×. + starts another terminal in the same folder. */
+.ed-tabs.term-tabs { height: var(--size-term-tab); }
+.ed-tab.term-tab { gap: 6px; padding-left: 10px; }
+.ed-tab.term-tab > .icon { width: 14px; height: 14px; color: var(--text-3); }
+.ed-tab.term-tab[aria-selected="true"] > .icon { color: var(--text-2); }
+.ed-tab.term-tab .prog, .ed-tab.term-tab .state { flex: none; color: var(--text-3); }
+.ed-tab.term-tab .state { font-size: var(--fs-xs); }
+.ed-tab.term-tab .x { margin-left: 2px; }
+.term-tabs > .btn.icon-only { width: 24px; height: 24px; }
+/* The panel's own buttons, on the right of its tabs: Own page, Hide */
+.term-tabs .acts { display: flex; flex: none; align-items: center; gap: 2px; margin-left: auto; padding: 0 var(--space-1); }
+
+/* The terminal: xterm.js in its place (.term-place), on term-bg, the code's background, with the mono font at the code
+   size. The page gives it 8px above and below; the panel 4px, so 4 lines fit in its least height. */
+.term-place { position: relative; flex: 1; min-height: 0; overflow: hidden; padding: var(--space-2) var(--space-3); background: var(--term-bg); color: var(--term-fg);
+  font-family: var(--font-mono); font-size: calc(12.5px + var(--ui-grow, 0px)); line-height: 1.6; }
+.term-panel .term-place { padding: var(--space-1) var(--space-3); }
+/* The shell ended or couldn't start: the bar is the Editor's file bar, under the tabs; the screen stays as it was */
+.term-place.ended { cursor: default; }
+
+/* Find (Ctrl+Shift+F, Cmd+F): a small box at the top right, over the terminal, so the terminal keeps its size */
+.term-find { position: absolute; top: var(--space-2); right: var(--space-4); z-index: 5; display: flex; align-items: center; gap: 2px; padding: var(--space-1);
+  border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--raised); box-shadow: var(--shadow-pop); font-family: var(--font-sans); font-size: var(--fs-sm); line-height: 1.45; }
+.term-find .in { position: relative; width: 240px; }
+.term-find .input { height: calc(28px + var(--ui-box, 0px)); padding-right: 86px; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.term-find .count { min-width: 62px; padding: 0 6px; color: var(--text-3); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.term-find .count.none { color: var(--danger); }
+
+/* One terminal, two places: the place that didn't ask last shows where it is, quietly, with Show here */
+.term-away { display: flex; align-items: center; justify-content: center; gap: var(--space-3); height: 100%; color: var(--text-3); font-family: var(--font-sans); font-size: var(--fs); }
+.term-away .icon { color: var(--text-3); }
+
+/* ---------- the Editor's terminal panel: in the code column, between the code and the status bar ---------- */
+/* Its height is a share of the column (.ed-main), 30% the first time, kept in localStorage gizai.editor.panel; the code keeps
+   at least size-term-code-min, the panel at least size-term-panel-min (its tabs and 4 lines). */
+.term-panel { display: flex; flex-direction: column; flex: 0 1 var(--term-share, var(--size-term-panel)); min-height: var(--size-term-panel-min); background: var(--term-bg); }
+.ed-main.has-term .ed-code { min-height: var(--size-term-code-min); }
+/* The drag handle is the panel's top border: a 1px line in line, with a size-handle grab area centred on it. Hover and
+   dragging: 2px of accent; focus: 2px of focus. role="separator", aria-orientation="horizontal", the share in aria-valuenow. */
+.term-handle { position: relative; z-index: 2; flex: none; height: 1px; background: var(--line); cursor: row-resize; touch-action: none; }
+.term-handle::before { content: ""; position: absolute; left: 0; right: 0; top: calc((var(--size-handle) - 1px) / -2); height: var(--size-handle); }
+.term-handle:hover, .term-handle.is-drag { background: var(--accent); box-shadow: 0 -1px 0 var(--accent); }
+.term-handle:focus-visible { outline: none; background: var(--focus); box-shadow: 0 -1px 0 var(--focus); }
+.ed-main.is-dragging, .ed-main.is-dragging * { cursor: row-resize; user-select: none; }
+
+/* The Terminal button in the Editor's top bar, between Fetch and Open in: a ghost button like Fetch. Pressed while the panel
+   shows; off (aria-disabled, so its tooltip still says why and the keyboard reaches it) while a terminal can't start there. */
+.btn.ghost[aria-pressed="true"] { background: var(--selected); color: var(--text); }
+.btn.term-btn[aria-disabled="true"] { pointer-events: auto; cursor: default; }
+.btn.term-btn[aria-disabled="true"]:hover { background: transparent; color: var(--text-2); }

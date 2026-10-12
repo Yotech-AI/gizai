@@ -1,6 +1,7 @@
 pub mod ask_lead;
 pub mod bitbucket;
 pub mod board;
+pub mod changes;
 pub mod chat;
 pub mod clis;
 pub mod code;
@@ -43,6 +44,8 @@ pub struct AppState {
     pub code: Arc<code::Copies>,
     /// Pull requests being opened or checked on GitHub (see `pulls`).
     pub pulls: Arc<pulls::PullChecks>,
+    /// The pull request diffs a card's Changes fetched lately (see `changes`).
+    pub changes: Arc<changes::PullDiffs>,
     /// Log in with GitHub, while gh waits for its code (see `github`).
     pub github: Arc<github::Logins>,
     /// The release check and the update (see `update`).
@@ -252,6 +255,7 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
     Ok(AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
+                  changes: Arc::new(changes::PullDiffs::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
                   desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()) })
 }
@@ -579,6 +583,7 @@ pub fn run() {
             commands::check_files, commands::item_id,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
+            changes::card_changes, changes::card_file_diff, changes::run_changes,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
             commands::list_old_worktrees, commands::remove_old_worktrees,

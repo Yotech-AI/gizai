@@ -5,8 +5,9 @@
 //! agent's own push in a run goes the same way too (`run_git_config`).
 //! The PR check follows the pull requests of cards in Review, and of any open card whose pull request isn't merged yet:
 //! every two minutes, when a run moves a card to Review, and when you open such a card. A merge moves its card to
-//! Deploy (Done for a team without a Deploy column), where nothing starts by itself, and removes its worktree. Usable
-//! without a Tauri app (tests): the UI hears about changes through `AppState::notify`.
+//! Deploy (Done for a team without a Deploy column), where nothing starts by itself, and removes its worktree; first it
+//! saves the card's range for its Changes (`changes::save_at_merge`). Usable without a Tauri app (tests): the UI hears
+//! about changes through `AppState::notify`.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -402,6 +403,8 @@ fn check_blocking(st: &AppState, via: &Via, card: &PrCard) -> Result<Checked, St
         let tip = worktree::rev_parse(repo, &format!("refs/heads/{}", card.branch)).ok();
         if seen || tip.as_deref().is_some_and(|t| pr.contains(t)) {
             out.moved_to = pulls::merged(&st.db, &st.you_id, &card.task_id, &pr.url).map_err(|e| e.to_string())?;
+            // the card's range, so its Changes still show the whole card once its worktree and branch are gone (GA-106)
+            crate::changes::save_at_merge(st, card, pr, tip.as_deref());
             let sentence = clean_up(st, card, pr, tip.as_deref());
             if !sentence.is_empty() {
                 let _ = pulls::note_cleanup(&st.db, &card.task_id, &sentence);

@@ -136,7 +136,49 @@ fn pull(v: &Value) -> Option<PullRequest> {
         _ => ("OPEN", draft),
     };
     let head = v.pointer("/source/commit/hash").and_then(Value::as_str).unwrap_or_default().to_string();
-    Some(PullRequest { number, url, state: state.into(), is_draft, head_ref_oid: head, commits: vec![] })
+    Some(PullRequest { number, url, state: state.into(), is_draft, head_ref_oid: head, commits: vec![], merge_commit: merge_commit_of(v) })
+}
+
+/// The commit that merged a pull request (`merge_commit.hash`, often a short hash), once merged.
+fn merge_commit_of(v: &Value) -> Option<Commit> {
+    v.pointer("/merge_commit/hash").and_then(Value::as_str).map(str::trim).filter(|h| !h.is_empty()).map(|h| Commit { oid: h.to_string() })
+}
+
+/// The commit that merged pull request `number` of `repo` ("workspace/repository"), as Bitbucket has it (often a short
+/// hash); None while it isn't merged.
+pub fn merge_commit(login: &Login, repo: &str, number: u64) -> Result<Option<String>, String> {
+    let answer = request(login, "GET", &format!("/repositories/{repo}/pullrequests/{number}"), &[], None)?;
+    if !(200..300).contains(&answer.status) {
+        return Err(refused(answer.status, &answer.body, Some(repo)));
+    }
+    let doc: Value = serde_json::from_str(&answer.body).map_err(|e| format!("Bitbucket gave an answer Gizai can't read ({e})"))?;
+    Ok(merge_commit_of(&doc).map(|c| c.oid))
+}
+
+/// Pull request `number`'s diff, as Bitbucket has it: every file's patch. Bitbucket answers with a redirect to the
+/// repository's own diff; Gizai follows it only to Bitbucket's API itself, so the login never goes anywhere else.
+pub fn pull_diff(login: &Login, repo: &str, number: u64) -> Result<String, String> {
+    let base = api();
+    // "https://api.bitbucket.org": where a redirect may lead
+    let origin = base.splitn(4, '/').take(3).collect::<Vec<_>>().join("/");
+    let mut url = format!("{base}/repositories/{repo}/pullrequests/{number}/diff");
+    for _ in 0..3 {
+        let answer = request_text(login, &url)?;
+        match answer.status {
+            200..=299 => return Ok(answer.body),
+            301 | 302 | 303 | 307 | 308 => {
+                let to = answer.location.unwrap_or_default();
+                let to = if to.starts_with('/') { format!("{origin}{to}") } else { to };
+                if to != origin && !to.starts_with(&format!("{origin}/")) {
+                    return Err(format!("Bitbucket sent Gizai elsewhere for that diff ({}), and Gizai only takes your login to Bitbucket's API",
+                                       to.split('?').next().unwrap_or_default()));
+                }
+                url = to;
+            }
+            status => return Err(refused(status, &answer.body, Some(repo))),
+        }
+    }
+    Err("Bitbucket kept sending Gizai elsewhere for that diff".into())
 }
 
 /// The commits of pull request `number` (its first 100).
@@ -202,6 +244,38 @@ fn request(login: &Login, method: &str, path: &str, query: &[(&str, &str)], body
     let status = response.status().as_u16();
     let body = response.body_mut().with_config().limit(BODY_LIMIT).lossy_utf8(true).read_to_string().map_err(|e| unreachable(&base, e))?;
     Ok(Answer { status, body })
+}
+
+/// A text answer, and where a redirect leads.
+struct TextAnswer {
+    status: u16,
+    body: String,
+    location: Option<String>,
+}
+
+/// One GET of a text (a diff) at `url`, as the login, with the same rules as `request`: https only (or this computer),
+/// no redirect followed.
+fn request_text(login: &Login, url: &str) -> Result<TextAnswer, String> {
+    let base = api();
+    let local = is_local(&base);
+    if !url.starts_with("https://") && !local {
+        return Err(format!("{base} isn't secure (https): Gizai sends the Bitbucket login only over https"));
+    }
+    let mut config = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(LIMIT))
+        .max_redirects(0)
+        .user_agent(format!("Gizai/{}", env!("CARGO_PKG_VERSION")));
+    if local {
+        config = config.proxy(None);
+    }
+    let agent: ureq::Agent = config.build().into();
+    let mut response = agent.get(url).header("Authorization", &login.authorization()).header("Accept", "text/plain").call()
+        .map_err(|e| unreachable(&base, e))?;
+    let status = response.status().as_u16();
+    let location = response.headers().get("location").and_then(|v| v.to_str().ok()).map(String::from);
+    let body = response.body_mut().with_config().limit(BODY_LIMIT).lossy_utf8(true).read_to_string().map_err(|e| unreachable(&base, e))?;
+    Ok(TextAnswer { status, body, location })
 }
 
 /// The API on this computer (a test's local server).

@@ -610,6 +610,9 @@ pub fn for_run(st: &AppState, agent: &Member, min_valid: Duration) -> (Vec<RunSe
 /// The names of the run's servers that Claude Code signs in to: when the run's init line says one needs sign-in, the run
 /// says to sign Claude Code in (`mcp_run::claude_code_not_connected`), not Gizai.
 pub fn claude_code_names(st: &AppState, servers: &[RunServer]) -> Vec<String> {
+    if servers.is_empty() {
+        return vec![];
+    }
     let all = core_mcp::list(&st.db).unwrap_or_default();
     servers.iter().filter(|r| all.iter().any(|s| s.name == r.name && s.claude_code_signs_in())).map(|r| r.name.clone()).collect()
 }

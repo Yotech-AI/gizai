@@ -129,7 +129,7 @@ export function McpSettings() {
     const v = await saveMcpServer(inputOf(edit));
     put(v);
     setEdit(null);
-    return `Saved ${v.name}.${v.listed ? "" : " List tools shows what it offers before you switch it on for an agent."}`;
+    return `Saved ${v.name}.${v.listed || v.signIn === "claude_code" ? "" : " List tools shows what it offers before you switch it on for an agent."}`;
   });
   const listTools = (s: McpServerView) => act(s.id, "list", async () => {
     const v = await listMcpTools(s.id);

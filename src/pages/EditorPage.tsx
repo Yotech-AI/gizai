@@ -1,8 +1,8 @@
 // The Editor page (GA-113, F2 of the Code Editor; research §5.2, design design/code-editor/editor.html §3, §4, §7):
 // #/editor/<folder>. The top bar is the folder's (breadcrumbs, branch and how many files changed, Open in); under it at
-// most one bar about the folder (read-only, a card that isn't yours); then the file tree or search in the folder beside
-// the tabs and the code; under the tabs at most one bar about the open file (changed on disk, read-only, couldn't save);
-// the status bar at the bottom is the open file's.
+// most one bar about the folder (read-only, a card that isn't yours, the card bar of your card by hand and where Hand over
+// sent it, GA-115); then the file tree or search in the folder beside the tabs and the code; under the tabs at most one
+// bar about the open file (changed on disk, read-only, couldn't save); the status bar at the bottom is the open file's.
 // Outside changes (research §5.3): every 3 seconds the open files' versions (an untouched tab reloads, a tab with changes
 // here offers Reload and Keep mine); every 10 seconds and when the window gets the focus, git's status; on the focus also
 // the tree's open folders. No file watcher.
@@ -12,13 +12,13 @@
 // Show output; a fetch that failed. A card's worktree has its own bars there (read-only, the card's), and no behind bar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileCode, FolderCode, Lock, PanelLeft, PanelLeftClose, Search, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, FileCode, FolderCode, Lock, PanelLeft, PanelLeftClose, Search, TriangleAlert, X } from "lucide-react";
 import type { EditorState, Text } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { gotoLine, openSearchPanel } from "@codemirror/search";
 import {
   editorCreate, editorDelete, editorFetch, editorFolders, editorGit, editorList, editorMain, editorRead, editorRename, editorUpdate, editorVersions,
-  editorWrite, getTask, onEditorUpdated, openInApp,
+  editorWrite, getTask, onEditorUpdated, onRowsChanged, openInApp,
 } from "../api";
 import type { DirEntry, EditorFolder, EditorUpdated, FolderGit, FolderMain, OpenedFile, SearchHit, Task } from "../types";
 import { go, href } from "../router";
@@ -34,6 +34,7 @@ import { FolderSearch, type SearchState } from "../components/editor/FolderSearc
 import { GoToFile } from "../components/editor/GoToFile";
 import { FolderPicker } from "../components/editor/FolderPicker";
 import { openInItems, OpenInMenu, useEditorApps } from "../components/editor/Menus";
+import { CardBar } from "../components/editor/CardBar";
 import { BehindBar, FetchButton, Standing } from "../components/editor/BehindBar";
 import { fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../lib/behind";
 
@@ -129,10 +130,23 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     );
   }).catch((e) => setFolderError(String(e))), [id]);
   useEffect(() => { void loadFolder(); rememberFolder(id); }, [id, loadFolder]);
-  useEffect(() => { if (folder?.taskId) getTask(folder.taskId).then(setTask).catch(() => setTask(null)); }, [folder?.taskId]);
+  // The card, again with every write the backend reports (Hand over, QA sending it back, a move on the board).
+  const taskId = folder?.taskId ?? null;
+  useEffect(() => {
+    if (!taskId) return;
+    let alive = true;
+    let un: (() => void) | undefined;
+    const load = () => { getTask(taskId).then((t) => { if (alive) setTask(t); }).catch(() => { if (alive) setTask(null); }); };
+    load();
+    onRowsChanged(() => { if (alive) load(); }).then((f) => (alive ? (un = f) : f())).catch(() => {});
+    return () => { alive = false; un?.(); };
+  }, [taskId]);
 
   // A card's worktree is yours when it is pinned to you (done by hand); another's is read-only until Edit anyway.
   const cardMine = !!task && task.byHand && task.assigneeId === youId;
+  // Hand over moved your card on: the card bar's place says where it went (until it is yours by hand again).
+  const [handed, setHanded] = useState<string | null>(null);
+  useEffect(() => { if (cardMine) setHanded(null); }, [cardMine]);
   const agentAtWork = !!folder?.readOnly;
   const notMine = folder?.kind === "card" && !agentAtWork && !cardMine;
   const folderLocked = agentAtWork || (notMine && !editAnyway);
@@ -560,6 +574,14 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
             : `${folder?.readOnlyWhy ?? "An agent is working on it"}: its worktree is read-only until the run ends.`}</span>
           {folder?.taskId && <span className="acts"><button className="btn sm" onClick={() => go({ page: "task", id: folder.taskId! })}>Open card</button></span>}
         </div>
+      ) : handed ? (
+        <div className="ed-bar done" role="status">
+          <CircleCheck className="icon" />
+          <span className="say">{handed}</span>
+          {folder?.taskId && <span className="acts"><button className="btn ghost sm" onClick={() => go({ page: "task", id: folder.taskId! })}>Open card</button></span>}
+        </div>
+      ) : cardMine && task ? (
+        <CardBar task={task} folder={id} git={git} onChanged={() => { refreshGit(); refreshTree(); }} onHanded={setHanded} />
       ) : notMine && !editAnyway ? (
         <div className="ed-bar" role="status">
           <Lock className="icon" />

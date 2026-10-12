@@ -1,10 +1,17 @@
 // The task page, Paperclip layout: header line, title, description, acceptance criteria, attachments, the agent
 // run, tabs (Comments, Activity, Runs) and a closable properties panel (]). Card | Changes at the top (GA-112): Changes
-// shows what the card changed, full width (Properties closes; ] still brings it back), at #/task/<id>/changes.
+// shows what the card changed, full width (Properties closes; ] still brings it back), at #/task/<id>/changes. A card
+// assigned to you has Open in editor in the top bar (GA-115): its worktree, made and prepared as for an agent, opens in
+// the Editor, the card pinned to you.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, Archive, ArchiveRestore, Copy, FileDiff, MessageSquare, PanelRight, Pencil, Play, SquareKanban } from "lucide-react";
-import { addComment, archiveTask, cardChanges, getTask, getTeam, listComments, listRuns, listUsers, onRunsChanged, restoreTask, taskActivity, updateTask } from "../api";
-import { href } from "../router";
+import {
+  Activity, Archive, ArchiveRestore, Copy, FileDiff, Keyboard, LoaderCircle, MessageSquare, PanelRight, Pencil, Play, SquareCode, SquareKanban,
+} from "lucide-react";
+import {
+  addComment, archiveTask, cardChanges, getTask, getTeam, handCard, listComments, listRuns, listUsers, onRunsChanged, restoreTask, startByHand,
+  taskActivity, updateTask,
+} from "../api";
+import { go, href } from "../router";
 import { useData } from "../lib/useData";
 import { relTime } from "../lib/format";
 import { modKey } from "../lib/keys";
@@ -19,6 +26,9 @@ import { Properties } from "../components/Properties";
 import { FileDrop } from "../components/FileDrop";
 import { RunPanel } from "../components/RunPanel";
 import { PullPanel } from "../components/PullPanel";
+import { OpenInMenu } from "../components/editor/Menus";
+import { rememberFolder } from "../lib/editor";
+import { byHandTip, canDoByHand, couldntOpen, markCardSeen, openInEditorTitle } from "../lib/hand";
 import { ChangesView } from "../components/changes/ChangesView";
 import { Diffstat } from "../components/changes/Diffstat";
 import { tabLabel } from "../lib/changes";
@@ -88,15 +98,17 @@ function useCardChanges(id: string) {
   return { data, error, reload };
 }
 
-/** `view` "changes": the Changes tab (GA-112); `run`: only that run's changes. */
-export function TaskPage({ id, view = "card", run }: { id: string; view?: "card" | "changes"; run?: string }) {
+/** `view` "changes": the Changes tab (GA-112); `run`: only that run's changes. `youId`: you, the person using this Gizai
+ *  (Open in editor shows on a card assigned to you). */
+export function TaskPage({ id, view = "card", run, youId }: { id: string; view?: "card" | "changes"; run?: string; youId?: string }) {
   const { data: task, error } = useData(() => getTask(id), [id]);
   const { data: team } = useData(() => getTeam());
   const { data: people } = useData(() => listUsers());
   const { data: comments } = useData(() => listComments(id), [id]);
   const { data: activity } = useData(() => taskActivity(id), [id]);
   const { data: runs } = useData(() => listRuns(id), [id]);
-  const live = useLiveRuns().some((r) => r.taskId === id);
+  const liveRun = useLiveRuns().find((r) => r.taskId === id);
+  const live = !!liveRun;
   const [tab, setTab] = useState<"comments" | "activity" | "runs">("comments");
   const [title, setTitle] = useState("");
   const [draft, setDraft] = useState("");
@@ -132,10 +144,37 @@ export function TaskPage({ id, view = "card", run }: { id: string; view?: "card"
     const c = reason ? [...(comments ?? [])].reverse().find((x) => x.bodyMd.includes(reason)) : undefined;
     ((c && document.getElementById(`comment-${c.id}`)) || thread.current)?.scrollIntoView({ block: "start" });
   }, [readReason]); // eslint-disable-line react-hooks/exhaustive-deps
+  // You look at the card (again as it changes): the Editor's card bar stops saying QA sent it back.
+  useEffect(() => { markCardSeen(id); }, [id, runs]);
+  // Your card by hand: where its worktree is, for Open in editor and Open in.
+  const [opening, setOpening] = useState(false);
+  const [handFolder, setHandFolder] = useState<string | null>(null);
+  const shown = useRef(true); // still on this card: a worktree that took a while to prepare opens only then
+  useEffect(() => { shown.current = true; return () => { shown.current = false; }; }, []);
+  const byHandMine = !!youId && !!task?.byHand && task?.assigneeId === youId;
+  useEffect(() => {
+    if (!byHandMine) { setHandFolder(null); return; }
+    let alive = true;
+    handCard(id).then((c) => { if (alive) setHandFolder(c.folder); }).catch(() => { if (alive) setHandFolder(null); });
+    return () => { alive = false; };
+  }, [id, byHandMine]);
 
   if (error) return <div className="error-banner">{error}</div>;
   if (!task) return null;
   const fail = (e: unknown) => setErr(String(e));
+  // Open in editor: a card started by hand just opens; else its worktree is made and prepared first (it can take a while).
+  const agentAtWork = liveRun ? team?.members.find((m) => m.actorId === liveRun.agentId)?.name ?? "An agent" : null;
+  const openInEditor = async () => {
+    setErr(null);
+    setOpening(true);
+    try {
+      const folder = (task.byHand && handFolder) || (await startByHand(id)).folder;
+      rememberFolder(folder);
+      if (shown.current) go({ page: "editor", id: folder });
+    } catch (e) {
+      if (shown.current) { setErr(couldntOpen(task.identifier, e)); setOpening(false); }
+    }
+  };
   // Archived (GA-43): read-only, with Restore. Only a card in Done can be archived, and not while an agent works on it.
   const archived = !!task.archivedAt;
   const archive = () => { setErr(null); archiveTask(id).catch(fail); };
@@ -167,6 +206,12 @@ export function TaskPage({ id, view = "card", run }: { id: string; view?: "card"
         </div>
         <div className="actions">
           <button className="btn ghost sm" onClick={() => navigator.clipboard?.writeText(task.identifier).catch(() => {})} title="Copy the task ID"><Copy className="icon" />Copy ID</button>
+          {canDoByHand(task, youId) && (
+            <button className="btn sm" disabled={live || opening} aria-busy={opening || undefined} title={openInEditorTitle(task, agentAtWork)} onClick={openInEditor}>
+              {opening ? <><LoaderCircle className="icon spin" />Preparing the worktree…</> : <><SquareCode className="icon" />Open in editor</>}
+            </button>
+          )}
+          {byHandMine && handFolder && !archived && <OpenInMenu folder={handFolder} name={task.identifier} path={null} line={null} fail={setErr} />}
           {archived ? <button className="btn primary sm" onClick={restore} title="Put it back at the bottom of Done"><ArchiveRestore className="icon" />Restore</button>
             : task.stateCategory === "done" && <button className="btn ghost sm" onClick={archive} disabled={live}
               title={live ? "An agent is working on this card" : "Take it off the board; the bin on the Tasks page lists it"}><Archive className="icon" />Archive</button>}
@@ -189,6 +234,7 @@ export function TaskPage({ id, view = "card", run }: { id: string; view?: "card"
               <span className="id">{task.identifier}</span>
               {task.projectName && <a className="proj" href={href({ page: "project", id: task.projectId! })}><span className="dot" style={{ width: 8, height: 8, borderRadius: "50%", background: task.projectColor ?? "var(--text-3)" }} />{task.projectName}</a>}
               {live && <span className="badge live"><span className="pulse" />Live</span>}
+              {task.byHand && <span className="badge" title={byHandTip(task)}><Keyboard className="icon sm" />By hand</span>}
               {task.hold && <span className="badge needs">On hold</span>}
               {archived && <span className="badge"><Archive className="icon sm" />Archived</span>}
             </div>

@@ -587,11 +587,12 @@ describe("read-only files and folders can't be edited and say why (GA-113)", () 
     expect(disk.get("README.md")!.text).toBe("# Kade portal\nBy hand.\n");
   });
 
-  it("your own card done by hand is yours to edit, with no bar", async () => {
+  it("your own card done by hand is yours to edit, with its card bar (GA-115) instead of a read-only bar", async () => {
     folderInfo = folder({ name: "GA-21", kind: "card", taskId: "t21" });
     task = { id: "t21", identifier: "GA-21", title: "Mine", byHand: true, assigneeId: "u1", assigneeName: "You" } as unknown as Task;
     await open();
     expect(folderBar()).toBe("");
+    expect(findAll(tree, (f) => f.props.className === "ed-bar hand" && f.props["aria-label"] === "GA-21 by hand")).toHaveLength(1);
     await clickRow("README.md");
     expect(view().state.readOnly).toBe(false);
   });

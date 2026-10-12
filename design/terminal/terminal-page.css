@@ -1,0 +1,157 @@
+/* This page only (design/terminal/terminal.html): its layout around the frames, and stand-ins for what the app draws by
+   other means: CodeMirror's code (the Editor's), xterm.js's screen (the cells, their colours, the cursor, the selection and
+   find's matches) and the hover and focus states the galleries hold still. The frames hold the app's markup, on the app's
+   stylesheets and terminal.css. */
+
+/* Lucide's look, which lucide-react puts on each icon as attributes */
+svg.icon { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+
+/* tokens.css's aliases resolve where they are declared, on the page's root; a frame in the other theme declares them
+   again, so they take its colours */
+[data-theme] { --st-review: var(--needs); --st-done: var(--success); --st-blocked: var(--danger); --pr-urgent: var(--danger);
+  --cordon: var(--live); --cordon-soft: var(--live-soft); --error: var(--danger);
+  --syn-meta: var(--syn-keyword); --syn-tag: var(--syn-function); --syn-attribute: var(--syn-type); --syn-number: var(--syn-string);
+  --syn-variable: var(--text); --syn-property: var(--text); --syn-operator: var(--text-2); --syn-punctuation: var(--text-2);
+  --syn-invalid: var(--danger); --git-added: var(--diff-add); --git-deleted: var(--diff-del); }
+
+/* ---------- the page ---------- */
+html, body { height: auto; }
+body { margin: 0; }
+.dz { max-width: 1520px; margin: 0 auto; padding: 40px 40px 120px; }
+.dz code { padding: 1px 5px; border-radius: var(--radius-s); background: var(--selected); font-family: var(--font-mono); font-size: .9em; }
+.dz-head h1 { margin: 10px 0 8px; font-size: var(--fs-xl); line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
+.dz-kicker { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: var(--fs-sm); }
+.dz-lead { max-width: 110ch; margin: 0 0 10px; color: var(--text); font-size: var(--fs-md); line-height: 1.55; }
+.dz-p { max-width: 120ch; margin: 8px 0 12px; color: var(--text-2); line-height: 1.6; }
+.dz-p b, .dz-notes b { color: var(--text); font-weight: 600; }
+.dz-notes { max-width: 128ch; margin: 8px 0 20px; padding-left: 20px; color: var(--text-2); line-height: 1.6; }
+.dz-notes li { margin: 5px 0; }
+.dz-show { display: flex; align-items: center; gap: 10px; margin: 18px 0 10px; }
+.dz-show .seg button { padding: 0 10px; }
+.dz-show .seg button[aria-pressed="true"] { background: var(--selected); color: var(--text); }
+.dz-toc { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; }
+.dz-toc a { padding: 4px 10px; border: 1px solid var(--line-2); border-radius: var(--radius-pill); color: var(--text-2); font-size: var(--fs-sm); text-decoration: none; }
+.dz-toc a:hover { background: var(--hover); color: var(--text); }
+.dz-sec { margin-top: 64px; padding-top: 28px; border-top: 1px solid var(--line); }
+.dz-sec h2 { margin: 0 0 8px; font-size: var(--fs-lg); font-weight: 650; letter-spacing: -.01em; }
+.dz-sec h3 { margin: 40px 0 6px; font-size: var(--fs-md); font-weight: 600; }
+.dz-quote { max-width: 120ch; margin: 8px 0 16px; padding: 8px 16px; border-left: 3px solid var(--line-2); color: var(--text-2); line-height: 1.6; }
+
+/* ---------- frames: an app window, or a strip of one ---------- */
+.shot { margin: 18px 0 0; }
+.shot-label, .vitem figcaption, .vhead { margin: 0 0 8px; color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .02em; }
+.win { position: relative; display: flex; overflow: hidden; max-width: 1440px; border: 1px solid var(--line-2); border-radius: var(--radius-l); background: var(--bg); color: var(--text);
+  box-shadow: var(--shadow-pop); font-family: var(--font-sans); font-size: var(--fs); line-height: 1.45; }
+.win .side { flex: none; width: var(--size-side); height: auto; }
+.win > .main { flex: 1; min-width: 0; min-height: 0; }
+.win.strip { box-shadow: none; }
+.win.col > .main { display: flex; flex-direction: column; }
+.variants { display: flex; flex-direction: column; gap: 18px; margin: 16px 0 0; }
+.vrow { display: grid; gap: 6px; }
+.vitems { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; }
+.vitem { max-width: 100%; margin: 0; }
+.vitem.wide { width: 100%; max-width: 1440px; }
+.vrow.stack .vitems { flex-direction: column; flex-wrap: nowrap; gap: 12px; }
+.win.pick { border-style: dashed; box-shadow: none; }
+.win.pick .pop { box-shadow: none; }
+/* A frame's caption below it: the tooltip a state shows, written out */
+.vitem .tip { max-width: 100%; margin: 6px 0 0; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+
+/* the Show switch */
+[data-show="dark"] .shot.light, [data-show="dark"] .vrow.light { display: none; }
+[data-show="light"] .shot.dark, [data-show="light"] .vrow.dark { display: none; }
+
+/* ---------- a still picture of CodeMirror with the code theme (src/lib/codeTheme.ts) ---------- */
+.ed-code { flex: 1; min-height: 0; overflow: hidden; padding: 4px 0; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: calc(12.5px + var(--ui-grow, 0px)); line-height: 1.6; }
+.ed-code .ln { display: flex; min-width: max-content; height: 20px; }
+.ed-code .no { flex: none; box-sizing: border-box; width: calc(3ch + 24px); padding: 0 8px 0 16px; color: var(--text-3); text-align: right; user-select: none; }
+.ed-code .fd { flex: none; width: 22px; }
+.ed-code .tx { padding: 0 24px 0 6px; white-space: pre; }
+.ed-code .ln.active { background: var(--hover); }
+.ed-code .ln.active .no { color: var(--text); }
+.ed-code .cursor { display: inline-block; width: 2px; height: 18px; margin-right: -2px; vertical-align: -4px; background: var(--text); }
+.syn-keyword { color: var(--syn-keyword); }
+.syn-string { color: var(--syn-string); }
+.syn-number { color: var(--syn-number); }
+.syn-comment { color: var(--syn-comment); }
+.syn-function { color: var(--syn-function); }
+.syn-type { color: var(--syn-type); }
+.syn-variable { color: var(--syn-variable); }
+.syn-property { color: var(--syn-property); }
+.syn-tag { color: var(--syn-tag); }
+.syn-attribute { color: var(--syn-attribute); }
+.syn-operator { color: var(--syn-operator); }
+.syn-punctuation { color: var(--syn-punctuation); }
+.syn-meta { color: var(--syn-meta); }
+.syn-invalid { color: var(--syn-invalid); text-decoration: underline wavy; text-underline-offset: 3px; }
+
+/* ---------- a still picture of xterm.js with the term-* colours: one row of cells per line ---------- */
+.term-screen { white-space: pre; }
+/* a terminal with more output than room shows its latest lines, as one scrolled to the bottom */
+.term-place.scrolled { display: flex; flex-direction: column; justify-content: flex-end; }
+.term-screen .tl { height: calc(20px + 1.6 * var(--ui-grow, 0px)); overflow: hidden; }
+.x-black { color: var(--term-black); } .x-red { color: var(--term-red); } .x-green { color: var(--term-green); } .x-yellow { color: var(--term-yellow); }
+.x-blue { color: var(--term-blue); } .x-magenta { color: var(--term-magenta); } .x-cyan { color: var(--term-cyan); } .x-white { color: var(--term-white); }
+.x-bright-black { color: var(--term-bright-black); } .x-bright-red { color: var(--term-bright-red); } .x-bright-green { color: var(--term-bright-green); }
+.x-bright-yellow { color: var(--term-bright-yellow); } .x-bright-blue { color: var(--term-bright-blue); } .x-bright-magenta { color: var(--term-bright-magenta); }
+.x-bright-cyan { color: var(--term-bright-cyan); } .x-bright-white { color: var(--term-bright-white); }
+.x-bg-black { background: var(--term-black); } .x-bg-red { background: var(--term-red); } .x-bg-green { background: var(--term-green); } .x-bg-yellow { background: var(--term-yellow); }
+.x-bg-blue { background: var(--term-blue); } .x-bg-magenta { background: var(--term-magenta); } .x-bg-cyan { background: var(--term-cyan); } .x-bg-white { background: var(--term-white); }
+.x-bg-bright-black { background: var(--term-bright-black); } .x-bg-bright-red { background: var(--term-bright-red); } .x-bg-bright-green { background: var(--term-bright-green); }
+.x-bg-bright-yellow { background: var(--term-bright-yellow); } .x-bg-bright-blue { background: var(--term-bright-blue); } .x-bg-bright-magenta { background: var(--term-bright-magenta); }
+.x-bg-bright-cyan { background: var(--term-bright-cyan); } .x-bg-bright-white { background: var(--term-bright-white); }
+.x-fg-bg { color: var(--term-bg); }
+.x-bold { font-weight: 700; }
+.x-dim { opacity: .5; }
+.x-under { text-decoration: underline; text-underline-offset: 3px; }
+/* the selection, find's matches (xterm's search decorations) and the cursor: a block while the terminal has the focus,
+   an outline while it hasn't */
+.x-sel { background: var(--term-selection); }
+.x-sel-off { background: var(--term-selection-inactive); }
+.x-hit { background: var(--term-selection); }
+.x-now { background: var(--term-selection); box-shadow: inset 0 0 0 1px var(--accent); }
+.x-cursor { background: var(--term-cursor); color: var(--term-cursor-text); }
+.x-cursor-off { box-shadow: inset 0 0 0 1px var(--term-cursor); }
+
+/* ---------- hover, focus and dragging held still, for the galleries and the screens ---------- */
+.nav-item.is-hover { background: var(--hover); color: var(--text); }
+.nav-item.is-hover .icon { color: var(--text); }
+.nav-item.is-focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.nav-label button.is-hover { background: var(--hover); color: var(--text); }
+.ed-tab.is-hover { background: var(--hover); color: var(--text); }
+.ed-tab.is-hover .x { visibility: visible; }
+.ed-tab.is-focus { outline: 2px solid var(--focus); outline-offset: -2px; }
+.btn.is-hover { background: var(--hover); color: var(--text); }
+.btn.is-focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.btn.term-btn[aria-disabled="true"].is-hover { background: transparent; color: var(--text-2); }
+.pop .opt.is-hover { background: var(--hover); }
+.term-handle.is-hover { background: var(--accent); box-shadow: 0 -1px 0 var(--accent); }
+.term-handle.is-focus { background: var(--focus); box-shadow: 0 -1px 0 var(--focus); }
+/* what the pointer would be: a still picture can't show it, so the frames draw it */
+.dz-pointer { position: absolute; z-index: 60; width: 18px; height: 18px; color: var(--text); pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .5)); }
+.dz-share { position: absolute; z-index: 6; right: 12px; padding: 1px 6px; border-radius: var(--radius-s); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--text-2);
+  font-family: var(--font-mono); font-size: var(--fs-xs); transform: translateY(-50%); pointer-events: none; }
+
+/* ---------- galleries and tables ---------- */
+.win.gal { display: block; max-width: 1440px; padding: 4px 0; }
+.dz-gallery { width: 100%; border-collapse: collapse; }
+.dz-gallery th { width: 180px; padding: 10px 16px; color: var(--text-2); font-size: var(--fs-sm); font-weight: 600; text-align: left; vertical-align: middle; }
+.dz-gallery td { padding: 8px 16px 8px 0; color: var(--text-3); font-size: var(--fs-sm); line-height: 1.45; vertical-align: middle; }
+.dz-gallery tr + tr > * { border-top: 1px solid var(--line); }
+.gal-cell { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.gal-cell.side { height: auto; padding: 6px 10px; }
+.gal-cell.bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.gal-cell.col { display: flex; flex-direction: column; background: var(--bg); }
+.dz-table { width: 100%; max-width: 1440px; margin: 12px 0 8px; border-collapse: collapse; font-size: var(--fs-sm); }
+.dz-table th { padding: 8px 12px; border-bottom: 1px solid var(--line-2); color: var(--text-3); font-weight: 600; text-align: left; white-space: nowrap; }
+.dz-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--text-2); line-height: 1.5; vertical-align: top; }
+.dz-table td:first-child { color: var(--text); }
+.dz-table b { color: var(--text); font-weight: 600; }
+.dz-table .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dz-table .low { color: var(--text-3); }
+.dz-sw { display: inline-block; width: 12px; height: 12px; margin-right: 8px; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line-2); vertical-align: -1px; }
+.kbd-run { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; }
+/* the 16 colours, as text on term-bg and as a background */
+.dz-ansi { display: grid; grid-template-columns: 120px repeat(8, minmax(0, 1fr)); gap: 6px; padding: 14px 16px; background: var(--term-bg); font-family: var(--font-mono); font-size: 12.5px; line-height: 20px; }
+.dz-ansi > span { padding: 0 6px; border-radius: var(--radius-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dz-ansi .head { color: var(--text-3); font-family: var(--font-sans); font-size: var(--fs-xs); }

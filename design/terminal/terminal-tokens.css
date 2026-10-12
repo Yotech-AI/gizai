@@ -1,0 +1,64 @@
+/* The terminal's tokens (GA-132, TD), until TF0 puts them in design/tokens.json and src/styles/tokens.css. Made by
+   gen-terminal.mjs from the same list as new-tokens.json: change them there. An alias is declared in each theme, so a frame
+   of this page in the other theme resolves it to its own colour. This file comes before tokens.css, so the app's own
+   tokens win once they have these names. */
+
+:root, [data-theme="dark"] {
+  --term-fg: var(--text);
+  --term-bg: var(--bg);
+  --term-cursor: var(--text);
+  --term-cursor-text: var(--bg);
+  --term-selection: #283350;
+  --term-selection-inactive: var(--selected);
+  --term-black: #30333a;
+  --term-red: var(--diff-del);
+  --term-green: var(--diff-add);
+  --term-yellow: #e3bd3c;
+  --term-blue: #85adff;
+  --term-magenta: #c58af9;
+  --term-cyan: #56b8f0;
+  --term-white: #c4c7ce;
+  --term-bright-black: #7f838d;
+  --term-bright-red: #ff9590;
+  --term-bright-green: #72dca6;
+  --term-bright-yellow: #f5d56b;
+  --term-bright-blue: #a9c5ff;
+  --term-bright-magenta: #d6a7ff;
+  --term-bright-cyan: #86d1f7;
+  --term-bright-white: #fafafb;
+}
+
+[data-theme="light"] {
+  --term-fg: var(--text);
+  --term-bg: var(--bg);
+  --term-cursor: var(--text);
+  --term-cursor-text: var(--bg);
+  --term-selection: #dae1f9;
+  --term-selection-inactive: var(--selected);
+  --term-black: #24272e;
+  --term-red: var(--diff-del);
+  --term-green: var(--diff-add);
+  --term-yellow: #855600;
+  --term-blue: #1e54c4;
+  --term-magenta: #8a3cc2;
+  --term-cyan: #0a6c9c;
+  --term-white: #d0d3da;
+  --term-bright-black: #636772;
+  --term-bright-red: #962420;
+  --term-bright-green: #0b5a36;
+  --term-bright-yellow: #6a4400;
+  --term-bright-blue: #1440a0;
+  --term-bright-magenta: #6f22a6;
+  --term-bright-cyan: #06577f;
+  --term-bright-white: #f3f4f7;
+}
+
+:root {
+  /* the tab strip grows with the density (--ui-box) like size-tab; the panel's least height keeps its 4 lines as the
+     Interface text grows */
+  --size-term-tab: calc(32px + var(--ui-box, 0px));
+  --size-term-panel: 30%;
+  --size-term-panel-min: calc(120px + var(--ui-box, 0px) + 4 * 1.6 * var(--ui-grow, 0px));
+  --size-term-code-min: 120px;
+  --size-handle: 6px;
+}

@@ -1,0 +1,105 @@
+# Terminal TD: terminals in the sidebar, on their own page and in the Editor (GA-132)
+
+The design of GA-124's research, `docs/research/terminal.md`: §5.1 (the screens), §5.2 (the keys) and §5.4 (the colours
+and the font), for Jefsev's review. TF0 builds the terminal's view and moves the tokens into the app, TF1 the sidebar and
+the Terminal page, TF2 the Editor's panel.
+
+- `terminal.html` is the design. Open it from disk in a browser: it uses the app's own stylesheets in `src/styles/`, so
+  it shows the app's components, type styles and tokens. Every screen shows in dark, then light; the switch at the top
+  shows one theme. Hover a control for its tooltip.
+- `terminal.css` holds the new components, all tokens: the Terminal section's rows, the Terminal page, the terminal tabs,
+  find, the Editor's panel with its drag handle, and the Terminal button. TF0 moves it into `src/styles/terminal.css`.
+- `terminal-page.css` only lays out this page and draws still pictures of CodeMirror and xterm.js.
+- `new-tokens.json` holds the 22 `term-*` colours and the 5 sizes in `design/tokens.json`'s format, for TF0.
+  `terminal-tokens.css` is the same list as CSS, for this page.
+- `gen-terminal.mjs` builds `terminal.html`, `new-tokens.json`, `terminal-tokens.css` and the tables below. It checks the
+  colours first and writes nothing when one breaks the rules: every colour a program prints as text at least 4.5:1 on
+  `term-bg`, and `term-cyan`, `term-magenta` and their bright forms at least 35° of hue (OKLCH) and a ΔE2000 of 15 from
+  `live` and `needs`, in both themes. Run it with `node design/terminal/gen-terminal.mjs`.
+
+Nothing in the app changes in this card: TF0 puts the tokens in `design/tokens.json` and the rule below is already in
+`design/README.md`.
+
+## What the design decides
+
+The card's choices (tabs per folder, the Editor's folders only, no new terminal while an agent works on a card, `exit`
+with 0 closes, closing asks once in place, no limit, free) are drawn as they are. On top of them:
+
+- **One tab size in both places.** The terminal tabs look like the Editor's file tabs but are 32px high
+  (`size-term-tab`), on the Terminal page and in the panel alike: in the panel they sit under the file tabs and the
+  code, where a second 36px strip would be heavy.
+- **The panel sits between the code and the status bar**, as the card says, so the status bar stays at the Editor's
+  bottom edge and doesn't jump when the panel opens. Its height is a share of the code column (`.ed-main`), 30% at
+  first; the code keeps 120px and the panel 120px (its tabs and 4 lines).
+- **The drag handle** is the panel's top border: 1px of `line`, a 6px grab area, 2px of `accent` on hover and while
+  dragging, 2px of `focus` with the keyboard (↑ and ↓ by 5%, a double-click for 30%).
+- **Find floats** at the top right of the terminal, so the terminal keeps its size and full-screen programs don't
+  redraw while you search. Matches look like the Editor's.
+- **The Terminal button when it can't start a terminal** is `aria-disabled`, not `disabled`, so its tooltip with the
+  reason still shows and the keyboard reaches it. When an agent starts on a card after you opened a terminal there, the
+  terminal stays and the button still shows and hides the panel; the panel's + is off with the reason.
+- **A card that isn't pinned to you**, chosen in New terminal, asks first under its row with the Editor's own button,
+  Edit anyway; in the Editor the button is off until Edit anyway.
+- **Ended** shows as a bar under the tabs (the Editor's file bar) with Start again and Close; the screen stays to read.
+  A shell that couldn't start offers Try again.
+- **`#/terminal`** with no terminal is an empty page with New terminal; the address of a closed terminal says so.
+- **The cursor doesn't blink**: only the live pulse moves on its own.
+- **Box drawing** for the DOM renderer: a box-drawing subset of JetBrains Mono (OFL, shipped already) after
+  `--font-mono`, for the terminal only; WebGL draws them itself.
+
+## The colours
+
+- `term-bg` is `bg` and `term-fg` is `text`: the panel and the code above it are one surface.
+- `term-red` and `term-green` are `diff-del` and `diff-add`, so `git diff` in a terminal reads as a card's Changes.
+  Yellow is the gold of `syn-type`, blue the blue of `syn-function`.
+- `term-cyan` is a sky blue and `term-magenta` a violet, clearly apart from teal `live` (an agent at work) and magenta
+  `needs` ("needs you").
+- Bright colours are the stronger ones on each background: lighter in dark, darker in light. Three are block colours,
+  under 4.5:1 by nature (black in dark; white and bright white in light); xterm.js's `minimumContrastRatio` of 4.5 lifts
+  text that lands in them.
+- The selection is the accent's blue, opaque (xterm.js's search needs `#rrggbb`), and stronger than the code's.
+
+Each value with its contrast on `term-bg`. `=` follows another token, with its value in brackets.
+
+<!-- tables: generated by gen-terminal.mjs -->
+| Token | Dark | Light |
+|---|---|---|
+| `--term-fg` | = text (`#ededf0`) · 16.28 | = text (`#14161b`) · 18.10 |
+| `--term-bg` | = bg (`#0f1013`) | = bg (`#ffffff`) |
+| `--term-cursor` | = text (`#ededf0`) · 16.28 | = text (`#14161b`) · 18.10 |
+| `--term-cursor-text` | = bg (`#0f1013`) | = bg (`#ffffff`) |
+| `--term-selection` | `#283350` | `#dae1f9` |
+| `--term-selection-inactive` | = selected (`#22252c`) | = selected (`#e6e9f0`) |
+| `--term-black` | `#30333a` · 1.50 | `#24272e` · 14.95 |
+| `--term-red` | = diff-del (`#f2706b`) · 6.62 | = diff-del (`#b42d29`) · 6.27 |
+| `--term-green` | = diff-add (`#4cc38a`) · 8.59 | = diff-add (`#167347`) · 5.87 |
+| `--term-yellow` | `#e3bd3c` · 10.52 | `#855600` · 6.31 |
+| `--term-blue` | `#85adff` · 8.53 | `#1e54c4` · 6.73 |
+| `--term-magenta` | `#c58af9` · 7.59 | `#8a3cc2` · 5.99 |
+| `--term-cyan` | `#56b8f0` · 8.62 | `#0a6c9c` · 5.77 |
+| `--term-white` | `#c4c7ce` · 11.24 | `#d0d3da` · 1.50 |
+| `--term-bright-black` | `#7f838d` · 5.01 | `#636772` · 5.65 |
+| `--term-bright-red` | `#ff9590` · 9.02 | `#962420` · 8.17 |
+| `--term-bright-green` | `#72dca6` · 11.33 | `#0b5a36` · 8.30 |
+| `--term-bright-yellow` | `#f5d56b` · 13.24 | `#6a4400` · 8.61 |
+| `--term-bright-blue` | `#a9c5ff` · 10.98 | `#1440a0` · 9.25 |
+| `--term-bright-magenta` | `#d6a7ff` · 9.81 | `#6f22a6` · 8.55 |
+| `--term-bright-cyan` | `#86d1f7` · 11.30 | `#06577f` · 7.84 |
+| `--term-bright-white` | `#fafafb` · 18.24 | `#f3f4f7` · 1.10 |
+
+| Size | Value | For |
+|---|---|---|
+| `--size-term-tab` | 32px | The terminal tabs' strip, on the Terminal page and in the Editor's panel (28px compact). |
+| `--size-term-panel` | 30% | The Editor's terminal panel the first time: a share of the code column (.ed-main), kept as a share. |
+| `--size-term-panel-min` | 120px | The panel's least height: its tabs (32px) and 4 lines (4 × 20px), with 4px above and below. |
+| `--size-term-code-min` | 120px | The code's least height while the panel shows (6 lines). |
+| `--size-handle` | 6px | The drag handle's grab area, centred on the panel's 1px top border. |
+<!-- /tables -->
+
+## The rule in design/README.md
+
+Added under "Colour carries meaning, never decoration", after the line on `needs`:
+
+> - The terminal's own colours (`term-*`) are what programs print, not Gizai's states: `term-cyan` is a sky blue and
+>   `term-magenta` a violet, at least 35° of hue (OKLCH) from `live` and `needs`, so a program's cyan never reads as an
+>   agent at work, nor its magenta as "needs you".

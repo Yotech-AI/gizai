@@ -36,6 +36,9 @@ and the drawer edge. Shadows only on things that float: `shadow-pop`, `shadow-dr
 - `live` (teal) means only "an agent is working on this right now": the pulse dot, the Live badge,
   the working strip on a card, the border of a live run card. Never use teal for anything else.
 - `needs` (magenta) means "a person is needed": Review, holds, the Inbox count.
+- The terminal's own colours (`term-*`) are what programs print, not Gizai's states: `term-cyan` is a sky blue and
+  `term-magenta` a violet, at least 35° of hue (OKLCH) from `live` and `needs`, so a program's cyan never reads as an
+  agent at work, nor its magenta as "needs you".
 - `success`, `warning`, `danger` are run and form outcomes. Each badge pairs its colour with a word.
 - Status is shown by glyph shape *and* hue (see StatusIcon), so it reads without colour:
   Backlog dashed circle `st-backlog`, To do open circle `st-todo`, In progress half circle

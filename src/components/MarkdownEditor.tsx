@@ -290,9 +290,10 @@ const sourceHighlight = HighlightStyle.define([
 ]);
 
 /** What each `Marks` adds, in the editor's marks compartment: changing it keeps the text, the cursor and undo. */
+const styled = syntaxHighlighting(highlight);
 const MARKS_EXTENSIONS: Record<Marks, Extension> = {
-  dim: [syntaxHighlighting(highlight), livePreview, chips],
-  hide: [syntaxHighlighting(highlight), formatted, chips],
+  dim: [styled, livePreview, chips],
+  hide: [styled, formatted, chips],
   show: [EditorView.editorAttributes.of({ class: "cm-md-source" }), syntaxHighlighting(sourceHighlight), refColours],
 };
 

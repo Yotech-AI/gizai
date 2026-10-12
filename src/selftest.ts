@@ -2819,6 +2819,8 @@ const termCtrl = (term: Terminal, letter: string, more: { shiftKey?: boolean } =
   term.textarea?.dispatchEvent(e);
   return e;
 };
+/** The height of one of the terminal's rows in CSS pixels: its screen's height over its rows. */
+const termRowHeight = (term: Terminal) => (term.element?.querySelector(".xterm-screen")?.getBoundingClientRect().height ?? 0) / term.rows;
 /** The rows the DOM renderer drew, as text. */
 const domRows = (host: HTMLElement) => [...host.querySelectorAll(".xterm-rows > div")].map((r) => (r.textContent ?? "").replace(/ /g, " ").trimEnd());
 
@@ -2845,6 +2847,8 @@ export async function terminalProbe(folder: string) {
   const term = first.term;
   out.size = `${term.cols} × ${term.rows}`;
   check(term.cols > 80 && term.rows > 24, `the view fits its page, not 80 × 24 (${term.cols} × ${term.rows})`);
+  out.row = Math.round(termRowHeight(term) * 100) / 100;
+  check(Math.abs(termRowHeight(term) - 20) < 0.5, `a row is the code's 20px line (${out.row}px)`);
   check(term.options.scrollback === 5000 && term.options.cursorBlink === false, "5,000 lines of scrollback and a cursor that doesn't blink");
   check(document.activeElement === term.textarea, "the terminal has the focus on its page");
   await waitFor(() => termLines(term).some((l) => l.trim()), 10000); // the prompt
@@ -2888,6 +2892,8 @@ export async function terminalProbe(folder: string) {
   out.refont = !!(await waitFor(() => (String(term.options.fontFamily).includes("JetBrains Mono") && term.options.fontSize === 14.5 ? true : null), 3000));
   await sleep(100);
   check(out.refont && term.cols < cols, `Settings → Appearance refonts the terminal and it fits again (${term.options.fontFamily} ${term.options.fontSize}px, ${cols} → ${term.cols} columns)`);
+  out.row_grown = Math.round(termRowHeight(term) * 100) / 100;
+  check(Math.abs(termRowHeight(term) - 14.5 * 1.6) <= 1, `the rows grow with the text, 1.6 times its size (${out.row_grown}px at 14.5px)`);
   setAppearance(before, false);
   await waitFor(() => (term.options.fontSize === 12.5 ? true : null), 3000);
 
@@ -2959,6 +2965,7 @@ export async function terminalProbe(folder: string) {
     `the second place shows it, the page says where it is with Show here (${pageAway?.textContent})`);
   await sleep(150);
   out.panelSize = `${term.cols} × ${term.rows}`;
+  check(term.rows >= 11, `it fits the other place in 20px rows: 11 in its 240px, less 8px above and below (${out.panelSize})`);
   if (pageAway) buttonByText(pageAway, "Show here")?.click();
   const home = await waitFor(() => (q(".term-page .term-place")?.contains(term.element ?? null) ? true : null), 3000);
   check(home && /is on its own page\.Show here$/.test(box.querySelector(".term-away")?.textContent ?? ""), "Show here moves it back, and the other place says it is on its own page");

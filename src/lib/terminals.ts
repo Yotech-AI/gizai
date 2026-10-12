@@ -7,8 +7,8 @@
 // - A place (the Terminal page, a folder's panel in the Editor) shows a view by moving its element in. The place that
 //   asked last shows it; the others show "Show here" (design §5). Moving the element keeps the buffer, the scrollback,
 //   the cursor and the selection. Only a view on screen holds a WebGL context.
-// - Colours are the term-* tokens, read with getComputedStyle; the font is --font-mono at the code size. Both follow the
-//   theme (t) and Settings → Appearance at once.
+// - Colours are the term-* tokens, read with getComputedStyle; the font is --font-mono at the code size, on the code's
+//   lines (20px at 12.5px). All follow the theme (t) and Settings → Appearance at once.
 // xterm.js and its addons load with the first terminal, in a chunk of their own.
 import { useSyncExternalStore } from "react";
 import type { ITheme, Terminal } from "@xterm/xterm";
@@ -102,7 +102,17 @@ export function themeFrom(read: (token: string) => string): ITheme {
 
 /** The code size (t-code, 12.5px on 20px lines), grown with the Interface text like the code. */
 export const fontSizeFor = (uiGrow: number) => 12.5 + uiGrow;
+/** The code's lines as CSS has them: 1.6 times the font size, so 20px rows at 12.5px. */
 export const LINE_HEIGHT = 1.6;
+export const rowHeightFor = (fontSize: number) => fontSize * LINE_HEIGHT;
+/** xterm.js's lineHeight multiplies the glyph's height, not the font size: a row is floor(ceil(glyph × dpr) × lineHeight)
+ *  device pixels. This is the lineHeight that makes a row `row` CSS pixels (20 at 12.5px, so the design's 4 lines fit the
+ *  panel's least height); at least 1, as xterm.js wants, and 1 when the glyph couldn't be measured. */
+export function lineHeightFor(glyph: number, row: number, dpr: number): number {
+  const g = Math.ceil(glyph * dpr);
+  if (!(g > 0) || !(row > 0)) return 1;
+  return Math.max(1, (Math.round(row * dpr) + 0.5) / g); // + 0.5: xterm.js floors, so a rounding error can't cost a pixel
+}
 export const SCROLLBACK = 5000;
 
 // ---------- the store ----------
@@ -128,6 +138,8 @@ type View = {
   webgl: WebglAddon | null;
   /** The size the backend was last told. */
   sent: { cols: number; rows: number };
+  /** The screen's pixel ratio the rows were made for (a zoom or another screen changes it). */
+  dpr: number;
 };
 
 let sessions: TerminalSession[] = [];
@@ -160,6 +172,33 @@ function looks() {
   const family = read("font-mono").trim() || "monospace";
   return { theme: themeFrom(read), fontFamily: family, fontSize: fontSizeFor(parseFloat(read("ui-grow")) || 0) };
 }
+
+/** The glyph's height in CSS pixels, measured as xterm.js measures it: the font's ascent and descent on a canvas, else the
+ *  height of a span of W's. 0 when it can't be measured. */
+function glyphHeight(family: string, size: number): number {
+  try {
+    const ctx = new OffscreenCanvas(100, 100).getContext("2d");
+    if (ctx) {
+      ctx.font = `${size}px ${family}`;
+      const m = ctx.measureText("W");
+      if ("fontBoundingBoxAscent" in m && "fontBoundingBoxDescent" in m) return Math.max(0, m.fontBoundingBoxAscent + m.fontBoundingBoxDescent);
+    }
+  } catch { /* no OffscreenCanvas: xterm.js measures a span too */ }
+  try {
+    const span = document.createElement("span");
+    span.textContent = "W".repeat(32);
+    span.style.cssText = "position:absolute;top:0;left:-9999em;visibility:hidden;display:inline-block;line-height:normal;white-space:pre;font-kerning:none";
+    span.style.fontFamily = family;
+    span.style.fontSize = `${size}px`;
+    document.body.appendChild(span);
+    const h = Number(span.offsetHeight);
+    span.remove();
+    return h > 0 ? h : 0;
+  } catch { return 0; }
+}
+const dprNow = () => globalThis.devicePixelRatio || 1;
+/** The lineHeight that gives this font the code's rows on this screen. */
+const lineHeightOf = (family: string, size: number) => lineHeightFor(glyphHeight(family, size), rowHeightFor(size), dprNow());
 
 /** Waits for the mono font, so xterm.js measures its cells in it (it measures once, when it opens or the font changes). */
 function fontReady(family: string, size: number): Promise<void> {
@@ -209,7 +248,7 @@ function make(s: TerminalSession) {
     const term = new x.Terminal({
       allowProposedApi: true, // the Unicode 11 widths and find's marks
       scrollback: SCROLLBACK, cursorBlink: false, cursorStyle: "block", cursorInactiveStyle: "outline",
-      fontFamily, fontSize, lineHeight: LINE_HEIGHT, fontWeight: 400, fontWeightBold: 700, drawBoldTextInBrightColors: true,
+      fontFamily, fontSize, lineHeight: lineHeightOf(fontFamily, fontSize), fontWeight: 400, fontWeightBold: 700, drawBoldTextInBrightColors: true,
       minimumContrastRatio: 4.5, customGlyphs: true, rescaleOverlappingGlyphs: true, theme,
       // OSC 8 links (a program marks text as a link): the same rule as the links found in the text
       linkHandler: { activate: open, allowNonHttpProtocols: false },
@@ -224,7 +263,7 @@ function make(s: TerminalSession) {
     term.unicode.activeVersion = "11";
     const host = document.createElement("div");
     host.className = "term-host";
-    const v: View = { id: s.id, term, fit, search, host, el: null, want: null, webgl: null, sent: { cols: s.cols, rows: s.rows } };
+    const v: View = { id: s.id, term, fit, search, host, el: null, want: null, webgl: null, sent: { cols: s.cols, rows: s.rows }, dpr: dprNow() };
     term.attachCustomKeyEventHandler((e) => keyIn(v, e));
     term.onData((d) => { terminalInput(s.id, d).catch(() => {}); });
     term.onBinary((d) => { terminalInput(s.id, d, true).catch(() => {}); });
@@ -374,6 +413,7 @@ export function attachView(id: string, el: HTMLElement): Promise<boolean> {
     if (v.want !== el || views.get(id) !== v) return false;
     if (v.host.parentElement !== el) el.appendChild(v.host);
     v.el = el;
+    setRows(v); // the font has loaded now, so the glyph measures as xterm.js will measure it
     v.term.open(v.host); // the first time builds the view; later it only picks up the new place, as VS Code does
     loadWebgl(v);
     fitView(id);
@@ -397,6 +437,7 @@ export function detachView(id: string, el: HTMLElement) {
 export function fitView(id: string) {
   const v = views.get(id);
   if (!v?.el || !v.term.element) return;
+  if (v.dpr !== dprNow()) setRows(v);
   const d = v.fit.proposeDimensions();
   if (!d || !Number.isFinite(d.cols) || !Number.isFinite(d.rows) || d.cols < 2 || d.rows < 1) return;
   if (d.cols !== v.term.cols || d.rows !== v.term.rows) v.term.resize(d.cols, d.rows);
@@ -405,6 +446,13 @@ export function fitView(id: string) {
     v.sent = { cols, rows };
     terminalResize(id, cols, rows).catch(() => {});
   }
+}
+
+/** Gives the view the code's rows for its font on this screen. */
+function setRows(v: View) {
+  v.dpr = dprNow();
+  const lh = lineHeightOf(String(v.term.options.fontFamily), Number(v.term.options.fontSize));
+  if (v.term.options.lineHeight !== lh) v.term.options.lineHeight = lh;
 }
 
 /** The theme or Settings → Appearance changed: every view takes the new colours and font; one on screen fits again. */
@@ -416,6 +464,7 @@ function restyle() {
     for (const v of views.values()) {
       if (v.term.options.fontFamily !== fontFamily) v.term.options.fontFamily = fontFamily;
       if (v.term.options.fontSize !== fontSize) v.term.options.fontSize = fontSize;
+      setRows(v);
     }
     // xterm.js measures the new cell, then the views on screen fit again (their places kept their size)
     requestAnimationFrame(() => { for (const v of views.values()) if (v.el) fitView(v.id); });

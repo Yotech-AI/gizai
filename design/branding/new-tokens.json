@@ -6,14 +6,14 @@
         "name": "band-subtle-line",
         "value": {
           "dark": "rgba(160, 211, 235, 0.10)",
-          "light": "rgba(37, 107, 139, 0.14)"
+          "light": "rgba(32, 108, 137, 0.14)"
         },
         "usage": "Subtle: the lines (currentColor of the band's SVG)."
       },
       {
         "name": "band-subtle-glow",
         "value": {
-          "dark": "rgba(26, 99, 130, 0.08)",
+          "dark": "rgba(20, 100, 128, 0.08)",
           "light": "rgba(201, 227, 239, 0.35)"
         },
         "usage": "Subtle: the glow at the bottom edge, fading to nothing at the band's top."
@@ -22,14 +22,14 @@
         "name": "band-medium-line",
         "value": {
           "dark": "rgba(160, 211, 235, 0.17)",
-          "light": "rgba(37, 107, 139, 0.24)"
+          "light": "rgba(32, 108, 137, 0.24)"
         },
         "usage": "Medium: the lines (currentColor of the band's SVG)."
       },
       {
         "name": "band-medium-glow",
         "value": {
-          "dark": "rgba(26, 99, 130, 0.15)",
+          "dark": "rgba(20, 100, 128, 0.15)",
           "light": "rgba(201, 227, 239, 0.65)"
         },
         "usage": "Medium: the glow at the bottom edge, fading to nothing at the band's top."
@@ -37,15 +37,15 @@
       {
         "name": "band-strong-line",
         "value": {
-          "dark": "rgba(160, 211, 235, 0.32)",
-          "light": "rgba(37, 107, 139, 0.40)"
+          "dark": "rgba(160, 211, 235, 0.38)",
+          "light": "rgba(32, 108, 137, 0.50)"
         },
         "usage": "Strong: the lines (currentColor of the band's SVG)."
       },
       {
         "name": "band-strong-glow",
         "value": {
-          "dark": "rgba(26, 99, 130, 0.30)",
+          "dark": "rgba(20, 100, 128, 0.36)",
           "light": "rgba(201, 227, 239, 1.00)"
         },
         "usage": "Strong: the glow at the bottom edge, fading to nothing at the band's top."

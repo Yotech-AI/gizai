@@ -347,8 +347,8 @@ const THEMES = ["dark", "light"];
 // edge, fading to nothing at the band's top.
 export const HUE = 228;
 const BASE = {
-  dark: { line: fromOklch(0.84, 0.062, HUE), glow: fromOklch(0.47, 0.085, HUE + 4) },
-  light: { line: fromOklch(0.5, 0.085, HUE + 4), glow: fromOklch(0.9, 0.032, HUE) },
+  dark: { line: fromOklch(0.84, 0.062, HUE), glow: fromOklch(0.47, 0.085, HUE) },
+  light: { line: fromOklch(0.5, 0.085, HUE), glow: fromOklch(0.9, 0.032, HUE) },
 };
 export const STRENGTHS = [
   { key: "subtle", name: "Subtle", what: "About as much as Omarchy's see-through shows now: there when you look for it.",
@@ -356,7 +356,7 @@ export const STRENGTHS = [
   { key: "medium", name: "Medium", what: "Clearly there, never loud: the lines read at a glance, the glow tints the bottom edge.",
     alpha: { dark: { line: 0.17, glow: 0.15 }, light: { line: 0.24, glow: 0.65 } } },
   { key: "strong", name: "Strong", what: "The bright strip of Jefsev's screenshot: the band is the first thing you see at the bottom.",
-    alpha: { dark: { line: 0.32, glow: 0.3 }, light: { line: 0.4, glow: 1 } } },
+    alpha: { dark: { line: 0.38, glow: 0.36 }, light: { line: 0.5, glow: 1 } } },
 ];
 /** The design's proposal, until Jefsev picks: band-line and band-glow follow it. */
 export const PICK = "medium";
@@ -368,18 +368,20 @@ const tokenOf = (s, theme) => ({ line: rgba(BASE[theme].line, s.alpha[theme].lin
 // glow over the surface) and on a line (a line over that). The canvases are bg and side; text-3 is the faintest text.
 // Subtle and medium keep all three at 4.5:1 between the lines, text and text-2 at 4.5:1 on a line too, and text-3 at 3:1 there.
 // Strong keeps text and text-2 at 4.5:1 between the lines and text on a line; text-3 drops to about 4:1 at the bottom edge.
+// The focus ring, a control's outline, keeps 3:1 (WCAG 2's non-text contrast) between the lines in every strength.
 const RULES = {
-  subtle: { between: { text: 4.5, "text-2": 4.5, "text-3": 4.5 }, on: { text: 4.5, "text-2": 4.5, "text-3": 3 } },
-  medium: { between: { text: 4.5, "text-2": 4.5, "text-3": 4.5 }, on: { text: 4.5, "text-2": 4.5, "text-3": 3 } },
-  strong: { between: { text: 4.5, "text-2": 4.5, "text-3": 3 }, on: { text: 4.5 } },
+  subtle: { between: { text: 4.5, "text-2": 4.5, "text-3": 4.5, focus: 3 }, on: { text: 4.5, "text-2": 4.5, "text-3": 3 } },
+  medium: { between: { text: 4.5, "text-2": 4.5, "text-3": 4.5, focus: 3 }, on: { text: 4.5, "text-2": 4.5, "text-3": 3 } },
+  strong: { between: { text: 4.5, "text-2": 4.5, "text-3": 3, focus: 3 }, on: { text: 4.5 } },
 };
 const TEXTS = ["text", "text-2", "text-3"];
+const MARKS = [...TEXTS, "focus"];
 export const CONTRAST = [];
 for (const s of STRENGTHS) for (const theme of THEMES) for (const surface of ["bg", "side"]) {
   const base = hex2rgb(APP[theme][surface]);
   const between = over(hex2rgb(BASE[theme].glow), s.alpha[theme].glow, base);
   const on = over(hex2rgb(BASE[theme].line), s.alpha[theme].line, between);
-  const c = Object.fromEntries(TEXTS.map((k) => [k, { between: contrast(hex2rgb(APP[theme][k]), between), on: contrast(hex2rgb(APP[theme][k]), on) }]));
+  const c = Object.fromEntries(MARKS.map((k) => [k, { between: contrast(hex2rgb(APP[theme][k]), between), on: contrast(hex2rgb(APP[theme][k]), on) }]));
   CONTRAST.push({ strength: s.key, theme, surface, between: toHex(between), on: toHex(on), c });
 }
 
@@ -663,8 +665,9 @@ async function main() {
   // 1. The artwork ------------------------------------------------------------------------------------------------------------
   const W = (w, h = 900, note = "") => {
     const bh = bandHeight(h), k = Math.min(1, 1270 / w);
-    return `<div class="width-row"><div class="what"><b>${w} × ${h}</b>${note}</div><div class="scaled" style="width:${Math.round(w * k)}px;height:${Math.round(bh * k)}px">`
-      + `<div class="win strip" data-theme="dark" data-band="${PICK}" style="width:${w}px;height:${bh}px;--frame-h:${h}px;--band-h:${bh}px;transform:scale(${k})">${BAND_EL}</div></div></div>`;
+    const box = `width:${Math.round(w * k)}px;height:${Math.round(bh * k)}px`;
+    return `<div class="width-row"><div class="what"><b>${w} × ${h}</b>${note}</div><div class="scaled" style="${box}">`
+      + `<div class="win strip" data-theme="dark" data-band="${PICK}" style="${box};--frame-h:${h}px;--band-h:100%">${BAND_EL}</div></div></div>`;
   };
   section("art", "1. The artwork",
     p(`Our own land, drawn by ${c("gen-bottom-band.mjs")} from seed ${SEED}: the same lines every time it runs, and no wallpaper or photo in it. A flat valley runs into the distance between ridged mountains, seen through a perspective camera, as a mesh of four-sided cells. The lines a nearer slope hides are taken out (a floating horizon, front to back), so the file holds only the lines you see; far lines fade, and the top of the picture fades so the peaks melt into the page above.`)
@@ -681,7 +684,7 @@ async function main() {
     + h3("The whole band at 1:1: scroll sideways")
     + `<div class="variants"><div class="vrow dark"><div class="vhead theme-name">Dark</div><div class="art-scroll">${frame("dark", "", { h: 128, w: BAND_CAMERA.W, cls: "strip", bandH: 128 })}</div></div></div>`
     + h3("What windows of each width show")
-    + p(`Each strip is the band as a window that wide shows it at ${PICK}, scaled down here to fit the page (the browser draws the vector at the smaller size, so it stays sharp). 128px high from 915px of window height up; ${bandHeight(600)}px in Gizai's smallest window, 900 × 600.`)
+    + p(`Each strip is the band as a window that wide shows it, at ${PICK}: the same cut of the picture, drawn smaller to fit the page. Its lines stay 1px, so the mesh looks finer here than in the window; the strip above shows it at 1:1. The band is 128px high from 915px of window height up, and ${bandHeight(600)}px in Gizai's smallest window, 900 × 600.`)
     + `<div class="variants"><div class="vrow dark"><div class="vhead theme-name">Dark</div><div class="widths">${W(800, 900, "The card's narrowest")}${W(900, 600, "Gizai's smallest window")}${W(1440, 900, "Gizai's first size")}${W(1920, 1080)}${W(2560, 1440)}${W(3840, 2160, "A 4K screen at 1:1")}</div></div></div>`);
 
   // 2. Three strengths on three screens ------------------------------------------------------------------------------------------
@@ -708,20 +711,21 @@ async function main() {
 
   // 3. Readability ----------------------------------------------------------------------------------------------------------------
   const cell = (r, k) => {
-    const v = r.c[k], low = (n) => (n < 4.5 ? ' class="low"' : "");
+    const v = r.c[k], min = k === "focus" ? 3 : 4.5, low = (n) => (n < min ? ' class="low"' : "");
     return `<span class="num"><span${low(v.between)}>${fmt(v.between)}</span> · <span${low(v.on)}>${fmt(v.on)}</span></span>`;
   };
   const sw = (hex) => `<span class="sw" style="background:${hex}"></span>`;
+  const range = (k, where, strength = "strong") => { const v = CONTRAST.filter((r) => r.strength === strength).map((r) => r.c[k][where]); return `${fmt(Math.min(...v))}–${fmt(Math.max(...v))}`; };
   section("readability", "3. Text over the band",
-    p("WCAG 2 contrast of the text colours over the band, where the band is strongest: its bottom edge, with the glow at full strength over the canvas (<code>bg</code>, or <code>side</code> under the sidebar, the threads and the tree), and a line at full strength over that. Each cell gives <b>between the lines · on a line</b>; under 4.5:1 is marked. Text sits higher than the edge almost everywhere (the sidebar's last row starts 12px up, where the glow is a tenth weaker), so these are the worst case.")
-    + table(["Strength", "Theme", "Canvas", "Behind the text", "text", "text-2", "text-3"],
+    p("WCAG 2 contrast of the text colours over the band, where the band is strongest: its bottom edge, with the glow at full strength over the canvas (<code>bg</code>, or <code>side</code> under the sidebar, the threads and the tree), and a line at full strength over that. Each cell gives <b>between the lines · on a line</b>; under 4.5:1 is marked (under 3:1 for the focus ring, which is a control's outline, not text). Text sits higher than the edge almost everywhere (the sidebar's last row starts 12px up, where the glow is a tenth weaker), so these are the worst case.")
+    + table(["Strength", "Theme", "Canvas", "Behind the text", "text", "text-2", "text-3", "focus"],
       CONTRAST.map((r) => [`${S[r.strength].name}${r.strength === PICK ? " (the proposal)" : ""}`, r.theme === "dark" ? "Dark" : "Light", c(r.surface),
-        `<span class="num">${sw(r.between)}${r.between} · ${sw(r.on)}${r.on}</span>`, cell(r, "text"), cell(r, "text-2"), cell(r, "text-3")]),
+        `<span class="num">${sw(r.between)}${r.between} · ${sw(r.on)}${r.on}</span>`, cell(r, "text"), cell(r, "text-2"), cell(r, "text-3"), cell(r, "focus")]),
       CONTRAST.map((r) => (r.strength === PICK ? "pick" : "")))
     + notes(
       "<b>Subtle and medium</b> keep all three text colours at 4.5:1 or more between the lines, and <code>text</code> and <code>text-2</code> at 4.5:1 even on a line; <code>text-3</code> keeps 3:1 there. A line is 1px wide: where one crosses a letter, that pixel has the second number and the rest of the letter the first.",
-      "<b>Strong</b> keeps <code>text</code> and <code>text-2</code> at 4.5:1 between the lines and <code>text</code> on a line; <code>text-3</code> drops to about 4:1 at the bottom edge, and a line crossing <code>text-2</code> drops under 3:1. That is the price of the bright strip: picking it means the faint text near the bottom (thread times, an ignored file's name) reads less well.",
-      "Controls keep their own surfaces (buttons, inputs, the composer), so the band changes no control's contrast. The focus ring (<code>focus</code>) keeps 3:1 on the band in every strength.",
+      `<b>Strong</b> keeps <code>text</code> and <code>text-2</code> at 4.5:1 between the lines and <code>text</code> on a line; <code>text-3</code> drops to ${range("text-3", "between")}:1 at the bottom edge, and a line crossing <code>text-2</code> drops to ${range("text-2", "on")}:1. That is the price of the bright strip: picking it means the faint text near the bottom (thread times, an ignored file's name) reads less well there.`,
+      `Controls keep their own surfaces (buttons, inputs, the composer box), so the band changes no control's contrast. The focus ring (<code>focus</code>), drawn around a row or a button that stands in the band, keeps ${range("focus", "between", "strong").split("–")[0]}:1 or more between the lines in every strength; where it crosses a line it can drop to ${range("focus", "on", "strong").split("–")[0]}:1 for that pixel in strong.`,
       `${c("gen-bottom-band.mjs")} checks these numbers before it writes anything, and stops when a strength breaks its rule.`));
 
   // 4. Colours ----------------------------------------------------------------------------------------------------------------------
@@ -967,8 +971,8 @@ ${SCRIPT}
     const v = (x) => (x.startsWith("{") ? `= ${x.slice(1, -1)}` : `\`${x}\``);
     const tables = "| Token | Dark | Light |\n|---|---|---|\n" + TOKENS.map(([n, d, l]) => `| \`--${n}\` | ${v(d)} | ${v(l)} |`).join("\n")
       + "\n" + SIZES.map(([n, val]) => `| \`--${n}\` | ${val} | ${val} |`).join("\n")
-      + "\n\nContrast at the band's bottom edge, between the lines · on a line (WCAG 2):\n\n| Strength | Theme | Canvas | text | text-2 | text-3 |\n|---|---|---|---|---|---|\n"
-      + CONTRAST.map((r) => `| ${S[r.strength].name} | ${r.theme} | \`${r.surface}\` | ${TEXTS.map((k) => `${fmt(r.c[k].between)} · ${fmt(r.c[k].on)}`).join(" | ")} |`).join("\n");
+      + "\n\nContrast at the band's bottom edge, between the lines · on a line (WCAG 2):\n\n| Strength | Theme | Canvas | text | text-2 | text-3 | focus |\n|---|---|---|---|---|---|---|\n"
+      + CONTRAST.map((r) => `| ${S[r.strength].name} | ${r.theme} | \`${r.surface}\` | ${MARKS.map((k) => `${fmt(r.c[k].between)} · ${fmt(r.c[k].on)}`).join(" | ")} |`).join("\n");
     const out = md.replace(/(<!-- tables: generated by gen-bottom-band\.mjs -->)[\s\S]*?(<!-- \/tables -->)/, (_, open, close) => `${open}\n${tables}\n${close}`);
     if (out !== md) fs.writeFileSync(README, out);
   }

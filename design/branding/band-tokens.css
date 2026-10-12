@@ -4,21 +4,21 @@
 
 :root, [data-theme="dark"] {
   --band-subtle-line: rgba(160, 211, 235, 0.10);
-  --band-subtle-glow: rgba(26, 99, 130, 0.08);
+  --band-subtle-glow: rgba(20, 100, 128, 0.08);
   --band-medium-line: rgba(160, 211, 235, 0.17);
-  --band-medium-glow: rgba(26, 99, 130, 0.15);
-  --band-strong-line: rgba(160, 211, 235, 0.32);
-  --band-strong-glow: rgba(26, 99, 130, 0.30);
+  --band-medium-glow: rgba(20, 100, 128, 0.15);
+  --band-strong-line: rgba(160, 211, 235, 0.38);
+  --band-strong-glow: rgba(20, 100, 128, 0.36);
   --band-line: var(--band-medium-line);
   --band-glow: var(--band-medium-glow);
 }
 
 [data-theme="light"] {
-  --band-subtle-line: rgba(37, 107, 139, 0.14);
+  --band-subtle-line: rgba(32, 108, 137, 0.14);
   --band-subtle-glow: rgba(201, 227, 239, 0.35);
-  --band-medium-line: rgba(37, 107, 139, 0.24);
+  --band-medium-line: rgba(32, 108, 137, 0.24);
   --band-medium-glow: rgba(201, 227, 239, 0.65);
-  --band-strong-line: rgba(37, 107, 139, 0.40);
+  --band-strong-line: rgba(32, 108, 137, 0.50);
   --band-strong-glow: rgba(201, 227, 239, 1.00);
   --band-line: var(--band-medium-line);
   --band-glow: var(--band-medium-glow);

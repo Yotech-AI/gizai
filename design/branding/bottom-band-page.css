@@ -69,7 +69,7 @@ body { margin: 0; }
 .width-row .what { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.45; }
 .width-row .what b { display: block; color: var(--text); font-family: var(--font-mono); font-weight: 500; }
 .scaled { position: relative; overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--radius); }
-.scaled > .win { position: absolute; left: 0; top: 0; max-width: none; border: 0; border-radius: 0; box-shadow: none; transform-origin: 0 0; }
+.scaled > .win { max-width: none; border: 0; border-radius: 0; box-shadow: none; }
 .dz-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; max-width: 1440px; margin: 14px 0; }
 .dz-fact { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); }
 .dz-fact b { display: block; font-family: var(--font-mono); font-size: var(--fs-md); font-weight: 500; }

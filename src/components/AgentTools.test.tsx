@@ -34,7 +34,7 @@ const tool = (name: string, risk: string, summary: string): McpToolView => ({
   hintsSent: [], risk, summary, notes: [],
 });
 const server = (s: Partial<McpServerView> & { id: string; name: string }): McpServerView => ({
-  transport: "http", command: "", args: [], envNames: [], url: `https://${s.name}.example.com/mcp`, headerNames: [], clientId: "", source: "",
+  transport: "http", command: "", args: [], envNames: [], url: `https://${s.name}.example.com/mcp`, headerNames: [], clientId: "", signInBy: "", source: "",
   signIn: "", problem: null, missing: [], listed: null, usedBy: [], ...s,
 });
 const otus = server({ id: "s-otus", name: "otus", signIn: "signed_in", listed: { serverName: "otus", serverVersion: "1.2.0", listedAt: 0, tools: [
@@ -238,5 +238,43 @@ describe("the switches", () => {
     const { input } = tree({ kind: "codex", value: [{ serverId: "s-otus", on: true, toolsOff: [] }] });
     expect([input("Use otus").disabled, input("Use otus").checked]).toEqual([true, false]);
     expect(input("Use search")).toBeUndefined();
+  });
+});
+
+// GA-120: a server Claude Code signs in to (Settings → MCP servers → Who signs in). Gizai can't list its tools, so an agent
+// that has it on gets all of them; its tools act as you in that service, through Claude Code's own sign-in, and it never
+// needs Gizai's sign-in.
+describe("a server Claude Code signs in to", () => {
+  const figma = server({ id: "s-figma", name: "figma", url: "https://mcp.figma.com/mcp", signInBy: "claude_code", signIn: "claude_code" });
+  const NO_LIST = "Claude Code signs in to this server, so Gizai can't list its tools. An agent that has it on gets all of them.";
+
+  it("says Claude Code signs in and that its tools act as you, with no Needs sign-in warning", () => {
+    for (const on of [false, true]) {
+      const html = render({ value: [{ serverId: "s-figma", on, toolsOff: [] }] }, { servers: [figma, acme] });
+      const f = row(html, "figma");
+      expect(f).toContain('<span class="badge outline">Claude Code signs in</span>');
+      const t = text(f);
+      expect(t).toContain("Claude Code signs in: its tools act as you in figma. Switch it on only for an agent you trust with that.");
+      expect(t).toContain(NO_LIST);
+      expect(t).not.toContain("Needs sign-in");
+      expect(t).not.toContain("a run leaves it out");
+      expect(t).not.toContain("List its tools in Settings");
+      expect(t).not.toContain("Its tools aren't listed yet");
+      // the other server still needs Gizai's sign-in
+      expect(text(row(html, "acme"))).toContain("Needs sign-in: a run leaves it out until you sign in in Settings → MCP servers.");
+    }
+  });
+
+  it("can be switched on like any other server", () => {
+    const got: AgentServer[][] = [];
+    direct = true;
+    queue.push([figma], view, null);
+    try {
+      const t = expand(AgentToolsField({ agentId: "a1", kind: "claude_code", allowedTools: [], value: [], onChange: (v) => got.push(v) }));
+      const sw = findAll(t, (x) => x["aria-label"] === "Use figma")[0] as { onChange: (e: unknown) => void; disabled?: boolean };
+      expect(sw.disabled).toBe(false);
+      sw.onChange({ target: { checked: true } });
+    } finally { direct = false; queue.length = 0; }
+    expect(got).toEqual([[{ serverId: "s-figma", on: true, toolsOff: [] }]]);
   });
 });

@@ -535,3 +535,61 @@ fn sign_out_revokes_and_forgets_the_tokens() {
     tokens.sign_out("otus").unwrap();
     assert_eq!(tokens.load("otus").unwrap(), None);
 }
+
+/// GA-120: a registration endpoint on 127.0.0.1 that answers its one request with `status` and no body; gives its address.
+fn refusing_registration(status: u16) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let url = format!("http://127.0.0.1:{}/oauth/register", listener.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let mut got = vec![];
+        let mut buf = [0u8; 4096];
+        // the request's head, then its body
+        let body_at = loop {
+            let n = s.read(&mut buf).unwrap();
+            got.extend_from_slice(&buf[..n]);
+            if let Some(i) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+            if n == 0 {
+                break got.len();
+            }
+        };
+        let head = String::from_utf8_lossy(&got[..body_at]).to_lowercase();
+        let len: usize = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+        while got.len() < body_at + len {
+            let n = s.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            got.extend_from_slice(&buf[..n]);
+        }
+        let _ = write!(s, "HTTP/1.1 {status} Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    url
+}
+
+#[test]
+fn a_registration_refused_with_401_or_403_says_to_let_claude_code_sign_in_or_enter_a_client_id() {
+    for status in [401, 403, 500] {
+        let register = refusing_registration(status);
+        let base = register.trim_end_matches("/oauth/register").to_string();
+        let d = oauth::Discovery {
+            resource: format!("{base}/mcp"), issuer: base.clone(), authorization_endpoint: format!("{base}/oauth/authorize"),
+            token_endpoint: format!("{base}/oauth/token"), registration_endpoint: Some(register), revocation_endpoint: None,
+            scope: None, service_name: None,
+        };
+        let e = oauth::begin(&d, None).unwrap_err();
+        let refused = format!("didn't let Gizai register itself (it answered with HTTP status {status})");
+        assert!(e.contains(&refused), "{status}: {e}");
+        let hint = ": set Who signs in to Claude Code (Edit), or enter a client id for Gizai from the service's settings";
+        if status == 500 {
+            assert!(e.ends_with(&refused) && !e.contains("Who signs in"), "no hint for {status}: {e}");
+        } else {
+            assert!(e.ends_with(&format!("{refused}{hint}")), "{status}: {e}");
+        }
+    }
+    assert_eq!(oauth::NO_REGISTRATION,
+               "This server doesn't let Gizai register itself: set Who signs in to Claude Code (Edit), or enter a client id for Gizai from the service's settings");
+}

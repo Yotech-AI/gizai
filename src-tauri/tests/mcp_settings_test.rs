@@ -468,3 +468,45 @@ async fn the_team_leads_tools_show_an_agents_servers_by_name_never_their_values(
     assert_no_secret_in_json("agent form", &serde_json::to_string(&mcp::agent_view(&t.st, &dev).unwrap()).unwrap(), &ALL_SECRETS);
     assert_no_secret_in_data(&t, &ALL_SECRETS);
 }
+
+// ---- GA-120: Who signs in to an address server ----
+
+#[test]
+fn who_signs_in_is_kept_for_an_address_empty_for_a_command_and_a_server_saved_before_reads_as_gizai() {
+    let t = setup();
+    // A server saved before the choice existed: no signInBy in the setting.
+    gizai_core::settings::set(&t.st.db, "mcp_servers", &json!([
+        {"id": "old-1", "name": "otus", "transport": "http", "url": "https://os.example.com/api/mcp", "headerNames": [], "clientId": "", "source": ""}
+    ])).unwrap();
+    let old = mcp::get(&t.st, "old-1").unwrap();
+    assert_eq!(old.server.sign_in_by, "", "reads as Gizai");
+    assert_eq!(old.sign_in, "");
+    let as_json = serde_json::to_value(&old).unwrap();
+    assert_eq!(as_json["signInBy"], "", "the UI gets signInBy: {as_json}");
+
+    // An address server saved as Claude Code keeps it, spelled any way.
+    let mut figma = address_server("figma", "https://mcp.figma.com/mcp");
+    figma.server.sign_in_by = " Claude_Code ".into();
+    let v = mcp::save(&t.st, figma).unwrap();
+    assert_eq!(v.server.sign_in_by, "claude_code");
+    assert_eq!(v.sign_in, "claude_code");
+    assert_eq!(core_mcp::get(&t.st.db, &v.server.id).unwrap().sign_in_by, "claude_code");
+    assert_eq!(serde_json::to_value(&v).unwrap()["signIn"], "claude_code");
+    // and an SSE one
+    let mut sse = address_server("linear", "https://mcp.linear.app/sse");
+    sse.server.transport = "sse".into();
+    sse.server.sign_in_by = "claude_code".into();
+    assert_eq!(mcp::save(&t.st, sse).unwrap().sign_in, "claude_code");
+
+    // A command never has it.
+    let mut cmd = command_server("notes", "list");
+    cmd.server.sign_in_by = "claude_code".into();
+    let v = mcp::save(&t.st, cmd).unwrap();
+    assert_eq!(v.server.sign_in_by, "");
+    assert_eq!(v.sign_in, "");
+
+    // Anything else is refused.
+    let mut odd = address_server("odd", "https://odd.example.com/mcp");
+    odd.server.sign_in_by = "cursor".into();
+    assert_eq!(mcp::save(&t.st, odd).unwrap_err(), "Gizai or Claude Code signs in to odd, not cursor");
+}

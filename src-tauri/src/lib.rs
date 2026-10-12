@@ -5,6 +5,7 @@ pub mod chat;
 pub mod clis;
 pub mod code;
 mod commands;
+pub mod editor;
 pub mod folders;
 pub mod git;
 pub mod github;
@@ -583,6 +584,9 @@ pub fn run() {
             commands::list_old_worktrees, commands::remove_old_worktrees,
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,
+            editor::editor_folders, editor::editor_list, editor::editor_read, editor::editor_write, editor::editor_create,
+            editor::editor_rename, editor::editor_delete, editor::editor_files, editor::editor_search, editor::editor_git,
+            editor::editor_versions, editor::editor_apps, editor::open_in_app,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")

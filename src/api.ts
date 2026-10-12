@@ -194,6 +194,32 @@ export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { pat
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
 
+// ---- the Editor (GA-107, contract C2): `folder` is always an EditorFolder.id, `path` always relative to it, with / ----
+/** The folders the Editor may open: projects' linked folders, the folders under Settings → Editor folders, card worktrees. */
+export const editorFolders = () => invoke<T.EditorFolder[]>("editor_folders");
+/** One folder level, folders first; `dir` "" for the top. */
+export const editorList = (folder: string, dir: string) => invoke<T.DirEntry[]>("editor_list", { folder, dir });
+export const editorRead = (folder: string, path: string) => invoke<T.OpenedFile>("editor_read", { folder, path });
+/** Saves; refuses with "changed on disk" when the file's version isn't `version` any more. Resolves with the new version. */
+export const editorWrite = (folder: string, path: string, text: string, version: string) =>
+  invoke<string>("editor_write", { folder, path, text, version });
+export const editorCreate = (folder: string, path: string, dir: boolean) => invoke<void>("editor_create", { folder, path, dir });
+export const editorRename = (folder: string, from: string, to: string) => invoke<void>("editor_rename", { folder, from, to });
+export const editorDelete = (folder: string, path: string) => invoke<void>("editor_delete", { folder, path });
+/** Go to file: tracked and untracked files git doesn't ignore. */
+export const editorFiles = (folder: string) => invoke<string[]>("editor_files", { folder });
+export const editorSearch = (folder: string, query: string, caseSensitive: boolean, wholeWord: boolean, regex: boolean) =>
+  invoke<T.SearchResult>("editor_search", { folder, query, caseSensitive, wholeWord, regex });
+/** The branch and each changed file's git status (local, no fetch). */
+export const editorGit = (folder: string) => invoke<T.FolderGit>("editor_git", { folder });
+/** The current version of each path ("" for a file that is gone), to notice outside changes. */
+export const editorVersions = (folder: string, paths: string[]) => invoke<string[]>("editor_versions", { folder, paths });
+/** VS Code, Zed and PhpStorm, those found on this computer (under any of their names, such as zeditor). */
+export const editorApps = () => invoke<T.EditorApp[]>("editor_apps");
+/** Opens the folder, or a file in it (at a line when given), in that editor. */
+export const openInApp = (app: T.EditorApp["id"], folder: string, path: string | null, line: number | null) =>
+  invoke<void>("open_in_app", { app, folder, path, line });
+
 // ---- updates: the release check and Update to <version> ----
 /** This version, what the release check found, and the update that runs (or ran). */
 export const updateStatus = () => invoke<T.UpdateStatus>("update_status");

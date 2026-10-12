@@ -252,7 +252,9 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   /** How Open pull request and Push branch reach GitHub. */
   pushOver: PushOver;
   /** Settings → Notifications: a desktop notification per kind, on or off. */
-  notifications: NotificationSwitches };
+  notifications: NotificationSwitches;
+  editorRoots: string[];   // Settings → General → Editor folders; default ["~/Herd"]
+};
 /** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
  *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
 export type NotificationSwitches = { hold: boolean; waiting: boolean; leadAsks: boolean; leadAnswered: boolean };
@@ -262,6 +264,42 @@ export type OldWorktree = {
   bytes: number; uncommitted: number; live: boolean;
 };
 export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
+
+// ---- the Editor (GA-107, contract C2) ----
+export type EditorFolder = {
+  id: string;                 // the folder's canonical path
+  path: string;               // as shown, ~ for the home folder
+  name: string;               // its own name, or the card's identifier
+  kind: "project" | "root" | "card";
+  projectId: string | null;
+  taskId: string | null;
+  readOnly: boolean;          // a card an agent is working on now
+  readOnlyWhy: string | null;
+};
+export type GitMark = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+export type DirEntry = {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+  ignored: boolean;           // git ignores it: greyed; read-only inside an ignored folder
+  git: GitMark | null;        // for a folder: whether something inside it changed ("modified")
+};
+export type OpenedFile = {
+  path: string;
+  text: string | null;        // null when binary or too large
+  binary: boolean;
+  tooLarge: boolean;          // over 5 MB
+  readOnly: boolean;
+  readOnlyWhy: string | null; // "Over 1 MB", "Ignored by git", "Backend Agent is working on GA-12"
+  crlf: boolean;
+  bom: boolean;
+  version: string;            // what editorWrite checks
+};
+export type SearchHit = { path: string; line: number; column: number; text: string };
+export type SearchResult = { hits: SearchHit[]; truncated: boolean };
+export type FolderGit = { branch: string | null; files: Record<string, GitMark>; uncommitted: number };
+export type EditorApp = { id: "vscode" | "zed" | "phpstorm"; name: string };
 
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */

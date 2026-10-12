@@ -127,8 +127,13 @@ read; a new path makes the note), `memory_append` (under a heading, without rewr
 or copy, rewriting links). `memory_read`, `memory_append` and `memory_move` find a note by its path, its title (as a
 wikilink does) or its id. It sees every scope, and the activity feed shows it as the author. Once a chat answer has used
 a tool from outside Gizai (another MCP server, the web, the browser), `memory_write`, `memory_append` and `memory_move`
-are refused for the rest of that answer, like its other tools that act: it proposes the note, and saves it once you
-confirm in a new message.
+aren't run for the rest of that answer, like its other tools that act: Gizai keeps each call under the answer for you to
+approve with one click (GA-102). The preview shows the note's path and its new text, with what changes against the
+current version when the note exists (`memory_write`), the path, heading and text (`memory_append`), or from and to
+(`memory_move`). **Approve** saves exactly that, once, as the Team Lead, with the usual version check: a note that
+changed since the Team Lead read it isn't saved, and the chat says why. **Discard** saves nothing. A newer
+`memory_write` or `memory_append` for the same note replaces the older one, and the Team Lead's next answer hears what
+you decided (`docs/agent-tools.md`, Safety rules).
 
 Every chat answer and every board check has the Team Lead's Memory block at the end of its system prompt, in old chats
 and new ones: its own notes (`Team Lead/`, `Notes` first) in full, at most **6,000 characters** (a note that doesn't fit

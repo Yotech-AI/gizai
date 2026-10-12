@@ -24,7 +24,8 @@ Nothing in the app changes in this card.
 
 - **Our own land.** A height field, a flat valley between ridged mountains (gradient noise from a seeded generator), seen
   through a perspective camera and drawn as a mesh of four-sided cells. The lines a nearer slope hides are taken out, so the
-  file holds only the lines you see. Far lines fade, and the top of the picture fades so the peaks melt into the page.
+  file holds only the lines you see. Far lines fade; toward the far sides, where perspective lays the columns almost flat,
+  the columns fade and the ridges stay; and the top of the picture fades so the peaks melt into the page.
 - **Sharp at every width, no seams.** One vector picture 4800 × 128 at 1:1, centred under the window's middle and cut at
   the sides (`preserveAspectRatio="xMidYMax slice"`), its lines 1px at every size (`vector-effect: non-scaling-stroke`).
   The valley is 300px wide at the bottom edge, so an 800px window still shows peaks on both sides.

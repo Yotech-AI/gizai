@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::{Args, Cx, err, ymd};
 
 /// The caller as memory sees it. The agent with Chat on is the Team Lead, whatever its role says.
-fn who(cx: &Cx) -> Result<Who, String> {
+pub(super) fn who(cx: &Cx) -> Result<Who, String> {
     let who = Who::of(cx.db(), cx.actor).map_err(err)?;
     let chat = gizai_core::team::chat_agent(cx.db()).ok().flatten().is_some_and(|a| a.actor_id == cx.actor);
     Ok(match who {

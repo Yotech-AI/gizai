@@ -68,10 +68,19 @@ pub fn get(db: &Db, id: &str) -> Result<PendingAction> {
 }
 
 /// Keeps a refused call as a pending action of its chat. In the same write, an older pending memory_write or
-/// memory_append in that chat for the same note (`note_key`) is replaced: only the newest waits.
+/// memory_append in that chat for the same note (`note_key`) is replaced: only the newest waits. The same call made again
+/// (the same tool with the same arguments) while the first still waits is that one: it isn't kept twice.
 pub fn keep(db: &Db, n: NewPending) -> Result<PendingAction> {
     db.write(Some(&n.actor_id), |w| {
         let c = w.conn();
+        let same: Option<PendingAction> = {
+            let mut st = c.prepare(&format!("SELECT {COLS} FROM pending_actions WHERE thread_id=?1 AND status='pending' AND tool=?2 ORDER BY rowid"))?;
+            let waiting = st.query_map(rusqlite::params![n.thread_id, n.tool], row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            waiting.into_iter().find(|a| a.args == n.args)
+        };
+        if let Some(a) = same {
+            return Ok(a);
+        }
         let (id, now) = (ids::new_id(), ids::now_ms());
         let note_key = n.note_key.as_ref().filter(|_| NOTE_WRITES.contains(&n.tool.as_str()));
         if let Some(key) = note_key {
@@ -186,17 +195,13 @@ pub fn mark_told(db: &Db, ids: &[String]) -> Result<()> {
     })
 }
 
-/// What `interrupted` says about an approved call Gizai closed under.
-pub const INTERRUPTED: &str = "Gizai closed while it ran, so it may or may not have happened: check before you ask for it again.";
-
-/// At start-up: calls that were running when Gizai closed (approved, not finished) count as failed with `INTERRUPTED`, so
-/// none is run twice and the Team Lead hears of them. Returns them.
-pub fn interrupted(db: &Db) -> Result<Vec<PendingAction>> {
-    let ids: Vec<String> = db.read(|c| {
-        let mut st = c.prepare("SELECT id FROM pending_actions WHERE status='running' ORDER BY rowid")?;
-        Ok(st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
-    })?;
-    ids.iter().map(|id| finish(db, id, false, INTERRUPTED)).collect()
+/// The calls approved and not finished, in every chat: at start-up, those Gizai closed under (the app finishes them as
+/// failed, so none runs twice and the Team Lead hears of them).
+pub fn running(db: &Db) -> Result<Vec<PendingAction>> {
+    db.read(|c| {
+        let mut st = c.prepare(&format!("SELECT {COLS} FROM pending_actions WHERE status='running' ORDER BY rowid"))?;
+        Ok(st.query_map([], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    })
 }
 
 /// One line of `line_diff`: `same`, `add` (only in the new text) or `del` (only in the old one).

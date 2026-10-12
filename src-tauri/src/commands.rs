@@ -666,6 +666,21 @@ pub fn dismiss_chat(app: AppHandle, st: State<AppState>, thread_id: String) -> R
     changed(&app, "chat_threads");
     Ok(())
 }
+/// GA-102: the Team Lead's calls that wait for your approval in a chat (after a tool from outside Gizai), each with what
+/// it would do now. Only these commands, for you, list, approve or discard them; no tool of the Team Lead's does.
+#[tauri::command]
+pub fn pending_actions(st: State<AppState>, thread_id: String) -> R<Vec<crate::pending::PendingView>> { crate::pending::list(&st, &thread_id) }
+/// Approve: runs exactly that call, once, with every other rule in force; the chat gets a note with what happened.
+#[tauri::command]
+pub async fn approve_pending_action(st: State<'_, AppState>, id: String) -> R<gizai_core::pending::PendingAction> { crate::pending::approve(&st, &id).await }
+/// Approve all: the calls you saw, one after the other in the order given.
+#[tauri::command]
+pub async fn approve_pending_actions(st: State<'_, AppState>, ids: Vec<String>) -> R<Vec<gizai_core::pending::PendingAction>> {
+    crate::pending::approve_all(&st, &ids).await
+}
+/// Discard: nothing runs; the chat gets a note with what was discarded.
+#[tauri::command]
+pub fn discard_pending_action(st: State<AppState>, id: String) -> R<gizai_core::pending::PendingAction> { crate::pending::discard(&st, &id) }
 
 // ---- pull requests on GitHub ----
 /// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.

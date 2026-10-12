@@ -290,12 +290,12 @@ export const terminalAck = (id: string, bytes: number) => invoke<void>("terminal
 export const terminalRename = (id: string, name: string) => invoke<T.TerminalSession>("terminal_rename", { id, name });
 /** Ends the shell and everything it started; resolves when they are gone (at most about 3 s; on Windows at once). */
 export const terminalClose = (id: string) => invoke<void>("terminal_close", { id });
-/** The clipboard's text, through the clipboard plugin (its one right: clipboard-manager:allow-read-text), so pasting
- *  into a terminal with Ctrl+Shift+V on Linux doesn't show WebKit's own Paste prompt. */
-export const readClipboardText = () => readText();
 /** After an open, a rename, a close, a shell's end and a change of `busy`: every open terminal. */
 export const onTerminalsChanged = (cb: (list: T.TerminalSession[]) => void): Promise<UnlistenFn> =>
   listen<T.TerminalSession[]>("terminals-changed", (m) => cb(m.payload));
+/** The clipboard's text, through the clipboard plugin (its one right: clipboard-manager:allow-read-text), so pasting
+ *  into a terminal with Ctrl+Shift+V on Linux doesn't show WebKit's own Paste prompt. */
+export const readClipboardText = () => readText();
 
 // ---- updates: the release check and Update to <version> ----
 /** This version, what the release check found, and the update that runs (or ran). */

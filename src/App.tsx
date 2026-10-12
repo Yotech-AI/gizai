@@ -20,6 +20,7 @@ import { AgentPage } from "./pages/AgentPage";
 import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { MemoryPage } from "./pages/MemoryPage";
+import { EditorPage } from "./pages/EditorPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
 import { appearanceProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
@@ -169,6 +170,7 @@ export default function App() {
             : route.page === "users" ? <UsersPage />
             : route.page === "usage" ? <UsagePage />
             : route.page === "memory" ? <MemoryPage key={route.scope ?? "all"} route={route} youId={info?.you_id ?? ""} />
+            : route.page === "editor" ? <EditorPage id={route.id} youId={info?.you_id ?? ""} />
             : route.page === "projects" ? <ProjectsPage />
             : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
             : <Placeholder route={route} info={info} />}

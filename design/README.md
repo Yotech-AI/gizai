@@ -55,6 +55,8 @@ and the drawer edge. Shadows only on things that float: `shadow-pop`, `shadow-dr
   changed line's number, the A and D letters and the counts (`+964 −112`, in mono) are `diff-add` and `diff-del`. A fold
   bar is `diff-fold` with `text-2`. They're near `success` and `danger` but separate: those mean run and form outcomes,
   so neither stands in for the other.
+- **Git's marks** on a file in the Editor's tree, tabs and status bar: A and U are `git-added` (`diff-add`), D and C
+  `git-deleted` (`diff-del`), M and R gold `git-modified`, which is also the dot on a folder with changes inside.
 - **Syntax uses four hues and the greys.** Violet `syn-keyword` (and `syn-meta`), blue `syn-function` (and `syn-tag`),
   gold `syn-type` (and `syn-attribute`), orange `syn-string` (and `syn-number`). Names stay `text`, operators and
   punctuation `text-2`, comments `syn-comment`. `syn-invalid` is `danger` with a wavy underline.
@@ -97,7 +99,9 @@ and panels, `radius-pill` for badges. Never round everything the same.
 properties panel (`size-props`) that can be closed. There is no org rail: Gizai has one
 organisation. A top bar (`size-topbar`) holds breadcrumbs and page actions; list pages add a view
 toolbar below it (New task on the left; view switch, Filters, Sort, Group on the right). Pages with
-parts (Usage, Settings) show them as tabs, the open one in the address.
+parts (Usage, Settings) show them as tabs, the open one in the address. The Editor adds a file
+tree (`size-tree`, rows `size-tree-row`), a tab strip (`size-tab`) and a status bar
+(`size-statusbar`), which grow with the text like the sidebar and rows.
 
 **Drawers, not dialogs.** Every create and edit form (new task, new project, edit client, add
 agent, agent settings, new doc) slides in from the right in a Drawer at least `size-drawer`

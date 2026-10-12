@@ -313,7 +313,7 @@ impl Main {
 
 /// A main ref as the screen names it: a remote's ("origin/main"), the link's that card starts fetch into Gizai's own ref
 /// ("origin/main" too), or the local branch ("main").
-fn label_of(rev: &str, default_branch: &str) -> String {
+pub(crate) fn label_of(rev: &str, default_branch: &str) -> String {
     if let Some(remote) = rev.strip_prefix("refs/remotes/") {
         return remote.to_string();
     }

@@ -207,7 +207,7 @@ pub fn stand(f: Named, main: Result<&Main, &str>, seen: &Fetched, updating: Opti
             out.updating = true;
             doing.to_string()
         }
-        None => match plan(f, main, read_only) {
+        None => match plan(f, Ok(main), read_only) {
             Ok(p) => {
                 out.can_update = true;
                 p.said()
@@ -219,13 +219,15 @@ pub fn stand(f: Named, main: Result<&Main, &str>, seen: &Fetched, updating: Opti
 }
 
 /// Update's plan for the folder `f`: what it will do (`Plan::said`), or why it can't, as the sentence after "Update
-/// can't run:". It can't when main hasn't been fetched, when the folder isn't behind main, while `read_only` says
-/// nothing in the folder may change, and when `checkout::check` refuses without switching branch. It installs only for
-/// a lock file the fast-forward changes (`Plan::only_changed_locks`). Nothing changes here.
-pub fn plan(f: Named, main: &Main, read_only: Option<&str>) -> Result<Plan, String> {
+/// can't run:". It can't outside git, without a main (`main` says why), when main hasn't been fetched, when the folder
+/// isn't behind main, while `read_only` says nothing in the folder may change, and when `checkout::check` refuses
+/// without switching branch. It installs only for a lock file the fast-forward changes (`Plan::only_changed_locks`).
+/// Nothing changes here.
+pub fn plan(f: Named, main: Result<&Main, &str>, read_only: Option<&str>) -> Result<Plan, String> {
     if !is_git(f.dir) {
         return Err(not_git(f));
     }
+    let main = main.map_err(str::to_string)?;
     if !has(f.dir, &main.rev) {
         return Err(refused(f, main, &Refusal::NotFetched));
     }

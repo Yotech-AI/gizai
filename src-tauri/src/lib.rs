@@ -46,6 +46,8 @@ pub struct AppState {
     pub pulls: Arc<pulls::PullChecks>,
     /// The pull request diffs a card's Changes fetched lately (see `changes`).
     pub changes: Arc<changes::PullDiffs>,
+    /// The Editor's fetches of main, by repository (see `editor`).
+    pub editor: Arc<editor::Fetches>,
     /// Log in with GitHub, while gh waits for its code (see `github`).
     pub github: Arc<github::Logins>,
     /// The release check and the update (see `update`).
@@ -255,7 +257,7 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
     Ok(AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
-                  changes: Arc::new(changes::PullDiffs::default()),
+                  changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
                   desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()) })
 }
@@ -279,6 +281,7 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
             }
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
             runs::Note::UpdateChanged => app.emit("update-changed", ()),
+            runs::Note::EditorUpdated(ended) => app.emit("editor-updated", ended),
         };
     })
 }
@@ -591,7 +594,8 @@ pub fn run() {
             commands::stop_update, commands::restart_gizai,
             editor::editor_folders, editor::editor_list, editor::editor_read, editor::editor_write, editor::editor_create,
             editor::editor_rename, editor::editor_delete, editor::editor_files, editor::editor_search, editor::editor_git,
-            editor::editor_versions, editor::editor_apps, editor::open_in_app,
+            editor::editor_versions, editor::editor_apps, editor::open_in_app, editor::editor_main, editor::editor_fetch,
+            editor::editor_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")

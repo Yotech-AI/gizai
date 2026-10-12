@@ -12,8 +12,9 @@
 //! copies vendor/ and node_modules/ from), locally and without a fetch (`gizai_agents::checkout::status`). When its
 //! dependencies are behind main, the turn's line gets a note: on a chat's first turn, and again when it changes. The
 //! Team Lead then offers to update the folder, and `update_checkout` does that in the background once you said yes
-//! (`start_update`); never at the same time as a card's preparation copying from the same folder (`folder_lock`).
-use std::collections::{HashMap, HashSet};
+//! (`start_update`); never at the same time as a card's preparation copying from the same folder (`folder_lock`). The
+//! Editor's Update (`editor`) shares both: one update per folder at a time (`begin_update`), under the same lock.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -41,8 +42,9 @@ pub struct Copies {
     heard: Mutex<HashMap<String, Heard>>,
     /// Linked folder (as it is on disk) → held while it is updated, or while a card's worktree is prepared from it.
     folders: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
-    /// Linked folders an update runs in.
-    updating: Mutex<HashSet<PathBuf>>,
+    /// Folders an update runs in (from chat, or the Editor's Update), with what it does: the plan's sentence, "" while
+    /// it is still being checked.
+    updating: Mutex<HashMap<PathBuf, String>>,
     /// `FETCH_EVERY` and `TURN_WAIT`, unless a test changed them (`set_timing`).
     timing: Mutex<Option<(Duration, Duration)>>,
 }
@@ -91,6 +93,12 @@ impl Copies {
     fn timing(&self) -> (Duration, Duration) {
         self.timing.lock().unwrap().unwrap_or((FETCH_EVERY, TURN_WAIT))
     }
+}
+
+/// A project fetched more recently than this isn't fetched again (`FETCH_EVERY`, unless a test changed it): for the
+/// copies, and for the Editor's Fetch.
+pub fn fetch_every(st: &AppState) -> Duration {
+    st.code.timing().0
 }
 
 /// What a chat turn gets from the copies.
@@ -273,7 +281,7 @@ async fn refresh(st: AppState, p: Project) -> Last {
     let dir = dir_of(&st, &p.key);
     // a folder being updated is half-way (an install removes node_modules/ first): it is looked at again next time
     let look = p.repo_path.as_deref().map(Path::new).and_then(|r| r.canonicalize().ok())
-        .is_some_and(|r| !st.code.updating.lock().unwrap().contains(&r));
+        .is_some_and(|r| !st.code.updating.lock().unwrap().contains_key(&r));
     match tokio::task::spawn_blocking(move || refresh_blocking(&p, &dir, fetch, look)).await {
         Ok(r) => {
             if fetch.is_some() {
@@ -343,23 +351,55 @@ async fn tidy(st: &AppState, keep: &[Project]) {
     }
 }
 
-/// Held while a project's linked folder `folder` is updated (`start_update`), or while a card's new worktree is prepared
-/// from it (`runs`): the two wait for each other, so no card copies a half-installed node_modules/.
+/// Held while a project's linked folder `folder` is updated (`start_update`, or the Editor's Update), or while a card's
+/// new worktree is prepared from it (`runs`): they wait for each other, so no card copies a half-installed node_modules/.
 pub fn folder_lock(st: &AppState, folder: &Path) -> Arc<tokio::sync::Mutex<()>> {
     let key = folder.canonicalize().unwrap_or_else(|_| folder.to_path_buf());
     st.code.folders.lock().unwrap().entry(key).or_default().clone()
 }
 
-/// No longer running when dropped.
-struct Updating {
+/// An update that runs in a folder (`begin_update`): no longer running when dropped.
+pub struct Updating {
     st: AppState,
     folder: PathBuf,
+}
+
+impl Updating {
+    /// What the update does (the plan's sentence), for `updating`.
+    pub fn says(&self, said: &str) {
+        if let Some(s) = self.st.code.updating.lock().unwrap().get_mut(&self.folder) {
+            *s = said.to_string();
+        }
+    }
 }
 
 impl Drop for Updating {
     fn drop(&mut self) {
         self.st.code.updating.lock().unwrap().remove(&self.folder);
     }
+}
+
+/// A folder's key in `updating`: the folder as it is on disk.
+fn update_key(folder: &Path) -> PathBuf {
+    folder.canonicalize().unwrap_or_else(|_| folder.to_path_buf())
+}
+
+/// Marks an update of the folder `folder` as running, until the returned `Updating` is dropped; None when one runs
+/// already (from chat, or the Editor's Update): one update per folder at a time.
+pub fn begin_update(st: &AppState, folder: &Path) -> Option<Updating> {
+    let key = update_key(folder);
+    let mut running = st.code.updating.lock().unwrap();
+    if running.contains_key(&key) {
+        return None;
+    }
+    running.insert(key.clone(), String::new());
+    Some(Updating { st: st.clone(), folder: key })
+}
+
+/// What the update running in the folder `folder` does (the plan's sentence; "" while it is still being checked), when
+/// one runs.
+pub fn updating(st: &AppState, folder: &Path) -> Option<String> {
+    st.code.updating.lock().unwrap().get(&update_key(folder)).cloned()
 }
 
 /// `update_checkout` from the chat `thread`: checks the linked folder of `project` (`checkout::plan`) and, when nothing
@@ -371,13 +411,11 @@ pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch
     let folder = project.repo_path.clone().filter(|r| !r.trim().is_empty())
         .ok_or_else(|| format!("{} has no linked folder", project.key))?;
     let folder = PathBuf::from(folder);
-    let key = folder.canonicalize().unwrap_or_else(|_| folder.clone());
-    if !st.code.updating.lock().unwrap().insert(key.clone()) {
-        return Err(format!("an update of {} is already running: nothing changed", folder.display()));
-    }
-    let running = Updating { st: st.clone(), folder: key };
+    let running = begin_update(st, &folder)
+        .ok_or_else(|| format!("an update of {} is already running: nothing changed", folder.display()))?;
     let (p, dir) = (project.clone(), folder.clone());
     let will = tokio::task::spawn_blocking(move || plan(&p, &dir, switch)).await.map_err(|e| e.to_string())??;
+    running.says(&will.said());
     let (st2, thread, p, dir) = (st.clone(), thread.to_string(), project.clone(), folder.clone());
     tokio::spawn(async move {
         let _running = running;

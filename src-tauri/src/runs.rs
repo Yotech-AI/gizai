@@ -46,6 +46,8 @@ pub enum Note {
     ChatChanged,
     /// The release check or an update moved on (see `update`).
     UpdateChanged,
+    /// The Editor's Update of a folder ended (see `editor`): the `editor-updated` event.
+    EditorUpdated(gizai_agents::behind::EditorUpdated),
 }
 
 #[derive(Debug, Clone, Serialize)]

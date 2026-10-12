@@ -104,7 +104,9 @@ organisation. A top bar (`size-topbar`) holds breadcrumbs and page actions; list
 toolbar below it (New task on the left; view switch, Filters, Sort, Group on the right). Pages with
 parts (Usage, Settings) show them as tabs, the open one in the address. The Editor adds a file
 tree (`size-tree`, rows `size-tree-row`), a tab strip (`size-tab`) and a status bar
-(`size-statusbar`), which grow with the text like the sidebar and rows.
+(`size-statusbar`), which grow with the text like the sidebar and rows. A terminal's tabs are
+`size-term-tab`; the Editor's terminal panel starts at `size-term-panel` of the code column, within
+`size-term-panel-min` and `size-term-code-min`, with a `size-handle` drag handle.
 
 **Drawers, not dialogs.** Every create and edit form (new task, new project, edit client, add
 agent, agent settings, new doc) slides in from the right in a Drawer at least `size-drawer`

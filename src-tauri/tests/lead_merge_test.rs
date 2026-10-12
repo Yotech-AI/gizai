@@ -703,6 +703,100 @@ fn the_lead_role_template_and_the_tool_describe_the_rules() {
     }
 }
 
+// ---- GA-102: a merge kept after an outside tool, approved with one click ----
+
+/// A chat where you asked for the merge, whose answer used mcp__otus__search and then tried merge_pull_request: the call
+/// is kept for you. Returns the chat and the kept call.
+async fn kept_merge(t: &T) -> (String, String) {
+    let thread = gizai_core::chat::create_thread(&t.st.db, &t.st.you_id, &t.lead, "Merge KADE-1").unwrap();
+    gizai_core::chat::add_message(&t.st.db, gizai_core::chat::NewMessage { thread_id: thread.clone(), role: "user".into(),
+        author_id: Some(t.st.you_id.clone()), body_md: Some("Look it up in Otus, then merge KADE-1".into()), ..Default::default() }).unwrap();
+    gizai_lib::chat::mark_outside(&t.st, &thread, "mcp__otus__search");
+    tools::call_in(&t.st, &t.lead, Some(&thread), "merge_pull_request", json!({"task": "KADE-1"})).await.unwrap_err();
+    let kept = gizai_lib::pending::list(&t.st, &thread).unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    (thread, kept[0].action.id.clone())
+}
+
+/// Gizai's notes in a chat.
+fn chat_notes(t: &T, thread: &str) -> Vec<String> {
+    gizai_core::chat::messages(&t.st.db, thread).unwrap().into_iter().filter(|m| m.role == "system").map(|m| m.body_md.unwrap_or_default()).collect()
+}
+
+/// The refusal a merge of KADE-1 gets in a chat answer without an outside tool, as things are now.
+async fn usual_refusal(t: &T) -> String {
+    let other = gizai_core::chat::create_thread(&t.st.db, &t.st.you_id, &t.lead, "Merge KADE-1 please").unwrap();
+    tools::call_in(&t.st, &t.lead, Some(&other), "merge_pull_request", json!({"task": "KADE-1"})).await.unwrap_err()
+}
+
+#[tokio::test]
+async fn a_kept_merge_shows_the_card_and_its_pull_request() {
+    let t = setup().await;
+    gizai_core::pulls::record(&t.st.db, None, &t.task, &format!("{LINK}/pull/7"), "open", false).unwrap();
+    let (thread, _) = kept_merge(&t).await;
+    let v = serde_json::to_value(&gizai_lib::pending::list(&t.st, &thread).unwrap()[0]).unwrap();
+    assert_eq!(v["preview"]["line"], "Merge KADE-1's pull request", "{v}");
+    let fields: Vec<(String, String)> = v["preview"]["fields"].as_array().unwrap().iter()
+        .map(|f| (f["label"].as_str().unwrap().to_string(), f["value"].as_str().unwrap().to_string())).collect();
+    assert_eq!(fields[0].0, "Card");
+    assert!(fields[0].1.starts_with("KADE-1 "), "{fields:?}");
+    assert!(fields.contains(&("Column".into(), "Review".into())), "{fields:?}");
+    assert!(fields.contains(&("Pull request".into(), format!("{LINK}/pull/7 (open)"))), "{fields:?}");
+    assert!(t.gh_calls().is_empty(), "looking at it asks gh nothing");
+}
+
+#[tokio::test]
+async fn approving_a_kept_merge_without_a_qa_pass_is_refused_as_ever_and_merges_nothing() {
+    let t = setup_with(None).await;
+    let (thread, id) = kept_merge(&t).await;
+    let a = gizai_lib::pending::approve(&t.st, &id).await.unwrap();
+    let usual = usual_refusal(&t).await;
+    t.refused(&usual, "QA hasn't passed KADE-1: it has no QA verdict", "Review");
+    let said = format!("Approved: merge KADE-1's pull request. It failed: {}", usual.trim_end_matches('.'));
+    assert_eq!((a.status.as_str(), a.result_md.as_deref()), ("failed", Some(said.as_str())), "the usual refusal");
+    assert_eq!(chat_notes(&t, &thread), [said]);
+    assert!(t.gh_calls().is_empty(), "gh never asked: {:?}", t.gh_calls());
+    assert_eq!(t.task().state_name, "Review");
+    // it doesn't run again
+    assert_eq!(gizai_lib::pending::approve(&t.st, &id).await.unwrap_err(), "It was approved already, so it doesn't run again.");
+    assert!(gizai_lib::pending::list(&t.st, &thread).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn approving_a_kept_merge_with_the_projects_switch_off_is_refused_and_merges_nothing() {
+    let t = setup().await;
+    let (thread, id) = kept_merge(&t).await;
+    t.set_switch(false);
+    let a = gizai_lib::pending::approve(&t.st, &id).await.unwrap();
+    assert_eq!(a.status, "failed");
+    let said = a.result_md.unwrap();
+    assert!(said.starts_with("Approved: merge KADE-1's pull request. It failed: ")
+            && said.contains("KADE doesn't let you merge: its Team Lead may merge switch is off"), "{said}");
+    assert_eq!(chat_notes(&t, &thread), [said]);
+    assert!(!t.gh_calls().iter().any(|c| c.starts_with("pr merge")), "{:?}", t.gh_calls());
+    assert_eq!(t.task().state_name, "Review");
+}
+
+#[tokio::test]
+async fn approving_a_kept_merge_that_meets_every_rule_merges_it_once() {
+    let t = setup().await;
+    let (thread, id) = kept_merge(&t).await;
+    assert!(t.gh_calls().is_empty(), "nothing merged before you approve");
+    // a double click: both approvals at once, one runs
+    let (a, b) = tokio::join!(gizai_lib::pending::approve(&t.st, &id), gizai_lib::pending::approve(&t.st, &id));
+    let (ok, refused) = match (a, b) { (Ok(a), Err(e)) | (Err(e), Ok(a)) => (a, e), other => panic!("one approval runs: {other:?}") };
+    assert!(refused == "It is being approved already." || refused == "It was approved already, so it doesn't run again.", "{refused}");
+    assert_eq!(ok.status, "approved");
+    assert_eq!(ok.result_md.as_deref(), Some("Approved: merge KADE-1's pull request. Merged pull request #7. The card moved to Deploy."));
+    assert_eq!(t.gh_calls().iter().filter(|c| c.starts_with("pr merge")).count(), 1, "{:?}", t.gh_calls());
+    assert_eq!(t.task().state_name, "Deploy");
+    assert_eq!(t.lead_comments().len(), 1, "the Team Lead's comment, once");
+    assert_eq!(chat_notes(&t, &thread), ["Approved: merge KADE-1's pull request. Merged pull request #7. The card moved to Deploy."]);
+    // Approve all over it runs nothing more
+    assert!(gizai_lib::pending::approve_all(&t.st, &[id]).await.is_err());
+    assert_eq!(t.gh_calls().iter().filter(|c| c.starts_with("pr merge")).count(), 1);
+}
+
 /// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders.
 fn real_tempdir() -> tempfile::TempDir {
     let base = std::env::temp_dir().canonicalize().unwrap();

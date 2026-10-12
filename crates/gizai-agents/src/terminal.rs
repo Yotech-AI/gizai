@@ -621,7 +621,7 @@ impl Session {
             }
             let mut until = next_look;
             if !out.pending.is_empty() && out.listener.is_some() {
-                let at = out.last_sent.map_or(now, |t| t + EVERY);
+                let at = next_send(out.last_sent, now);
                 if at <= now {
                     let bytes = std::mem::take(&mut out.pending);
                     let generation = out.generation;
@@ -1017,6 +1017,14 @@ fn copy_fd(fd: std::os::fd::RawFd) -> io::Result<std::fs::File> {
         }
         Ok(std::fs::File::from_raw_fd(copy))
     }
+}
+
+/// When the sender sends what came, asked at `now`: at once when it has sent nothing before, else 8 ms after its last
+/// send at the earliest. Public for its tests (GA-140): a view's own clock can't check this on a busy machine, as the
+/// sender can be held up between deciding to send and the view's call.
+#[doc(hidden)]
+pub fn next_send(last_sent: Option<Instant>, now: Instant) -> Instant {
+    last_sent.map_or(now, |last| now.max(last + EVERY))
 }
 
 /// What the terminal kept, to send first to a new listener: from the start of a line once older output was dropped (in

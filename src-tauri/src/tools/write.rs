@@ -15,11 +15,43 @@ fn task_json(t: &Task) -> Value {
            "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold, "testing": t.testing})
 }
 
-fn task_done(cx: &Cx, id: &str, what: &str) -> Result<Value, String> {
+/// The result of a change to a card. `held_after`: the tool from outside Gizai after which the change put the card on
+/// hold (GA-101); the result says so, for the Team Lead to tell the user.
+fn task_done(cx: &Cx, id: &str, what: &str, held_after: Option<&str>) -> Result<Value, String> {
     let t = tasks::get(cx.db(), id).map_err(err)?;
     cx.changed("tasks");
     cx.wake(&t.id);
-    Ok(json!({"ok": true, "done": what, "task": task_json(&t), "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))}))
+    let mut v = json!({"ok": true, "done": what, "task": task_json(&t), "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))});
+    if let Some(tool) = held_after {
+        v["on_hold"] = json!(format!("{} waits on hold for the user's OK, so no agent starts it: you used {tool}, a tool from outside \
+            Gizai, in this answer. Tell the user, and ask them to check it and take it off hold.", t.identifier));
+    }
+    Ok(v)
+}
+
+/// GA-101: why a card waits on hold `needs_decision` when the Team Lead put it where an agent would start it, or changed it
+/// there, after using `tool`, a tool from outside Gizai.
+fn waiting_for_ok(tool: &str) -> String {
+    format!("Waiting for your OK: the Team Lead put this card here after using {tool}, a tool from outside Gizai. Check it, then take it off hold.")
+}
+
+/// An Auto column: its agents pick its cards up by themselves (`workflow::waiting_for`).
+fn auto(col: &team::WorkflowState) -> bool {
+    col.auto && gizai_core::columns::takes_agents(&col.category)
+}
+
+/// The card is in an Auto column.
+fn in_auto(cx: &Cx, t: &Task) -> Result<bool, String> {
+    let project = t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok());
+    Ok(resolve::team_of(cx, project.as_ref())?.states.iter().any(|s| s.id == t.state_id && auto(s)))
+}
+
+/// GA-101: the patch changes what the card's agent is told (its description or acceptance criteria) or who starts it (its
+/// assignee).
+fn steers(t: &Task, p: &TaskPatch) -> bool {
+    let differs = |new: &Option<String>, now: Option<&str>| new.as_deref().is_some_and(|n| n.trim() != now.unwrap_or_default().trim());
+    differs(&p.description_md, Some(&t.description_md)) || differs(&p.acceptance_md, t.acceptance_md.as_deref())
+        || differs(&p.assignee_id, t.assignee_id.as_deref())
 }
 
 /// For an update: the given value (empty clears), else the current one.
@@ -244,31 +276,39 @@ pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
 
 // ---- tasks ----
 
-pub(crate) fn create_task(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn create_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let p = resolve::project(cx, &a.req("project")?)?;
     let title = a.req("title")?;
     let team = resolve::team_of(cx, Some(&p))?;
-    let state_id = match a.opt("column") { Some(c) => Some(resolve::column(&team, &c)?.id), None => None };
+    let column = match a.opt("column") { Some(c) => Some(resolve::column(&team, &c)?), None => None };
     let label_ids = match a.list("labels") { Some(l) => resolve::labels(&team, &l)?, None => vec![] };
     let assignee_id = match a.opt("assignee") {
         Some(n) if !n.eq_ignore_ascii_case("none") => Some(resolve::assignee(cx, &n)?),
         _ => None,
     };
-    let id = tasks::create(cx.db(), cx.actor, TaskInput {
+    // GA-101: in an Auto column (the first column when none is given) after a tool from outside Gizai, it waits on hold.
+    let held_after = match column.as_ref().or(team.states.first()) {
+        Some(c) if auto(c) => cx.outside("create_task", a).await?,
+        _ => None,
+    };
+    let reason = held_after.as_deref().map(waiting_for_ok);
+    let id = tasks::create_held(cx.db(), cx.actor, TaskInput {
         project_id: p.id.clone(), title, description_md: a.opt("description_md").unwrap_or_default(), acceptance_md: a.opt("acceptance_md"),
-        state_id, priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids, testing: Some(a.flag("testing").unwrap_or(true)),
-    }).map_err(err)?;
-    task_done(cx, &id, "created")
+        state_id: column.map(|c| c.id), priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids,
+        testing: Some(a.flag("testing").unwrap_or(true)),
+    }, reason.as_deref().map(|r| ("needs_decision", r))).map_err(err)?;
+    task_done(cx, &id, "created", held_after.as_deref())
 }
 
-pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn update_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let mut patch = TaskPatch { title: a.opt("title"), description_md: a.text("description_md"), acceptance_md: a.text("acceptance_md"),
                                 priority: a.int("priority")?, testing: a.flag("testing"), ..Default::default() };
     if let Some(n) = a.text("assignee") {
         patch.assignee_id = Some(if n.is_empty() || n.eq_ignore_ascii_case("none") { String::new() } else { resolve::assignee(cx, &n)? });
     }
-    if a.flag("clear_hold") == Some(true) {
+    let clears = a.flag("clear_hold") == Some(true);
+    if clears {
         patch.hold = Some(String::new());
     } else if let Some(h) = a.opt("hold") {
         patch.hold = Some(h);
@@ -287,19 +327,33 @@ pub(crate) fn update_task(cx: &Cx, a: &Args) -> Result<Value, String> {
         Some(l) => Some(resolve::labels(&resolve::team_of(cx, t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok()).as_ref())?, &l)?),
         None => None,
     };
+    // GA-101: after a tool from outside Gizai, a card in an Auto column isn't taken off hold, and a change to what its agent
+    // is told or to who starts it puts it on hold for the user's OK, in the same write. A run under way goes on.
+    let mut held_after = None;
+    if (clears || steers(&t, &patch)) && in_auto(cx, &t)? && let Some(tool) = cx.outside("update_task", a).await? {
+        if clears {
+            return Err(super::refused_after("update_task", &tool));
+        }
+        patch.hold = Some("needs_decision".into());
+        patch.hold_reason = Some(waiting_for_ok(&tool));
+        held_after = Some(tool);
+    }
     tasks::update_with_labels(cx.db(), cx.actor, &t.id, patch, label_ids).map_err(err)?;
-    task_done(cx, &t.id, "updated")
+    task_done(cx, &t.id, "updated", held_after.as_deref())
 }
 
-pub(crate) fn move_task(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn move_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let project = t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok());
     let col = resolve::column(&resolve::team_of(cx, project.as_ref())?, &a.req("column")?)?;
     if cx.check.is_some() && matches!(col.category.as_str(), "review" | "deploy" | "done") {
         return Err(format!("A board check never moves a card to {}: ask the user in a chat (start_chat) instead.", col.name));
     }
-    tasks::move_to(cx.db(), cx.actor, &t.id, &col.id, "").map_err(err)?;
-    task_done(cx, &t.id, "moved")
+    // GA-101: into an Auto column after a tool from outside Gizai, it waits on hold.
+    let held_after = if auto(&col) { cx.outside("move_task", a).await? } else { None };
+    let reason = held_after.as_deref().map(waiting_for_ok);
+    tasks::move_to_held(cx.db(), cx.actor, &t.id, &col.id, "", reason.as_deref().map(|r| ("needs_decision", r))).map_err(err)?;
+    task_done(cx, &t.id, "moved", held_after.as_deref())
 }
 
 pub(crate) fn comment(cx: &Cx, a: &Args) -> Result<Value, String> {

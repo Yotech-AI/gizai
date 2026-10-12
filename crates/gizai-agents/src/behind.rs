@@ -97,7 +97,7 @@ pub enum End {
     /// It ran to the end: the plan it carried out, and what `checkout::update` did.
     Done(Plan, checkout::Updated),
     /// It stopped part-way.
-    Stopped(Plan, checkout::Stopped),
+    Stopped(Plan, Box<checkout::Stopped>),
     /// The checks refused it when its turn came: why, as the sentence after "Update can't run:".
     Refused(String),
 }

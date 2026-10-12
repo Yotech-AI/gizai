@@ -445,7 +445,7 @@ fn plan(p: &Project, dir: &Path, switch: bool) -> Result<checkout::Plan, String>
 /// Why an update didn't end well: the checks refused it when it was its turn, or a step failed.
 enum Ended {
     Refused(String),
-    Stopped(checkout::Stopped),
+    Stopped(Box<checkout::Stopped>),
 }
 
 /// The update's end: the chat's system message (with the end of the output when it stopped), and the short sentence

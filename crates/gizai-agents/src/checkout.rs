@@ -301,9 +301,9 @@ impl Progress {
     }
 
     /// Stops here: `why` the step failed, and `output` its output.
-    fn stop(mut self, why: String, output: String) -> Stopped {
+    fn stop(mut self, why: String, output: String) -> Box<Stopped> {
         self.printed(&output);
-        Stopped { done: self.done, why, output, moved: self.moved, installed: self.installed, printed: self.printed.join("\n") }
+        Box::new(Stopped { done: self.done, why, output, moved: self.moved, installed: self.installed, printed: self.printed.join("\n") })
     }
 }
 
@@ -311,7 +311,7 @@ impl Progress {
 /// main (`git merge --ff-only`), then installs the dependency folders that were behind (`prepare::install`: no prompts,
 /// within its time limit). git's hooks don't run, so nothing happens beyond what the plan says. `path` is the PATH the
 /// installs get (None: Gizai's own). The first step that fails stops it.
-pub fn update(dir: &Path, plan: &Plan, path: Option<&OsStr>) -> Result<Updated, Stopped> {
+pub fn update(dir: &Path, plan: &Plan, path: Option<&OsStr>) -> Result<Updated, Box<Stopped>> {
     let mut p = Progress::default();
     let said = |e: AgentError| match e {
         AgentError::Git(m) => m,

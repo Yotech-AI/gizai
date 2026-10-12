@@ -78,11 +78,14 @@ export function FileTree({ title, levels, open, git, active, readOnly, readOnlyW
 
   const itemsFor = (entry: DirEntry | null, inIgnored: boolean): MenuItem[] => {
     const lockedHere = readOnly || inIgnored;
+    // New makes its file in the folder itself: inside an ignored folder, which is read-only (the folder can still be
+    // renamed or deleted).
+    const lockedNew = lockedHere || (entry?.dir === true && entry.ignored);
     const why = readOnly ? readOnlyWhy ?? "Read-only" : "Ignored by git: read-only";
     const dir = entry ? (entry.dir ? entry.path : entry.path.includes("/") ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "") : "";
     const items: MenuItem[] = [
-      { label: "New file", disabled: lockedHere, title: lockedHere ? why : undefined, run: () => startNew("file", dir) },
-      { label: "New folder", disabled: lockedHere, title: lockedHere ? why : undefined, run: () => startNew("folder", dir) },
+      { label: "New file", disabled: lockedNew, title: lockedNew ? why : undefined, run: () => startNew("file", dir) },
+      { label: "New folder", disabled: lockedNew, title: lockedNew ? why : undefined, run: () => startNew("folder", dir) },
     ];
     if (entry) {
       items.push(

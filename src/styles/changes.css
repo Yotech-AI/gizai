@@ -110,11 +110,12 @@
 .r.add .x { border-radius: 2px; background: var(--diff-add-strong); }
 .r.del .x { border-radius: 2px; background: var(--diff-del-strong); }
 
-/* the fold bar: "37 unchanged lines" shows them all; ↓ 20 and ↑ 20 step from the change above and the one below */
-.fold { display: grid; grid-template-columns: var(--gut) 18px auto; align-items: center; min-height: 28px; margin: 2px 0; background: var(--diff-fold); color: var(--text-2);
+/* the fold bar: "37 unchanged lines" shows them all; ↓ 20 and ↑ 20 step from the change above and the one below.
+   Scoped to the code: the sidebar's folding headings use .fold too (GA-129) */
+.chg-code .fold { display: grid; grid-template-columns: var(--gut) 18px auto; align-items: center; min-height: 28px; margin: 2px 0; background: var(--diff-fold); color: var(--text-2);
   font-family: var(--font-sans); font-size: var(--fs-sm); line-height: 1.3; }
-.fold .ln { display: flex; justify-content: flex-end; padding-right: 8px; color: var(--text-3); }
-.fold .tx { display: flex; align-items: center; gap: 6px; padding: 3px 12px 3px 0; white-space: nowrap; }
+.chg-code .fold .ln { display: flex; justify-content: flex-end; padding-right: 8px; color: var(--text-3); }
+.chg-code .fold .tx { display: flex; align-items: center; gap: 6px; padding: 3px 12px 3px 0; white-space: nowrap; }
 .fold-all { height: 22px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-2); font: inherit; cursor: pointer; }
 .fold-all:hover { background: var(--hover); color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
 .fold-step { height: 22px; padding: 0 7px; border: 1px solid var(--line-2); border-radius: var(--radius-s); background: var(--bg); color: var(--text-2); font: inherit; font-size: var(--fs-xs);

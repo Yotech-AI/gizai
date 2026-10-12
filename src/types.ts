@@ -365,6 +365,24 @@ export type EditorUpdated = {
 /** Where your card by hand is: its worktree (an EditorFolder id), its branch, files with uncommitted changes, commits not pushed. */
 export type HandCard = { taskId: string; folder: string; branch: string; changed: number; unpushed: number };
 
+// ---- terminals (GA-133, contract CT) ----
+/** An open terminal; `ended` is set when its shell ended other than with exit code 0 (that one leaves the list). */
+export type TerminalSession = {
+  id: string;
+  name: string;
+  folder: string;          // the Editor folder's id (EditorFolder.id)
+  folderPath: string;      // as shown, ~ for the home folder
+  taskId: string | null;   // the card, for a card's worktree
+  shell: string;           // "zsh", "bash", "pwsh"…
+  busy: string | null;     // the program in the foreground, when it isn't the shell
+  ended: TerminalEnd | null;
+  cols: number;
+  rows: number;
+  openedAt: number;
+};
+/** `code` null when a signal ended the shell; `why` says what ended it ("sh ended with exit code 3"). */
+export type TerminalEnd = { code: number | null; at: number; why: string | null };
+
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */
 export type PushOver = "ssh" | "https";

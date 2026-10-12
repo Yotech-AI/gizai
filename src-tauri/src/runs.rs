@@ -48,6 +48,9 @@ pub enum Note {
     UpdateChanged,
     /// The Editor's Update of a folder ended (see `editor`): the `editor-updated` event.
     EditorUpdated(gizai_agents::behind::EditorUpdated),
+    /// A terminal opened, was renamed or closed, its shell ended or its busy program changed (see `terminal`): the
+    /// `terminals-changed` event, with every open terminal.
+    TerminalsChanged(Vec<gizai_agents::terminal::TerminalSession>),
 }
 
 #[derive(Debug, Clone, Serialize)]

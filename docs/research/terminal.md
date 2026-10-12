@@ -68,6 +68,45 @@ From the card (Jefsev, 12 Oct 2026):
 
 Not in this card: building it, and a terminal for agents.
 
+### 3.2 The eight questions
+
+(Q1, Q2 and Q4 follow below Q8.)
+
+**Q3. Sessions: how many, closing, leaving the page, quitting, scrollback, many open.**
+
+Answer and recommendation:
+
+- **Any number at once**, each a row under Terminal (§5.1). The backend keeps them in a list in `AppState` (TB), in the order opened; the window keeps the same list (`terminal_list`, `terminals-changed`). A terminal costs a shell process, two threads in Gizai (reading and writing) and its scrollback in the window. [I]
+- **Closing ends the shell and everything it started, as Stop ends a run**, in two steps like Stop's (`process.rs:243-276`) [V Stop; I the steps]:
+  - *Linux and macOS:* SIGHUP to the terminal's foreground process group and to the shell's own group, then closing the pseudo-terminal (the kernel then sends SIGHUP to the shell's session, as when a terminal window closes). After 3 s, SIGKILL to every process still attached to the terminal: on Linux the processes whose `/proc/<pid>/stat` names it as their controlling terminal (`tty_nr`, field 7 [V proc_pid_stat(5)]), on macOS those `sysctl` lists for it with `KERN_PROC_TTY` (in `libc` 0.2.190, the version Gizai locks [V docs.rs, `Cargo.lock:2179-2180`]). That reaches background jobs and `nohup` programs too, which live in other process groups of the same terminal and which `kill(-group)` alone would miss. A program that left the terminal on purpose (`setsid`, a daemon) keeps running, as it would after closing any terminal window. Gizai's own `spawn_tree` can't be used as it is: it puts the child in a new process group (`os.rs:255`), and a terminal's shell must lead a new session instead, which `portable-pty` does itself (§3.2 Q1). [V `os.rs`; I the rest]
+  - *Windows:* right after the shell starts, TB puts it in a **Job Object** with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, the same kind `spawn_tree` uses for agents (`os.rs:341-364`), so everything the shell starts is in the job. Close ends the job (`TerminateJobObject`, as `Tree::end`, `os.rs:222-226`) and closes the pseudo-console. The shell runs for a few microseconds before it is in the job, too short to start anything. [V `os.rs`; I the gap]
+- **They keep running when you leave the page or hide the panel.** The backend reads every terminal all the time, and the window writes what arrives into that terminal's one xterm.js view, which lives for the terminal's life outside the pages (§5.3). Pages unmount when you leave them (`App.tsx:159-175`), so the view can't live inside one. A view that isn't on screen still takes in output and acknowledges it, so no program stalls because you looked away. [V the unmount; I design]
+- **When Gizai quits,** every terminal ends, with the steps above, in `quit.rs`'s exit path next to the agents (`end_agents`, `quit.rs:52-60`). Closing the window only hides it (`lib.rs:612-624`), so terminals keep running then, like agents. If Gizai crashes, Linux and macOS close its pseudo-terminals with the process (SIGHUP to each shell) and Windows ends the jobs when their last handle goes, so no shell is left behind. Nothing is restored at the next start (question 6). [V quit and window; I crash behaviour]
+- **Scrollback: 5,000 lines** per terminal, in memory only (VS Code's default is 1,000 [V `terminalConfiguration.ts`]); Clear empties it. §3.2 Q2 gives what that costs.
+- **Very many open:** no limit and no dialog. From the 20th, New terminal says "20 terminals are open: each keeps its shell running until you close it." The folded heading always says how many are open. [I]
+
+**Q5. Where a terminal starts, and how each row is named.**
+
+Answer and recommendation:
+
+- **From the Editor's panel:** the root of the folder the Editor shows (its `EditorFolder.id`).
+- **From the sidebar's `+`:** a folder you pick in the Editor's folder picker (Projects, In ~/Herd, Cards), with the folder the main panel shows on top.
+- **A card's worktree:** in the picker's Cards group, and from the Editor when it shows one. Refused while an agent works on that card, as the Editor makes that worktree read-only (`gizai-core/src/editor.rs:136-140`), with the same sentence ("QA Agent is working on GA-118: …"). (Open question 3.)
+- **The same folder rules as the Editor:** `terminal_open` asks `editor::find` (`crates/gizai-core/src/editor.rs:150-168`), so only projects' linked folders, the folders directly in the Editor folders (`~/Herd`), and card worktrees; never `/`, your home folder, the folders with keys and logins (`~/.ssh`, `~/.gnupg`, `~/.aws`, … `folders.rs:45-57`) or Gizai's data folder apart from card worktrees (`folders.rs:199-228`). A link that leads out is checked where it leads (`editor.rs:170-183`). [V]
+- **Names:** the folder's own name ("gizai"), then "gizai 2", "gizai 3" for more in the same folder (the lowest free number); a card's worktree shows the card's identifier with its title faint after it, as the Editor's card rows do (`Sidebar.tsx:237`). Rename (F2, a double click on a tab) sets any name up to 40 characters; an empty one gives the default back. The row's right side shows the program running now, never the shell's own title escape sequence, which any program can set. [V the Editor's rows; I the rest]
+
+**Q6. Safety.**
+
+Answer: as §5.6 says. In short: no agent or Team Lead tool can type into a terminal or read it (none exists, and TB adds none); nothing from a terminal is saved to disk, Memory or a card; scrollback lives in memory only and goes with the terminal; links open only on Ctrl+click and only for http(s); no program can read the clipboard. Recommendation: make each of these an acceptance criterion of TB or TF0 (§6), so they are tested, not just intended. [V for what exists; I for the rules]
+
+**Q7. The screens.**
+
+Answer: §5.1 (sidebar section, New terminal, the Terminal page with its tabs, the Editor's panel with its drag handle, one terminal in two places) and §5.2 (keys), in D2's style. Recommendation: TD draws them as a page in the repository, as D2 did, before TF0 to TF2 are built.
+
+**Q8. Free or paid.**
+
+Answer: free. `docs/PAID-FEATURES.md` keeps the whole desktop app free and sells only hosted services; "the code editor and a card's changes" is on its free list (`:36`) and in the plans table's first row (`:46`). [V] A terminal runs entirely on your computer, so nothing in it could be a hosted service. Recommendation: TF1 writes "the terminal" next to the code editor in both places and in README.md.
+
 ---
 
 ## 5. The design

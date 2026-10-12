@@ -6,16 +6,21 @@
 // Outside changes (research §5.3): every 3 seconds the open files' versions (an untouched tab reloads, a tab with changes
 // here offers Reload and Keep mine); every 10 seconds and when the window gets the focus, git's status; on the focus also
 // the tree's open folders. No file watcher.
+// Behind main (GA-114, F3; design §5, contract C3): the top bar says how the folder stands against main, with Fetch; main
+// is fetched when the folder opens and every 10 minutes while the page shows it, and looked at (locally) every 10 seconds.
+// Under the top bar, the behind bar: Update and what it will do, or why it can't; Update running; how it ended, with
+// Show output; a fetch that failed. A card's worktree has its own bars there (read-only, the card's), and no behind bar.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileCode, FolderCode, GitBranch, Lock, PanelLeft, PanelLeftClose, Search, TriangleAlert, X } from "lucide-react";
+import { FileCode, FolderCode, Lock, PanelLeft, PanelLeftClose, Search, TriangleAlert, X } from "lucide-react";
 import type { EditorState, Text } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { gotoLine, openSearchPanel } from "@codemirror/search";
 import {
-  editorCreate, editorDelete, editorFolders, editorGit, editorList, editorRead, editorRename, editorVersions, editorWrite, getTask, openInApp,
+  editorCreate, editorDelete, editorFetch, editorFolders, editorGit, editorList, editorMain, editorRead, editorRename, editorUpdate, editorVersions,
+  editorWrite, getTask, onEditorUpdated, openInApp,
 } from "../api";
-import type { DirEntry, EditorFolder, FolderGit, OpenedFile, SearchHit, Task } from "../types";
+import type { DirEntry, EditorFolder, EditorUpdated, FolderGit, FolderMain, OpenedFile, SearchHit, Task } from "../types";
 import { go, href } from "../router";
 import {
   cursorLabel, diskAction, endingsLabel, forgetFolder, ignoredFolderOf, keepTabs, loadTabs, MARK_TIP, MARK_WORD, markOf, nameOf, nextAfterClose,
@@ -29,6 +34,8 @@ import { FolderSearch, type SearchState } from "../components/editor/FolderSearc
 import { GoToFile } from "../components/editor/GoToFile";
 import { FolderPicker } from "../components/editor/FolderPicker";
 import { openInItems, OpenInMenu, useEditorApps } from "../components/editor/Menus";
+import { BehindBar, FetchButton, Standing } from "../components/editor/BehindBar";
+import { fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../lib/behind";
 
 export function EditorPage({ id, youId }: { id?: string; youId: string }) {
   return id ? <FolderEditor key={id} folderId={id} youId={youId} /> : <NoFolder />;
@@ -170,6 +177,92 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     window.addEventListener("focus", focus);
     return () => { clearInterval(t); window.removeEventListener("focus", focus); };
   }, [refreshGit, refreshTree, loadFolder]);
+
+  // ---- main: how the folder stands against it, Fetch, Update ----
+  const [main, setMain] = useState<FolderMain | null>(null);
+  const [fetching, setFetching] = useState(false);
+  /** Update was clicked and hasn't answered yet. */
+  const [starting, setStarting] = useState(false);
+  /** Why Update refused when clicked, while the folder's own answer doesn't say so already. */
+  const [refusal, setRefusal] = useState<string | null>(null);
+  /** How the last update ended (editor-updated), until Dismiss. */
+  const [ended, setEnded] = useState<EditorUpdated | null>(null);
+  const [showOutput, setShowOutput] = useState(false);
+  const mainRef = useRef(main);
+  mainRef.current = main;
+  // Answers can come back out of order (a fetch takes longer than a look): the newest answer shows, not the last to arrive.
+  const asked = useRef(0);
+  const shownAnswer = useRef(0);
+  const lastFetch = useRef(0);
+  const fetchingRef = useRef(false);
+  const endedAt = useRef(0);
+  const showMain = useCallback((answer: number, m: FolderMain) => {
+    if (answer < shownAnswer.current) return;
+    shownAnswer.current = answer;
+    setMain(m);
+    if (!m.canUpdate || m.updating) setRefusal(null);
+    tellMain(id, m);
+  }, [id]);
+  const refreshMain = useCallback(() => {
+    const answer = ++asked.current;
+    editorMain(id).then((m) => showMain(answer, m)).catch(() => {});
+  }, [id, showMain]);
+  const fetchMain = useCallback(() => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    lastFetch.current = Date.now();
+    setFetching(true);
+    // a fetch says how the folder stands once it has fetched: its answer is the newest when it arrives
+    editorFetch(id).then((m) => showMain(++asked.current, m)).catch(() => {})
+      .finally(() => { fetchingRef.current = false; setFetching(false); });
+  }, [id, showMain]);
+  // When the folder opens: how it stands as last fetched at once, then a fetch. Then every 10 seconds a look (local), and a
+  // fetch 10 minutes after the last; not while the window is hidden, and on the focus at once.
+  useEffect(() => {
+    refreshMain();
+    fetchMain();
+    const tick = () => {
+      if (document.hidden) return;
+      const m = mainRef.current;
+      if ((!m || hasMain(m)) && fetchDue(lastFetch.current, Date.now(), m)) fetchMain(); else refreshMain();
+    };
+    const t = setInterval(tick, 10_000);
+    window.addEventListener("focus", tick);
+    return () => { clearInterval(t); window.removeEventListener("focus", tick); };
+  }, [refreshMain, fetchMain]);
+  // An update's end: the bar says how it ended; the standing, git's marks and the tree show the new state.
+  useEffect(() => {
+    let alive = true;
+    let stop: (() => void) | null = null;
+    onEditorUpdated((e) => {
+      if (e.folder !== id) return;
+      endedAt.current = Date.now();
+      setEnded(e);
+      setShowOutput(false);
+      setStarting(false);
+      refreshMain();
+      refreshGit();
+      refreshTree();
+    }).then((u) => { if (alive) stop = u; else u(); }).catch(() => {});
+    return () => { alive = false; stop?.(); };
+  }, [id, refreshMain, refreshGit, refreshTree]);
+  const startUpdate = () => {
+    const clicked = Date.now();
+    setStarting(true);
+    setRefusal(null);
+    setEnded(null);
+    setShowOutput(false);
+    editorUpdate(id).then((will) => {
+      // it may have ended (and said so) before this answer came
+      const m = mainRef.current;
+      if (endedAt.current >= clicked || !m) return;
+      const now = { ...m, updating: true, updateSays: will };
+      shownAnswer.current = ++asked.current;
+      setMain(now);
+      tellMain(id, now);
+    }).catch((e) => setRefusal(String(e).replace(/^Error:\s*/, "")))
+      .finally(() => { setStarting(false); refreshMain(); });
+  };
 
   // ---- the code: one view, the open tab's state in it ----
   const handlers = useRef<CodeHandlers>({ save: () => {}, update: () => {} });
@@ -445,16 +538,15 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
   const firstApp = apps?.[0];
   const openInFirst = (path: string) => firstApp && <button className="btn sm" onClick={() => openInApp(firstApp.id, id, path, null).catch((e) => setBanner(String(e)))}>Open in {firstApp.name}</button>;
   const dirtyCount = tabs.filter((x) => x.dirty).length;
+  const behind = !folder || folder.kind === "card" ? null : mainBar(main, { name, ended, refusal, starting });
 
   return (
     <div className="ed-page">
       <div className="topbar">
         <div className="crumbs ed-crumbs"><a href={href({ page: "editor" })}>Editor</a><span className="sep">/</span><b title={folder?.path ?? id}>{name}</b></div>
-        <div className="ed-standing" title={[git?.branch, git && git.uncommitted ? `${git.uncommitted} changed` : null].filter(Boolean).join(" · ")}>
-          {git?.branch && <><GitBranch className="icon sm" /><span className="branch">{git.branch}</span></>}
-          {git && git.uncommitted > 0 && <>{git.branch && <span className="sep">·</span>}<span>{git.uncommitted.toLocaleString("en-US")} changed</span></>}
-        </div>
+        <Standing {...standing(main, git)} />
         <div className="actions" style={{ marginLeft: "auto" }}>
+          {hasMain(main) && <FetchButton title={fetchTitle(main)} busy={fetching} off={starting || main.updating} onClick={fetchMain} />}
           {folder && <OpenInMenu folder={id} name={name} path={t?.path ?? null} line={t ? cursor.line : null} fail={setBanner} />}
         </div>
       </div>
@@ -483,6 +575,9 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
           <span className="say">You're editing {name}'s worktree. {owner ? `${owner}'s` : "Its"} next run gets your changes, uncommitted.</span>
           <span className="acts"><button className="btn sm" onClick={() => setEditAnyway(false)}>Done editing</button></span>
         </div>
+      ) : behind ? (
+        <BehindBar bar={behind} output={showOutput} fetching={fetching} update={startUpdate} fetch={fetchMain}
+          toggleOutput={() => setShowOutput((x) => !x)} dismiss={() => { setEnded(null); setShowOutput(false); }} />
       ) : null}
 
       <div className="ed">

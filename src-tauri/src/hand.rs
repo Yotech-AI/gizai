@@ -88,19 +88,24 @@ fn hand_of(st: &AppState, task_id: &str, idle: bool) -> R<Hand> {
     }
 }
 
-/// Cards a Commit, Push or Hand over works on now.
+/// Cards an Open in editor, Commit, Push or Hand over works on now.
 static BUSY: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
-/// Held while a Commit, Push or Hand over works on a card: one at a time per card, so a second click waits its turn.
+/// Held while an Open in editor, Commit, Push or Hand over works on a card: one at a time per card, so a second click
+/// is refused instead of running twice.
 struct Busy(String);
 
 impl Busy {
-    fn take(h: &Hand) -> R<Busy> {
-        if BUSY.lock().unwrap_or_else(|e| e.into_inner()).insert(h.task.id.clone()) {
-            Ok(Busy(h.task.id.clone()))
+    fn take(task_id: &str, identifier: &str) -> R<Busy> {
+        if BUSY.lock().unwrap_or_else(|e| e.into_inner()).insert(task_id.to_string()) {
+            Ok(Busy(task_id.to_string()))
         } else {
-            Err(format!("Gizai is already committing, pushing or handing over {}: wait a moment", h.task.identifier))
+            Err(format!("Gizai is still busy with {identifier} for you: wait a moment"))
         }
+    }
+
+    fn of(h: &Hand) -> R<Busy> {
+        Busy::take(&h.task.id, &h.task.identifier)
     }
 }
 
@@ -129,7 +134,10 @@ fn changes_word(n: usize) -> String {
 /// Open in editor (contract C4's `start_by_hand`), on a card assigned to you: `runs::start_by_hand` (its worktree made and
 /// prepared as for an agent, the card pinned to you, you its implementer, moved on from To do as you). Returns where it is.
 pub async fn start(st: &AppState, task_id: &str) -> R<HandCard> {
+    let identifier = tasks::get(&st.db, task_id).map_err(|e| e.to_string())?.identifier;
+    let busy = Busy::take(task_id, &identifier)?;
     crate::runs::start_by_hand(st, task_id).await?;
+    drop(busy);
     card(st, task_id).await
 }
 
@@ -162,7 +170,7 @@ pub async fn commit(st: &AppState, task_id: &str, message: &str) -> R<Commit> {
     let (id, message) = (task_id.to_string(), message.to_string());
     off(st, move |st| {
         let h = hand_of(st, &id, true)?;
-        let _busy = Busy::take(&h)?;
+        let _busy = Busy::of(&h)?;
         worktree::commit_all(&h.wt, &message).map_err(crate::pulls::plain)
     }).await
 }
@@ -175,7 +183,7 @@ pub async fn push(st: &AppState, task_id: &str) -> R<String> {
     let id = task_id.to_string();
     off(st, move |st| {
         let h = hand_of(st, &id, true)?;
-        let _busy = Busy::take(&h)?;
+        let _busy = Busy::of(&h)?;
         let link = h.link().ok_or_else(|| {
             format!("{} has no GitHub, Bitbucket or git link to push to: add one to {} first (project page → Edit)", h.task.identifier, h.project.name)
         })?;
@@ -213,7 +221,7 @@ pub async fn over(st: &AppState, task_id: &str) -> R<String> {
 
 fn over_now(st: &AppState, task_id: &str) -> R<String> {
     let h = hand_of(st, task_id, true)?;
-    let _busy = Busy::take(&h)?;
+    let _busy = Busy::of(&h)?;
     let left = h.changed();
     if left > 0 {
         return Err(format!("{} has {}: commit {} before you hand it over", h.task.identifier, changes_word(left),

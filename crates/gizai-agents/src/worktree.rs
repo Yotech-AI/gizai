@@ -462,9 +462,10 @@ pub fn unpushed(repo: &Path, branch: &str, base: &str, pushed: Option<&str>) -> 
     new_commits(repo, &ours, &theirs)
 }
 
-/// The branch checked out in the checkout at `dir`, if it is on one.
+/// The branch checked out in the checkout at `dir`, if it is on one (not `--short`: that says `heads/<name>` when a tag
+/// has the same name).
 pub fn branch_of(dir: &Path) -> Option<String> {
-    git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().filter(|b| !b.is_empty())
+    git(dir, &["symbolic-ref", "--quiet", "HEAD"]).ok()?.strip_prefix("refs/heads/").filter(|b| !b.is_empty()).map(String::from)
 }
 
 /// Commit…, on a person's card (GA-111): commits every change in the checkout at `dir`, untracked files included

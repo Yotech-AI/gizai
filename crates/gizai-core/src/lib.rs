@@ -20,6 +20,7 @@ pub mod limits;
 pub mod settings;
 pub mod workflow;
 pub mod questions;
+pub mod pending;
 pub mod board;
 pub mod chat;
 pub mod clis;

@@ -8,6 +8,7 @@ import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, s
 import { go } from "../../router";
 import { chatRunsOn, groupMessages, SUGGESTIONS, toolName } from "../../lib/chat";
 import { addPaths } from "../../lib/files";
+import { placePending } from "../../lib/pending";
 import { usePending, type Pending } from "../../lib/usePending";
 import { useDropZone } from "../../lib/useDropZone";
 import type { ChatCli, ChatMessage, ChatThread as Thread, Member, QueuedMessage } from "../../types";
@@ -16,6 +17,7 @@ import { MarkdownEditor, type EditorHandle } from "../MarkdownEditor";
 import { PendingFileList, pickFiles } from "../FileDrop";
 import { Popover } from "../Popover";
 import { MessageGroup, UserBubble } from "./ChatMessage";
+import { PendingActions } from "./PendingActions";
 import { Avatar } from "../Avatar";
 import { BusyButton } from "../BusyButton";
 import { useChat } from "./useChat";
@@ -126,7 +128,9 @@ function Queued({ q, waiting, onError }: { q: QueuedMessage; waiting: boolean; o
 }
 
 export function ChatThread({ threadId, thread, agent }: { threadId: string | null; thread?: Thread; agent: Member }) {
-  const { messages, draft, tool, working, queue, error, setWorking } = useChat(threadId);
+  const { messages, draft, tool, working, queue, error, setWorking, pending: calls } = useChat(threadId);
+  // GA-102: the Team Lead's calls that wait for your approval in this chat, each under the answer that tried it.
+  const waitingCalls = (calls ?? []).filter((a) => a.threadId === threadId);
   const [value, setValue] = useState("");
   // Files added to the message (+ → Add files, or dropped on the Chat page): their paths, until it is sent.
   const [files, setFiles] = useState<string[]>([]);
@@ -149,7 +153,7 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
   useLayoutEffect(() => {
     const s = scroller.current;
     if (s && pinned.current) s.scrollTop = s.scrollHeight;
-  }, [messages, draft, working, tool, queue]);
+  }, [messages, draft, working, tool, queue, waitingCalls.length]);
   // The queue goes by itself when the answer is done; after a stopped or failed answer (or a restart) it waits.
   const waiting = queue.filter((q) => !working || q.held);
   // Stop spins until the answer has stopped, Send now until its messages have gone, Answer on until the answer starts.
@@ -228,6 +232,8 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
 
   const groups = groupMessages(messages);
   const last = groups[groups.length - 1];
+  const placed = placePending(groups, waitingCalls);
+  const callsUnder = (key: string) => placed.has(key) ? <PendingActions actions={placed.get(key)!} onError={setSendError} /> : undefined;
   const liveBits = working ? (
     <>
       {draft && <div className="chat-msg agent draft"><MarkdownView md={draft} /><span className="caret" aria-hidden /></div>}
@@ -252,10 +258,11 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
             </div>
           )}
           {groups.map((g, i) => <MessageGroup key={g.key} g={g} agentRole={agent.roleKey} noteActions={noteActions}
-            live={i === groups.length - 1 && g.side === "agent" ? liveBits : undefined} />)}
+            live={i === groups.length - 1 && g.side === "agent" ? liveBits : undefined} after={g.side === "agent" ? callsUnder(g.key) : undefined} />)}
           {working && last?.side !== "agent" && (
             <MessageGroup g={{ side: "agent", key: "live", at: Date.now(), author: agent.name, items: [] }} agentRole={agent.roleKey} live={liveBits} />
           )}
+          {callsUnder("")}
           {queueBits}
         </div>
       </div>

@@ -219,10 +219,10 @@ pub fn stand(f: Named, main: Result<&Main, &str>, seen: &Fetched, updating: Opti
 }
 
 /// Update's plan for the folder `f`: what it will do (`Plan::said`), or why it can't, as the sentence after "Update
-/// can't run:". It can't outside git, without a main (`main` says why), when main hasn't been fetched, when the folder
-/// isn't behind main, while `read_only` says nothing in the folder may change, and when `checkout::check` refuses
-/// without switching branch. It installs only for a lock file the fast-forward changes (`Plan::only_changed_locks`).
-/// Nothing changes here.
+/// can't run:". It can't outside git, without a main (`main` says why), when main hasn't been fetched, while
+/// `read_only` says nothing in the folder may change, when `checkout::check` refuses without switching branch, and when
+/// there is nothing to move (the folder is up to date). It installs only for a lock file the fast-forward changes
+/// (`Plan::only_changed_locks`). Nothing changes here.
 pub fn plan(f: Named, main: Result<&Main, &str>, read_only: Option<&str>) -> Result<Plan, String> {
     if !is_git(f.dir) {
         return Err(not_git(f));
@@ -231,13 +231,13 @@ pub fn plan(f: Named, main: Result<&Main, &str>, read_only: Option<&str>) -> Res
     if !has(f.dir, &main.rev) {
         return Err(refused(f, main, &Refusal::NotFetched));
     }
-    if counts(f.dir, &main.rev).0 == 0 {
-        return Err(format!("{} is up to date with {}.", f.name, main.label));
-    }
     if let Some(why) = read_only {
         return Err(full_stop(why));
     }
     let plan = checkout::check(f.dir, f.dir, &main.branch, &main.rev, false).map_err(|r| refused(f, main, &r))?;
+    if plan.commits == 0 {
+        return Err(format!("{} is up to date with {}.", f.name, main.label));
+    }
     Ok(plan.only_changed_locks(f.dir))
 }
 

@@ -297,10 +297,13 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
 /** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
  *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
 export type NotificationSwitches = { hold: boolean; waiting: boolean; leadAsks: boolean; leadAnswered: boolean };
-/** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
+/** A file with an uncommitted change, from git status: `path` is a renamed file's new path, an untracked folder ends in /. */
+export type UncommittedFile = { path: string; change: "new" | "changed" | "deleted" };
+/** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. `uncommitted` counts its files with
+ *  uncommitted changes, and `changes` lists the first 10 of them. */
 export type OldWorktree = {
   taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;
-  bytes: number; uncommitted: number; live: boolean;
+  bytes: number; uncommitted: number; changes: UncommittedFile[]; live: boolean;
 };
 export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
 

@@ -215,6 +215,8 @@ export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
+/** Remove anyway: puts the worktree's uncommitted changes in git's stash, then removes it. */
+export const removeOldWorktreeAnyway = (taskId: string) => invoke<T.RemovedWorktree>("remove_old_worktree_anyway", { taskId });
 
 // ---- the Editor (GA-107, contract C2): `folder` is always an EditorFolder.id, `path` always relative to it, with / ----
 /** The folders the Editor may open: projects' linked folders, the folders under Settings → Editor folders, card worktrees. */

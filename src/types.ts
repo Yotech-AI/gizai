@@ -51,6 +51,7 @@ export type Task = {
   runForMe?: string[];
   /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
   withLead?: boolean;
+  byHand: boolean;         // pinned to a person: agents leave it alone
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -359,6 +360,10 @@ export type EditorUpdated = {
   said: string;               // "Moved main 3 commits to 319bf0b and ran npm ci."
   output: string;             // what git and the install printed, for Show output; "" when nothing
 };
+
+// ---- a person's card (GA-111, contract C4) ----
+/** Where your card by hand is: its worktree (an EditorFolder id), its branch, files with uncommitted changes, commits not pushed. */
+export type HandCard = { taskId: string; folder: string; branch: string; changed: number; unpushed: number };
 
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */

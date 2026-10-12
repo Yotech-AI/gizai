@@ -128,6 +128,8 @@ struct Card {
     run_for_me: Vec<String>,
     /// On hold for a decision: what the Team Lead did with its question (GA-70), as `questions` keeps it.
     lead: Option<String>,
+    /// Pinned to a person, who does it by hand (GA-111, `workflow::start_by_hand`).
+    by_hand: bool,
 }
 
 fn usd(micros: i64) -> String {
@@ -178,7 +180,8 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                       WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
                     CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') FROM runs r
                       WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
-                      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END
+                      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+                    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person')
              FROM tasks t JOIN workflow_states s ON s.id = t.state_id LEFT JOIN projects p ON p.id = t.project_id
              WHERE t.deleted_at IS NULL AND s.category IN ('ready','in_progress','testing')
                AND (p.id IS NULL OR (p.deleted_at IS NULL AND p.status NOT IN ('archived','done','paused')))
@@ -186,6 +189,7 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
         let cards = st.query_map([], |r| Ok(Card {
             id: r.get(0)?, identifier: r.get(1)?, title: r.get(2)?, column: r.get(3)?, category: r.get(4)?, hold: r.get(5)?,
             hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?), lead: r.get(10)?,
+            by_hand: r.get::<_, i64>(11)? != 0,
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut out = vec![];
@@ -234,6 +238,12 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                     }
                 };
                 out.push(f);
+                continue;
+            }
+
+            // GA-111: a card pinned to a person is theirs to do by hand: no agent waits for it, and a run on it that ended
+            // part-way is theirs to pick up too.
+            if card.by_hand {
                 continue;
             }
 

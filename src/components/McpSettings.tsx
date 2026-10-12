@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { importMcpServers, listMcpServers, listMcpTools, mcpSignIn, mcpSignOut, removeMcpServer, saveMcpServer, scanClaudeCodeMcp } from "../api";
-import { linesOf, nameProblem, parseArgs, renameLine, RISK_BADGE, secretLines, serverWhere, signInLabel, toolsSummary, TRANSPORT_LABEL, type LineDraft } from "../lib/mcp";
+import { CLAUDE_CODE_NO_LIST, CLAUDE_CODE_SIGN_IN_HINT, linesOf, nameProblem, parseArgs, renameLine, RISK_BADGE, secretLines, serverWhere, SIGN_IN_BY_LABEL, signInLabel,
+  toolsSummary, TRANSPORT_LABEL, type LineDraft } from "../lib/mcp";
 import { relTime } from "../lib/format";
 import type { McpScan, McpServerInput, McpServerView } from "../types";
 import { BrowserEntryRow } from "./BrowserEntry";
 import { McpToolList } from "./McpTools";
 
 type Draft = { id: string; name: string; transport: string; command: string; args: string; env: LineDraft[]; url: string; headers: LineDraft[];
-  clientId: string; source: string };
-const blank: Draft = { id: "", name: "", transport: "stdio", command: "", args: "", env: [], url: "", headers: [], clientId: "", source: "" };
+  clientId: string; signInBy: string; source: string };
+const blank: Draft = { id: "", name: "", transport: "stdio", command: "", args: "", env: [], url: "", headers: [], clientId: "", signInBy: "", source: "" };
 const draftOf = (s: McpServerView): Draft => ({ id: s.id, name: s.name, transport: s.transport, command: s.command, args: s.args.join("\n"),
-  env: linesOf(s.envNames, s.missing), url: s.url, headers: linesOf(s.headerNames, s.missing), clientId: s.clientId, source: s.source });
+  env: linesOf(s.envNames, s.missing), url: s.url, headers: linesOf(s.headerNames, s.missing), clientId: s.clientId, signInBy: s.signInBy, source: s.source });
 const inputOf = (d: Draft): McpServerInput => {
   const stdio = d.transport === "stdio";
   return {
     server: { id: d.id, name: d.name.trim(), transport: d.transport, command: stdio ? d.command.trim() : "", args: stdio ? parseArgs(d.args) : [], envNames: [],
-      url: stdio ? "" : d.url.trim(), headerNames: [], clientId: stdio ? "" : d.clientId.trim(), source: d.source },
+      url: stdio ? "" : d.url.trim(), headerNames: [], clientId: stdio ? "" : d.clientId.trim(), signInBy: stdio ? "" : d.signInBy, source: d.source },
     env: stdio ? secretLines(d.env) : [],
     headers: stdio ? [] : secretLines(d.headers),
   };
@@ -173,6 +174,8 @@ export function McpSettings() {
           {list.map((s) => {
             const doing = busy[s.id];
             const sign = signInLabel(s.signIn);
+            // Claude Code signs in to it: Gizai can't list its tools, sign in or sign out.
+            const claude = s.signIn === "claude_code";
             const tools = s.listed?.tools ?? [];
             const sum = s.listed ? toolsSummary(tools) : null;
             return (
@@ -186,13 +189,15 @@ export function McpSettings() {
                     {s.source && <span className="faint">Imported from {s.source}</span>}
                     {s.usedBy.length > 0 && <span className="faint">On for {s.usedBy.join(", ")}</span>}
                     {s.signIn === "signed_in" && <span className="faint">Its tools act as you in {s.name}.</span>}
+                    {claude && <span className="faint">{CLAUDE_CODE_NO_LIST}</span>}
                     {s.missing.length > 0 && <span className="warn">No value saved for {s.missing.join(", ")}: Edit to enter it.</span>}
                     {s.problem && <span className="warn">{s.problem}</span>}
                     {doing === "signin" && <span className="hint" role="status">Sign in in your browser: Gizai waits up to 10 minutes for it.</span>}
                     {doing === "list" && <span className="hint" role="status">Listing its tools (a server started with npx may first download its package)…</span>}
                   </span>
                   <span className="cl-actions">
-                    <button className="btn ghost sm" disabled={!!doing} onClick={() => listTools(s)}>{doing === "list" ? "Listing…" : "List tools"}</button>
+                    <button className="btn ghost sm" disabled={!!doing || claude} title={claude ? CLAUDE_CODE_NO_LIST : undefined}
+                      onClick={() => listTools(s)}>{doing === "list" ? "Listing…" : "List tools"}</button>
                     {s.transport !== "stdio" && s.signIn === "signed_in" && (
                       <button className="btn ghost sm" disabled={!!doing} onClick={() => signOut(s)}>{doing === "signout" ? "Signing out…" : "Sign out"}</button>)}
                     {s.transport !== "stdio" && s.signIn === "needs_sign_in" && (
@@ -247,8 +252,14 @@ export function McpSettings() {
               <div className="wide field-like"><span>Headers</span>
                 <SecretLines what="Header" lines={edit.headers} onChange={(l) => set("headers", l)} namePlaceholder="X-Api-Key" />
                 <span className="hint">Values go to your keychain, never to Gizai's database, and aren't shown again once saved. A server that asks you to sign in doesn't need an Authorization header: Sign in does that.</span></div>
-              <label className="wide">Client id for sign-in<input className="input mono" value={edit.clientId} onChange={(e) => set("clientId", e.target.value)} placeholder="Only when the service doesn't let Gizai register itself" />
-                <span className="hint">Empty: Gizai registers itself with the service when you sign in.</span></label>
+              <label className="wide">Who signs in<select className="select" value={edit.signInBy} onChange={(e) => set("signInBy", e.target.value)}>
+                {Object.entries(SIGN_IN_BY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+                {edit.signInBy === "claude_code" && <span className="hint">{CLAUDE_CODE_SIGN_IN_HINT}</span>}</label>
+              {edit.signInBy !== "claude_code" && (
+                <label className="wide">Client id for sign-in<input className="input mono" value={edit.clientId} onChange={(e) => set("clientId", e.target.value)} placeholder="Only when the service doesn't let Gizai register itself" />
+                  <span className="hint">Empty: Gizai registers itself with the service when you sign in.</span></label>
+              )}
             </>
           )}
           <span className="cl-actions"><button className="btn ghost sm" disabled={anyBusy} onClick={() => setEdit(null)}>Cancel</button>

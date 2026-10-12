@@ -149,12 +149,16 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
     return () => ro.disconnect();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const unpin = () => { pinned.current = null; };
+  // a press on the scrollbar itself (the diffs' own element, not a box in it) is a scroll of your own
+  const onPointerDown = (e: React.PointerEvent) => { if (e.target === e.currentTarget) unpin(); };
 
   // the current file follows the scroll: the first box that reaches under the sticky headers' line (boxes are in order,
-  // so a binary search: 245 files stay quick)
+  // so a binary search: 245 files stay quick). A pin whose 2 s are over is gone.
   const onScroll = () => {
     const d = diffs.current, boxes = inner.current?.children;
-    if (!d || !boxes?.length || pinned.current) return;
+    if (!d || !boxes?.length) return;
+    if (pinned.current && Date.now() < pinned.current.until) return;
+    pinned.current = null;
     const line = d.scrollTop + 40;
     let lo = 0, hi = boxes.length - 1;
     while (lo < hi) {
@@ -254,7 +258,7 @@ function Changes({ task, c, run, onBack }: { task: Task; c: CardChanges; run: Ru
           <span><span className="kbd">[</span> fold this list</span><span><span className="kbd">Esc</span> back to Card</span>
         </div>
       </aside>
-      <div className="chg-diffs" ref={diffs} onScroll={onScroll} onWheel={unpin} onTouchStart={unpin}>
+      <div className="chg-diffs" ref={diffs} onScroll={onScroll} onWheel={unpin} onTouchStart={unpin} onPointerDown={onPointerDown}>
         <div ref={inner}>
           {order.map((f) => <FileBox key={f.path} f={f} source={source} near={near.has(f.path)} onView={onView} />)}
         </div>

@@ -85,8 +85,12 @@ pub fn take_over_plan(project: &Project, from: &Path, limit: u64) -> TakeOver {
     if bytes <= limit {
         return TakeOver { keep, emptied: None };
     }
-    // as `worktree::reuse` reads the paths: "target", "./target" and "/target/" are all the build folder
-    let keep = keep.into_iter().filter(|k| k.trim().trim_start_matches("./").trim_matches('/') != "target").collect();
+    // as `worktree::reuse` reads the paths: "target", "./target" and "/target/" are all the build folder, and a folder in
+    // it (a copied "target/debug") would keep most of it
+    let keep = keep.into_iter().filter(|k| {
+        let k = k.trim().trim_start_matches("./").trim_matches('/');
+        k != "target" && !k.starts_with("target/")
+    }).collect();
     TakeOver { keep, emptied: Some(bytes) }
 }
 
@@ -195,7 +199,7 @@ fn remove_cards(st: &AppState, task_ids: &[String], stash: bool) -> Result<Vec<R
                 let why = match e { gizai_agents::AgentError::Git(m) => m, other => other.to_string() };
                 out.push(RemovedWorktree { task_id: c.task_id, identifier: c.identifier, removed: false,
                                            note: format!("kept its worktree: git couldn't put its uncommitted {} in the stash, so \
-                                                          nothing was removed ({why})", plural(changes, "change")) });
+                                                          nothing was removed ({})", plural(changes, "change"), why.trim_end_matches('.')) });
                 continue;
             }
             said.push(format!("put its {changes} uncommitted {} in git's stash as \"{message}\"", plural(changes, "change")));

@@ -219,7 +219,7 @@ All three options draw the terminal with xterm.js (§3.2 Q2). It is the maintain
 - **What it takes:** the plugin in Rust and its npm package; the window starts the shell, writes, resizes and kills through the plugin's commands, and reads by calling `read` in a loop.
 - **Libraries:** `tauri-plugin-pty` 0.3.1 (MIT; built on portable-pty; 50 thousand downloads; first published December 2023, last July 2026; its README says "Developing!") and `tauri-pty` 0.3.1 [V crates.io, `npm view`, its `lib.rs` 0.3.1].
 - **Risks:**
-  - Its `spawn` takes any program, arguments, folder and environment from the window, with no allow-list [V `lib.rs`]. Today Gizai gives the window no way to start a program (`src-tauri/capabilities/default.json:8-13`).
+  - Its `spawn` takes any program, arguments, folder and environment from the window, with no allow-list [V `lib.rs`]. Today the window can't start a program of its own choosing: Gizai has no shell plugin, and every program it starts is chosen in Rust (`src-tauri/capabilities/default.json:8-13`).
   - Output comes by polling, 4,096 bytes per `read`, with no flow control [V].
   - `kill` ends the shell only, through portable-pty's `ChildKiller`, so on Windows it hits the inverted `kill()` result of Q1, and nothing it started is ended.
   - Closing it to the window and adding the folder rules, closing and flow control means writing option A on top of it.
@@ -227,7 +227,7 @@ All three options draw the terminal with xterm.js (§3.2 Q2). It is the maintain
 
 ### Option C: Gizai's own sessions, with the screen kept in Rust (`alacritty_terminal`)
 
-- **What it takes:** Alacritty's terminal library parses the output into a screen grid in Rust, as Zed does for its native terminal. The window draws that grid, either through a renderer of Gizai's own or by turning grid updates back into escape sequences for xterm.js.
+- **What it takes:** Alacritty's terminal library parses the output into a screen grid in Rust, as Zed does for its native terminal [I]. The window draws that grid, either through a renderer of Gizai's own or by turning grid updates back into escape sequences for xterm.js.
 - **Libraries:** `alacritty_terminal` 0.26.0 (Apache-2.0, April 2026, 2 million downloads) [V crates.io]; it includes its own pseudo-terminal code.
 - **What it would give:** the backend knows the screen, so a reloaded window, or two windows showing one terminal at once, get the exact screen.
 - **Risks:** with its own renderer, Gizai would rebuild selection, find, links, input encoding, screen readers and speed, which xterm.js already has. With xterm.js on top, the screen is parsed twice. Either way it is the largest option, and the only thing it gives is what §5.3's 256 KB replay already gives closely enough. [I]
@@ -243,7 +243,7 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 
 ### 5.1 The screens
 
-**Screen 1: the sidebar's Terminal section.** A folding **Terminal** section between Projects and Editor (`Sidebar.tsx:78`–`:80`), drawn with `FoldSection` like Editor: `+` (New terminal) and the caret on its heading; `"terminal"` joins `Fold` (`src/lib/sidebar.ts:8`). [V where; I design]
+**Screen 1: the sidebar's Terminal section.** A folding **Terminal** section between Projects and Editor (after the Projects section, `src/components/Sidebar.tsx:72-79`, and before `EditorSection`, `:81`), drawn with `FoldSection` like Editor: `+` (New terminal) and the caret on its heading; `"terminal"` joins `Fold` (`src/lib/sidebar.ts:8`). [V where; I design]
 
 ```
 │ PROJECTS                          + │
@@ -265,7 +265,7 @@ All screens use the design system as it is, with D2's Editor (`design/code-edito
 - **Rows:** one per open terminal, any number, in the order they were opened (a new one at the bottom, so rows don't move under the mouse). Each is a link to `#/terminal/<id>`, highlighted (`.on`) while its page shows. The name (§3.2 Q5) and, on the right in `text-3`, the program running in it now (`npm`, `cargo`, `vim`), nothing while the shell waits for a command, or `ended` when the shell ended. Never teal or a pulse: those mean an agent at work (`design/README.md:36-37`).
 - **No × on the row** (D2's rule: no button inside a row that is a link, `gen-editor.mjs:552`). Closing is in the row's menu, a middle click, and the × on the terminal's tab.
 - **Right click** (or the context menu key, Shift+F10): Rename (F2), Show in the Editor (opens its folder in the Editor with this terminal in the panel), Copy folder path, Close. Close on a terminal with a program running asks under the row: "npm is still running in gizai 2. Close it and end npm? [Close] [Cancel]".
-- **Folded:** the heading shows how many are open, "3 open", like the "2 behind" D2 drew on the Editor's folded heading (`design/code-editor/gen-editor.mjs:61`; the app doesn't show it yet, `src/components/Sidebar.tsx:181`, `:219`).
+- **Folded:** the heading shows how many are open, "3 open", as the Editor's folded heading says how many folders are behind, "2 behind" (`src/components/Sidebar.tsx:220`, `:238`; D2's `design/code-editor/gen-editor.mjs:61`).
 - **None open:** one row, "New terminal", as the Editor's "Open a folder" row.
 
 **Screen 2: New terminal.** `+` opens the Editor's folder picker (`FolderPicker.tsx`) titled "New terminal in": the same groups (Projects, In ~/Herd, Cards) and search box, with the folder the main panel shows now (the Editor's folder, or the current terminal's folder) on top. Enter starts it and opens its page. Ctrl+Shift+\` starts one at once in the folder you are in, without the picker (§5.2).

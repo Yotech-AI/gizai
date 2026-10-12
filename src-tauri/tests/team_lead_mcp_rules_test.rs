@@ -2,7 +2,8 @@
 #![cfg(unix)]
 // GA-39: the Team Lead's rules around MCP servers.
 // - After a chat answer used a tool from outside Gizai (an MCP server of its own, the web, the browser), Gizai's tools
-//   that act are refused for the rest of that answer, and work again in the next message.
+//   that act aren't run for the rest of that answer (GA-102: kept for the user to approve with one click, see
+//   pending_actions_test), and work again in the next message.
 // - The Team Lead can't switch an agent's MCP servers or their tools, and no tool of its adds, imports or signs in to one.
 // - Quitting ends the MCP servers a chat answer started (the process side is in gizai-agents' mcp_cleanup_test).
 // - GA-84: memory's writes (memory_write, memory_append, memory_move) are among those tools; its reads aren't, and a
@@ -104,7 +105,14 @@ impl T {
     }
 }
 
+/// The refusal after mcp__otus__search: a tool in `NOT_AFTER_OUTSIDE` isn't run, and the call waits for the user's click
+/// (GA-102); update_task taking a card in an Auto column off hold is refused, for the user to confirm in a new message
+/// (GA-101).
 fn refused_after_outside(e: &str, name: &str) -> bool {
+    if tools::NOT_AFTER_OUTSIDE.contains(&name) {
+        return e == format!("{name} wasn't run: this answer used mcp__otus__search, a tool from outside Gizai. Gizai keeps the call for \
+            the user to approve with one click. Tell them in a sentence what it does.");
+    }
     e.starts_with(&format!("{name} is refused for the rest of this answer")) && e.contains("mcp__otus__search")
         && e.contains("confirm it in a new message")
 }

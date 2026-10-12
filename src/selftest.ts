@@ -183,6 +183,77 @@ export async function docProbe(
   return { ok: first && !!banner && kept, first_save: first, conflict_shown: !!banner, kept_mine: kept, versions: [v0, d1.currentVersion, d3.currentVersion] };
 }
 
+/** GA-122: closing Gizai with unsaved text in the doc page's or the Memory page's editor. scripts/close-save-test.sh quits
+ * Gizai from outside (SIGTERM, as scripts/quit-test.sh does) and reads the database afterwards; Gizai doesn't quit itself.
+ * Each report overwrites the last one. `step`:
+ *  - "type": types a line and leaves it unsaved, then leaves the editor and the window (a click on the title, the window's
+ *    blur and hidden: switching windows or minimising) and checks that no version was made; reports `typed`.
+ *  - "none": types nothing; reports `typed: false`.
+ *  - "secret": types an API key into a memory note (Memory refuses to save it), reports `typed`, then waits for the question
+ *    the quit brings, checks Stay is focused and answers Stay (phase "stayed": the window, the text and "Unsaved changes"
+ *    are still there); on the next quit it reports phase "asked-again" and answers Close. */
+export const CLOSE_LINE = "Typed before closing, GA-122.";
+export const CLOSE_SECRET = "sk-a1B2c3D4e5F6g7H8i9J0kLmN";
+export async function closeSaveProbe(
+  step: string,
+  docId: string,
+  api: { getDoc: (id: string) => Promise<{ bodyMd: string; currentVersion: number }>; report: (r: unknown) => Promise<void> },
+) {
+  const out: Record<string, unknown> = { ready: true, step, doc: docId };
+  const report = (more: Record<string, unknown>) => { Object.assign(out, more); return api.report(out); };
+  const status = () => textOf(q(".mem-note-bar [role=status], .topbar .actions [role=status]"));
+  let content = await waitFor(() => q(".doc-editor .cm-content"), 4000);
+  if (!content) {
+    // A memory note opens to read: its Edit switch shows the editor.
+    [...document.querySelectorAll<HTMLButtonElement>(".mem-note-bar .seg button")].find((b) => textOf(b) === "Edit")?.click();
+    content = await waitFor(() => q(".doc-editor .cm-content"), 4000);
+  }
+  if (!content) return report({ error: "no editor", typed: false });
+  const v0 = (await api.getDoc(docId)).currentVersion;
+  out.v0 = v0;
+  out.status_before = status();
+  if (step === "none") return report({ typed: false });
+
+  const view = EditorView.findFromDOM(content as HTMLElement)!;
+  view.dispatch({ selection: { anchor: view.state.doc.length } });
+  view.focus();
+  await sleep(100);
+  const typed = step === "secret" ? ` ${CLOSE_SECRET}` : ` ${CLOSE_LINE}`;
+  document.execCommand("insertText", false, typed);
+  out.status_typed = await waitFor(() => (status().startsWith("Unsaved changes") ? status() : null), 3000);
+  // Leaving the editor and the window: no version (GA-118 and GA-122).
+  q<HTMLInputElement>(".title-input")?.focus();
+  window.dispatchEvent(new Event("blur"));
+  Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+  await sleep(1500);
+  Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+  window.dispatchEvent(new Event("focus"));
+  out.version_after_blur = (await api.getDoc(docId)).currentVersion;
+  out.status_after_blur = status();
+  await report({ typed: docOf(content).endsWith(typed) });
+  if (step !== "secret") return;
+
+  const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>(".ask button")].find((b) => textOf(b) === name);
+  const asked = await waitFor(() => q(".ask"), 30000);
+  if (!asked) return report({ phase: "stayed", error: "no question" });
+  const question = textOf(q(".ask h2"));
+  const stayFocused = document.activeElement === button("Stay");
+  button("Stay")?.click();
+  await sleep(500);
+  const saved = await api.getDoc(docId);
+  await report({
+    phase: "stayed", question, stay_focused: stayFocused, asked_gone: !q(".ask"), text_kept: docOf(content).endsWith(typed),
+    status_stayed: status(), error_shown: textOf(q(".mem-note .error-banner, .main > .error-banner")), version_stayed: saved.currentVersion,
+    visible: document.visibilityState,
+  });
+  const again = await waitFor(() => q(".ask"), 60000);
+  if (!again) return report({ phase: "asked-again", error: "no second question" });
+  await report({ phase: "asked-again", question_again: textOf(q(".ask h2")) });
+  button("Close")?.click();
+}
+
 function typeInto(el: HTMLInputElement | HTMLTextAreaElement, text: string) {
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, text);

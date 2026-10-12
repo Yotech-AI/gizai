@@ -1,11 +1,23 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type * as T from "./types";
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const selftestReport = (json: unknown) => invoke<void>("selftest_report", { json: JSON.stringify(json) });
 export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
+
+// Closing Gizai with unsaved text in an editor (GA-122). The page says when it has some; then closing the window or
+// quitting waits for the page's answer: "asking" (the question shows), "close" (go on closing) or "stay".
+export type CloseAnswer = "asking" | "close" | "stay";
+export const setUnsavedEdits = (unsaved: boolean) => invoke<void>("set_unsaved_edits", { unsaved });
+export const closeAnswer = (answer: CloseAnswer) => invoke<void>("close_answer", { answer });
+/** The window's close button. Gizai hides the window itself (or waits for `closeAnswer`), so Tauri's own close never runs. */
+export const onCloseRequested = (cb: () => void): Promise<UnlistenFn> =>
+  getCurrentWindow().onCloseRequested((e) => { e.preventDefault(); cb(); });
+/** A request to quit while the page has unsaved text: Gizai waits for `closeAnswer`. */
+export const onQuitRequested = (cb: () => void): Promise<UnlistenFn> => listen("quit-requested", () => cb());
 
 export const listClients = () => invoke<T.Client[]>("list_clients");
 export const getClient = (id: string) => invoke<T.Client>("get_client", { id });

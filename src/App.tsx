@@ -4,6 +4,7 @@ import { useRoute } from "./router";
 import type { AppInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
+import { CloseGuard } from "./components/CloseGuard";
 import { Placeholder } from "./pages/Placeholder";
 import { ClientsPage } from "./pages/ClientsPage";
 import { ClientPage } from "./pages/ClientPage";
@@ -21,7 +22,7 @@ import { UsagePage } from "./pages/UsagePage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { EditorPage } from "./pages/EditorPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 
 export default function App() {
@@ -75,6 +76,13 @@ export default function App() {
         }
         document.body.dataset.ready = "1";
         if (i.selftest) {
+          // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the
+          // probe types in the editor and reports; the script quits Gizai from outside, so the page doesn't.
+          if (i.selftest_mode?.startsWith("close-save:")) {
+            const docId = decodeURIComponent((i.start_route ?? "").replace(/^(doc|memory)\//, ""));
+            await closeSaveProbe(i.selftest_mode.slice(11), docId, { getDoc, report: selftestReport });
+            return;
+          }
           const errors: string[] = [];
           const probe = async <X,>(name: string, f: () => Promise<X>) => { try { return await f(); } catch (err) { errors.push(`${name}: ${err}`); return null; } };
           const team = await probe("getTeam", () => getTeam());
@@ -181,6 +189,7 @@ export default function App() {
             : <Placeholder route={route} info={info} />}
         </main>
         <CommandPalette open={palette} onClose={() => setPalette(false)} onNewTask={() => newTask()} />
+        <CloseGuard />
       </div>
     </DrawerHost>
   );

@@ -456,6 +456,12 @@ pub fn mark_closing(st: &AppState) {
     st.runs.closing.store(true, Ordering::SeqCst);
 }
 
+/// Gizai isn't quitting after all (Stay, when quitting asked about unsaved text: see `unsaved`): runs and chat answers
+/// start again.
+pub fn unmark_closing(st: &AppState) {
+    st.runs.closing.store(false, Ordering::SeqCst);
+}
+
 pub fn is_closing(st: &AppState) -> bool {
     st.runs.closing.load(Ordering::SeqCst)
 }

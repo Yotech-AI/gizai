@@ -4,7 +4,7 @@ Plan, 2026-10-07. No code yet. The market research behind it, with sources and d
 
 ## In one minute
 
-- **The app stays MIT, free and complete.** It works without an account or network. No licence check ever goes into the open code.
+- **The app stays open source (Apache-2.0), free and complete.** It works without an account or network. No licence check ever goes into the open code.
 - **Gizai sells hosted services only:**
   1. encrypted off-site backup;
   2. sync between your own devices;
@@ -36,7 +36,7 @@ Everything in the desktop app:
 - the code editor, a card's changes and the terminal;
 - local snapshots to any folder (including a Dropbox or Syncthing folder) and export.
 
-Anyone may build their own sync server against the MIT code. Gizai's edge is that the hosted one is convenient, reliable and trustworthy.
+Anyone may build their own sync server against the open-source code. Gizai's edge is that the hosted one is convenient, reliable and trustworthy.
 
 ## Plans
 
@@ -64,7 +64,7 @@ Optional, your call: a **supporter licence** (€25–50 once, like Obsidian Cat
 ## How it fits together
 
 ```
-Gizai desktop (MIT)                         Gizai Cloud (hosted, EU)
+Gizai desktop (Apache-2.0)                  Gizai Cloud (hosted, EU)
 ├─ crates/gizai-cloud-client   ── HTTPS ──► api.gizai.app  (Rust, axum)
 │   sign-in, keychain, snapshot,             ├─ accounts, devices, entitlements (signed)
 │   encrypt, upload, restore,                ├─ backups: encrypted blobs → object storage (EU)

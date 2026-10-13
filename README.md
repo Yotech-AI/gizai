@@ -89,6 +89,8 @@ On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) 
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE): read the code, change it and build it yourself. The whole app is free, with the agents, the Team Lead's chat, the Editor and the terminals; the plan for paid features is hosted services only, like an encrypted backup and sync ([docs/PAID-FEATURES.md](docs/PAID-FEATURES.md)).
+GizAi is open source under the [Apache License 2.0](LICENSE); see also [NOTICE](NOTICE). You may use, change and share it, also commercially, if you include the licence and the NOTICE and mark the files you changed. The licence gives no rights to the GizAi name and logo. Releases published before the switch to Apache-2.0 stay under the MIT licence.
+
+The whole app is free, with the agents, the Team Lead's chat, the Editor and the terminals; the plan for paid features is hosted services only, like an encrypted backup and sync ([docs/PAID-FEATURES.md](docs/PAID-FEATURES.md)).
 
 GizAi is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.

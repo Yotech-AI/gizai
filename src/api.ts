@@ -8,6 +8,9 @@ import type * as T from "./types";
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const selftestReport = (json: unknown) => invoke<void>("selftest_report", { json: JSON.stringify(json) });
 export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
+// GA-148, the product tour (scripts/tour-capture.sh): a still of the screen, and the steps with what they clicked
+export const tourStill = (name: string) => invoke<void>("tour_still", { name });
+export const tourSteps = (json: unknown) => invoke<void>("tour_steps", { json: JSON.stringify(json) });
 
 // Closing Gizai with unsaved text in an editor (GA-122). The page says when it has some; then closing the window or
 // quitting waits for the page's answer: "asking" (the question shows), "close" (go on closing) or "stay".

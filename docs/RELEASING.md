@@ -46,24 +46,27 @@ Replace `X.Y.Z` with the new version.
    git grep -n 'X.Y.Z' -- Cargo.toml package.json src-tauri/tauri.conf.json Cargo.lock package-lock.json
    ```
 
-   Commit it as `Bump version to X.Y.Z`, push the branch, and merge its pull request into `main` once its CI checks pass:
+   Commit it as `Bump version to X.Y.Z`, push the branch, and open its pull request into `main`. A pull request that changes nothing but the version skips the build and the tests, so its checks pass within a minute or two: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which the bump starts as it changes `src-tauri/tauri.conf.json`. Merge it as soon as they report:
 
    ```sh
    gh pr view <number> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.name): \(.status) \(.conclusion)"'
    ```
 
-   Each of the three must say `COMPLETED SUCCESS`. A check that is still `IN_PROGRESS` needs a few more minutes (the Windows build is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
+   Each must say `COMPLETED SUCCESS`. The full check comes in step 2, on the release's pull request.
+
+   `scripts/version-only.mjs` decides, in each check's "Version only?" step: only these five files may change (the three above and the two lock files), and in them only Gizai's version, from one old version to one new version everywhere (in `Cargo.lock`, the versions of Gizai's own crates). Before you push, `node scripts/version-only.mjs origin/main HEAD` says the same, or what else changes. A pull request that changes anything else, a dependency in `Cargo.lock` say, gets the full checks, about 12 minutes: wait until they all say `COMPLETED SUCCESS` (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
 
    Gizai checks the bump. An update installs nothing when the release's `Cargo.toml` says another version, and it checks `gizai --version` after installing. A forgotten bump would otherwise offer the same update forever.
 
-2. **Merge `main` into `production`** with a pull request and a merge commit (never squash or rebase):
+2. **Merge `main` into `production`** with a pull request and a merge commit (never squash or rebase). This pull request is the release's full check: CI and Install build, test and install exactly what goes to production, on Linux, macOS and Windows. Wait for all of it before you merge:
 
    ```sh
    gh pr create --base production --head main --title "Release vX.Y.Z" --body "What's in it, in a few lines."
+   gh pr view <number> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.name): \(.status) \(.conclusion)"'
    gh pr merge <number> --merge
    ```
 
-   CI runs on this pull request too. Its checks should pass at once, as `main` already passed them.
+   That's five checks, about 12 minutes: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which runs as the release changes `src-tauri/tauri.conf.json`. Each must say `COMPLETED SUCCESS`. A check that is still `IN_PROGRESS` needs a few more minutes (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
 
 3. **Create the release** on `production`, with notes made from the merged pull requests:
 

@@ -40,7 +40,11 @@
 #     they show at once and are kept; reading text grows fully (task list, task page, its editor, the New task drawer, a doc,
 #     a chat and its composer), titles half, IDs, pills, dates, avatars, group labels, badges, hints and icons at most 1px;
 #     rows grow, the chat column, sidebar and board columns get wider, and in the 1280 px window nothing is cut off or scrolls
-#     sideways, in dark and in light. Compact; each font everywhere at once. Then a second start: Geist, light, compact and
+#     sideways, in dark and in light. Compact; each font everywhere at once. GA-143: the mountains along the bottom are on at
+#     the defaults (.app's first child, fixed along the bottom edge at the window's width, 14% of its height within 80–128px,
+#     under the page so clicks there reach the page, aria-hidden, in band-line; html holds the canvas, body and the sidebar are
+#     see-through), in light too; "Show mountains along the bottom" turns them off and on at once, and leaves them off for the
+#     second start, where they are still off and Reset to defaults turns them on. Then a second start: Geist, light, compact and
 #     the sizes are still there, and Reset to defaults brings everything back (so later starts begin at the defaults).
 # 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note and the
 #     Backend Agent with its own folder's. Decisions/Use SQLite reads with its wikilinks (one to a heading, by an alias), a

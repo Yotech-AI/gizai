@@ -23,7 +23,7 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 ## Features
 
 - **The board decides who works.** Each column holds the agents that work its cards, so cards move from builder to tester to you by themselves. [Read more](docs/features/board.md)
-- **A Team Lead you talk to.** Ask the Team Lead in chat to plan work, make cards, start agents or check the board. [Read more](docs/features/team-lead.md)
+- **A Team Lead you talk to.** Ask the Team Lead in chat to plan work, make cards or start agents, and Approve with one click (or Approve all) the steps that wait for your OK. [Read more](docs/features/team-lead.md)
 - **Tested before you see it.** A QA agent tests every card and opens its pull request, so what reaches your Review has passed. [Read more](docs/features/testing.md)
 - **A code editor, free.** Read what a card changed, and edit a project's files with a file tree, tabs and search. [Read more](docs/features/code-editor.md)
 - **Terminals, free.** Open your own shell in a project's folder or a card's worktree, as many as you like. [Read more](docs/features/terminal.md)
@@ -37,7 +37,7 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 
 GizAi builds from source and installs for you alone, without sudo or administrator rights. Every system needs git, Rust, Node.js 20 or newer, and a coding CLI you're logged in to, like Claude Code.
 
-- **Linux:** also WebKitGTK 4.1. `./install.sh --check` names the packages for your distribution.
+- **Linux:** also WebKitGTK 4.1, and for the tray icon `libayatana-appindicator` on Arch and Omarchy or `libayatana-appindicator3-1` on Debian and Ubuntu. `./install.sh --check` names the packages.
 - **macOS** on Apple silicon: also Apple's Command Line Tools, from `xcode-select --install`.
 
 ```sh

@@ -105,6 +105,69 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # The one-line installs: get.sh passes sh -n, and get.ps1 parses in both PowerShells. Then each one's check runs
+      # the way the one line runs it, get.sh from a pipe (dash on Linux, macOS's own sh) and get.ps1 from memory (as
+      # irm | iex does), into a scratch folder: first production from GitHub, then this pull request's own commit over
+      # it (GIZAI_REPO and GIZAI_REF), which the folder must hold at the end.
+      - name: Check get.sh
+        if: steps.version.outputs.only != 'true' && runner.os != 'Windows'
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/get-sh
+        run: |
+          /bin/sh -n scripts/get.sh
+          cat scripts/get.sh | GIZAI_REPO=https://github.com/Yotech-AI/gizai.git GIZAI_REF=production /bin/sh -s -- --check
+          cat scripts/get.sh | GIZAI_REPO="$GITHUB_WORKSPACE" GIZAI_REF=HEAD /bin/sh -s -- --check
+          test "$(git -C "$XDG_DATA_HOME/gizai-src" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      # get.ps1 runs from memory in a PowerShell of its own, which must go on after it: piped into iex, get.ps1 returns
+      # rather than exit (which would close the window), with its result in $LASTEXITCODE. Run as a file, it exits
+      # with that result: 0, and 1 for a ref that doesn't exist.
+      - name: Check get.ps1 (PowerShell 7)
+        if: steps.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null; $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\get.ps1", [ref]$tokens, [ref]$errs) | Out-Null
+          if ($errs) { $errs; exit 1 }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\get-ps1-7"
+          $iex = "$env:RUNNER_TEMP\iex-get-ps1-7.ps1"
+          Set-Content -LiteralPath $iex -Value '& ([scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))) -Check; "returned $LASTEXITCODE"'
+          foreach ($from in @('https://github.com/Yotech-AI/gizai.git', 'production'), @($env:GITHUB_WORKSPACE, 'HEAD')) {
+            $env:GIZAI_REPO = $from[0]; $env:GIZAI_REF = $from[1]
+            pwsh -NoProfile -File $iex | Tee-Object -Variable out
+            if (@($out)[-1] -ne 'returned 0') { "get.ps1 -Check didn't return 0 for $from"; exit 1 }
+          }
+          pwsh -NoProfile -File scripts\get.ps1 -Check
+          if ($LASTEXITCODE -ne 0) { "get.ps1 -Check as a file exited with $LASTEXITCODE, not 0"; exit 1 }
+          $env:GIZAI_REF = 'no-such-ref'
+          pwsh -NoProfile -File scripts\get.ps1 -Check
+          if ($LASTEXITCODE -ne 1) { "get.ps1 -Check as a file exited with $LASTEXITCODE for a ref that doesn't exist, not 1"; exit 1 }
+          $head = git -C "$env:LOCALAPPDATA\gizai-src" rev-parse HEAD
+          if ($head -ne $env:GITHUB_SHA) { "gizai-src is at $head, not at $env:GITHUB_SHA"; exit 1 }
+
+      - name: Check get.ps1 (Windows PowerShell 5.1)
+        if: steps.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens = $null; $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\get.ps1", [ref]$tokens, [ref]$errs) | Out-Null
+          if ($errs) { $errs; exit 1 }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\get-ps1-5"
+          $iex = "$env:RUNNER_TEMP\iex-get-ps1-5.ps1"
+          Set-Content -LiteralPath $iex -Value '& ([scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))) -Check; "returned $LASTEXITCODE"'
+          foreach ($from in @('https://github.com/Yotech-AI/gizai.git', 'production'), @($env:GITHUB_WORKSPACE, 'HEAD')) {
+            $env:GIZAI_REPO = $from[0]; $env:GIZAI_REF = $from[1]
+            powershell -NoProfile -ExecutionPolicy Bypass -File $iex | Tee-Object -Variable out
+            if (@($out)[-1] -ne 'returned 0') { "get.ps1 -Check didn't return 0 for $from"; exit 1 }
+          }
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\get.ps1 -Check
+          if ($LASTEXITCODE -ne 0) { "get.ps1 -Check as a file exited with $LASTEXITCODE, not 0"; exit 1 }
+          $env:GIZAI_REF = 'no-such-ref'
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\get.ps1 -Check
+          if ($LASTEXITCODE -ne 1) { "get.ps1 -Check as a file exited with $LASTEXITCODE for a ref that doesn't exist, not 1"; exit 1 }
+          $head = git -C "$env:LOCALAPPDATA\gizai-src" rev-parse HEAD
+          if ($head -ne $env:GITHUB_SHA) { "gizai-src is at $head, not at $env:GITHUB_SHA"; exit 1 }
+
       - run: npm ci
         if: steps.version.outputs.only != 'true'
 

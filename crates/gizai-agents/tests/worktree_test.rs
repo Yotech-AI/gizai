@@ -500,6 +500,100 @@ fn the_temp_environment_is_tmpdir_tmp_and_temp() {
         .map(|(k, v)| (k.to_string(), v.to_string())));
 }
 
+// ---- GA-138: a finished worktree's uncommitted files (Settings → Data), and Remove anyway's stash ----
+
+fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
+    String::from_utf8(Command::new("git").args(args).current_dir(dir).output().unwrap().stdout).unwrap().trim().to_string()
+}
+
+fn commit_all(dir: &std::path::Path, msg: &str) {
+    git(dir, &["add", "-A"]);
+    git(dir, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", msg]);
+}
+
+#[test]
+fn git_status_lines_are_read_as_new_changed_or_deleted_files() {
+    use worktree::{FileChangeKind::*, UncommittedFile};
+    let f = |path: &str, change| UncommittedFile { path: path.into(), change };
+    // as `git status --porcelain -z` prints them: no quotes around a path, and a rename's or copy's old path as one more field
+    let out = "?? notes/\0 M src/app.rs\0 D old.txt\0A  added.rs\0R  new name.rs\0old name.rs\0AM staged then changed.rs\0\
+               UU conflict.rs\0MD gone.rs\0 T link\0C  copy.rs\0orig.rs\0?? ünï cödé.md\0";
+    assert_eq!(worktree::parse_status(out), [
+        f("notes/", New), f("src/app.rs", Changed), f("old.txt", Deleted), f("added.rs", New), f("new name.rs", Changed),
+        f("staged then changed.rs", New), f("conflict.rs", Changed), f("gone.rs", Deleted), f("link", Changed),
+        f("copy.rs", Changed), f("ünï cödé.md", New),
+    ]);
+    assert_eq!(worktree::parse_status(""), []);
+    // as the app reads them
+    assert_eq!(serde_json::to_value(f("a.rs", Deleted)).unwrap(), serde_json::json!({"path": "a.rs", "change": "deleted"}));
+}
+
+#[test]
+fn a_checkouts_uncommitted_files_come_from_git_status_as_many_as_it_counts() {
+    let tmp = real_tempdir();
+    let repo = repo(tmp.path());
+    for (name, text) in [("keep.txt", "a\n"), ("gone.txt", "b\n"), ("old name.txt", "c\n")] {
+        std::fs::write(repo.join(name), text).unwrap();
+    }
+    commit_all(&repo, "files");
+    let w = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-6", "Six", "main").unwrap();
+    assert_eq!(worktree::uncommitted_files(&w.path).unwrap(), []);
+
+    std::fs::write(w.path.join("keep.txt"), "changed\n").unwrap();
+    std::fs::remove_file(w.path.join("gone.txt")).unwrap();
+    git(&w.path, &["mv", "old name.txt", "new name.txt"]);
+    std::fs::write(w.path.join("ünï cödé.md"), "x\n").unwrap();
+    std::fs::create_dir_all(w.path.join("drafts/deep")).unwrap();
+    std::fs::write(w.path.join("drafts/deep/a.md"), "x\n").unwrap();
+    std::fs::write(w.path.join("drafts/b.md"), "x\n").unwrap();
+    let files = worktree::uncommitted_files(&w.path).unwrap();
+    let got: Vec<(&str, worktree::FileChangeKind)> = files.iter().map(|f| (f.path.as_str(), f.change)).collect();
+    use worktree::FileChangeKind::*;
+    assert_eq!(got, [("gone.txt", Deleted), ("keep.txt", Changed), ("new name.txt", Changed), ("drafts/", New), ("ünï cödé.md", New)],
+               "git status's order, a renamed file by its new name, a new folder as one entry and a path as it is");
+    assert_eq!(files.len(), worktree::uncommitted(&w.path).unwrap(), "one per line uncommitted counts");
+}
+
+#[test]
+fn stash_all_puts_every_uncommitted_change_in_the_repositorys_stash_with_its_message() {
+    let tmp = real_tempdir();
+    let repo = repo(tmp.path());
+    std::fs::write(repo.join("app.rs"), "fn main() {}\n").unwrap();
+    commit_all(&repo, "app");
+    let w = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-7", "Seven", "main").unwrap();
+    std::fs::write(w.path.join("app.rs"), "fn main() { todo!() }\n").unwrap();
+    std::fs::write(w.path.join("draft.md"), "unsaved\n").unwrap();
+
+    worktree::stash_all(&w.path, "KADE-7 leftover, removed in Settings").unwrap();
+    assert_eq!(worktree::uncommitted(&w.path).unwrap(), 0, "nothing uncommitted is left");
+    assert_eq!(git_out(&repo, &["stash", "list", "--format=%gs"]), format!("On {}: KADE-7 leftover, removed in Settings", w.branch),
+               "the main checkout's git stash list shows it");
+    assert_eq!(git_out(&repo, &["show", "stash@{0}:app.rs"]), "fn main() { todo!() }");
+    assert_eq!(git_out(&repo, &["show", "stash@{0}^3:draft.md"]), "unsaved", "the untracked file too");
+
+    // nothing left to stash: nothing happens
+    worktree::stash_all(&w.path, "KADE-7 again").unwrap();
+    assert_eq!(git_out(&repo, &["stash", "list"]).lines().count(), 1);
+}
+
+#[test]
+fn a_stash_git_refuses_says_why_in_one_line_and_changes_nothing() {
+    let tmp = real_tempdir();
+    let repo = repo(tmp.path());
+    let w = worktree::ensure(&repo, &tmp.path().join("wt"), "KADE-8", "Eight", "main").unwrap();
+    std::fs::write(w.path.join("draft.md"), "unsaved\n").unwrap();
+    std::fs::write(repo.join(".git/refs/stash.lock"), "").unwrap();
+
+    let err = worktree::stash_all(&w.path, "KADE-8 leftover, removed in Settings").unwrap_err();
+    let gizai_agents::AgentError::Git(why) = &err else { panic!("{err:?}") };
+    // git 2.55 says only "Cannot save the current status" here; older ones name the lock first
+    assert!((why == "Cannot save the current status" || why.contains("stash.lock")) && !why.contains('\n'), "git's own line: {why}");
+    assert_eq!(std::fs::read_to_string(w.path.join("draft.md")).unwrap(), "unsaved\n");
+    assert_eq!(git_out(&repo, &["stash", "list"]), "");
+    assert!(matches!(worktree::stash_all(&tmp.path().join("gone"), "x"), Err(gizai_agents::AgentError::Git(_))),
+            "a folder that isn't there is a git error too");
+}
+
 /// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
 /// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
 /// Windows drive.

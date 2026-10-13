@@ -96,8 +96,16 @@ select.chip { appearance: none; padding-right: 26px; background-image: url("data
 .files li { display: flex; align-items: center; gap: 4px; }
 .old-worktrees { display: grid; gap: 8px; }
 .old-worktrees ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.old-worktrees li { display: flex; align-items: center; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.old-worktrees > ul > li { display: grid; gap: 4px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.old-worktrees .ow-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .old-worktrees .ow-card { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.old-worktrees .ow-files { padding: 0 0 2px 12px; font-size: var(--fs-sm); }
+.old-worktrees .ow-files li { display: flex; gap: 8px; min-width: 0; }
+.old-worktrees .ow-change { flex: none; width: 56px; }
+.old-worktrees .ow-change.new { color: var(--git-added); }
+.old-worktrees .ow-change.changed { color: var(--git-modified); }
+.old-worktrees .ow-change.deleted { color: var(--git-deleted); }
+.old-worktrees .ow-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .old-worktrees .ow-size { color: var(--text-2); }
 .old-worktrees .ow-confirm { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--text); }
 .old-worktrees .ow-actions { display: inline-flex; gap: 6px; }

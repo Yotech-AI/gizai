@@ -37,10 +37,25 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 
 ## Install
 
-GizAi builds from source and installs for you alone, without sudo or administrator rights. Every system needs git, Rust, Node.js 20 or newer, and Claude Code or Codex, logged in.
+On Linux and macOS:
 
-- **Linux:** also WebKitGTK 4.1, and for the tray icon `libayatana-appindicator` on Arch and Omarchy or `libayatana-appindicator3-1` on Debian and Ubuntu. `./install.sh --check` names the packages.
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh | sh
+```
+
+On Windows 11, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1 | iex
+```
+
+It gets the source of the latest release, checks what your computer is missing, then builds GizAi and installs it for you alone, without sudo or administrator rights. Run it again to update. Every system needs git, Rust, Node.js 20 or newer, and Claude Code or Codex, logged in.
+
+- **Linux:** also WebKitGTK 4.1, and for the tray icon `libayatana-appindicator` on Arch and Omarchy or `libayatana-appindicator3-1` on Debian and Ubuntu. The check names the packages.
 - **macOS** on Apple silicon: also Apple's Command Line Tools, from `xcode-select --install`.
+- **Windows 11:** also the Microsoft C++ Build Tools and Git for Windows.
+
+Or build from a clone:
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -48,7 +63,7 @@ cd gizai
 ./install.sh
 ```
 
-- **Windows 11:** also the Microsoft C++ Build Tools and Git for Windows. Run this in PowerShell:
+On Windows, in PowerShell:
 
 ```powershell
 git clone --branch production https://github.com/Yotech-AI/gizai.git

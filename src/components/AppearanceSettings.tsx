@@ -1,5 +1,6 @@
 // Settings → Appearance (GA-42): the font, the text sizes of the chat, the interface, and tasks and docs, the theme and the
-// density. A change shows at once and is kept on this computer (src/lib/appearance.ts), without Save settings.
+// density, and the mountains along the bottom of the window (GA-143). A change shows at once and is kept on this computer
+// (src/lib/appearance.ts), without Save settings.
 import { Moon, Sun } from "lucide-react";
 import { Field, FormSection } from "./Form";
 import {
@@ -76,6 +77,11 @@ export function AppearanceSettings() {
             <button aria-pressed={a.density === "comfortable"} onClick={() => setAppearance({ density: "comfortable" })}>Comfortable</button>
             <button aria-pressed={a.density === "compact"} onClick={() => setAppearance({ density: "compact" })}>Compact</button>
           </div>
+        </Field>
+      </FormSection>
+      <FormSection title="Background" text="A landscape of wireframe mountains along the bottom of the window. It stays behind text and controls.">
+        <Field label="Mountains" wide hint="Under the sidebar and the page, in the theme's colours. Off gives the plain background back.">
+          <label className="check"><input type="checkbox" checked={a.band} onChange={(e) => setAppearance({ band: e.target.checked })} />Show mountains along the bottom</label>
         </Field>
       </FormSection>
     </>

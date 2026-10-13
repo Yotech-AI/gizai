@@ -234,7 +234,8 @@ pub fn plan(f: Named, main: Result<&Main, &str>, read_only: Option<&str>) -> Res
     if let Some(why) = read_only {
         return Err(full_stop(why));
     }
-    let plan = checkout::check(f.dir, f.dir, &main.branch, &main.rev, false).map_err(|r| refused(f, main, &r))?;
+    // never a switch, never a stash: uncommitted changes in tracked files keep it from running
+    let plan = checkout::check(f.dir, f.dir, &main.branch, &main.rev, false, false).map_err(|r| refused(f, main, &r))?;
     if plan.commits == 0 {
         return Err(format!("{} is up to date with {}.", f.name, main.label));
     }

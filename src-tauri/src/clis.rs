@@ -14,6 +14,7 @@ use crate::AppState;
 pub struct CliStatus {
     #[serde(flatten)]
     pub cli: Cli,
+    /// As Settings shows it: `~/…` (on Windows `~\…`) in your home folder.
     pub path: Option<String>,
     pub problem: Option<String>,
 }
@@ -51,7 +52,15 @@ fn status(st: &AppState, cli: Cli, path: &std::ffi::OsStr) -> CliStatus {
         None if cli.command.trim().is_empty() => Some(format!("{} not found: set its program", cli.name)),
         None => Some(format!("{} not found", cli.command.trim())),
     };
-    CliStatus { path: found.map(|p| p.display().to_string()), problem, cli }
+    CliStatus { path: found.map(|p| shown(&p, &home())), problem, cli }
+}
+
+/// `p` with your home folder as `~`, as the app shows paths elsewhere (`gizai_core::folders::Places::show`).
+fn shown(p: &Path, home: &str) -> String {
+    match p.strip_prefix(home) {
+        Ok(rest) if !home.is_empty() && !rest.as_os_str().is_empty() => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        _ => p.display().to_string(),
+    }
 }
 
 /// Windows: Claude Code runs its Bash tool in Git for Windows' bash and doesn't start without it, so a Claude Code CLI

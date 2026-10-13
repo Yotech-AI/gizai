@@ -330,8 +330,8 @@ pub fn find_claude() -> Option<String> {
     })
 }
 
-/// The saved Claude Code path; detected only when none was ever saved (a saved path that has gone missing is
-/// reported, never silently replaced by another binary).
+/// The saved Claude Code path, `~` expanded as for the other CLIs; detected only when none was ever saved (a saved path
+/// that has gone missing is reported, never silently replaced by another binary).
 pub(crate) fn claude_bin(st: &AppState, bin_override: Option<String>) -> Result<PathBuf, String> {
     let bin = match bin_override {
         Some(b) => Some(b),
@@ -340,7 +340,8 @@ pub(crate) fn claude_bin(st: &AppState, bin_override: Option<String>) -> Result<
             None => detect_claude(st),
         },
     };
-    bin.as_deref().and_then(program_at).ok_or_else(|| "Claude Code not found: set its path in Settings".into())
+    bin.map(|b| gizai_core::clis::expand_home(b.trim(), &gizai_core::clis::home())).as_deref().and_then(program_at)
+        .ok_or_else(|| "Claude Code not found: set its path in Settings".into())
 }
 
 /// How long Claude Code's model list is kept before it is asked again.

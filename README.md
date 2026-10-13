@@ -12,7 +12,11 @@
 
 [Install](#install) · [Docs](#documentation) · [Releases](https://github.com/Yotech-AI/gizai/releases) · [Licence](LICENSE)
 
-![GizAi: the board, a live agent run, the Team Lead's chat, the team and an agent](docs/gizai.gif)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/tour/tour-dark.gif">
+  <source media="(prefers-color-scheme: light)" srcset="docs/tour/tour-light.gif">
+  <img alt="GizAi's product tour: the board and a live agent run, the Team Lead's chat, Claude Code and Codex, a card tested by QA, the Editor and its Terminal, Memory, an agent's tools and the Inbox" src="docs/tour/tour-light.gif">
+</picture>
 
 </div>
 
@@ -94,9 +98,10 @@ The details are in [docs/install.md](docs/install.md): what each system needs, u
 source scripts/env.sh
 cargo test --workspace && npm test
 scripts/ui-test.sh        # UI tests in a headless compositor, never on your desktop
-scripts/readme-gif.sh     # remakes the GIF above
-scripts/tour-capture.sh   # the product tour's stills, in dark and light, into video/capture/
+scripts/tour-capture.sh --out <folder>   # the product tour's stills, in dark and light (default .devdata/tour/capture)
 ```
+
+The capture makes the product tour's stills: Gizai with made-up data in a headless compositor, scene by scene, in dark and light, with a `scenes.json` of what each step clicked. The tour video and the two GIFs above (`docs/tour/tour-dark.gif` and `tour-light.gif`) are made from those stills in the website's repository, which holds the tour's Remotion project.
 
 On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds Gizai and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs Gizai from source on macOS and Windows with it (`.github/workflows/install.yml`). A pull request into `main` that changes nothing but Gizai's version, a release's first step, skips both, and its checks pass within a minute or two: the release's pull request into `production` runs them in full (`docs/RELEASING.md`).
 

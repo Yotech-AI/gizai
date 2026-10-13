@@ -288,8 +288,13 @@ fn settings_list_each_cli_with_its_program_or_why_not() {
     add_cli(&st, "Gone", "codex", "/nonexistent/codex", &[], "");
     let list = gizai_lib::clis::list(&st).unwrap();
     assert_eq!(list.iter().map(|c| c.cli.name.as_str()).collect::<Vec<_>>(), ["Claude Code", "Fake", "Gone"]);
-    assert_eq!(list[0].path.as_deref(), Some(FAKE_CLAUDE));
-    assert_eq!((list[1].path.as_deref(), list[1].problem.as_deref()), (Some(FAKE_CLI), None));
+    // Settings shows a program in your home folder as ~/… (GA-149), and the checkout often is in it (CI's is)
+    let shown = |p: &str| match std::path::Path::new(p).strip_prefix(gizai_core::clis::home()) {
+        Ok(rest) if !gizai_core::clis::home().is_empty() => format!("~/{}", rest.display()),
+        _ => p.to_string(),
+    };
+    assert_eq!(list[0].path.as_deref(), Some(shown(FAKE_CLAUDE).as_str()));
+    assert_eq!((list[1].path.as_deref(), list[1].problem.as_deref()), (Some(shown(FAKE_CLI).as_str()), None));
     assert_eq!((list[2].path.as_deref(), list[2].problem.as_deref()), (None, Some("/nonexistent/codex not found")));
     // a program by name is looked up on the PATH
     let dir = std::path::Path::new(FAKE_CLI).parent().unwrap();

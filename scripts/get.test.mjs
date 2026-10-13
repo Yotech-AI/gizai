@@ -104,9 +104,9 @@ function newCase() {
   return { root, home, share, src: join(share, "gizai-src"), log: join(root, "install.log") };
 }
 
-// get.sh piped into /bin/sh, as curl -fsSL <url> | sh -s -- <args> runs it. env adds or (with undefined) removes
-// variables.
-function getSh(c, args = [], env = {}) {
+// get.sh piped into /bin/sh, as curl -fsSL <url> | sh -s -- <args> runs it, or with stdin run as a file
+// (sh get.sh <args>) with that on stdin. env adds or (with undefined) removes variables.
+function getSh(c, args = [], env = {}, stdin = undefined) {
   const all = {
     HOME: c.home,
     PATH: process.env.PATH,
@@ -116,8 +116,9 @@ function getSh(c, args = [], env = {}) {
     ...env,
     ...CEILING,
   };
-  const run = spawnSync("/bin/sh", ["-s", "--", ...args], {
-    input: readFileSync(GET_SH),
+  const asFile = stdin !== undefined;
+  const run = spawnSync("/bin/sh", asFile ? [GET_SH, ...args] : ["-s", "--", ...args], {
+    input: asFile ? stdin : readFileSync(GET_SH),
     encoding: "utf8",
     env: Object.fromEntries(Object.entries(all).filter(([, v]) => v !== undefined)),
     timeout: 60_000,
@@ -168,10 +169,12 @@ describe.skipIf(!unix)("scripts/get.sh", { timeout: 60_000 }, () => {
     expect(readdirSync(c.share)).toEqual(["gizai-src"]);
   });
 
-  it("gives install.sh nothing on stdin, so it can't read the rest of a script piped into sh", () => {
+  it("gives install.sh nothing on stdin, so neither run reads what was sent to get.sh", () => {
     const c = newCase();
     expect(getSh(c).code).toBe(0);
-    expect(runs(c).map((run) => run.input)).toEqual(["", ""]);
+    const r = getSh(c, [], {}, "y\ny\n");
+    expect(r.code, r.out).toBe(0);
+    expect(runs(c).map((run) => run.input)).toEqual(["", "", "", ""]);
   });
 
   it("run again, updates the folder to the new release and installs again: changes go, target/ stays", () => {

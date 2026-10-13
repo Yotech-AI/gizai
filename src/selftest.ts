@@ -1205,12 +1205,53 @@ const pick = async (group: string, label: string) => {
   return !!b;
 };
 const pressedIn = (group: string) => textsOf(`[aria-label="${group}"] button[aria-pressed="true"]`, appearancePanel() ?? document);
-const SIZE_KEYS = ["gizai-font", "gizai-size-chat", "gizai-size-ui", "gizai-size-docs", "gizai-theme", "gizai-density"];
+const SIZE_KEYS = ["gizai-font", "gizai-size-chat", "gizai-size-ui", "gizai-size-docs", "gizai-theme", "gizai-density", "gizai-band"];
 const kept = () => Object.fromEntries(SIZE_KEYS.map((k) => [k, localStorage.getItem(k)]).filter(([, v]) => v !== null));
 const htmlVars = () => {
   const s = document.documentElement.style;
   return Object.fromEntries([...Array(s.length).keys()].map((i) => s.item(i)).filter((n) => n.startsWith("--")).map((n) => [n, s.getPropertyValue(n).trim()]));
 };
+/** GA-143: the mountains along the bottom of the window, as the window shows them now. at_bottom: what a click 4px above the
+ *  window's bottom edge reaches, at the left, the middle and the right ("band" if the band took it). */
+const bandBox = () => [...(appearancePanel()?.querySelectorAll<HTMLInputElement>('label.check input[type="checkbox"]') ?? [])]
+  .find((i) => textOf(i.closest("label")) === "Show mountains along the bottom") ?? null;
+const bandState = () => {
+  const html = document.documentElement, el = q(".app > .band"), svg = el ? q("svg", el) : null, side = q(".side");
+  const cs = el ? getComputedStyle(el) : null, r = el?.getBoundingClientRect(), W = html.clientWidth, H = window.innerHeight;
+  const hit = (x: number) => { const e = document.elementFromPoint(x, H - 4); return !e ? null : e.closest(".band") ? "band" : `${e.tagName.toLowerCase()}.${String(e.className).split(" ")[0]}`; };
+  return { attr: html.dataset.band ?? null, kept: localStorage.getItem("gizai-band"), first: !!el && q(".app")?.firstElementChild === el, present: !!q(".band"),
+    hidden: el?.getAttribute("aria-hidden") ?? null, svg: !!svg, position: cs?.position ?? null, z: cs?.zIndex ?? null, events: cs?.pointerEvents ?? null,
+    rect: r ? { left: Math.round(r.left), width: Math.round(r.width), bottom: Math.round(r.bottom), h: Math.round(r.height * 10) / 10 } : null,
+    want: { width: W, bottom: H, h: Math.round(Math.min(128, Math.max(80, H * 0.14)) * 10) / 10 },
+    line: svg ? getComputedStyle(svg).color : null, at_bottom: [hit(8), hit(W / 2), hit(W - 8)],
+    html_bg: getComputedStyle(html).backgroundColor, body_bg: getComputedStyle(document.body).backgroundColor,
+    side_bg: side ? getComputedStyle(side).backgroundColor : null, side_before: side ? getComputedStyle(side, "::before").backgroundColor : null,
+    box: bandBox()?.checked ?? null, hides: bandHides() };
+};
+/** The app's own stylesheet hides the band in a window under 560px high, with more contrast, in forced colours and in print:
+ *  the cage can't make Gizai's window lower than its 600px least, so the rule itself is read. */
+const bandHides = () => [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } })
+  .filter((r): r is CSSMediaRule => r instanceof CSSMediaRule && [...r.cssRules].some((x) => x instanceof CSSStyleRule && x.selectorText === ".app > .band" && x.style.display === "none"))
+  .map((r) => r.conditionText.replace(/\s+/g, " "));
+type BandState = ReturnType<typeof bandState>;
+/** Clicks "Show mountains along the bottom" when it isn't `on` yet; what the window shows a moment later. */
+const bandSwitch = async (on: boolean) => { const b = bandBox(); if (b && b.checked !== on) b.click(); await sleep(200); return bandState(); };
+/** GA-139's Subtle lines (band-line), the canvas (bg, on html) and the sidebar's colour (side, on its ::before). */
+const BAND = { dark: { line: [160, 211, 235, 0.1], bg: "rgb(15, 16, 19)", side: "rgb(11, 12, 15)" },
+  light: { line: [32, 108, 137, 0.14], bg: "rgb(255, 255, 255)", side: "rgb(243, 244, 247)" } };
+const sameColour = (c: string | null, want: number[]) => { const n = (c?.match(/[\d.]+/g) ?? []).map(Number);
+  return n.length >= 3 && want.every((v, i) => Math.abs((n[i] ?? 1) - v) <= (i === 3 ? 0.005 : 0.5)); };
+/** On: .app's first child, aria-hidden, fixed along the bottom edge at the window's width, 80–128px (14% of the window), under
+ *  the page at z-index -1 taking no clicks, in band-line; html holds the canvas, body and the sidebar are see-through. */
+const bandOn = (s: BandState, theme: "dark" | "light") => s.attr === "on" && s.kept === null && s.first && s.hidden === "true" && s.svg
+  && s.position === "fixed" && s.z === "-1" && s.events === "none" && !!s.rect && s.rect.left === 0 && s.rect.width === s.want.width
+  && Math.abs(s.rect.bottom - s.want.bottom) <= 1 && Math.abs(s.rect.h - s.want.h) <= 0.6 && s.rect.h >= 80 && s.rect.h <= 128
+  && sameColour(s.line, BAND[theme].line) && s.at_bottom.every((x) => x !== "band") && s.html_bg === BAND[theme].bg
+  && s.body_bg === "rgba(0, 0, 0, 0)" && s.side_bg === "rgba(0, 0, 0, 0)" && s.side_before === BAND[theme].side && s.box === true
+  && s.hides.length === 1 && s.hides[0] === "(max-height: 559px), (prefers-contrast: more), (forced-colors: active), print";
+/** Off: no band and no data-band, kept as gizai-band "false", the plain background back on body and the sidebar. */
+const bandOff = (s: BandState) => s.attr === null && s.kept === "false" && !s.first && !s.present && s.box === false
+  && s.body_bg === s.html_bg && !!s.side_bg && s.side_bg !== "rgba(0, 0, 0, 0)";
 /** Elements wider than their box (they would scroll sideways or be cut off at the side); the page itself first. */
 function sideways(sels: string[]): string[] {
   const out: string[] = [];
@@ -1283,6 +1324,9 @@ export async function appearanceProbe(phase: "set" | "kept") {
     && defaults.save === 30 && defaults.tab === 13.5 && defaults.bubble === 13.5 && defaults.agent === 15 && defaults.docs === 15 && defaults.docs_h3 === 15.5
     && JSON.stringify(defaults.pressed) === JSON.stringify({ chat: ["15"], ui: ["13.5"], docs: ["15"], theme: ["Dark"], density: ["Comfortable"] })
     && defaults.nav.family === "Atkinson Hyperlegible Next";
+  // GA-143: the mountains are on at the defaults; the checkbox turns them off at once (kept as gizai-band) and on again.
+  const band = { on: bandState(), off: await bandSwitch(false), again: await bandSwitch(true) };
+  const bandOk = bandOn(band.on, "dark") && bandOff(band.off) && bandOn(band.again, "dark");
 
   // Tabs work like the Usage page's, in the address; an edit not saved yet survives a switch to another tab and back.
   const tabTo = async (label: string) => {
@@ -1403,7 +1447,9 @@ export async function appearanceProbe(phase: "set" | "kept") {
   }
   await goTo("#/settings/appearance", '.settings-panel[aria-label="Appearance"]');
   await pick("Theme", "Light");
-  const light = { theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.body).backgroundColor, kept: localStorage.getItem("gizai-theme") };
+  // html holds the canvas: body's own background is off while the mountains show (GA-143)
+  const light = { theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).backgroundColor, kept: localStorage.getItem("gizai-theme"),
+    band: bandState() };
   const lightPages = await pages();
 
   const growsOk = (p: Record<string, any>) => {
@@ -1418,7 +1464,7 @@ export async function appearanceProbe(phase: "set" | "kept") {
   };
   const editorsOk = !task || (editors.description === 20 && editors.description_closed === true && editors.acceptance === 20 && editors.acceptance_closed === true
     && editors.drawer === 20 && editors.drawer_closed === true);
-  const lightOk = light.theme === "light" && light.bg === "rgb(255, 255, 255)" && light.kept === "light";
+  const lightOk = light.theme === "light" && light.bg === "rgb(255, 255, 255)" && light.kept === "light" && bandOn(light.band, "light");
 
   // Compact, then each font everywhere at once; Geist stays for the next start.
   await goTo("#/settings/appearance", '.settings-panel[aria-label="Appearance"]');
@@ -1434,13 +1480,17 @@ export async function appearanceProbe(phase: "set" | "kept") {
   }
   const fontsOk = Object.entries(fonts).every(([key, f]: [string, any]) => JSON.stringify(f.fams) === JSON.stringify(FAMILIES[key]) && f.checked === key
     && (key === "atkinson" ? f.attr === null && f.kept === null : f.attr === key && f.kept === key));
+  // the mountains off for the next start (GA-143)
+  const bandLeft = await bandSwitch(false);
+  const bandLeftOk = bandOff(bandLeft);
   restoreView();
   await sleep(1500); // WebKit writes localStorage to disk a moment later
 
-  const ok = tabOk && switchingOk && controlsOk && defaultsOk && choicesOk && bigOk && growsOk(dark) && growsOk(lightPages) && editorsOk && lightOk && compactOk && fontsOk;
+  const ok = tabOk && switchingOk && controlsOk && defaultsOk && choicesOk && bigOk && growsOk(dark) && growsOk(lightPages) && editorsOk && lightOk && compactOk && fontsOk
+    && bandOk && bandLeftOk;
   return { ok, phase, tab_ok: tabOk, switching_ok: switchingOk, controls_ok: controlsOk, defaults_ok: defaultsOk, choices_ok: choicesOk, big_ok: bigOk, dark_ok: growsOk(dark),
-    light_pages_ok: growsOk(lightPages), editors_ok: editorsOk, light_ok: lightOk, compact_ok: compactOk, fonts_ok: fontsOk,
-    tabs, switching, controls, defaults, choices, loads, small0, row0, col0, big, dark, light, light_pages: lightPages, editors, compact, fonts,
+    light_pages_ok: growsOk(lightPages), editors_ok: editorsOk, light_ok: lightOk, compact_ok: compactOk, fonts_ok: fontsOk, band_ok: bandOk, band_left_ok: bandLeftOk,
+    tabs, switching, controls, defaults, choices, loads, small0, row0, col0, big, dark, light, light_pages: lightPages, editors, compact, fonts, band, band_left: bandLeft,
     found: { task: task?.identifier ?? null, doc: !!docId, chat: !!chat } };
 }
 
@@ -1449,22 +1499,24 @@ async function appearanceKeptProbe() {
   const html = document.documentElement;
   const start = { font: html.dataset.font ?? null, theme: html.dataset.theme ?? null, density: html.dataset.density ?? null, vars: htmlVars(), kept: kept(),
     pressed: { chat: pressedIn("Chat size"), ui: pressedIn("Interface size"), docs: pressedIn("Tasks and docs size"), theme: pressedIn("Theme"), density: pressedIn("Density") },
-    checked: q(".font-choice.on", appearancePanel() ?? document)?.getAttribute("data-font") ?? null, fams: appFonts(), nav: box(q(".side .nav-item")) };
+    checked: q(".font-choice.on", appearancePanel() ?? document)?.getAttribute("data-font") ?? null, fams: appFonts(), nav: box(q(".side .nav-item")), band: bandState() };
   const startOk = start.font === "geist" && start.theme === "light" && start.density === "compact" && start.vars["--chat-grow"] === "5px"
     && start.vars["--ui-grow"] === "3px" && start.vars["--docs-grow"] === "5px" && start.vars["--ui-box"] === "1px"
     && JSON.stringify(start.pressed) === JSON.stringify({ chat: ["20"], ui: ["16.5"], docs: ["20"], theme: ["Light"], density: ["Compact"] })
-    && start.checked === "geist" && JSON.stringify(start.fams) === JSON.stringify(FAMILIES.geist) && start.nav.fs === 16.5 && start.nav.h === 33;
+    && start.checked === "geist" && JSON.stringify(start.fams) === JSON.stringify(FAMILIES.geist) && start.nav.fs === 16.5 && start.nav.h === 33
+    && bandOff(start.band); // GA-143: the mountains the "set" phase turned off stay off
   const reset = q<HTMLButtonElement>("button.link", appearancePanel() ?? document);
   const resetEnabled = !!reset && !reset.disabled;
   reset?.click();
   await sleep(300);
   const after = { font: html.dataset.font ?? null, theme: html.dataset.theme ?? null, density: html.dataset.density ?? null, vars: htmlVars(), kept: kept(),
     pressed: { chat: pressedIn("Chat size"), ui: pressedIn("Interface size"), docs: pressedIn("Tasks and docs size"), theme: pressedIn("Theme"), density: pressedIn("Density") },
-    reset_disabled: reset?.disabled ?? null, fams: appFonts(), nav: box(q(".side .nav-item")), bg: getComputedStyle(document.body).backgroundColor };
+    reset_disabled: reset?.disabled ?? null, fams: appFonts(), nav: box(q(".side .nav-item")), bg: getComputedStyle(document.documentElement).backgroundColor,
+    band: bandState() };
   const afterOk = after.font === null && after.theme === "dark" && after.density === null && Object.keys(after.vars).length === 0 && Object.keys(after.kept).length === 0
     && JSON.stringify(after.pressed) === JSON.stringify({ chat: ["15"], ui: ["13.5"], docs: ["15"], theme: ["Dark"], density: ["Comfortable"] })
     && after.reset_disabled === true && JSON.stringify(after.fams) === JSON.stringify(FAMILIES.atkinson) && after.nav.fs === 13.5 && after.nav.h === 32
-    && after.bg !== "rgb(255, 255, 255)";
+    && after.bg !== "rgb(255, 255, 255)" && bandOn(after.band, "dark"); // GA-143: Reset to defaults turns the mountains on again
   // whatever happened, leave the defaults for the next test's start
   if (Object.keys(kept()).length) resetAppearance();
   await sleep(1500);

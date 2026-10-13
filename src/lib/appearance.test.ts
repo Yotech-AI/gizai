@@ -1,7 +1,8 @@
 // GA-42: Settings → Appearance's values (src/lib/appearance.ts). What is kept in localStorage and read back at the next start,
 // what goes on <html> (data-font, data-theme, data-density and the size variables appearance.css grows the text by), and that
-// the defaults put no size variable on <html> at all, so the app looks as it did. A fake localStorage and <html> stand in for
-// the WebView's; each "start" imports the module afresh, as a restart of Gizai would.
+// the defaults put no size variable on <html> at all, so the app looks as it did. GA-143 adds the mountains along the bottom:
+// on by default (data-band="on"), kept as gizai-band only while off. A fake localStorage and <html> stand in for the WebView's;
+// each "start" imports the module afresh, as a restart of Gizai would.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CHAT_SIZES, DEFAULTS, DOCS_SIZES, FONTS, KEYS, UI_SIZES, appearanceOf, growth, isDefault, parseAppearance, sizeVars,
@@ -52,12 +53,13 @@ describe("the choices", () => {
     expect(CHAT_SIZES).toEqual([14, 15, 16, 17, 18, 20]);
     expect(UI_SIZES).toEqual([12.5, 13.5, 14.5, 15.5, 16.5]);
     expect(DOCS_SIZES).toEqual([14, 15, 16, 17, 18, 20]);
-    expect(DEFAULTS).toEqual({ font: "atkinson", chat: 15, ui: 13.5, docs: 15, theme: "dark", density: "comfortable" });
+    expect(DEFAULTS).toEqual({ font: "atkinson", chat: 15, ui: 13.5, docs: 15, theme: "dark", density: "comfortable", band: true });
   });
   it("keeps the theme and density under the t and d keys' own names, from before", () => {
     expect(KEYS.theme).toBe("gizai-theme");
     expect(KEYS.density).toBe("gizai-density");
-    expect(new Set(Object.values(KEYS)).size).toBe(6);
+    expect(KEYS.band).toBe("gizai-band");
+    expect(new Set(Object.values(KEYS)).size).toBe(7);
   });
 });
 
@@ -69,7 +71,7 @@ describe("reading what was kept", () => {
   });
   it("reads each value", () => {
     expect(read({ "gizai-font": "geist", "gizai-size-chat": "20", "gizai-size-ui": "16.5", "gizai-size-docs": "14", "gizai-theme": "light", "gizai-density": "compact" }))
-      .toEqual({ font: "geist", chat: 20, ui: 16.5, docs: 14, theme: "light", density: "compact" });
+      .toEqual({ font: "geist", chat: 20, ui: 16.5, docs: 14, theme: "light", density: "compact", band: true });
   });
   it("puts anything it doesn't know back at its default, so a bad value can't break the look", () => {
     expect(read({ "gizai-font": "comic-sans", "gizai-size-chat": "19", "gizai-size-ui": "13", "gizai-size-docs": "big", "gizai-theme": "blue", "gizai-density": "tiny" }))
@@ -132,15 +134,15 @@ describe("the size variables on <html>", () => {
 });
 
 describe("Settings → Appearance on <html>", () => {
-  it("puts nothing but the dark theme on <html> at the defaults", async () => {
+  it("puts nothing but the dark theme and the mountains on <html> at the defaults", async () => {
     await start();
-    expect(html.dataset).toEqual({ theme: "dark" });
+    expect(html.dataset).toEqual({ theme: "dark", band: "on" });
     expect(html.props.size).toBe(0);
   });
   it("shows a change at once, keeps it, and starts with it next time", async () => {
     const m = await start();
     m.setAppearance({ font: "inter", chat: 20, ui: 16.5, docs: 18, theme: "light", density: "compact" });
-    expect(html.dataset).toEqual({ font: "inter", theme: "light", density: "compact" });
+    expect(html.dataset).toEqual({ font: "inter", theme: "light", density: "compact", band: "on" });
     expect(html.style.getPropertyValue("--chat-grow")).toBe("5px");
     expect(html.style.getPropertyValue("--ui-grow")).toBe("3px");
     expect(html.style.getPropertyValue("--docs-grow")).toBe("3px");
@@ -149,8 +151,8 @@ describe("Settings → Appearance on <html>", () => {
     });
     // a restart
     const again = await start();
-    expect(again.getAppearance()).toEqual({ font: "inter", chat: 20, ui: 16.5, docs: 18, theme: "light", density: "compact" });
-    expect(html.dataset).toEqual({ font: "inter", theme: "light", density: "compact" });
+    expect(again.getAppearance()).toEqual({ font: "inter", chat: 20, ui: 16.5, docs: 18, theme: "light", density: "compact", band: true });
+    expect(html.dataset).toEqual({ font: "inter", theme: "light", density: "compact", band: "on" });
     expect(html.style.getPropertyValue("--chat-scale")).toBe("1.333");
   });
   it("changes one thing without touching the others", async () => {
@@ -166,7 +168,7 @@ describe("Settings → Appearance on <html>", () => {
     m.resetAppearance();
     expect(m.getAppearance()).toEqual(DEFAULTS);
     expect(store.size).toBe(0);
-    expect(html.dataset).toEqual({ theme: "dark" });
+    expect(html.dataset).toEqual({ theme: "dark", band: "on" });
     expect(html.props.size).toBe(0);
     await start();
     expect(html.props.size).toBe(0);
@@ -179,14 +181,14 @@ describe("Settings → Appearance on <html>", () => {
     expect(Object.fromEntries(store)).toEqual({ "gizai-theme": "light", "gizai-density": "compact" });
     m.toggleTheme();
     m.toggleDensity();
-    expect(html.dataset).toEqual({ theme: "dark" });
+    expect(html.dataset).toEqual({ theme: "dark", band: "on" });
     expect(store.size).toBe(0);
   });
   it("starts with what the t and d keys kept before this card", async () => {
     store.set("gizai-theme", "light");
     store.set("gizai-density", "compact");
     await start();
-    expect(html.dataset).toEqual({ theme: "light", density: "compact" });
+    expect(html.dataset).toEqual({ theme: "light", density: "compact", band: "on" });
   });
   it("the dev hook's appearance (screenshots) shows but isn't kept", async () => {
     const m = await start();
@@ -203,10 +205,59 @@ describe("Settings → Appearance on <html>", () => {
   });
 });
 
+describe("the mountains along the bottom (GA-143)", () => {
+  const read = (kept: Record<string, string>) => parseAppearance((k) => kept[k] ?? null);
+  it("are on unless gizai-band says false, so a bad value can't hide them", () => {
+    expect(read({}).band).toBe(true);
+    expect(read({ "gizai-band": "false" }).band).toBe(false);
+    for (const v of ["true", "", "off", "0"]) expect(read({ "gizai-band": v }).band).toBe(true);
+    expect(isDefault({ ...DEFAULTS, band: false })).toBe(false);
+  });
+  it("turn off at once (data-band goes from <html>) and on again, kept only while off", async () => {
+    const m = await start();
+    expect(html.dataset.band).toBe("on");
+    m.setAppearance({ band: false });
+    expect(html.dataset.band).toBeUndefined();
+    expect(Object.fromEntries(store)).toEqual({ "gizai-band": "false" });
+    m.setAppearance({ band: true });
+    expect(html.dataset.band).toBe("on");
+    expect(store.size).toBe(0);
+  });
+  it("stay off after a restart, and Reset to defaults turns them on again", async () => {
+    const m = await start();
+    m.setAppearance({ band: false, theme: "light" });
+    const again = await start();
+    expect(again.getAppearance().band).toBe(false);
+    expect(html.dataset).toEqual({ theme: "light" });
+    again.resetAppearance();
+    expect(again.getAppearance().band).toBe(true);
+    expect(html.dataset).toEqual({ theme: "dark", band: "on" });
+    expect(store.size).toBe(0);
+    await start();
+    expect(html.dataset.band).toBe("on");
+  });
+  it("tell useAppearance's listeners, so the band follows the switch without a reload", async () => {
+    const m = await start();
+    const seen: boolean[] = [];
+    const off = m.onAppearance((a) => seen.push(a.band));
+    m.setAppearance({ band: false });
+    m.resetAppearance();
+    off();
+    expect(seen).toEqual([false, true]);
+  });
+  it("the dev hook can show them off (band=false) without keeping it", async () => {
+    expect(appearanceOf("band=false").band).toBe(false);
+    const m = await start();
+    m.setAppearance(m.appearanceOf("band=false"), false);
+    expect(html.dataset.band).toBeUndefined();
+    expect(store.size).toBe(0);
+  });
+});
+
 describe("appearanceOf (the dev hook)", () => {
   it("reads the given parts and leaves the rest at the default", () => {
     expect(appearanceOf("chat=20,ui=16.5,docs=20,font=inter,theme=light"))
-      .toEqual({ font: "inter", chat: 20, ui: 16.5, docs: 20, theme: "light", density: "comfortable" });
+      .toEqual({ font: "inter", chat: 20, ui: 16.5, docs: 20, theme: "light", density: "comfortable", band: true });
     expect(appearanceOf("")).toEqual(DEFAULTS);
     expect(appearanceOf("chat=99,nope=1")).toEqual(DEFAULTS);
   });

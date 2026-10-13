@@ -3,6 +3,7 @@ import { appInfo, exitApp, getDoc, getTask, getTeam, listRuns, saveDoc, updateTa
 import { useRoute } from "./router";
 import type { AppInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
+import { Band } from "./components/Band";
 import { CommandPalette } from "./components/CommandPalette";
 import { CloseGuard } from "./components/CloseGuard";
 import { Placeholder } from "./pages/Placeholder";
@@ -178,6 +179,8 @@ export default function App() {
   return (
     <DrawerHost request={drawer} setRequest={setDrawer}>
       <div className="app">
+        {/* the mountains along the bottom (GA-143), while they are on: the window's lowest layer, under everything after it */}
+        <Band />
         <Sidebar youId={info?.you_id ?? ""} dataLabel={info?.data_label} dataDir={info?.data_dir} route={route} onSearch={() => setPalette(true)} onNewTask={() => newTask()} />
         <main className="main">
           {error && <div className="error-banner">{error}</div>}

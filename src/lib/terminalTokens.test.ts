@@ -34,14 +34,16 @@ function colour(theme: "dark" | "light", name: string): string {
 }
 
 describe("the term-* tokens (design/terminal/new-tokens.json)", () => {
-  it("are TD's 22 colours right after git-deleted and 5 sizes right after size-statusbar, and tokens.css is made from them", () => {
+  it("are TD's 22 colours right after git-deleted and 5 sizes right after size-statusbar and the band's sizes (GA-143), and tokens.css is made from them", () => {
     expect(td.color.tokens.length).toBe(22);
     expect(td.size.tokens.length).toBe(5);
     const colours = tokensJson.color.tokens;
     const at = colours.findIndex((t) => t.name === "git-deleted") + 1;
     expect(colours.slice(at, at + 22)).toEqual(td.color.tokens);
     const sizes = tokensJson.size.tokens;
-    const sat = sizes.findIndex((t) => t.name === "size-statusbar") + 1;
+    // GA-143 put the band's two sizes right after size-statusbar, as GA-139's new-tokens.json says; TD's five follow them
+    const sat = sizes.findIndex((t) => t.name === "size-band-min") + 1;
+    expect(sizes[sat - 3]?.name).toBe("size-statusbar");
     expect(sizes.slice(sat, sat + 5)).toEqual(td.size.tokens);
     expect(tokensFile).toBe(tokensCss(tokensJson));
   });

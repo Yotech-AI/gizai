@@ -144,11 +144,12 @@ It changes only these three things. After it, the GitHub API should show the new
 
 ### 3.2 Social preview
 
-- **GitHub's rules** [V] (docs.github.com, "Customizing your repository's social media preview"; helper):
+- **GitHub's rules** [V] (docs.github.com, "Customizing your repository's social media preview"):
   - "a PNG, JPG, or GIF file under 1 MB … at least 640 by 320 pixels (1280 by 640 pixels for best display)";
   - "Until you add an image, repository links expand to show basic information about the repository and the owner's
     avatar";
-  - it is set in Settings → Social preview → Edit → Upload an image. No API or CLI sets it, so you upload it by hand.
+  - it is set in Settings → Social preview → Edit → Upload an image. No documented API or CLI sets it (helper), so you
+    upload it by hand.
 - **The plan [I]:** don't stretch og.png. Its 1200 × 630 is 1.9 : 1, and GitHub's 2 : 1 would cut or squash it.
   Render both images from one design in GW instead:
   - **The tool:** a `ShareCard` composition in GW's Remotion project (its `video` folder). It already holds the brand
@@ -623,9 +624,10 @@ Lengths are characters. Google cuts titles at about 60, so the search words come
   description, Open Graph and Twitter. The homepage's title goes in `src/data/site.ts`.
 - **Later, not in this card:**
   - a how-to guide, "Run several coding agents in parallel with git worktrees", for the query only guides win;
-  - a page about what GizAi does differently from tools that are closing or moving on. Vibe Kanban "is sunsetting"
-    and Crystal is "Deprecated: February 2026" [V] (vibekanban.com/blog/shutdown, github.com/stravu/crystal, helper).
-    Facts only (question 9).
+  - a page about what GizAi does differently from tools that are closing or moving on. "Vibe Kanban is sunsetting. The
+    project will continue as open source and community maintained." [V] ("Goodbye bloop", vibekanban.com/blog/shutdown,
+    10 April 2026). Crystal is "Deprecated: February 2026" (github.com/stravu/crystal, helper). Facts only
+    (question 9).
 
 ### 3.9 Release notes
 

@@ -747,7 +747,7 @@ describe("The folder picker", () => {
     expect(text(byClass("pop-empty")[0]!)).toBe("No folder found");
   });
 
-  it("opens a picked folder's page at #/editor/<its id, encoded>, closing, and puts it at the top of the sidebar's Editor list", async () => {
+  it("opens a picked folder's page at #/editor/<its id, encoded>, closing, and adds it at the bottom of the sidebar's Editor list (GA-157)", async () => {
     h.api.editorFolders = async () => FOLDERS;
     store.set(OPENED_KEY, JSON.stringify(["/home/me/Herd/kade-portal"]));
     showPicker();
@@ -756,7 +756,23 @@ describe("The folder picker", () => {
     expect(pickerClosed).toBe(1);
     expect(h.went).toEqual([{ page: "editor", id: "/home/me/Herd/blog" }]);
     expect(href(h.went[0]!)).toBe("#/editor/%2Fhome%2Fme%2FHerd%2Fblog");
-    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(["/home/me/Herd/blog", "/home/me/Herd/kade-portal"]);
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(["/home/me/Herd/kade-portal", "/home/me/Herd/blog"]);
+  });
+
+  // GA-157 QA: a folder already in the sidebar's Editor list stays where it is when the picker opens it
+  it("leaves a picked folder that is already in the sidebar's Editor list where it is, every other row too", async () => {
+    h.api.editorFolders = async () => FOLDERS;
+    const list = ["/home/me/Herd/kade-portal", "/home/me/Herd/blog", "/home/me/Herd/shop"];
+    store.set(OPENED_KEY, JSON.stringify(list));
+    showPicker();
+    await settle();
+    await fire(option("~/Herd/shop"), "onClick");
+    expect(h.went).toEqual([{ page: "editor", id: "/home/me/Herd/shop" }]);
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(list);
+    showPicker();
+    await settle();
+    await fire(option("~/Herd/kade-portal"), "onClick");
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(list);
   });
 
   it("opens the chosen folder with Enter, ↓ choosing the next, and the first of what the filter leaves", async () => {

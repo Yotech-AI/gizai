@@ -694,6 +694,79 @@ pub fn uncommitted(dir: &Path) -> Result<usize, AgentError> {
     Ok(git(dir, &["status", "--porcelain"])?.lines().filter(|l| !l.trim().is_empty()).count())
 }
 
+/// What a file's uncommitted change is, from its two letters in `git status --porcelain`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileChangeKind {
+    /// Untracked, or added to the index.
+    New,
+    /// Modified, renamed, copied, a type change or a merge conflict.
+    Changed,
+    Deleted,
+}
+
+/// A file with an uncommitted change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UncommittedFile {
+    /// Relative to the checkout; a renamed file's new path. An untracked folder is one entry, ending in `/`.
+    pub path: String,
+    pub change: FileChangeKind,
+}
+
+/// The files in the checkout at `dir` with uncommitted changes, untracked ones included, in git status's order: one per
+/// line of `git status --porcelain`, so as many as `uncommitted` counts.
+pub fn uncommitted_files(dir: &Path) -> Result<Vec<UncommittedFile>, AgentError> {
+    Ok(parse_status(&git(dir, &["status", "--porcelain", "-z"])?))
+}
+
+/// The files of `git status --porcelain -z` output: "XY path", each followed by a NUL, and after a rename or copy its
+/// old path as one more field.
+pub fn parse_status(out: &str) -> Vec<UncommittedFile> {
+    let mut files = vec![];
+    let mut fields = out.split('\0');
+    while let Some(entry) = fields.next() {
+        let (Some(xy), Some(path)) = (entry.get(..2), entry.get(3..)) else { continue };
+        if path.is_empty() {
+            continue;
+        }
+        if xy.contains(['R', 'C']) {
+            fields.next();
+        }
+        let change = match xy {
+            "??" => FileChangeKind::New,
+            _ if xy.contains('A') => FileChangeKind::New,
+            _ if xy.contains('D') => FileChangeKind::Deleted,
+            _ => FileChangeKind::Changed,
+        };
+        files.push(UncommittedFile { path: path.to_string(), change });
+    }
+    files
+}
+
+/// Puts every uncommitted change in the checkout at `dir`, untracked files included (not ignored ones), in git's stash
+/// with `message` (`git stash push --include-untracked`), so the checkout can go without losing them. The stash is the
+/// repository's, shared by all its worktrees: `git stash list` in the main checkout shows it too. With nothing to stash
+/// it does nothing. An error says why, in plain words where Gizai knows them.
+pub fn stash_all(dir: &Path, message: &str) -> Result<(), AgentError> {
+    let out = crate::os::command("git").arg("-C").arg(dir).args(["stash", "push", "--include-untracked", "-m", message])
+        .stdin(std::process::Stdio::null()).env("GIT_TERMINAL_PROMPT", "0").output()
+        .map_err(|e| AgentError::Git(format!("can't run git: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = format!("{}\n{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
+    if said.contains("Please tell me who you are") || said.contains("unable to auto-detect email address") {
+        return Err(AgentError::Git("git doesn't know who you are: set your name and email with git config --global user.name \
+                                    \"Your Name\" and git config --global user.email you@example.com, then try again".into()));
+    }
+    // git's own error line (a lock file's comes before its advice), else its last line
+    let lines: Vec<&str> = said.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let why = lines.iter().find_map(|l| l.strip_prefix("fatal: ").or_else(|| l.strip_prefix("error: ")))
+        .or(lines.last().copied()).unwrap_or("git failed");
+    Err(AgentError::Git(why.to_string()))
+}
+
 /// Why a git command that talks to a remote failed.
 enum Failure {
     /// Everything git said.

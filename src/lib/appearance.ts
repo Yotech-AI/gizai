@@ -1,13 +1,14 @@
 // Settings → Appearance (GA-42): one font for the whole app, three text sizes (the chat, the interface, and tasks and
-// docs), the theme and the density. Kept on this computer in localStorage, like the theme always was, and put on <html>
-// before the first paint (main.tsx): data-font, data-theme and data-density, and the size steps that
-// src/styles/appearance.css grows the text and the layout by. A change shows at once; Save settings isn't involved.
+// docs), the theme and the density, and the mountains along the bottom of the window (GA-143). Kept on this computer in
+// localStorage, like the theme always was, and put on <html> before the first paint (main.tsx): data-font, data-theme,
+// data-density and data-band, and the size steps that src/styles/appearance.css grows the text and the layout by. A
+// change shows at once; Save settings isn't involved.
 import { useEffect, useState } from "react";
 
 export type FontKey = "atkinson" | "jetbrains-mono" | "inter" | "geist" | "hack";
 export type Theme = "dark" | "light";
 export type Density = "comfortable" | "compact";
-export type Appearance = { font: FontKey; chat: number; ui: number; docs: number; theme: Theme; density: Density };
+export type Appearance = { font: FontKey; chat: number; ui: number; docs: number; theme: Theme; density: Density; band: boolean };
 
 /** Each choice sets the text font and the code font (task IDs, code, run logs); appearance.css has their stacks. */
 export const FONTS: { key: FontKey; name: string; note: string }[] = [
@@ -22,11 +23,13 @@ export const FONTS: { key: FontKey; name: string; note: string }[] = [
 export const CHAT_SIZES = [14, 15, 16, 17, 18, 20];
 export const UI_SIZES = [12.5, 13.5, 14.5, 15.5, 16.5];
 export const DOCS_SIZES = [14, 15, 16, 17, 18, 20];
-export const DEFAULTS: Appearance = { font: "atkinson", chat: 15, ui: 13.5, docs: 15, theme: "dark", density: "comfortable" };
+export const DEFAULTS: Appearance = { font: "atkinson", chat: 15, ui: 13.5, docs: 15, theme: "dark", density: "comfortable", band: true };
 
-/** Where each is kept. gizai-theme and gizai-density are the t and d keys' own, from before. */
+/** Where each is kept. gizai-theme and gizai-density are the t and d keys' own, from before. The mountains are on by
+ *  default, so gizai-band is only kept while they are off ("false"). */
 export const KEYS: Record<keyof Appearance, string> = {
   font: "gizai-font", chat: "gizai-size-chat", ui: "gizai-size-ui", docs: "gizai-size-docs", theme: "gizai-theme", density: "gizai-density",
+  band: "gizai-band",
 };
 
 /** What was kept, with anything unknown (or missing) at its default. */
@@ -41,6 +44,7 @@ export function parseAppearance(get: (key: string) => string | null): Appearance
     chat: size("chat", CHAT_SIZES), ui: size("ui", UI_SIZES), docs: size("docs", DOCS_SIZES),
     theme: get(KEYS.theme) === "light" ? "light" : "dark",
     density: get(KEYS.density) === "compact" ? "compact" : "comfortable",
+    band: get(KEYS.band) !== "false",
   };
 }
 
@@ -81,13 +85,16 @@ export function sizeVars(a: Appearance): Partial<Record<(typeof SIZE_VARS)[numbe
   return v;
 }
 
-/** Puts `a` on <html>: the font, theme and density, and the size variables (removed again at their defaults). */
+/** Puts `a` on <html>: the font, theme, density and mountains (data-band="on", for band.css), and the size variables
+ *  (removed again at their defaults). */
 export function applyAppearance(root: HTMLElement, a: Appearance) {
   if (a.font === DEFAULTS.font) delete root.dataset.font;
   else root.dataset.font = a.font;
   root.dataset.theme = a.theme;
   if (a.density === "compact") root.dataset.density = "compact";
   else delete root.dataset.density;
+  if (a.band) root.dataset.band = "on";
+  else delete root.dataset.band;
   const vars = sizeVars(a);
   for (const name of SIZE_VARS) {
     const value = vars[name];
@@ -146,6 +153,12 @@ export function toggleTheme() {
 }
 export function toggleDensity() {
   setAppearance({ density: getAppearance().density === "compact" ? "comfortable" : "compact" });
+}
+
+/** Calls `f` after each change, once it is on <html> (the terminals restyle themselves with it); returns the unsubscribe. */
+export function onAppearance(f: (a: Appearance) => void): () => void {
+  listeners.add(f);
+  return () => { listeners.delete(f); };
 }
 
 /** The appearance, kept up to date when it changes (also by the t and d keys). */

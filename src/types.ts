@@ -297,10 +297,13 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
 /** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
  *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
 export type NotificationSwitches = { hold: boolean; waiting: boolean; leadAsks: boolean; leadAnswered: boolean };
-/** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. */
+/** A file with an uncommitted change, from git status: `path` is a renamed file's new path, an untracked folder ends in /. */
+export type UncommittedFile = { path: string; change: "new" | "changed" | "deleted" };
+/** A Done or Cancelled card's worktree (Settings → Data); `bytes` is its disk use. `uncommitted` counts its files with
+ *  uncommitted changes, and `changes` lists the first 10 of them. */
 export type OldWorktree = {
   taskId: string; identifier: string; title: string; category: "done" | "cancelled"; projectName: string; branch: string; path: string;
-  bytes: number; uncommitted: number; live: boolean;
+  bytes: number; uncommitted: number; changes: UncommittedFile[]; live: boolean;
 };
 export type RemovedWorktree = { taskId: string; identifier: string; removed: boolean; note: string };
 
@@ -364,6 +367,24 @@ export type EditorUpdated = {
 // ---- a person's card (GA-111, contract C4) ----
 /** Where your card by hand is: its worktree (an EditorFolder id), its branch, files with uncommitted changes, commits not pushed. */
 export type HandCard = { taskId: string; folder: string; branch: string; changed: number; unpushed: number };
+
+// ---- terminals (GA-133, contract CT) ----
+/** An open terminal; `ended` is set when its shell ended other than with exit code 0 (that one leaves the list). */
+export type TerminalSession = {
+  id: string;
+  name: string;
+  folder: string;          // the Editor folder's id (EditorFolder.id)
+  folderPath: string;      // as shown, ~ for the home folder
+  taskId: string | null;   // the card, for a card's worktree
+  shell: string;           // "zsh", "bash", "pwsh"…
+  busy: string | null;     // the program in the foreground, when it isn't the shell
+  ended: TerminalEnd | null;
+  cols: number;
+  rows: number;
+  openedAt: number;
+};
+/** `code` null when a signal ended the shell; `why` says what ended it ("sh ended with exit code 3"). */
+export type TerminalEnd = { code: number | null; at: number; why: string | null };
 
 // ---- Settings → GitHub ----
 /** ssh: your SSH keys (the default); https: the GitHub CLI's login. */

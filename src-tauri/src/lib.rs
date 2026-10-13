@@ -21,6 +21,7 @@ pub mod pulls;
 mod quit;
 pub mod runs;
 pub mod shell_path;
+pub mod terminal;
 pub mod tools;
 mod unsaved;
 pub mod update;
@@ -68,6 +69,8 @@ pub struct AppState {
     pub desktop: notifications::Desktop,
     /// The Inbox as the notifications last saw it (see `notifications::watch`).
     pub inbox: Arc<notifications::Watch>,
+    /// The open terminals, in memory only (see `terminal`).
+    pub terminals: Arc<gizai_agents::terminal::Terminals>,
 }
 
 #[derive(Serialize)]
@@ -264,7 +267,8 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
-                  desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()) };
+                  desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()),
+                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()) };
     // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
     // failed, so it never runs twice, and its chat says so.
     pending::at_start(&st);
@@ -291,6 +295,7 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
             runs::Note::UpdateChanged => app.emit("update-changed", ()),
             runs::Note::EditorUpdated(ended) => app.emit("editor-updated", ended),
+            runs::Note::TerminalsChanged(list) => app.emit("terminals-changed", list),
         };
     })
 }
@@ -460,6 +465,8 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // The window may only read the clipboard's text (capabilities/default.json): a terminal's Ctrl+Shift+V on Linux.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(move |app| {
             if let (Some(label), Some(w)) = (data_label(&dir), app.get_webview_window("main")) {
                 let _ = w.set_title(&format!("Gizai ({label} data)"));
@@ -599,7 +606,7 @@ pub fn run() {
             changes::card_changes, changes::card_file_diff, changes::run_changes,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
-            commands::list_old_worktrees, commands::remove_old_worktrees,
+            commands::list_old_worktrees, commands::remove_old_worktrees, commands::remove_old_worktree_anyway,
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,
             editor::editor_folders, editor::editor_list, editor::editor_read, editor::editor_write, editor::editor_create,
@@ -607,6 +614,8 @@ pub fn run() {
             editor::editor_versions, editor::editor_apps, editor::open_in_app, editor::editor_main, editor::editor_fetch,
             editor::editor_update,
             editor::start_by_hand, editor::hand_card, editor::hand_commit, editor::hand_push, editor::hand_over,
+            terminal::terminal_list, terminal::terminal_open, terminal::terminal_attach, terminal::terminal_input,
+            terminal::terminal_resize, terminal::terminal_ack, terminal::terminal_rename, terminal::terminal_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gizai")
@@ -642,8 +651,10 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);
-                // agents still at work end now, so none outlives Gizai
+                // agents still at work and every terminal end now, at the same time, so none outlives Gizai
+                let terminals = quit::end_terminals(app.state::<AppState>().inner());
                 quit::end_agents(app.state::<AppState>().inner());
+                let _ = terminals.join();
                 mcp::remove_socket(app.state::<AppState>().inner());
                 // an update that is building stops (its source and build so far are kept for the next one)
                 update::on_exit(app.state::<AppState>().inner());

@@ -40,7 +40,11 @@
 #     they show at once and are kept; reading text grows fully (task list, task page, its editor, the New task drawer, a doc,
 #     a chat and its composer), titles half, IDs, pills, dates, avatars, group labels, badges, hints and icons at most 1px;
 #     rows grow, the chat column, sidebar and board columns get wider, and in the 1280 px window nothing is cut off or scrolls
-#     sideways, in dark and in light. Compact; each font everywhere at once. Then a second start: Geist, light, compact and
+#     sideways, in dark and in light. Compact; each font everywhere at once. GA-143: the mountains along the bottom are on at
+#     the defaults (.app's first child, fixed along the bottom edge at the window's width, 14% of its height within 80–128px,
+#     under the page so clicks there reach the page, aria-hidden, in band-line; html holds the canvas, body and the sidebar are
+#     see-through), in light too; "Show mountains along the bottom" turns them off and on at once, and leaves them off for the
+#     second start, where they are still off and Reset to defaults turns them on. Then a second start: Geist, light, compact and
 #     the sizes are still there, and Reset to defaults brings everything back (so later starts begin at the defaults).
 # 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note and the
 #     Backend Agent with its own folder's. Decisions/Use SQLite reads with its wikilinks (one to a heading, by an alias), a
@@ -70,6 +74,32 @@
 #     and light; n, p, Alt+↓, [ and Esc; Show changes beside both runs, and each run's changes only; no branch, branch
 #     only, merged and no changes. (b) speed: the 2,000-line (32 files) and the 15,000-line (245 files) cards show their
 #     first screen within 300 ms of the Changes tab and scroll for 3 s without a frame over 100 ms.
+# 15. terminal (GA-135), in KADE-1's worktree, with /bin/sh in a scratch home folder: #/terminal's New terminal opens the
+#     folder picker titled "New terminal in", and picking KADE-1 starts a terminal on its page, fitted, with the focus;
+#     typing echo gizai-probe prints it; leaving the page and coming back shows the same view with what it printed
+#     meanwhile (off screen it holds no WebGL context); seq 1 6000 keeps 5,000 lines of scrollback; the colours are the
+#     term-* tokens and follow the theme at once, the font follows Settings → Appearance and the view fits again;
+#     Ctrl+K, Ctrl+W, Ctrl+P, Ctrl+B, n, t and d reach the shell and do nothing in Gizai; Ctrl+Shift+F finds and Escape
+#     closes; Ctrl+Shift+C and Ctrl+Shift+V copy and paste (when the cage has a clipboard); a second place takes the view
+#     and the page offers Show here, which takes it back; WebGL draws where hardware WebGL2 exists, and the DOM renderer
+#     draws the same screen with WebGL off and after its context is lost; yes for 10 s keeps the window drawing and
+#     Ctrl+C stops it within a second; closing the terminal disposes of its view.
+# 16. terminal panel (GA-137), in KADE-1's worktree and ~/Herd/panel-site, with /bin/sh in a scratch home folder, in two
+#     starts on the same WebKit storage: (a) the Editor's Terminal button between Fetch and Open in, off on a card that
+#     isn't pinned to you until Edit anyway; it opens the panel at 30% of the code column with a terminal in the folder's
+#     root (pwd prints it); the button and Ctrl+` (also from inside the terminal) hide it and the shell keeps running;
+#     Ctrl+W, Ctrl+P and Ctrl+B reach the shell and Ctrl+Shift+F finds in the terminal, none reaching the Editor; the drag
+#     handle stops at 120px of code and 120px of terminal, a double click gives 30% back, ↑ and ↓ move it 5%; another folder
+#     opens it at the same height with its own terminals, Ctrl+Shift+` adds one and closing the last tab hides it; a
+#     terminal opened elsewhere is a tab; Own page shows the same view on #/terminal/<id>; Show in Editor opens the panel on
+#     its tab, it shows again when the folder opens again and, once hidden, stays hidden; while another place has the view
+#     the panel shows the placeholder with Show here. (b) After a restart the
+#     panel opens at the height kept, in both folders.
+#     Ctrl+C stops it within a second; closing the terminal disposes of its view. GA-136 (TF1): KADE-1 isn't pinned to you, so
+#     the picker asks first and Edit anyway starts it; its row is in the sidebar's Terminal (between Projects and Editor,
+#     KADE-1 in mono, selected), its tab on the page in a 32px strip, and the top bar says the folder, sh and the size; + after
+#     the tabs starts another terminal there without a picker, and exit closes it (its row and tab go, the page shows the
+#     first again); with both closed the sidebar has one row, New terminal, and the page is #/terminal.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -133,4 +163,16 @@ rm -rf .devdata/uitest-changes .devdata/uitest-changes.wt && mkdir -p .devdata/u
 CHG=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_changes -- .devdata/uitest "$PWD/.devdata/uitest-changes")
 DATA=$PWD/.devdata/uitest ROUTE="task/${CHG%% *}/changes" MODE="changes-a:$CHG" scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE="task/${CHG%% *}" MODE="changes-b:$CHG" scripts/smoke-cage.sh || fail=1
+fresh
+# KADE-1 gets a branch and its worktree folder, so it is one of the Editor's folders (a card's worktree)
+KADE1=$(python3 -c "import sqlite3; c=sqlite3.connect('.devdata/uitest/gizai.db'); c.execute(\"update tasks set branch='gizai/kade-1-terminal' where identifier='KADE-1'\"); c.commit(); print(c.execute(\"select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='KADE-1'\").fetchone()[0])")
+mkdir -p ".devdata/uitest/worktrees/$KADE1/KADE-1" && rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
+fresh
+KADE1=$(python3 -c "import sqlite3; c=sqlite3.connect('.devdata/uitest/gizai.db'); c.execute(\"update tasks set branch='gizai/kade-1-terminal' where identifier='KADE-1'\"); c.commit(); print(c.execute(\"select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='KADE-1'\").fetchone()[0])")
+mkdir -p ".devdata/uitest/worktrees/$KADE1/KADE-1" && printf '# KADE-1\n' > ".devdata/uitest/worktrees/$KADE1/KADE-1/README.md"
+rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home/Herd/panel-site
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-a:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=120 scripts/smoke-cage.sh || fail=1
+# the same WebKit storage (.devdata/xdg): a restart
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-b:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

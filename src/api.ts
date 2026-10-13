@@ -1,7 +1,8 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import type * as T from "./types";
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
@@ -215,6 +216,8 @@ export type RepoCheck = { isGit: boolean; branch?: string | null; dirty: boolean
 export const checkRepo = (path: string) => invoke<RepoCheck>("check_repo", { path });
 export const listOldWorktrees = () => invoke<T.OldWorktree[]>("list_old_worktrees");
 export const removeOldWorktrees = (taskIds: string[]) => invoke<T.RemovedWorktree[]>("remove_old_worktrees", { taskIds });
+/** Remove anyway: puts the worktree's uncommitted changes in git's stash, then removes it. */
+export const removeOldWorktreeAnyway = (taskId: string) => invoke<T.RemovedWorktree>("remove_old_worktree_anyway", { taskId });
 
 // ---- the Editor (GA-107, contract C2): `folder` is always an EditorFolder.id, `path` always relative to it, with / ----
 /** The folders the Editor may open: projects' linked folders, the folders under Settings → Editor folders, card worktrees. */
@@ -264,6 +267,37 @@ export const handPush = (taskId: string) => invoke<string>("hand_push", { taskId
 /** Refuses uncommitted changes; pushes, moves the card to Testing (Review with its Testing switch off) and takes the pin off.
  *  Resolves with the column's name. */
 export const handOver = (taskId: string) => invoke<string>("hand_over", { taskId });
+
+// ---- terminals (GA-133, contract CT): your shell in one of the Editor's folders, kept in memory while Gizai runs ----
+/** Every open terminal, in the order they were opened. */
+export const terminalList = () => invoke<T.TerminalSession[]>("terminal_list");
+/** Starts your shell in one of the Editor's folders (an EditorFolder id), at this size. Refuses, with the Editor's reason,
+ *  a folder the Editor can't open or a card's worktree an agent is working on. `name` null: the folder's name, numbered. */
+export const terminalOpen = (folder: string, cols: number, rows: number, name: string | null) =>
+  invoke<T.TerminalSession>("terminal_open", { folder, cols, rows, name });
+/** Sends the terminal's output to `onBytes`: first what it kept in memory (at most 256 KB), then everything new, in order.
+ *  One listener per terminal: attaching again replaces the last one. */
+export function terminalAttach(id: string, onBytes: (bytes: Uint8Array) => void): Promise<void> {
+  const output = new Channel<ArrayBuffer>((b) => onBytes(new Uint8Array(b)));
+  return invoke<void>("terminal_attach", { id, output });
+}
+/** What you typed or pasted (xterm's onData), or with `binary` xterm's onBinary: one byte per character. */
+export const terminalInput = (id: string, data: string, binary = false) => invoke<void>("terminal_input", { id, data, binary });
+/** The place showing the terminal has this size now; 0 columns or rows keeps the size it has. */
+export const terminalResize = (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows });
+/** xterm.js has written this many more bytes (its write callback; send it every 100,000 bytes or so). Above 500,000 bytes
+ *  not yet acknowledged the backend stops reading until it is back under 200,000, and the program waits, as in any terminal. */
+export const terminalAck = (id: string, bytes: number) => invoke<void>("terminal_ack", { id, bytes });
+/** Trimmed, at most 40 characters; an empty name gives the default back. */
+export const terminalRename = (id: string, name: string) => invoke<T.TerminalSession>("terminal_rename", { id, name });
+/** Ends the shell and everything it started; resolves when they are gone (at most about 3 s; on Windows at once). */
+export const terminalClose = (id: string) => invoke<void>("terminal_close", { id });
+/** After an open, a rename, a close, a shell's end and a change of `busy`: every open terminal. */
+export const onTerminalsChanged = (cb: (list: T.TerminalSession[]) => void): Promise<UnlistenFn> =>
+  listen<T.TerminalSession[]>("terminals-changed", (m) => cb(m.payload));
+/** The clipboard's text, through the clipboard plugin (its one right: clipboard-manager:allow-read-text), so pasting
+ *  into a terminal with Ctrl+Shift+V on Linux doesn't show WebKit's own Paste prompt. */
+export const readClipboardText = () => readText();
 
 // ---- updates: the release check and Update to <version> ----
 /** This version, what the release check found, and the update that runs (or ran). */

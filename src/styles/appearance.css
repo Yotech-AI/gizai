@@ -33,6 +33,9 @@
   --size-tree-row: calc(28px + var(--ui-box, 0px));
   --size-tab: calc(36px + var(--ui-box, 0px));
   --size-statusbar: calc(24px + var(--ui-box, 0px));
+  /* the terminal's tab strip like the Editor's tabs; the Editor's terminal panel keeps its tabs and 4 lines as the text grows */
+  --size-term-tab: calc(32px + var(--ui-box, 0px));
+  --size-term-panel-min: calc(120px + var(--ui-box, 0px) + 4 * 1.6 * var(--ui-grow, 0px));
   /* tasks and docs: Markdown read and edited (descriptions, acceptance criteria, comments, docs); headings half */
   --fs-prose: calc(15px + var(--docs-grow, 0px));
   --prose-grow-head: var(--docs-grow-head, 0px);

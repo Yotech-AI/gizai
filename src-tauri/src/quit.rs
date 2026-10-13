@@ -7,7 +7,8 @@
 //!
 //! Agents at work (runs and chat answers) are stopped before Gizai quits, however it is asked to: Quit Gizai
 //! completely (the tray or Settings), a signal, logging out (SIGTERM) or shutting down. They are recorded as stopped
-//! because Gizai quit, and none outlives Gizai.
+//! because Gizai quit, and none outlives Gizai. Every terminal ends then too (GA-133, `end_terminals`), by the same
+//! paths; closing the window keeps Gizai and its terminals running, and nothing is restored at the next start.
 //!
 //! Windows: logging off and shutting down reach Gizai as WM_ENDSESSION, which Tauri's event loop (tao) turns into its
 //! last event (`RunEvent::Exit`) before it ends the process: agents at work end at once there (`end_agents`, within the
@@ -57,6 +58,14 @@ pub fn end_agents(st: &AppState) {
     while (!runs::live(st).is_empty() || !chat::live(st).is_empty() || chat::checking(st)) && t0.elapsed() < END_WAIT {
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Gizai exits: every terminal ends, with its shell and everything it started (`terminal::end_all`: SIGHUP, the
+/// pseudo-terminal closed and SIGKILL after 3 s to what is left; on Windows its Job Object at once). On a thread of its
+/// own, so it runs alongside `end_agents`: join it after that.
+pub fn end_terminals(st: &AppState) -> std::thread::JoinHandle<()> {
+    let st = st.clone();
+    std::thread::spawn(move || crate::terminal::end_all(&st))
 }
 
 /// Ends the main window's page process, if it still runs. Only for a Gizai that is about to exit: the window

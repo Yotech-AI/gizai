@@ -36,6 +36,9 @@ and the drawer edge. Shadows only on things that float: `shadow-pop`, `shadow-dr
 - `live` (teal) means only "an agent is working on this right now": the pulse dot, the Live badge,
   the working strip on a card, the border of a live run card. Never use teal for anything else.
 - `needs` (magenta) means "a person is needed": Review, holds, the Inbox count.
+- The terminal's own colours (`term-*`) are what programs print, not Gizai's states: `term-cyan` is a sky blue and
+  `term-magenta` a violet, at least 35° of hue (OKLCH) from `live` and `needs`, so a program's cyan never reads as an
+  agent at work, nor its magenta as "needs you".
 - `success`, `warning`, `danger` are run and form outcomes. Each badge pairs its colour with a word.
 - Status is shown by glyph shape *and* hue (see StatusIcon), so it reads without colour:
   Backlog dashed circle `st-backlog`, To do open circle `st-todo`, In progress half circle
@@ -101,7 +104,9 @@ organisation. A top bar (`size-topbar`) holds breadcrumbs and page actions; list
 toolbar below it (New task on the left; view switch, Filters, Sort, Group on the right). Pages with
 parts (Usage, Settings) show them as tabs, the open one in the address. The Editor adds a file
 tree (`size-tree`, rows `size-tree-row`), a tab strip (`size-tab`) and a status bar
-(`size-statusbar`), which grow with the text like the sidebar and rows.
+(`size-statusbar`), which grow with the text like the sidebar and rows. A terminal's tabs are
+`size-term-tab`; the Editor's terminal panel starts at `size-term-panel` of the code column, within
+`size-term-panel-min` and `size-term-code-min`, with a `size-handle` drag handle.
 
 **Drawers, not dialogs.** Every create and edit form (new task, new project, edit client, add
 agent, agent settings, new doc) slides in from the right in a Drawer at least `size-drawer`

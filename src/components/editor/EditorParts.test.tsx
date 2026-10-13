@@ -790,6 +790,31 @@ describe("The folder picker", () => {
     await settle();
     expect(text(byClass("pop-empty")[0]!)).toBe("Error: no database");
   });
+
+  // GA-135: the Terminal page's New terminal uses the picker with its own title and onPick
+  it("titled New terminal in, hands the picked folder to onPick, and keeps a card an agent works on off, saying why", async () => {
+    h.api.editorFolders = async () => FOLDERS;
+    h.api.getSettings = async () => ({ editorRoots: ["~/Herd"] }) as Settings;
+    h.api.listTasks = async () => [task("t1", "The Editor page", false), task("t2", "Fix the login", true)];
+    h.api.listProjects = async () => [{ id: "p1", name: "Kade portal", color: "var(--c-yellow)" } as Project];
+    const picked: string[] = [];
+    show(() => <FolderPicker at={{ x: 40, y: 120 }} title="New terminal in" onPick={(f) => picked.push(f.id)} onClose={() => { pickerClosed += 1; }} />);
+    await settle();
+    expect(text(byClass("ed-picker-title")[0]!)).toBe("New terminal in");
+    expect(byLabel("New terminal in").props.role).toBe("dialog");
+    const busy = one(findAll(tree, (f) => f.props.role === "option" && String(f.props.title).startsWith("QA Agent")), "GA-118");
+    expect(busy.props.title).toBe("QA Agent is working on GA-118: a terminal there waits until its run ends.");
+    expect(busy.props["aria-disabled"]).toBe(true);
+    await fire(busy, "onClick");
+    await typeIn(findBox(), "GA-118");
+    await key(findBox(), "Enter");
+    expect([picked, pickerClosed]).toEqual([[], 0]);
+    await typeIn(findBox(), "");
+    expect(option("~/.local/share/gizai/worktrees/GA/GA-120").props["aria-disabled"]).toBeUndefined();
+    await fire(option("~/.local/share/gizai/worktrees/GA/GA-120"), "onClick");
+    expect([picked, pickerClosed]).toEqual([["/home/me/.local/share/gizai/worktrees/GA/GA-120"], 1]);
+    expect(h.went).toEqual([]); // it doesn't open the folder in the Editor
+  });
 });
 
 // ---- Open in ----

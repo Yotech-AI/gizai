@@ -2,7 +2,8 @@
 //! the Team Lead's read-only copies of the projects' code,
 //! a card's changes from git, pull requests (gh, and Bitbucket's REST API), the connection to GitHub and Bitbucket (pushes over SSH or HTTPS, gh's
 //! login), prompts and process control,
-//! and Gizai's own updates (the release check, building and installing a release). Never imports Tauri.
+//! Gizai's own updates (the release check, building and installing a release), and terminals (your shell in a
+//! pseudo-terminal). Never imports Tauri.
 pub mod behind;
 pub mod bitbucket;
 pub mod browser;
@@ -28,6 +29,7 @@ pub mod process;
 pub mod prompt;
 pub mod secrets;
 pub mod stream;
+pub mod terminal;
 pub mod tool_catalog;
 pub mod update;
 pub mod worktree;

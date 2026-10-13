@@ -72,9 +72,8 @@ and Theme on its Top bar and Footer.
 | 08 | The Inbox | `/features/inbox` | 07 | 01 | `docs/features/inbox.md` | `10-inbox` |
 
 Previous and next follow the homepage's order and wrap round: 01's previous is 08, 08's next is 01. Docs links to
-`https://github.com/Yotech-AI/gizai/blob/main/<path>`; the `docs/features/` files come with GA-97. The media column
-names the scene folders in `video/capture/dark` and `video/capture/light`: what each page's GIF is made from. Check
-`07-clis` for other companies' logos before it goes on the site.
+`https://github.com/Yotech-AI/gizai/blob/main/<path>`; the `docs/features/` files come with GA-97. Check `07-clis` for
+other companies' logos before it goes on the site.
 
 ## Heading levels
 

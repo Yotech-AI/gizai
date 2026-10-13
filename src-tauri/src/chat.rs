@@ -368,6 +368,12 @@ pub(crate) fn live_run(st: &AppState, thread_id: &str) -> Option<String> {
     st.chat.live.lock().unwrap().get(thread_id).map(|l| l.run_id.clone()).filter(|r| !r.is_empty())
 }
 
+/// The Team Lead is answering in the chat, as the Chat page shows it: also while the answer is starting, before its
+/// Claude Code has (`live_run` is None then), and between an answer and the one for messages queued meanwhile.
+pub(crate) fn answering(st: &AppState, thread_id: &str) -> bool {
+    st.chat.live.lock().unwrap().contains_key(thread_id)
+}
+
 /// What a turn runs with: the Team Lead, the coding CLI the chat runs on now, its program, and the MCP helper.
 struct Plan {
     agent: Member,

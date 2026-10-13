@@ -166,7 +166,7 @@ It changes only these three things. After it, the GitHub API should show the new
     not as artwork.
   - **The script:** `npm run render:share` in `video/` writes `public/og.png` (1200 × 630, the site's share card) and
     `design/github-social-preview.png` (1280 × 640, kept in GW's repository but not served), each under 1 MB.
-  - **The upload:** you upload the second one to GitHub by hand (§5).
+  - **The upload:** you upload the second one to GitHub by hand (§6).
 - **Instead of a script:** a Design card in Figma ("Giz-AI", a Share card frame at 1280 × 640). It suits a bigger
   change to the look, but every later change means exporting again by hand. I recommend the script, with the Design
   Agent or you checking the result in Review.
@@ -528,7 +528,8 @@ forms"; helper).
 2. **The titles hold no search words.** A searcher for "run coding agents in parallel" or "kanban for AI coding
    agents" finds none in "The board decides who works · GizAi". New titles below.
 3. **No WebSite data, so no site name for Google.** Google wants WebSite data on the homepage with `name` and `url`,
-   and recommends `alternateName` [V] (developers.google.com, "Site names"; helper). Add `name: "GizAi"` and
+   and recommends `alternateName` [V] (developers.google.com, "Site names": "The `WebSite` structured data must be on
+   the home page of the site"). Add `name: "GizAi"` and
    `alternateName: ["Gizai"]` (the window still says Gizai). Not "Giz AI": that's Giz Inc.'s spelling.
 4. **SoftwareApplication can't earn a rich result.** Google requires `aggregateRating` or `review`, and "Ratings must
    be sourced directly from users" [V] (developers.google.com, "Software app" and "Review snippet"; helper). Keep it for meaning,

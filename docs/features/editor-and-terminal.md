@@ -12,6 +12,8 @@ The sidebar has an Editor section above Agents, and a Terminal section above Edi
 
 \+ on either section opens the folder picker.
 
+The Editor section lists the folders you opened, at most 8. Each stays where it is when you open it again, and a new one joins at the bottom, like a new terminal. With a ninth, the folder you opened longest ago leaves the list.
+
 ## The Editor
 
 A small code editor with syntax colours. It has:

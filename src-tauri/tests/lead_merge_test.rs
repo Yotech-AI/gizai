@@ -718,6 +718,9 @@ async fn kept_merge(t: &T) -> (String, String) {
     (thread, kept[0].action.id.clone())
 }
 
+/// GA-154: the last note once nothing waits for your OK any more in the chat and the Team Lead isn't answering there.
+const DONE: &str = "Nothing else waits for your OK. The Team Lead's answer above is done: send a message to go on.";
+
 /// Gizai's notes in a chat.
 fn chat_notes(t: &T, thread: &str) -> Vec<String> {
     gizai_core::chat::messages(&t.st.db, thread).unwrap().into_iter().filter(|m| m.role == "system").map(|m| m.body_md.unwrap_or_default()).collect()
@@ -754,7 +757,7 @@ async fn approving_a_kept_merge_without_a_qa_pass_is_refused_as_ever_and_merges_
     t.refused(&usual, "QA hasn't passed KADE-1: it has no QA verdict", "Review");
     let said = format!("Approved: merge KADE-1's pull request. It failed: {}", usual.trim_end_matches('.'));
     assert_eq!((a.status.as_str(), a.result_md.as_deref()), ("failed", Some(said.as_str())), "the usual refusal");
-    assert_eq!(chat_notes(&t, &thread), [said]);
+    assert_eq!(chat_notes(&t, &thread), [said.as_str(), DONE], "then the closing note (GA-154)");
     assert!(t.gh_calls().is_empty(), "gh never asked: {:?}", t.gh_calls());
     assert_eq!(t.task().state_name, "Review");
     // it doesn't run again
@@ -772,7 +775,7 @@ async fn approving_a_kept_merge_with_the_projects_switch_off_is_refused_and_merg
     let said = a.result_md.unwrap();
     assert!(said.starts_with("Approved: merge KADE-1's pull request. It failed: ")
             && said.contains("KADE doesn't let you merge: its Team Lead may merge switch is off"), "{said}");
-    assert_eq!(chat_notes(&t, &thread), [said]);
+    assert_eq!(chat_notes(&t, &thread), [said.as_str(), DONE], "then the closing note (GA-154)");
     assert!(!t.gh_calls().iter().any(|c| c.starts_with("pr merge")), "{:?}", t.gh_calls());
     assert_eq!(t.task().state_name, "Review");
 }
@@ -791,7 +794,8 @@ async fn approving_a_kept_merge_that_meets_every_rule_merges_it_once() {
     assert_eq!(t.gh_calls().iter().filter(|c| c.starts_with("pr merge")).count(), 1, "{:?}", t.gh_calls());
     assert_eq!(t.task().state_name, "Deploy");
     assert_eq!(t.lead_comments().len(), 1, "the Team Lead's comment, once");
-    assert_eq!(chat_notes(&t, &thread), ["Approved: merge KADE-1's pull request. Merged pull request #7. The card moved to Deploy."]);
+    assert_eq!(chat_notes(&t, &thread), ["Approved: merge KADE-1's pull request. Merged pull request #7. The card moved to Deploy.", DONE],
+               "one closing note for the double click (GA-154)");
     // Approve all over it runs nothing more
     assert!(gizai_lib::pending::approve_all(&t.st, &[id]).await.is_err());
     assert_eq!(t.gh_calls().iter().filter(|c| c.starts_with("pr merge")).count(), 1);

@@ -2,8 +2,12 @@
 //! waits under that answer until you approve it with one click or discard it. Approve runs exactly the stored call, as the
 //! Team Lead in its chat, with every other rule still in force (`tools::call_approved`), and only once; Discard runs
 //! nothing. Either way a note of Gizai's in the chat says what happened, and the Team Lead hears it at the start of its
-//! next answer there (`for_turn`). Only you decide: the UI's commands come here, and no tool of the Team Lead's lists,
-//! approves or discards a pending action. A board check never makes one: it uses no tool from outside Gizai.
+//! next answer there (`for_turn`). A decision doesn't start an answer, so once nothing waits and the Team Lead isn't
+//! answering, a last note says its answer is done (GA-154, `ANSWER_DONE`). Only you decide: the UI's commands come here,
+//! and no tool of the Team Lead's lists, approves or discards a pending action. A board check never makes one: it uses no
+//! tool from outside Gizai.
+use std::sync::Mutex;
+
 use gizai_core::pending::{self as core, NewPending, PendingAction};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -86,6 +90,24 @@ fn note(st: &AppState, a: &PendingAction, text: &str) {
                                                     "status": a.status, "run": a.run_id}));
 }
 
+/// The last note after your decisions in a chat, so it doesn't look stuck: approving doesn't start a new answer.
+pub const ANSWER_DONE: &str = "Nothing else waits for your OK. The Team Lead's answer above is done: send a message to go on.";
+
+/// Held from a decision's end until its notes are in the chat: of two decisions in a chat that end together, only the
+/// later one finds that nothing waits any more, so the chat gets one `ANSWER_DONE`.
+static ENDING: Mutex<()> = Mutex::new(());
+
+/// You decided on `a`: its note in the chat, then `ANSWER_DONE` when no call of the chat waits any more (of an earlier
+/// answer neither) and the Team Lead isn't answering there. That one is for you only: it isn't a decision note, so the
+/// Team Lead's next answer (`for_turn`) and a hand-over leave it out.
+fn decided(st: &AppState, a: &PendingAction, text: &str) {
+    note(st, a, text);
+    if crate::chat::answering(st, &a.thread_id) || !core::waiting(&st.db, &a.thread_id).is_ok_and(|w| w.is_empty()) {
+        return;
+    }
+    crate::chat::note(st, &a.thread_id, ANSWER_DONE, json!({"kind": "pending_done", "run": a.run_id}));
+}
+
 /// Approve: runs exactly the stored call, once (a second approval is refused, `core::claim`), as the Team Lead in its chat
 /// with every rule but the outside one in force. "Approved: <what>. <what happened>" or "… It failed: <its error>" goes
 /// into the chat as a note of Gizai's, and to the Team Lead in its next answer.
@@ -98,14 +120,19 @@ pub async fn approve(st: &AppState, id: &str) -> Result<PendingAction, String> {
         Ok(result) => (true, format!("Approved: {what}. {}", preview::done(&a.tool, result))),
         Err(e) => (false, format!("Approved: {what}. It failed: {}", e.trim_end_matches('.'))),
     };
-    let a = core::finish(&st.db, &a.id, ok, &text).map_err(|e| e.to_string())?;
-    note(st, &a, &text);
+    let a = {
+        let _ending = ENDING.lock().unwrap_or_else(|e| e.into_inner());
+        let a = core::finish(&st.db, &a.id, ok, &text).map_err(|e| e.to_string())?;
+        decided(st, &a, &text);
+        a
+    };
     changed(st);
     Ok(a)
 }
 
 /// Approve all: the calls you saw (`ids`), one after the other in the order given, each as Approve runs it; one that
-/// fails doesn't stop the rest. Calls that no longer wait are skipped, and the error names them.
+/// fails doesn't stop the rest. Calls that no longer wait are skipped, and the error names them. The ones it hasn't run
+/// yet still wait, so `ANSWER_DONE` comes once, after the last one it ran.
 pub async fn approve_all(st: &AppState, ids: &[String]) -> Result<Vec<PendingAction>, String> {
     let mut done = vec![];
     let mut skipped = vec![];
@@ -125,8 +152,12 @@ pub async fn approve_all(st: &AppState, ids: &[String]) -> Result<Vec<PendingAct
 pub fn discard(st: &AppState, id: &str) -> Result<PendingAction, String> {
     let a = core::get(&st.db, id).map_err(|e| e.to_string())?;
     let text = format!("Discarded: {}.", lower_first(&preview::preview(st, &a.actor_id, &a.thread_id, &a.tool, &a.args).line));
-    let a = core::discard(&st.db, &st.you_id, id, &text).map_err(|e| e.to_string())?;
-    note(st, &a, &text);
+    let a = {
+        let _ending = ENDING.lock().unwrap_or_else(|e| e.into_inner());
+        let a = core::discard(&st.db, &st.you_id, id, &text).map_err(|e| e.to_string())?;
+        decided(st, &a, &text);
+        a
+    };
     changed(st);
     Ok(a)
 }

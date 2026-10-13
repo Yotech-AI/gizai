@@ -384,3 +384,28 @@ fn main_of_a_folder_that_isnt_a_projects_is_its_origins_default_branch() {
     assert_eq!(s.fetch_error, None, "a later fetch worked");
     assert!(s.fetched_at.is_some());
 }
+
+#[test]
+fn the_editors_update_never_stashes_and_keeps_its_own_wording_over_uncommitted_changes() {
+    // GA-156 lets the Team Lead stash first; the Editor's Update keeps refusing
+    let tmp = tempfile::tempdir().unwrap();
+    let r = Repos::new(tmp.path());
+    let main = main_ref();
+    r.push(&[("composer.lock", "{\"v\": 2}\n")], "new php packages");
+    r.fetch();
+    let head = r.head();
+    // a local npm install changed the lock file
+    std::fs::write(r.folder.join("package-lock.json"), "{\"lockfileVersion\": 3, \"local\": true}\n").unwrap();
+    let porcelain = r.porcelain();
+    let e = behind::plan(named(&r.folder), Ok(&main), None).unwrap_err();
+    assert_eq!(e, "kade-portal has uncommitted changes in package-lock.json. Commit or stash them first.");
+    let s = behind::stand(named(&r.folder), Ok(&main), &Fetched::default(), None, None);
+    assert_eq!((s.can_update, s.update_says.as_str()), (false, e.as_str()));
+    assert_eq!((r.head(), r.porcelain(), git_out(&r.folder, &["stash", "list"])), (head.clone(), porcelain, String::new()), "nothing changed");
+
+    // once the change is gone, its plan has nothing to stash
+    git(&r.folder, &["checkout", "-q", "--", "package-lock.json"]);
+    let plan = behind::plan(named(&r.folder), Ok(&main), None).unwrap();
+    assert!(plan.stash.is_empty(), "{plan:?}");
+    assert!(!plan.said().contains("stash"), "{}", plan.said());
+}

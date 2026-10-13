@@ -342,6 +342,19 @@ describe("open a folder under the test root, open a file, type, Ctrl+S (GA-113)"
     expect(rowDot("src")).toBe(false);
     expect(store.get("gizai.editor.opened")).toBe(JSON.stringify([FOLDER]));
   });
+  // GA-157 QA: the page of a folder already in the sidebar's list leaves the list as it was; a new one joins at the bottom
+  it("opened from the sidebar, leaves the folder where it is in the sidebar's list, every row too", async () => {
+    const list = [`${ROOT}/one`, FOLDER, `${ROOT}/two`];
+    store.set("gizai.editor.opened", JSON.stringify(list));
+    await open();
+    expect(JSON.parse(store.get("gizai.editor.opened")!)).toEqual(list);
+    expect(Object.keys(JSON.parse(store.get("gizai.editor.openedAt")!))).toEqual([FOLDER]);
+  });
+  it("adds a folder that isn't in the sidebar's list yet at the bottom", async () => {
+    store.set("gizai.editor.opened", JSON.stringify([`${ROOT}/one`, `${ROOT}/two`]));
+    await open();
+    expect(JSON.parse(store.get("gizai.editor.opened")!)).toEqual([`${ROOT}/one`, `${ROOT}/two`, FOLDER]);
+  });
 
   it("saves what was typed: the file on disk has the text, the tab loses its dot, the tree shows M", async () => {
     await open();

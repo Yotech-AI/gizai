@@ -514,3 +514,258 @@ fn real_tempdir() -> tempfile::TempDir {
     let base = std::path::PathBuf::from(base.to_string_lossy().trim_start_matches(r"\\?\").to_string());
     tempfile::tempdir_in(base).unwrap()
 }
+
+// ---- GA-156: update_checkout with stash puts uncommitted changes in git's stash first ----
+
+/// Fake composer and npm first on PATH, for the whole process (as in editor_behind_flow_test): each call goes to
+/// calls.log in the folder it installs. Only the stash tests install; the other tests here never do.
+fn fakes() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let bin = Box::leak(Box::new(real_tempdir())).path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let write = |name: &str, script: &str| {
+            let path = bin.join(name);
+            std::fs::write(&path, script).unwrap();
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        };
+        write("composer", "#!/bin/sh\nmkdir -p vendor/composer\necho \"composer $*\" >> vendor/calls.log\n");
+        // npm fails in a folder with .npm-fails in it
+        write("npm", "#!/bin/sh\nif [ -f .npm-fails ]; then echo 'npm ERR! code EUSAGE' >&2; exit 1; fi\nmkdir -p node_modules/.bin\n\
+                      echo \"npm $*\" >> node_modules/calls.log\n");
+        let old = std::env::var("PATH").unwrap_or_default();
+        unsafe { std::env::set_var("PATH", format!("{}:{old}", bin.display())) };
+    });
+}
+
+/// Who makes commits in the folder, so git can make a stash entry there whatever the machine's own git config says. An
+/// empty name makes git refuse.
+fn identity(dir: &Path, name: &str) {
+    git(dir, &["config", "user.name", name]);
+    git(dir, &["config", "user.email", "t@t"]);
+}
+
+/// `git stash list`, newest first: "On main: Gizai: before the update to main".
+fn stashes(dir: &Path) -> Vec<String> {
+    git_out(dir, &["stash", "list", "--format=%gs"]).lines().map(str::to_string).collect()
+}
+
+/// The update's result, as Gizai posts it in the chat.
+async fn update_ended(st: &AppState, thread: &str) -> String {
+    for _ in 0..400 {
+        if let Some(said) = chat::messages(&st.db, thread).unwrap().into_iter().find(|m| m.role == "system").and_then(|m| m.body_md) {
+            return said;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("no result in the chat");
+}
+
+const LOCAL_LOCK: &str = "{\"lockfileVersion\": 3, \"packages\": {\"left-pad\": {}}}\n";
+
+#[tokio::test]
+async fn update_checkout_with_stash_puts_uncommitted_changes_in_gits_stash_first_and_says_how_to_get_them_back() {
+    fakes();
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    identity(&herd, "t");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    code::before_turn(&st, "warm-up").await;
+    let head = git_out(&herd, &["rev-parse", "HEAD"]);
+    // 13 Oct: on main's commit, with package-lock.json changed by a local npm install; a new file of yours isn't tracked
+    std::fs::write(herd.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    std::fs::write(herd.join("notes.txt"), "mine\n").unwrap();
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update my folder").unwrap();
+
+    // without stash: refused as before, with the new ending; nothing changes and nothing starts
+    let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE"})).await.unwrap_err();
+    assert!(e.contains(&format!("{} has uncommitted changes in package-lock.json: nothing changed. Commit or stash them first", herd.display()))
+            && e.trim_end_matches('.').ends_with(", or call again with stash only when the user agreed to put them in git's stash"), "{e}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(stashes(&herd).is_empty());
+    assert_eq!(std::fs::read_to_string(herd.join("package-lock.json")).unwrap(), LOCAL_LOCK);
+    assert!(chat::messages(&st.db, &thread).unwrap().iter().all(|m| m.role != "system"), "no update ran");
+
+    // with stash
+    let r = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap();
+    assert_eq!(r["done"], "started", "{r}");
+    assert_eq!(r["will"], format!("put the uncommitted changes in package-lock.json in git's stash, leave main where it is ({}, already \
+                                   main's commit) and run npm ci", &head[..7]));
+    let said = update_ended(&st, &thread).await;
+    assert_eq!(said, format!("Updated KADE's linked folder {h}: put the uncommitted changes in package-lock.json in git's stash (git -C {h} \
+                              stash pop brings them back), stayed at {} (already main's commit) and ran npm ci.", &head[..7], h = herd.display()));
+    // one stash entry with that change; the folder is clean and at main's commit; npm ci ran; the untracked file stays
+    assert_eq!(stashes(&herd), ["On main: Gizai: before the update to main"]);
+    assert_eq!(git_out(&herd, &["stash", "show", "--name-only", "stash@{0}"]), "package-lock.json");
+    assert_eq!(git_out(&herd, &["status", "--porcelain"]), "?? notes.txt");
+    assert_eq!(git_out(&herd, &["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read_to_string(herd.join("package-lock.json")).unwrap(), "{\"lockfileVersion\": 3}\n", "main's lock");
+    assert_eq!(std::fs::read_to_string(herd.join("node_modules/calls.log")).unwrap(), "npm ci --no-audit --no-fund\n");
+    assert!(!herd.join("vendor/calls.log").exists(), "composer.lock is main's: no composer install");
+    assert_eq!(std::fs::read_to_string(herd.join("notes.txt")).unwrap(), "mine\n");
+    // the next turn hears it, once
+    let line = code::before_turn(&st, &thread).await.line;
+    assert!(line.contains("The update you started ended: Updated KADE's linked folder") && line.contains("stash pop brings them back"), "{line}");
+
+    // git stash pop, as the message says, brings the change back
+    git(&herd, &["stash", "pop", "-q"]);
+    assert_eq!(std::fs::read_to_string(herd.join("package-lock.json")).unwrap(), LOCAL_LOCK);
+}
+
+#[tokio::test]
+async fn update_checkout_with_stash_stashes_nothing_when_something_else_is_in_the_way() {
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    identity(&herd, "t");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    gh.push(&[("app.php", "<?php\n")], "on github");
+    code::before_turn(&st, "warm-up").await;
+    std::fs::write(herd.join("package.json"), "{\"name\": \"wip\"}\n").unwrap();
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update my folder").unwrap();
+    let now = || (git_out(&herd, &["rev-parse", "HEAD"]), git_out(&herd, &["branch", "--show-current"]), git_out(&herd, &["status", "--porcelain"]));
+    let set_folders = |access: &str| {
+        let m = team::agent(&st.db, &lead).unwrap();
+        team::update_agent(&st.db, &st.you_id, &lead, gizai_core::model::AgentInput { name: m.name, role_key: m.role_key,
+            folders: Some(vec![gizai_core::folders::Folder { path: herd.display().to_string(), access: access.into() }]), ..Default::default() }).unwrap();
+    };
+
+    // the linked folder set to read in the Team Lead's folders
+    set_folders("read");
+    let before = now();
+    let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap_err();
+    assert!(e.contains("is set to read in the Team Lead's folders") && e.contains("nothing changed"), "{e}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!((now(), stashes(&herd).len()), (before, 0), "nothing stashed, nothing changed");
+
+    // on another branch, not asked to switch
+    set_folders("change");
+    git(&herd, &["switch", "-q", "-c", "feature/x"]);
+    let before = now();
+    let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap_err();
+    assert!(e.contains("is on branch feature/x, not main") && e.contains("nothing changed"), "{e}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!((now(), stashes(&herd).len()), (before, 0), "nothing stashed, nothing changed");
+    assert!(chat::messages(&st.db, &thread).unwrap().iter().all(|m| m.role != "system"), "no update ran");
+}
+
+#[tokio::test]
+async fn when_git_cant_stash_the_update_from_the_chat_stops_before_the_fast_forward_and_says_why() {
+    fakes();
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    // no name to put on the stash entry: git won't make one
+    identity(&herd, "");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    let to = gh.push(&[("composer.lock", "{\"v\": 2}\n")], "new php packages");
+    code::before_turn(&st, "warm-up").await;
+    let head = git_out(&herd, &["rev-parse", "HEAD"]);
+    std::fs::write(herd.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    let deps = (mtimes(&herd.join("vendor")), mtimes(&herd.join("node_modules")));
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update my folder").unwrap();
+
+    let r = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap();
+    assert_eq!(r["will"], format!("put the uncommitted changes in package-lock.json in git's stash, move main 1 commit to {} and run composer \
+                                   install and npm ci", &to[..7]));
+    let said = update_ended(&st, &thread).await;
+    assert!(said.starts_with(&format!("The update of KADE's linked folder {} stopped: putting the uncommitted changes in git's stash failed.\n\n```\n",
+                                      herd.display())) && said.contains("ident"), "the reason and git's error: {said}");
+    assert!(!said.contains("Before that"), "{said}");
+    // main, the change and the dependency folders are as they were
+    assert_eq!(git_out(&herd, &["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read_to_string(herd.join("package-lock.json")).unwrap(), LOCAL_LOCK);
+    assert!(stashes(&herd).is_empty());
+    assert_eq!((mtimes(&herd.join("vendor")), mtimes(&herd.join("node_modules"))), deps, "no install ran");
+    assert!(!herd.join("vendor/calls.log").exists() && !herd.join("node_modules/calls.log").exists());
+    let line = code::before_turn(&st, &thread).await.line;
+    assert!(line.contains("stopped: putting the uncommitted changes in git's stash failed"), "{line}");
+}
+
+#[tokio::test]
+async fn when_a_step_after_the_stash_fails_the_chat_says_the_changes_are_in_gits_stash_and_how_to_get_them_back() {
+    fakes();
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    identity(&herd, "t");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    code::before_turn(&st, "warm-up").await;
+    std::fs::write(herd.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    std::fs::write(herd.join(".npm-fails"), "").unwrap();
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update my folder").unwrap();
+    tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap();
+    let said = update_ended(&st, &thread).await;
+    let h = herd.display();
+    assert!(said.starts_with(&format!("The update of KADE's linked folder {h} stopped: npm ci failed (exit code 1). Before that it put the \
+                                       uncommitted changes in package-lock.json in git's stash (git -C {h} stash pop brings them back).")), "{said}");
+    assert!(said.contains("npm ERR! code EUSAGE"), "the end of the output: {said}");
+    assert_eq!(stashes(&herd), ["On main: Gizai: before the update to main"]);
+}
+
+// ---- GA-160: GA-156's stash where it meets GA-154's closing note, as 0.11.0 has them together ----
+
+/// Gizai's notes in a chat, oldest first.
+fn notes(st: &AppState, thread: &str) -> Vec<String> {
+    chat::messages(&st.db, thread).unwrap().into_iter().filter(|m| m.role == "system").filter_map(|m| m.body_md).collect()
+}
+
+#[tokio::test]
+async fn approving_a_kept_update_with_stash_stashes_ends_the_answer_with_the_closing_note_and_then_posts_the_updates_result() {
+    fakes();
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    identity(&herd, "t");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    code::before_turn(&st, "warm-up").await;
+    let head = git_out(&herd, &["rev-parse", "HEAD"]);
+    std::fs::write(herd.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    // the answer used a tool from outside Gizai, so update_checkout with stash waits for your OK and changes nothing yet
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Look it up in Otus, then update my folder and stash my changes").unwrap();
+    gizai_lib::chat::mark_outside(&st, &thread, "mcp__otus__search");
+    let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap_err();
+    assert!(e.starts_with("update_checkout wasn't run: this answer used mcp__otus__search"), "{e}");
+    let kept = gizai_lib::pending::list(&st, &thread).unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(stashes(&herd).is_empty() && notes(&st, &thread).is_empty(), "nothing ran before Approve");
+    assert_eq!(std::fs::read_to_string(herd.join("package-lock.json")).unwrap(), LOCAL_LOCK);
+
+    // Approve: the decision's note, then GA-154's closing note (nothing else waits), then the update's own result
+    gizai_lib::pending::approve(&st, &kept[0].action.id).await.unwrap();
+    let h = herd.display().to_string();
+    let result = format!("Updated KADE's linked folder {h}: put the uncommitted changes in package-lock.json in git's stash (git -C {h} \
+                          stash pop brings them back), stayed at {} (already main's commit) and ran npm ci.", &head[..7]);
+    for _ in 0..400 {
+        if notes(&st, &thread).len() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let said = notes(&st, &thread);
+    assert_eq!(said.len(), 3, "{said:?}");
+    assert!(said[0].starts_with("Approved: ") && said[0].ends_with("The update started: its result comes as a message in this chat."), "{said:?}");
+    assert_eq!(said[1], gizai_lib::pending::ANSWER_DONE, "{said:?}");
+    assert_eq!(said[2], result, "{said:?}");
+    assert!(gizai_lib::pending::list(&st, &thread).unwrap().is_empty());
+    assert_eq!(stashes(&herd), ["On main: Gizai: before the update to main"]);
+    assert_eq!(git_out(&herd, &["stash", "show", "--name-only", "stash@{0}"]), "package-lock.json");
+    assert_eq!(std::fs::read_to_string(herd.join("node_modules/calls.log")).unwrap(), "npm ci --no-audit --no-fund\n");
+}

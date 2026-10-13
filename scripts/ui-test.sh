@@ -100,6 +100,25 @@
 #     KADE-1 in mono, selected), its tab on the page in a 32px strip, and the top bar says the folder, sh and the size; + after
 #     the tabs starts another terminal there without a picker, and exit closes it (its row and tab go, the page shows the
 #     first again); with both closed the sidebar has one row, New terminal, and the page is #/terminal.
+# 17. folder picker (GA-146), with four cards' worktrees (titles of one, two and more lines; identifiers of three widths:
+#     GFW-1, KADE-1, KADE-123), a project's linked folder and a folder in ~/Herd, in a scratch home folder: New terminal's
+#     picker (the Terminal page and the sidebar's +, at the default sizes, the largest and compact) and the Editor's (the
+#     Editor page and the sidebar's +) are 480px wide inside the window; a card's title shows on at most two lines, cut off
+#     after the second, in a row as tall as it (a one-line row as high as before); no row runs over another; every card
+#     title starts at one place, with the glyph and the identifier on its first line; the tooltip starts with the full
+#     title; project and folder rows are one row high with the path on the right; ↑, ↓ and Escape; in the Editor's picker
+#     Enter opens a folder and a click opens a card's worktree.
+# 18. editor rows (GA-151), on the folder picker's data with GFW-2 by hand, KADE-123 titled "Fix" and 12 new files in GFW-1:
+#     with none open, the sidebar's Open a folder row and + open the picker; with the six open, at the default sizes, the
+#     largest, compact and both, every Editor row is as tall as the sidebar's other rows and none runs over another; a
+#     card's identifier shows whole on one line with its title right after it on one line, a long one ending in an ellipsis
+#     and "Fix" whole; "12 changed", "by hand", "updating" and a folder's "3 behind" show whole on the right; a card row's
+#     tooltip starts with its full title, a by-hand row's and the folder rows' are as before; folded, the heading says
+#     "1 behind"; the right-click menu has Copy path, Remove from the list and Open card.
+# 19. editor order (GA-157), on the same data with order-g, order-h and order-i in ~/Herd: eight folders picked in turn from
+#     the sidebar's + each join the Editor list at the bottom; a click on each row opens its page and marks it, no row
+#     moving; a listed folder picked again stays put; a ninth: the one opened longest ago leaves, the others keep their
+#     order. Then a restart: the same list in the same order, a click moves nothing, and Remove from the list takes one off.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -175,4 +194,45 @@ rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home/Herd/panel-site
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-a:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=120 scripts/smoke-cage.sh || fail=1
 # the same WebKit storage (.devdata/xdg): a restart
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-b:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+fresh
+# GA-146: GFW-1, GFW-2, KADE-1 and KADE-123 (KADE-3, renumbered for a wider identifier) get worktrees, with titles of one
+# line, two lines and more; Kade portal is linked to ~/Herd/kade-portal, and ~/Herd/picker-site is a folder in ~/Herd
+rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home/Herd/kade-portal .devdata/uitest-home/Herd/picker-site
+python3 - "$PWD/.devdata/uitest-home/Herd/kade-portal" <<'PY'
+import os, sqlite3, sys, time
+c = sqlite3.connect('.devdata/uitest/gizai.db')
+c.execute("update tasks set identifier='KADE-123' where identifier='KADE-3'")
+titles = {'GFW-1': None, 'GFW-2': 'Figma 3: overview, newsletters, recruitment, campaigns and exports for the spring',
+          'KADE-1': 'Brandbook in Figma: the GizAi logo, favicon, colours, type, icons, illustrations, photography, tone of voice'
+                    ' and every template we send to clients, with a page per channel', 'KADE-123': None}
+for ident, title in titles.items():
+    c.execute("update tasks set branch=?, title=coalesce(?, title) where identifier=?", (f"gizai/{ident.lower()}-picker", title, ident))
+    key = c.execute("select p.key from tasks t join projects p on p.id = t.project_id where t.identifier=?", (ident,)).fetchone()[0]
+    os.makedirs(f".devdata/uitest/worktrees/{key}/{ident}", exist_ok=True)
+now = int(time.time() * 1000)
+c.execute("insert into repos(id, created_at, updated_at, project_id, provider, remote_url, local_path) select 'picker-repo', ?, ?, id, 'git',"
+          " 'https://example.invalid/kade-portal.git', ? from projects where key='KADE'", (now, now, sys.argv[1]))
+c.commit()
+PY
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:picker GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+# GA-151: the sidebar's Editor rows, on the same data: GFW-2 pinned to you (by hand), KADE-123 titled "Fix", and GFW-1 with
+# a long title and 12 new files in its own repository ("12 changed")
+python3 - <<'PY'
+import sqlite3, subprocess
+c = sqlite3.connect('.devdata/uitest/gizai.db')
+c.execute("update tasks set pinned_actor_id=(select id from actors where kind='person' order by created_at limit 1) where identifier='GFW-2'")
+c.execute("update tasks set title='Fix' where identifier='KADE-123'")
+c.execute("update tasks set title='Newsletter templates for the spring campaign, with a page per channel and every export' where identifier='GFW-1'")
+c.commit()
+key = c.execute("select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='GFW-1'").fetchone()[0]
+wt = f".devdata/uitest/worktrees/{key}/GFW-1"
+subprocess.run(["git", "init", "-q", "-b", "gizai/gfw-1-picker", wt], check=True)
+for i in range(12):
+    open(f"{wt}/new-{i + 1}.txt", "w").write("new\n")
+PY
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:rows GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+# GA-157: the order of the sidebar's Editor list, on the same data with three more folders in ~/Herd; b is a restart of a
+mkdir -p .devdata/uitest-home/Herd/order-g .devdata/uitest-home/Herd/order-h .devdata/uitest-home/Herd/order-i
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-a GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-b GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

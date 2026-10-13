@@ -66,15 +66,15 @@ The decisions (Jeffrey, 9 Oct 2026):
 
 ## Install, update and CI
 
-- **Install from source (decided).** Linux and macOS: `install.sh`. Windows: `install.ps1`. The README lists what each system needs first and the commands.
+- **Install from source (decided).** Linux and macOS: `install.sh`. Windows: `install.ps1`. The README has the commands, and [install.md](install.md) what each system needs first. The one-line installs get the latest release's source and run these: `scripts/get.sh` with any POSIX `sh` (dash, macOS's own), `scripts/get.ps1` with Windows PowerShell 5.1 or PowerShell 7, piped into `iex`.
 - **Where it installs.** An update installs where the running Gizai was installed, and only a Gizai an install script installed updates itself (`gizai_agents::update::install_prefix`):
   - Linux: `<prefix>/lib/gizai/gizai` and `gizai-mcp`, the command `<prefix>/bin/gizai`, the launcher entry under `<prefix>/share` (`<prefix>` is `~/.local`, `GIZAI_PREFIX` changes it). Unchanged.
   - macOS: the app at `<prefix>/lib/gizai/Gizai.app`, with `gizai` and `gizai-mcp` in its `Contents/MacOS`, `<prefix>/lib/gizai/gizai` and `gizai-mcp` linking into it, `<prefix>/bin/gizai`, and `~/Applications/Gizai.app` linking to the app for the usual prefix, so the Dock, Finder and Spotlight start it.
   - Windows: `gizai.exe` and `gizai-mcp.exe` in `<prefix>` (`%LOCALAPPDATA%\Programs\Gizai`, `GIZAI_PREFIX` changes it), with `gizai-installed.txt` next to them, which tells an installed Gizai from a build in a checkout, and a Start menu shortcut that carries the AppUserModelID `ai.gizai.app`.
 - **Updates (decided).** Gizai fetches the release's tag and builds it from source with that system's install script, as on Linux. No Tauri updater, no signed update files.
-- **No signing (decided).** A build made on your own machine isn't a download, so Gatekeeper and SmartScreen have nothing to quarantine. The README says what to do if they still warn.
+- **No signing (decided).** A build made on your own machine isn't a download, so Gatekeeper and SmartScreen have nothing to quarantine. [install.md](install.md#not-signed) says what to do if they still warn.
 - **CI.** `.github/workflows/ci.yml` builds Gizai on Linux, macOS (Apple Silicon) and Windows on every pull request, and runs `cargo test --workspace` and `npm test` on each. Releases stay as they are: no binaries attached.
-- **The installers in CI.** `ci.yml` checks that `install.sh` parses with macOS's bash 3.2 and that `install.ps1` parses with Windows PowerShell 5.1 and PowerShell 7, and runs their checks. `.github/workflows/install.yml` does what an update does on a Mac and a Windows PC, into a scratch folder: build only, install, install again over it, then uninstall. It also checks Gizai.app's signature and the Start menu shortcut's app ID. A release build takes a while, so it runs only on pull requests that change an installer (or `tauri.conf.json`), and by hand.
+- **The installers in CI.** `ci.yml` checks that `install.sh` parses with macOS's bash 3.2 and that `install.ps1` parses with Windows PowerShell 5.1 and PowerShell 7, and runs their checks. It checks the one-line installs the same way: `get.sh` with `sh -n`, `get.ps1` in both PowerShells, and each one's check run as the one line runs it, against the pull request's own commit, into a scratch folder. `.github/workflows/install.yml` does what an update does on a Mac and a Windows PC, into a scratch folder: build only, install, install again over it, then uninstall. It also checks Gizai.app's signature and the Start menu shortcut's app ID. A release build takes a while, so it runs only on pull requests that change an installer (or `tauri.conf.json`), and by hand.
 
 ## Check list per system
 

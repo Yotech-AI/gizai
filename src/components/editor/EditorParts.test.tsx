@@ -707,7 +707,8 @@ function showPicker() {
   show(() => <FolderPicker at={{ x: 40, y: 120 }} onClose={() => { pickerClosed += 1; }} />);
 }
 const pickerGroupsShown = () => findAll(tree, (f) => f.props.role === "group").map((g) => [g.props["aria-label"], findAll(g.el, (f) => f.props.role === "option").map((o) => o.props.title)]);
-const option = (path: string) => one(findAll(tree, (f) => f.props.role === "option" && f.props.title === path), `option ${path}`);
+// a card row's tooltip starts with the card's title, on its own line (GA-146): the path is its last line
+const option = (path: string) => one(findAll(tree, (f) => f.props.role === "option" && String(f.props.title).split("\n").at(-1) === path), `option ${path}`);
 const findBox = () => byLabel("Find a folder");
 
 describe("The folder picker", () => {
@@ -721,7 +722,7 @@ describe("The folder picker", () => {
     expect(pickerGroupsShown()).toEqual([
       ["Projects", ["~/Herd/kade-portal"]],
       ["In ~/Herd", ["~/Herd/blog", "~/Herd/shop"]],
-      ["Cards", ["~/.local/share/gizai/worktrees/GA/GA-120", "~/.local/share/gizai/worktrees/GA/GA-118"]],
+      ["Cards", ["Fix the login\n~/.local/share/gizai/worktrees/GA/GA-120", "The Editor page\n~/.local/share/gizai/worktrees/GA/GA-118"]],
     ]);
     expect(text(byClass("label", option("~/Herd/kade-portal").el)[0]!)).toBe("Kade portal");
     const says = (path: string) => ["card-id", "label", "stand", "where"].map((c) => byClass(c, option(path).el).map(text).join(""));
@@ -746,7 +747,7 @@ describe("The folder picker", () => {
     expect(text(byClass("pop-empty")[0]!)).toBe("No folder found");
   });
 
-  it("opens a picked folder's page at #/editor/<its id, encoded>, closing, and puts it at the top of the sidebar's Editor list", async () => {
+  it("opens a picked folder's page at #/editor/<its id, encoded>, closing, and adds it at the bottom of the sidebar's Editor list (GA-157)", async () => {
     h.api.editorFolders = async () => FOLDERS;
     store.set(OPENED_KEY, JSON.stringify(["/home/me/Herd/kade-portal"]));
     showPicker();
@@ -755,7 +756,23 @@ describe("The folder picker", () => {
     expect(pickerClosed).toBe(1);
     expect(h.went).toEqual([{ page: "editor", id: "/home/me/Herd/blog" }]);
     expect(href(h.went[0]!)).toBe("#/editor/%2Fhome%2Fme%2FHerd%2Fblog");
-    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(["/home/me/Herd/blog", "/home/me/Herd/kade-portal"]);
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(["/home/me/Herd/kade-portal", "/home/me/Herd/blog"]);
+  });
+
+  // GA-157 QA: a folder already in the sidebar's Editor list stays where it is when the picker opens it
+  it("leaves a picked folder that is already in the sidebar's Editor list where it is, every other row too", async () => {
+    h.api.editorFolders = async () => FOLDERS;
+    const list = ["/home/me/Herd/kade-portal", "/home/me/Herd/blog", "/home/me/Herd/shop"];
+    store.set(OPENED_KEY, JSON.stringify(list));
+    showPicker();
+    await settle();
+    await fire(option("~/Herd/shop"), "onClick");
+    expect(h.went).toEqual([{ page: "editor", id: "/home/me/Herd/shop" }]);
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(list);
+    showPicker();
+    await settle();
+    await fire(option("~/Herd/kade-portal"), "onClick");
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(list);
   });
 
   it("opens the chosen folder with Enter, ↓ choosing the next, and the first of what the filter leaves", async () => {
@@ -802,8 +819,8 @@ describe("The folder picker", () => {
     await settle();
     expect(text(byClass("ed-picker-title")[0]!)).toBe("New terminal in");
     expect(byLabel("New terminal in").props.role).toBe("dialog");
-    const busy = one(findAll(tree, (f) => f.props.role === "option" && String(f.props.title).startsWith("QA Agent")), "GA-118");
-    expect(busy.props.title).toBe("QA Agent is working on GA-118: a terminal there waits until its run ends.");
+    const busy = one(findAll(tree, (f) => f.props.role === "option" && String(f.props.title).includes("\nQA Agent")), "GA-118");
+    expect(busy.props.title).toBe("The Editor page\nQA Agent is working on GA-118: a terminal there waits until its run ends.");
     expect(busy.props["aria-disabled"]).toBe(true);
     await fire(busy, "onClick");
     await typeIn(findBox(), "GA-118");
@@ -814,6 +831,33 @@ describe("The folder picker", () => {
     await fire(option("~/.local/share/gizai/worktrees/GA/GA-120"), "onClick");
     expect([picked, pickerClosed]).toEqual([["/home/me/.local/share/gizai/worktrees/GA/GA-120"], 1]);
     expect(h.went).toEqual([]); // it doesn't open the folder in the Editor
+  });
+
+  // GA-146 QA: the full title leads a card row's tooltip; project and folder rows keep the path alone
+  it("starts a card row's tooltip with the card's full title, a long one too; project and folder rows keep the path alone", async () => {
+    const long = "Figma 3: overview, newsletters, recruitment, campaigns and exports, with every page of the brandbook redrawn";
+    h.api.editorFolders = async () => FOLDERS;
+    showPicker();
+    h.api.listTasks = async () => [task("t1", long, false), task("t2", "Fix the login", true)];
+    show(() => null);
+    show(() => <FolderPicker at={{ x: 40, y: 120 }} onClose={() => { pickerClosed += 1; }} />);
+    await settle();
+    expect(option("~/.local/share/gizai/worktrees/GA/GA-118").props.title).toBe(`${long}\n~/.local/share/gizai/worktrees/GA/GA-118`);
+    expect(text(byClass("label", option("~/.local/share/gizai/worktrees/GA/GA-118").el)[0]!)).toBe(long);
+    expect(option("~/Herd/kade-portal").props.title).toBe("~/Herd/kade-portal");
+    expect(option("~/Herd/blog").props.title).toBe("~/Herd/blog");
+    expect(findAll(tree, (f) => f.props.role === "option").map((o) => o.props["data-kind"])).toEqual(["project", "root", "root", "card", "card"]);
+  });
+
+  it("gives a card it doesn't know the title of (its task not listed) the path alone as its tooltip, without an empty first line", async () => {
+    h.api.editorFolders = async () => FOLDERS;
+    showPicker();
+    h.api.listTasks = async () => { throw new Error("no database"); };
+    show(() => null);
+    show(() => <FolderPicker at={{ x: 40, y: 120 }} onClose={() => { pickerClosed += 1; }} />);
+    await settle();
+    expect(pickerGroupsShown().at(-1)).toEqual(["Cards", ["~/.local/share/gizai/worktrees/GA/GA-118", "~/.local/share/gizai/worktrees/GA/GA-120"]]);
+    expect(text(byClass("label", option("~/.local/share/gizai/worktrees/GA/GA-120").el)[0]!)).toBe("");
   });
 });
 

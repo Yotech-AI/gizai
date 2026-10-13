@@ -23,6 +23,7 @@ pub mod runs;
 pub mod shell_path;
 pub mod terminal;
 pub mod tools;
+mod tour;
 mod unsaved;
 pub mod update;
 pub mod worktrees;
@@ -572,7 +573,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, selftest_report, exit_app, unsaved::set_unsaved_edits, unsaved::close_answer,
+            app_info, selftest_report, tour::tour_still, tour::tour_steps, exit_app, unsaved::set_unsaved_edits, unsaved::close_answer,
             commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
             commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
             commands::agent_mcp, commands::save_agent_mcp, commands::agent_cli_tools, commands::save_agent_cli_tools, commands::ask_cli_tools,

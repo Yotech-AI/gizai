@@ -117,7 +117,8 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 .nav-item .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .nav-section { display: flex; flex-direction: column; flex-shrink: 0; gap: 2px; margin-top: 14px; }
 .nav-label { display: flex; align-items: center; height: 26px; padding: 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); }
-.nav-label button { margin-left: auto; width: 20px; height: 20px; display: grid; place-items: center; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: pointer; }
+/* the + and the caret: no padding, or the browser's own button padding pushes the icon 3px right of its hover background's centre (GA-158) */
+.nav-label button { margin-left: auto; width: 20px; height: 20px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-s); background: none; color: var(--text-3); cursor: pointer; }
 .nav-label button:hover { background: var(--hover); color: var(--text); }
 /* a section that folds (Agents, Memory): its heading's text folds it too; folded Agents shows its live runs before the caret */
 .nav-label .fold { display: flex; align-items: center; flex: 1; min-width: 0; align-self: stretch; cursor: pointer; user-select: none; }
@@ -583,7 +584,9 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 /* ---------- sidebar: the Editor section, a FoldSection between Projects and Agents ---------- */
 /* How a folder stands, on the right of its row: one of "3 behind", "2 changed", "1 ahead", "By hand", "read-only" */
 .nav-item .stand { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
-.nav-item .card-id { font-family: var(--font-mono); font-size: var(--fs-sm); }
+/* A card's row stays one line high: its identifier and how it stands stay whole, its title between them gives way (GA-151) */
+.nav-item .card-id { flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.nav-item .card-id ~ .meta { flex: none; }
 /* Folded, the heading says how many folders are behind (Agents says how many agents are live) */
 .nav-label .fold-tag { margin: 0 6px 0 auto; color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: normal; text-transform: none; }
 
@@ -594,7 +597,7 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .pop .pop-note { padding: 6px 8px 4px; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
 
 /* ---------- the folder picker: a popover from + on the Editor heading, like the @ picker ---------- */
-.pop.ed-picker { display: flex; flex-direction: column; width: 380px; max-width: calc(100vw - 16px); max-height: 460px; padding: 0; overflow: hidden; }
+.pop.ed-picker { display: flex; flex-direction: column; width: 480px; max-width: calc(100vw - 16px); max-height: 460px; padding: 0; overflow: hidden; }
 .ed-picker-in { position: relative; flex: none; padding: var(--space-2); border-bottom: 1px solid var(--line); }
 .ed-picker-in > .icon { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
 .ed-picker-in .input { height: calc(30px + var(--ui-box, 0px)); padding-left: 30px; }
@@ -604,6 +607,14 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 .ed-picker .opt .card-id { flex: none; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 .ed-picker .opt .where { flex: 0 1 auto; margin-left: auto; min-width: 0; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-xs); }
 .ed-picker .opt .stand { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: var(--fs-xs); }
+/* A card's row (GA-146): its title on up to two lines, then an ellipsis, and the row as tall as the title needs, never
+   shorter than a row. The glyph, the identifier and how it stands sit on the title's first line (--first-line high); the
+   identifiers share one column, as wide as the longest (--id-chars, set on the list), so every title starts at one place. */
+.ed-picker .opt[data-kind="card"] { --first-line: calc(1.45 * var(--fs)); align-items: flex-start; height: auto; min-height: calc(30px + var(--ui-box, 0px));
+  padding-block: max(0px, (30px + var(--ui-box, 0px) - var(--first-line)) / 2); line-height: 1.45; }
+.ed-picker .opt[data-kind="card"] > .st, .ed-picker .opt[data-kind="card"] > .card-id, .ed-picker .opt[data-kind="card"] > .stand { display: inline-flex; align-items: center; height: var(--first-line); }
+.ed-picker .opt[data-kind="card"] > .card-id { width: calc(var(--id-chars, 0) * 1ch); white-space: nowrap; }
+.ed-picker .opt[data-kind="card"] > .label { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .ed-picker-foot { flex: none; padding: var(--space-2) var(--space-3); border-top: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
 .ed-picker-foot a { color: var(--text-2); }
 

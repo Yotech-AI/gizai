@@ -1,13 +1,14 @@
 //! A project's own checkout, its linked folder (the main checkout you work in, where a new card's worktree copies
 //! vendor/ and node_modules/ from): how its dependencies stand against main (`status`, local only: no fetch), and its
-//! update to main when you said yes in chat (`plan`, then `update`). The update switches to the default branch only when
-//! asked (the other branch stays as it is), moves with a fast-forward (never a merge commit, a reset or force), and
-//! installs the dependency folders that are behind as a card's preparation would. It never runs the project's setup
-//! command, which could touch your local database.
+//! update to main when you said yes in chat (`plan`, then `update`). The update puts uncommitted changes in tracked
+//! files in git's stash first only when asked (GA-156: they stay there for you to pop), switches to the default branch
+//! only when asked (the other branch stays as it is), moves with a fast-forward (never a merge commit, a reset or
+//! force), and installs the dependency folders that are behind as a card's preparation would. It never runs the
+//! project's setup command, which could touch your local database.
 //!
 //! The Editor's Update (GA-110, `behind`) goes through the same checks (`check`, which says why not as a `Refusal` the
-//! Editor words its own way) and the same `update`, never switching branch and installing only for a lock file that
-//! changes (`Plan::only_changed_locks`).
+//! Editor words its own way) and the same `update`, never stashing, never switching branch and installing only for a
+//! lock file that changes (`Plan::only_changed_locks`).
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -18,6 +19,9 @@ use crate::worktree::git;
 
 /// The dependency folders a card's preparation installs, with the lock file that says what belongs in them.
 const DEPS: [(&str, &str); 2] = [("vendor", "composer.lock"), ("node_modules", "package-lock.json")];
+
+/// The message of the stash entry `update` puts uncommitted changes in, as `git stash list` shows it.
+pub const STASH_MESSAGE: &str = "Gizai: before the update to main";
 
 /// A dependency folder that is behind main.
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +86,9 @@ pub fn status(dir: &Path, default_branch: &str, main: &str) -> Result<Status, Ag
 /// What `update` will do (`plan` found nothing in the way).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
+    /// The tracked files with uncommitted changes it puts in git's stash first, as git status gives them: only when
+    /// `check` was asked to stash; else empty, as when nothing is uncommitted.
+    pub stash: Vec<String>,
     /// The branch the checkout is on now; None without one.
     pub on: Option<String>,
     /// Switch to `default_branch` first: it is on another branch, or none.
@@ -97,9 +104,13 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// What it will do, in one sentence ("switch from feature/x to main, move main 12 commits to 319bf0b and run npm ci").
+    /// What it will do, in one sentence ("switch from feature/x to main, move main 12 commits to 319bf0b and run npm ci";
+    /// with a stash it starts "put the uncommitted changes in package-lock.json in git's stash").
     pub fn said(&self) -> String {
         let mut parts = vec![];
+        if !self.stash.is_empty() {
+            parts.push(stash_said(&self.stash));
+        }
         if self.switch {
             parts.push(match &self.on {
                 Some(b) => format!("switch from {b} to {} ({b} stays as it is)", self.default_branch),
@@ -148,6 +159,21 @@ fn sentence(parts: &[String]) -> String {
     }
 }
 
+/// Uncommitted files as the Team Lead's sentences name them: "a, b"; after ten, "and 5 more".
+fn files_said(files: &[String]) -> String {
+    if files.len() > 10 {
+        format!("{} and {} more", files[..10].join(", "), files.len() - 10)
+    } else {
+        files.join(", ")
+    }
+}
+
+/// "put the uncommitted changes in package-lock.json in git's stash": what a plan with a stash of these files will do
+/// first (`Plan::said`), and what `update` did.
+pub fn stash_said(files: &[String]) -> String {
+    format!("put the uncommitted changes in {} in git's stash", files_said(files))
+}
+
 /// Why `check` changes nothing, as it found it. `said` words it for the Team Lead (`plan`); the Editor words it its own
 /// way (`behind`).
 #[derive(Debug, Clone, PartialEq)]
@@ -177,14 +203,8 @@ impl Refusal {
         match self {
             Refusal::NotACheckout => format!("{name} isn't a checkout of the project's repository: nothing changed"),
             Refusal::InProgress(what) => format!("{what} is in progress in {name}: nothing changed. Finish or abort it first"),
-            Refusal::Uncommitted(changed) => {
-                let shown = if changed.len() > 10 {
-                    format!("{} and {} more", changed[..10].join(", "), changed.len() - 10)
-                } else {
-                    changed.join(", ")
-                };
-                format!("{name} has uncommitted changes in {shown}: nothing changed. Commit or stash them first")
-            }
+            Refusal::Uncommitted(changed) => format!("{name} has uncommitted changes in {}: nothing changed. Commit or stash them first, or \
+                                                     call again with stash only when the user agreed to put them in git's stash", files_said(changed)),
             Refusal::OtherBranch(Some(b)) => format!("{name} is on branch {b}, not {default_branch}: nothing changed. Updating it means switching \
                                 to {default_branch} first ({b} stays as it is): call again with switch only when that is agreed"),
             Refusal::OtherBranch(None) => format!("{name} has no branch checked out: nothing changed. Updating it means switching to \
@@ -200,13 +220,18 @@ impl Refusal {
 
 /// Whether `update` may run in the checkout `dir` of the repository whose main checkout is `repo`, and what it would do:
 /// bring its `default_branch` to `main` (a ref) with a fast-forward, after switching to it when it is on another branch
-/// and `switch` allows that. Nothing changes here. Says why not (`Refusal`) when:
+/// and `switch` allows that. With `stash`, uncommitted changes in tracked files don't stop it: the plan puts them in
+/// git's stash first (`Plan::stash`). Nothing changes here. Says why not (`Refusal`) when:
 /// - it isn't a checkout of `repo`;
-/// - a merge, rebase, cherry-pick or revert is in progress, or tracked files have uncommitted changes (it names them);
+/// - a merge, rebase, cherry-pick or revert is in progress, or tracked files have uncommitted changes and `stash` is
+///   false (it names them);
 /// - it is on another branch, or none, and `switch` is false;
 /// - its default branch has commits main doesn't, so only a merge could bring main in;
 /// - main hasn't been fetched yet, or the default branch isn't there.
-pub fn check(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool) -> Result<Plan, Refusal> {
+///
+/// The installs are those `status` finds now, before any stash: a lock file changed by hand still gets its install,
+/// which puts its dependency folder back in line with main's lock.
+pub fn check(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool, stash: bool) -> Result<Plan, Refusal> {
     if !dir.is_dir() || !is_checkout_of(dir, repo) {
         return Err(Refusal::NotACheckout);
     }
@@ -224,7 +249,7 @@ pub fn check(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: 
     // --no-optional-locks: a check that refuses doesn't even refresh the folder's index
     let changed: Vec<String> = git(dir, &["--no-optional-locks", "status", "--porcelain", "--untracked-files=no"]).map_err(failed)?
         .lines().filter(|l| l.len() > 3).map(|l| l[3..].to_string()).collect();
-    if !changed.is_empty() {
+    if !changed.is_empty() && !stash {
         return Err(Refusal::Uncommitted(changed));
     }
     let on = Some(git(dir, &["branch", "--show-current"]).map_err(failed)?).filter(|b| !b.is_empty());
@@ -244,17 +269,19 @@ pub fn check(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: 
     }
     let commits = count(format!("{from}..{to}"))?;
     let install = status(dir, default_branch, main).map_err(failed)?.deps.into_iter().map(|d| d.folder).collect();
-    Ok(Plan { on, switch: switching, default_branch: default_branch.to_string(), from, to, commits, install })
+    Ok(Plan { stash: changed, on, switch: switching, default_branch: default_branch.to_string(), from, to, commits, install })
 }
 
 /// `check`, refused in a sentence for the Team Lead (`Refusal::said`): `update_checkout`'s plan.
-pub fn plan(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool) -> Result<Plan, String> {
-    check(dir, repo, default_branch, main, switch).map_err(|r| r.said(dir, default_branch, main))
+pub fn plan(dir: &Path, repo: &Path, default_branch: &str, main: &str, switch: bool, stash: bool) -> Result<Plan, String> {
+    check(dir, repo, default_branch, main, switch, stash).map_err(|r| r.said(dir, default_branch, main))
 }
 
 /// What `update` did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Updated {
+    /// The files whose uncommitted changes it put in git's stash first (`STASH_MESSAGE`); empty when it stashed nothing.
+    pub stashed: Vec<String>,
     /// The branch it switched from, when it switched ("" for none).
     pub switched_from: Option<String>,
     pub from: String,
@@ -274,6 +301,9 @@ pub struct Stopped {
     pub why: String,
     /// The end of the output.
     pub output: String,
+    /// The files whose uncommitted changes it had put in git's stash ("put the uncommitted changes in … in git's stash"
+    /// is in `done` then); empty when it stashed nothing.
+    pub stashed: Vec<String>,
     /// The fast-forward had run: the default branch is at main's commit.
     pub moved: bool,
     /// The installs that had run ("composer install").
@@ -286,6 +316,7 @@ pub struct Stopped {
 #[derive(Default)]
 struct Progress {
     done: Vec<String>,
+    stashed: Vec<String>,
     moved: bool,
     installed: Vec<String>,
     printed: Vec<String>,
@@ -303,14 +334,16 @@ impl Progress {
     /// Stops here: `why` the step failed, and `output` its output.
     fn stop(mut self, why: String, output: String) -> Box<Stopped> {
         self.printed(&output);
-        Box::new(Stopped { done: self.done, why, output, moved: self.moved, installed: self.installed, printed: self.printed.join("\n") })
+        Box::new(Stopped { done: self.done, why, output, stashed: self.stashed, moved: self.moved, installed: self.installed,
+                           printed: self.printed.join("\n") })
     }
 }
 
-/// Carries out `plan` in the checkout `dir`: switches to the default branch when the plan says so, fast-forwards it to
-/// main (`git merge --ff-only`), then installs the dependency folders that were behind (`prepare::install`: no prompts,
-/// within its time limit). git's hooks don't run, so nothing happens beyond what the plan says. `path` is the PATH the
-/// installs get (None: Gizai's own). The first step that fails stops it.
+/// Carries out `plan` in the checkout `dir`: puts the uncommitted changes in tracked files in git's stash when the plan
+/// says so (`git stash push`, as `STASH_MESSAGE`; untracked files stay where they are), switches to the default branch
+/// when the plan says so, fast-forwards it to main (`git merge --ff-only`), then installs the dependency folders that
+/// were behind (`prepare::install`: no prompts, within its time limit). git's hooks don't run, so nothing happens beyond
+/// what the plan says. `path` is the PATH the installs get (None: Gizai's own). The first step that fails stops it.
 pub fn update(dir: &Path, plan: &Plan, path: Option<&OsStr>) -> Result<Updated, Box<Stopped>> {
     let mut p = Progress::default();
     let said = |e: AgentError| match e {
@@ -318,6 +351,21 @@ pub fn update(dir: &Path, plan: &Plan, path: Option<&OsStr>) -> Result<Updated, 
         other => other.to_string(),
     };
     const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+    if !plan.stash.is_empty() {
+        let top = || git(dir, &["rev-parse", "--quiet", "--verify", "refs/stash"]).ok();
+        let before = top();
+        // tracked files only, as `check` counts them
+        let args = [NO_HOOKS[0], NO_HOOKS[1], "stash", "push", "-m", STASH_MESSAGE];
+        match git(dir, &args) {
+            Ok(out) => p.printed(&out),
+            Err(e) => return Err(p.stop("putting the uncommitted changes in git's stash failed".into(), said(e))),
+        }
+        // the changes went since the check: git stashed nothing, so there is nothing to pop
+        if top() != before {
+            p.done.push(stash_said(&plan.stash));
+            p.stashed = plan.stash.clone();
+        }
+    }
     if plan.switch {
         let args = [NO_HOOKS[0], NO_HOOKS[1], "switch", "--quiet", plan.default_branch.as_str()];
         match git(dir, &args) {
@@ -349,6 +397,7 @@ pub fn update(dir: &Path, plan: &Plan, path: Option<&OsStr>) -> Result<Updated, 
         }
     }
     Ok(Updated {
+        stashed: p.stashed,
         switched_from: plan.switch.then(|| plan.on.clone().unwrap_or_default()),
         from: plan.from.clone(), to: plan.to.clone(), installed: p.installed, printed: p.printed.join("\n"),
     })

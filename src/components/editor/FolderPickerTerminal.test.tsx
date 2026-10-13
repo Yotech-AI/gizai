@@ -201,7 +201,7 @@ describe("New terminal's folder picker (design §2)", () => {
     await terminal();
     const off = option("GA-118");
     expect(off.props["aria-disabled"]).toBe(true);
-    expect(off.props.title).toBe("QA Agent is working on GA-118: a terminal there waits until its run ends.");
+    expect(off.props.title).toBe("Show a run's changes\nQA Agent is working on GA-118: a terminal there waits until its run ends.");
     const stand = findAll(kids(off), (f) => f.props.className === "stand")[0]!;
     expect(textOf(kids(stand))).toBe("QA Agent is working");
     expect(findAll(kids(stand), (f) => f.props.className === "pulse")).toHaveLength(1);
@@ -220,7 +220,7 @@ describe("New terminal's folder picker (design §2)", () => {
     const cards = findAll(tree, (f) => f.props.role === "group" && f.props["aria-label"] === "Cards")[0]!;
     const order = findAll(kids(cards), (f) => f.props.role === "option" || f.props.role === "alertdialog").map((f) => (f.props.role === "option" ? textOf(kids(findAll(kids(f), (x) => x.props.className === "card-id")[0]!)) : "ask"));
     expect(order).toEqual(["KADE-41", "GA-118", "GA-112", "ask"]);
-    expect(option("GA-112").props.title).toBe("GA-112 is Frontend Agent's card");
+    expect(option("GA-112").props.title).toBe("Remember the open tabs per folder\nGA-112 is Frontend Agent's card");
     fire(findAll(kids(ask), (f) => f.type === "button" && textOf(kids(f)) === "Edit anyway")[0]!, "onClick");
     expect(picked).toEqual(["GA-112"]);
     expect(closed).toBe(1);
@@ -268,5 +268,99 @@ describe("the Editor's own picker (no onPick) is as it was", () => {
     expect(confirmBox()).toBeUndefined();
     expect(s.went).toEqual([{ page: "editor", id: `${WT}/GA/GA-112` }]);
     expect(closed).toBe(1);
+  });
+});
+
+// GA-146 QA: card rows with long titles. How tall a row is and where its title wraps is CSS, checked in the real window by
+// the cage run (scripts/ui-test.sh, terminal:picker); here: what the rows carry for it, the tooltip and where the picker sits.
+describe("card rows with long titles (GA-146)", () => {
+  const list = () => one((f) => f.props.role === "listbox")!;
+  const idChars = () => (list().props.style as Record<string, unknown>)["--id-chars"];
+  const typeQuery = (value: string) => fire(one((f) => f.type === "input")!, "onChange", { target: { value } });
+
+  it("gives the cards' identifiers one column, as wide as the longest card's (KADE-41: 7 characters), kept while you type", async () => {
+    await terminal();
+    expect(idChars()).toBe(7);
+    typeQuery("GA-112");
+    expect(groups()).toEqual([["Cards", ["GA-112"]]]);
+    expect(idChars()).toBe(7);
+    typeQuery("invoice-api");
+    expect(idChars()).toBe(7);
+  });
+  it("marks card rows as cards, so only they grow; project and folder rows keep their path on the right", async () => {
+    await terminal();
+    const rows = findAll(tree, (f) => f.props.role === "option");
+    expect(rows.map((o) => o.props["data-kind"])).toEqual(["project", "root", "root", "card", "card", "card"]);
+    const where = (o: Found) => findAll(kids(o), (x) => x.props.className === "where").map((x) => textOf(kids(x)));
+    expect(rows.map(where)).toEqual([["~/Herd/gizai"], ["~/Herd/invoice-api"], ["~/Herd/kade-portal"], [], [], []]);
+    expect(rows.slice(0, 3).map((o) => o.props.title)).toEqual(["~/Herd/gizai", "~/Herd/invoice-api", "~/Herd/kade-portal"]);
+  });
+  it("starts a card row's tooltip with its full title, then the path, in New terminal's picker and in the Editor's own", async () => {
+    await terminal();
+    expect(option("KADE-41").props.title).toBe("Fix the invoice total\n~/.local/share/gizai/worktrees/KADE/KADE-41");
+    root = () => null; render();
+    await show();
+    expect(["KADE-41", "GA-118", "GA-112"].map((n) => option(n).props.title)).toEqual([
+      "Fix the invoice total\n~/.local/share/gizai/worktrees/KADE/KADE-41",
+      "Show a run's changes\n~/.local/share/gizai/worktrees/GA/GA-118",
+      "Remember the open tabs per folder\n~/.local/share/gizai/worktrees/GA/GA-112",
+    ]);
+  });
+  it("stays in the window, 8px from its edges: moved left when it would run off the right, up when it would run off the bottom", async () => {
+    const at = { x: 240, y: 100 };
+    root = () => <FolderPicker at={{ ...at }} onClose={() => { closed += 1; }} />;
+    render();
+    await settle();
+    // the fake runtime doesn't attach refs: the dialog's ref gets a 480 × 300 box by hand
+    const dialog = one((f) => f.props.role === "dialog")!;
+    (dialog.props.ref as { current: unknown }).current = { getBoundingClientRect: () => ({ width: 480, height: 300 }) };
+    const placed = (x: number, y: number) => {
+      root = () => <FolderPicker at={{ x, y }} onClose={() => { closed += 1; }} />;
+      render();
+      const st = one((f) => f.props.role === "dialog")!.props.style as { left: number; top: number };
+      return [st.left, st.top];
+    };
+    expect(placed(240, 120)).toEqual([240, 120]);
+    expect(placed(1000, 120)).toEqual([1280 - 480 - 8, 120]);
+    expect(placed(240, 600)).toEqual([240, 720 - 300 - 8]);
+    expect(placed(1270, 715)).toEqual([792, 412]);
+    expect(placed(2, 3)).toEqual([8, 8]);
+  });
+});
+
+// Vitest hands a .css file back empty, so the stylesheets are read from disk (as in ChatComposerLayout.test.tsx); node:fs
+// comes in through a computed specifier: the build type-checks tests without Node's types.
+const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+const css = (name: string): string => fs.readFileSync(new URL(`../../styles/${name}`, import.meta.url), "utf8");
+/** The declarations of the first block whose selector is exactly `selector`. */
+function rule(sheet: string, selector: string): Map<string, string> {
+  const start = sheet.indexOf(`\n${selector} {`);
+  if (start < 0) throw new Error(`no ${selector} block`);
+  const body = sheet.slice(sheet.indexOf("{", start) + 1, sheet.indexOf("}", start)).replace(/\/\*[\s\S]*?\*\//g, "");
+  const out = new Map<string, string>();
+  for (const m of body.matchAll(/([\w-]+)\s*:\s*([^;]+);/g)) out.set(m[1] ?? "", (m[2] ?? "").replace(/\s+/g, " ").trim());
+  return out;
+}
+
+describe("the folder picker's styles (GA-146)", () => {
+  const components = css("components.css");
+  it("make the picker 480px wide, and never wider than the window minus 16px", () => {
+    const picker = rule(components, ".pop.ed-picker");
+    expect([picker.get("width"), picker.get("max-width")]).toEqual(["480px", "calc(100vw - 16px)"]);
+  });
+  it("let a card row grow with its title, never shorter than a row; project and folder rows keep the one-line row", () => {
+    const row = rule(css("app.css"), ".pop .opt");
+    expect([row.get("height"), row.get("align-items")]).toEqual(["calc(30px + var(--ui-box, 0px))", "center"]);
+    const card = rule(components, '.ed-picker .opt[data-kind="card"]');
+    expect([card.get("height"), card.get("min-height"), card.get("align-items")]).toEqual(["auto", row.get("height"), "flex-start"]);
+    const where = rule(components, ".ed-picker .opt .where");
+    expect([where.get("white-space"), where.get("text-overflow"), where.get("overflow")]).toEqual(["nowrap", "ellipsis", "hidden"]);
+  });
+  it("clamp a card's title at two lines, and give the identifiers one column of --id-chars characters", () => {
+    const label = rule(components, '.ed-picker .opt[data-kind="card"] > .label');
+    expect([label.get("display"), label.get("-webkit-line-clamp"), label.get("line-clamp"), label.get("overflow"), label.get("min-width")]).toEqual(["-webkit-box", "2", "2", "hidden", "0"]);
+    const id = rule(components, '.ed-picker .opt[data-kind="card"] > .card-id');
+    expect([id.get("width"), id.get("white-space")]).toEqual(["calc(var(--id-chars, 0) * 1ch)", "nowrap"]);
+    expect(rule(components, ".ed-picker .opt .card-id").get("font-family")).toBe("var(--font-mono)");
   });
 });

@@ -39,6 +39,9 @@ and the drawer edge. Shadows only on things that float: `shadow-pop`, `shadow-dr
 - The terminal's own colours (`term-*`) are what programs print, not Gizai's states: `term-cyan` is a sky blue and
   `term-magenta` a violet, at least 35° of hue (OKLCH) from `live` and `needs`, so a program's cyan never reads as an
   agent at work, nor its magenta as "needs you".
+- The mountains along the bottom of the window (`band-*`, GA-139) are the window's own light, not a state: one cool
+  blue, at least 35° of hue (OKLCH) from `live` and `needs` and 30° from `accent`, low in chroma and alpha. They never
+  move and never run behind code; text and controls on them keep their contrast (`design/branding/README.md`).
 - `success`, `warning`, `danger` are run and form outcomes. Each badge pairs its colour with a word.
 - Status is shown by glyph shape *and* hue (see StatusIcon), so it reads without colour:
   Backlog dashed circle `st-backlog`, To do open circle `st-todo`, In progress half circle

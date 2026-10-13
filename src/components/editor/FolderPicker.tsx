@@ -1,12 +1,13 @@
 // The folder picker (GA-113; design §2): from + on the sidebar's Editor heading, and Open a folder on the Editor page.
-// A popover like the @ picker, through a portal (the sidebar clips what overflows it), its top where it was asked for,
-// moved up as far as it must to fit the window. Projects (their linked folders), one group per Editor folder ("In
-// ~/Herd": the folders directly inside it that aren't a project's), and Cards (worktrees, yours by hand first). One box
-// filters them all; ↑ and ↓ choose, Enter opens, Escape closes. The Terminal page (GA-135) and the sidebar's Terminal
-// (GA-136) use it titled "New terminal in", with their own `onPick` (design/terminal §2): there a card's worktree an agent
-// works on is off, with why as its tooltip; a card that isn't pinned to you asks first under its row, with Edit anyway; the
-// folder the page shows is on top and chosen; a note can sit on top of the list (20 terminals open); and a terminal that
-// couldn't start says why under its row, with the picker still open.
+// A popover like the @ picker, through a portal (the sidebar clips what overflows it), its top left corner where it was
+// asked for, moved up and left as far as it must to fit the window. Projects (their linked folders), one group per Editor
+// folder ("In ~/Herd": the folders directly inside it that aren't a project's), and Cards (worktrees, yours by hand first:
+// a card's title on up to two lines, its full title in the row's tooltip; GA-146). One box filters them all; ↑ and ↓
+// choose, Enter opens, Escape closes. The Terminal page (GA-135) and the sidebar's Terminal (GA-136) use it titled "New
+// terminal in", with their own `onPick` (design/terminal §2): there a card's worktree an agent works on is off, with why
+// as its tooltip; a card that isn't pinned to you asks first under its row, with Edit anyway; the folder the page shows is
+// on top and chosen; a note can sit on top of the list (20 terminals open); and a terminal that couldn't start says why
+// under its row, with the picker still open.
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FolderCode, Info, Keyboard, Search } from "lucide-react";
@@ -16,7 +17,7 @@ import { go, href } from "../../router";
 import { pickerGroups, rememberFolder } from "../../lib/editor";
 import { StatusIcon } from "../StatusIcon";
 
-/** Opens a folder in the Editor: to the top of the sidebar's list, then its page. */
+/** Opens a folder in the Editor: at the bottom of the sidebar's list when it isn't in it yet, then its page. */
 export function openFolder(id: string) {
   rememberFolder(id);
   go({ page: "editor", id });
@@ -44,7 +45,7 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
-  const [top, setTop] = useState(at.y);
+  const [pos, setPos] = useState({ left: at.x, top: at.y });
   const [asking, setAsking] = useState<string | null>(null);
   const [failed, setFailed] = useState<{ id: string; why: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,13 +65,16 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
     return () => window.removeEventListener("mousedown", down);
   }, [onClose]);
   useLayoutEffect(() => {
-    const h = ref.current?.getBoundingClientRect().height ?? 0;
-    setTop(Math.max(8, Math.min(at.y, window.innerHeight - h - 8)));
-  }, [at.y, folders, asking, failed]);
+    const r = ref.current?.getBoundingClientRect();
+    setPos({ left: Math.max(8, Math.min(at.x, window.innerWidth - (r?.width ?? 0) - 8)), top: Math.max(8, Math.min(at.y, window.innerHeight - (r?.height ?? 0) - 8)) });
+  }, [at.x, at.y, folders, asking, failed]);
 
   const byHand = (f: EditorFolder) => !!(f.taskId && tasks.get(f.taskId)?.byHand);
   const groups = useMemo(() => currentFirst(pickerGroups(folders ?? [], roots, query, byHand), current), [folders, roots, query, tasks, current]); // eslint-disable-line react-hooks/exhaustive-deps
   const flat = groups.flatMap((g) => g.folders);
+  // the cards' identifiers share one column, as wide as the longest (in characters: the mono font), so every title starts
+  // at the same place (GA-146); from all the cards, so it stays put while you type
+  const idChars = useMemo(() => Math.max(0, ...(folders ?? []).filter((f) => f.kind === "card").map((f) => f.name.length)), [folders]);
   // a terminal can't start in a card's worktree while an agent works on it (the backend refuses it too)
   const off = (f: EditorFolder) => !!onPick && f.readOnly;
   // nor, without asking, in one that isn't pinned to you: a shell there can change its files, as an edit can
@@ -91,7 +95,7 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
 
   let i = -1;
   return createPortal(
-    <div ref={ref} className="pop ed-picker" role="dialog" aria-label={title ?? "Open a folder"} style={{ position: "fixed", left: at.x, top }}
+    <div ref={ref} className="pop ed-picker" role="dialog" aria-label={title ?? "Open a folder"} style={{ position: "fixed", left: pos.left, top: pos.top }}
       onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); } }}>
       {title && <div className="ed-picker-title">{title}</div>}
       <div className="ed-picker-in">
@@ -105,7 +109,7 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
           }} />
       </div>
       {note && <div className="ed-picker-note" role="status"><Info className="icon" /><span>{note}</span></div>}
-      <div className="ed-picker-list" role="listbox" aria-label="Folders">
+      <div className="ed-picker-list" role="listbox" aria-label="Folders" style={{ "--id-chars": idChars } as React.CSSProperties}>
         {error ? <div className="pop-empty">{error}</div>
           : !folders ? <div className="pop-empty">Loading…</div>
           : folders.length === 0 ? <div className="pop-empty">No folders yet. Link a project to its folder (project page → Edit), or say where your projects are in Settings → General → Editor folders.</div>
@@ -119,10 +123,11 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
                 const task = f.taskId ? tasks.get(f.taskId) : undefined;
                 const project = f.projectId ? projects.get(f.projectId) : undefined;
                 const asks = ask(f);
+                const says = off(f) ? `${f.readOnlyWhy ?? "An agent is working on it"}: a terminal there waits until its run ends.` : asks ? asks.slice(0, asks.indexOf(":")) : f.path;
                 return (
                   <Fragment key={f.id}>
-                  <button className={`opt${me === sel ? " active" : ""}`} role="option" aria-selected={me === sel}
-                    title={off(f) ? `${f.readOnlyWhy ?? "An agent is working on it"}: a terminal there waits until its run ends.` : asks ? asks.slice(0, asks.indexOf(":")) : f.path}
+                  <button className={`opt${me === sel ? " active" : ""}`} role="option" aria-selected={me === sel} data-kind={f.kind}
+                    title={f.kind === "card" && task?.title ? `${task.title}\n${says}` : says}
                     aria-disabled={off(f) || undefined}
                     onMouseEnter={() => setSel(me)} onClick={() => choose(f)}>
                     {f.kind === "project" ? <span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", flex: "none", background: project?.color ?? "var(--text-3)" }} />

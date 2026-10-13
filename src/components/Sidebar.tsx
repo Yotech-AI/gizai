@@ -264,10 +264,11 @@ function TerminalSection({ route, tasks, youId, folded, onFold }: { route: Route
   );
 }
 
-/** Editor (GA-113), between Terminal and Agents: the folders you opened, newest first (at most 8), each with how it
- *  stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
+/** Editor (GA-113), between Terminal and Agents: the folders you opened (at most 8), each where it joined the list, a new
+ *  one at the bottom like a new terminal (GA-157). Each says how it stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
  *  to a person, "updating" while Update runs, else behind main ("3 behind", GA-114), else how many files changed, else
- *  ahead. Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,
+ *  ahead. A card's row is its identifier and its title, on one line (cut short, the tooltip starts with it whole; GA-151).
+ *  Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,
  *  Copy path, Remove from the list and, on a card's row, Open card. How a folder stands against main is as last fetched
  *  (the Editor page fetches); the row follows the page at once (Update started, a fetch) and an update's end. */
 function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: Task[]; folded: boolean; onFold: () => void }) {
@@ -335,15 +336,17 @@ function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: 
           : task?.byHand ? <span className="stand"><Keyboard className="icon sm" />by hand</span>
           : main?.updating ? <span className="stand"><LoaderCircle className="icon sm spin" />updating</span>
           : word ? <span className="stand">{word}</span> : null;
-        const tip = f?.readOnly ? `${workingWho(f.readOnlyWhy)} on ${f.name}: read-only until its run ends`
+        const says = f?.readOnly ? `${workingWho(f.readOnlyWhy)} on ${f.name}: read-only until its run ends`
           : task?.byHand ? `${task.identifier} ${task.title}. Pinned to you: agents leave it alone`
           : rowTip(f?.path ?? id, main, git);
+        // a card's row starts with its full title, which the row may cut short (GA-151); by hand, it already does
+        const tip = f?.kind === "card" && task?.title && (f.readOnly || !task.byHand) ? `${task.title}\n${says}` : says;
         return (
           <a key={id} className={`nav-item${route.page === "editor" && route.id === id ? " on" : ""}`} href={href({ page: "editor", id })} title={tip}
             onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id }); }}
             onKeyDown={(e) => { if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left + 24, y: r.bottom, id }); } }}>
             <FolderCode className="icon" />
-            {f?.kind === "card" ? <><span className="card-id">{f.name}</span>{task && <span className="faint" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{task.title}</span>}</> : <span>{name}</span>}
+            {f?.kind === "card" ? <><span className="card-id">{f.name}</span>{task && <span className="faint ellipsis">{task.title}</span>}</> : <span>{name}</span>}
             {stand && <span className="meta">{stand}</span>}
           </a>
         );

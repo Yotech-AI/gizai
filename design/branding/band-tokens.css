@@ -1,0 +1,35 @@
+/* The band's tokens (GA-139), until the frontend card puts them in design/tokens.json and src/styles/tokens.css. Made by
+   gen-bottom-band.mjs from the same list as new-tokens.json: change them there. An alias is declared in each theme, so a
+   frame of this page in the other theme resolves it to its own colour. */
+
+:root, [data-theme="dark"] {
+  --band-subtle-line: rgba(160, 211, 235, 0.10);
+  --band-subtle-glow: rgba(20, 100, 128, 0.08);
+  --band-medium-line: rgba(160, 211, 235, 0.17);
+  --band-medium-glow: rgba(20, 100, 128, 0.15);
+  --band-strong-line: rgba(160, 211, 235, 0.38);
+  --band-strong-glow: rgba(20, 100, 128, 0.36);
+  --band-line: var(--band-medium-line);
+  --band-glow: var(--band-medium-glow);
+}
+
+[data-theme="light"] {
+  --band-subtle-line: rgba(32, 108, 137, 0.14);
+  --band-subtle-glow: rgba(201, 227, 239, 0.35);
+  --band-medium-line: rgba(32, 108, 137, 0.24);
+  --band-medium-glow: rgba(201, 227, 239, 0.65);
+  --band-strong-line: rgba(32, 108, 137, 0.50);
+  --band-strong-glow: rgba(201, 227, 239, 1.00);
+  --band-line: var(--band-medium-line);
+  --band-glow: var(--band-medium-glow);
+}
+
+:root {
+  --size-band: 128px;
+  --size-band-min: 80px;
+}
+
+/* This page only: a frame's strength (the app has one, in band-line and band-glow) */
+[data-band="subtle"] { --band-line: var(--band-subtle-line); --band-glow: var(--band-subtle-glow); }
+[data-band="medium"] { --band-line: var(--band-medium-line); --band-glow: var(--band-medium-glow); }
+[data-band="strong"] { --band-line: var(--band-strong-line); --band-glow: var(--band-strong-glow); }

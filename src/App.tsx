@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { appInfo, exitApp, getDoc, getTask, getTeam, listRuns, saveDoc, updateTask, listClients, listProjects, listTasks, selftestReport } from "./api";
+import { appInfo, exitApp, getDoc, getTask, getTeam, listRuns, saveDoc, updateTask, listClients, listProjects, listTasks, selftestReport, tourStill, tourSteps } from "./api";
 import { useRoute } from "./router";
 import type { AppInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
@@ -24,7 +24,7 @@ import { MemoryPage } from "./pages/MemoryPage";
 import { EditorPage } from "./pages/EditorPage";
 import { TerminalPage } from "./pages/TerminalPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, terminalProbe, usageProbe } from "./selftest";
+import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, runSteps, teamProbe, terminalProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 import { startTerminals } from "./lib/terminals";
 
@@ -71,15 +71,10 @@ export default function App() {
           setAppearance(appearanceOf(spec), false);
           steps = then;
         }
-        // GIZAI_SELFTEST_MODE=steps:<step>;<step>…: a step "#/route" goes there, any other step clicks that CSS selector.
+        // GIZAI_SELFTEST_MODE=steps:<step>;<step>…: a step "#/route" goes there, any other step clicks that CSS selector;
+        // runSteps has the rest (the product tour's named clicks and stills, GA-148).
         if (i.selftest_mode?.startsWith("steps:")) steps = i.selftest_mode.slice(6).split(";");
-        if (steps.length) {
-          for (const step of steps) {
-            await new Promise((r) => setTimeout(r, 1200));
-            if (step.startsWith("#/")) window.location.hash = step;
-            else { const el = document.querySelector(step) as HTMLElement | null; el?.scrollIntoView({ block: "start" }); el?.click(); }
-          }
-        }
+        if (steps.length) await runSteps(steps, { still: tourStill, report: tourSteps });
         document.body.dataset.ready = "1";
         if (i.selftest) {
           // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the

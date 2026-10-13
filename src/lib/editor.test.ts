@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DirEntry, EditorFolder, FolderGit, SearchHit } from "../types";
 import {
   diskAction, cursorLabel, endingsLabel, foldersOf, forgetFolder, hitParts, hitsByFile, holdsChanges, ignoredFolderOf, indentOf,
-  keepTabs, keptTabs, loadTabs, markOf, matchFiles, MAX_OPENED, nameOf, nextAfterClose, openedOf, OPENED_KEY, parentOf,
+  keepTabs, keptTabs, loadTabs, markOf, matchFiles, MAX_OPENED, nameOf, nextAfterClose, openedAtOf, openedOf, OPENED_AT_KEY, OPENED_KEY, parentOf,
   pickerGroups, readOnlyBar, readOnlyStatus, rememberFolder, searchSummary, sizeLabel, standingTip, standingWord, stepTab,
   tabNames, TABS_KEY, treeRows, typedPath, unreadable, WHY, withOpened, withoutOpened, withTabs, type Level,
 } from "./editor";
@@ -46,25 +46,126 @@ describe("the folders you opened, as kept in localStorage (GA-113)", () => {
     const ten = Array.from({ length: 10 }, (_, i) => `/f${i}`);
     expect(openedOf(JSON.stringify(ten))).toEqual(ten.slice(0, 8));
   });
-  it("puts a folder you open at the top", () => {
-    expect(withOpened(null, "/a")).toBe('["/a"]');
-    expect(withOpened('["/a","/b"]', "/c")).toBe('["/c","/a","/b"]');
+  // GA-157: a folder opened for the first time joins at the bottom; one already listed stays where it is
+  it("adds a folder you open for the first time at the bottom", () => {
+    expect(withOpened(null, null, "/a", 1000)).toEqual({ list: '["/a"]', at: '{"/a":1000}' });
+    expect(withOpened('["/a","/b"]', '{"/a":1,"/b":2}', "/c", 3).list).toBe('["/a","/b","/c"]');
   });
-  it("lists a folder once: opening it again moves it to the top", () => {
-    expect(withOpened('["/a","/b","/c"]', "/c")).toBe('["/c","/a","/b"]');
-    expect(withOpened('["/a"]', "/a")).toBe('["/a"]');
+  it("lists a folder once: opening it again leaves every row where it was", () => {
+    expect(withOpened('["/a","/b","/c"]', '{"/a":1,"/b":2,"/c":3}', "/c", 4).list).toBe('["/a","/b","/c"]');
+    expect(withOpened('["/a","/b","/c"]', '{"/a":1,"/b":2,"/c":3}', "/a", 4).list).toBe('["/a","/b","/c"]');
+    expect(withOpened('["/a"]', '{"/a":1}', "/a", 2).list).toBe('["/a"]');
   });
-  it("drops the oldest beyond 8", () => {
+  it("with 8 listed, a ninth: the one opened longest ago leaves, the others keep their order", () => {
     const eight = Array.from({ length: 8 }, (_, i) => `/f${i}`);
-    expect(JSON.parse(withOpened(JSON.stringify(eight), "/new"))).toEqual(["/new", ...eight.slice(0, 7)]);
+    const at = JSON.stringify(Object.fromEntries(eight.map((f, i) => [f, 100 + i])));
+    expect(JSON.parse(withOpened(JSON.stringify(eight), at, "/new", 200).list)).toEqual([...eight.slice(1), "/new"]);
   });
   it("starts over from something unreadable", () => {
-    expect(withOpened("{oops", "/a")).toBe('["/a"]');
+    expect(withOpened("{oops", "{oops", "/a", 5)).toEqual({ list: '["/a"]', at: '{"/a":5}' });
   });
   it("takes a folder off the list on Remove from the list, the others as they were", () => {
     expect(withoutOpened('["/a","/b","/c"]', "/b")).toBe('["/a","/c"]');
     expect(withoutOpened('["/a"]', "/x")).toBe('["/a"]');
     expect(withoutOpened(null, "/a")).toBe("[]");
+  });
+});
+
+// GA-157 QA: opening a folder keeps every row of the sidebar's Editor list in its place, like Terminals: a new folder joins
+// at the bottom, and with a ninth the one opened longest ago leaves. When each was last opened is kept next to the list.
+describe("the order of the folders you opened (GA-157)", () => {
+  type Kept = { list: string | null; at: string | null };
+  /** Opens each folder in turn, at `from`, `from + 1`, …, starting from what is kept. */
+  const openAll = (ids: string[], kept: Kept = { list: null, at: null }, from = 1000): Kept => {
+    let s = kept;
+    ids.forEach((id, i) => { s = withOpened(s.list, s.at, id, from + i); });
+    return s;
+  };
+  const listOf = (s: Kept) => openedOf(s.list);
+  const timesOf = (s: Kept) => openedAtOf(s.at);
+  const eight = Array.from({ length: 8 }, (_, i) => `/f${i}`);
+
+  it("keeps when each was last opened under gizai.editor.openedAt", () => {
+    expect(OPENED_AT_KEY).toBe("gizai.editor.openedAt");
+  });
+  it("reads the times kept, leaving out what isn't a time; nothing kept, or something unreadable, is none", () => {
+    for (const kept of [null, "", "{oops", "null", "5", '"x"', "[1,2]"]) expect(openedAtOf(kept)).toEqual({});
+    expect(openedAtOf('{"/a":5,"/b":"6","/c":null,"/d":true,"/e":[7],"/f":1.5}')).toEqual({ "/a": 5, "/f": 1.5 });
+  });
+  it("adds each new folder at the bottom, in the order they were opened", () => {
+    const s = openAll(["/a", "/b", "/c", "/d"]);
+    expect(listOf(s)).toEqual(["/a", "/b", "/c", "/d"]);
+    expect(timesOf(s)).toEqual({ "/a": 1000, "/b": 1001, "/c": 1002, "/d": 1003 });
+  });
+  it("leaves every row where it was when a listed folder opens again, in any order, and only notes its new time", () => {
+    const s0 = openAll(["/a", "/b", "/c", "/d"]);
+    let s = s0;
+    for (const [id, now] of [["/c", 2000], ["/a", 2001], ["/d", 2002], ["/b", 2003], ["/c", 2004]] as const) {
+      s = withOpened(s.list, s.at, id, now);
+      expect(listOf(s)).toEqual(["/a", "/b", "/c", "/d"]);
+      expect(timesOf(s)[id]).toBe(now);
+    }
+    expect(timesOf(s)).toEqual({ "/a": 2001, "/b": 2003, "/c": 2004, "/d": 2002 });
+  });
+  it("with 8 listed, a ninth: the one opened longest ago leaves, not the top one and not one just opened again", () => {
+    // f0…f7 opened in turn, then f0 (at the top) and f3 (in the middle) again
+    const s8 = openAll(["/f0", "/f3"], openAll(eight), 2000);
+    expect(listOf(s8)).toEqual(eight);
+    const s9 = withOpened(s8.list, s8.at, "/new1", 3000);
+    expect(listOf(s9)).toEqual(["/f0", "/f2", "/f3", "/f4", "/f5", "/f6", "/f7", "/new1"]);
+    const s10 = withOpened(s9.list, s9.at, "/new2", 3001);
+    expect(listOf(s10)).toEqual(["/f0", "/f3", "/f4", "/f5", "/f6", "/f7", "/new1", "/new2"]);
+    // f3 was opened after f4, so f4 goes next
+    const s11 = withOpened(s10.list, s10.at, "/new3", 3002);
+    expect(listOf(s11)).toEqual(["/f0", "/f3", "/f5", "/f6", "/f7", "/new1", "/new2", "/new3"]);
+    expect(Object.keys(timesOf(s11)).sort()).toEqual(listOf(s11).slice().sort());
+  });
+  it("is still at most 8, however many are opened", () => {
+    const s = openAll(Array.from({ length: 30 }, (_, i) => `/g${i}`));
+    expect(listOf(s)).toEqual(Array.from({ length: 8 }, (_, i) => `/g${22 + i}`));
+    expect(Object.keys(timesOf(s))).toHaveLength(8);
+  });
+  it("gives each opening a later time than those kept: two in the same millisecond, or a clock put back, keep their order", () => {
+    let s: Kept = { list: null, at: null };
+    for (const id of eight) s = withOpened(s.list, s.at, id, 5000);
+    expect(eight.map((f) => timesOf(s)[f])).toEqual([5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007]);
+    s = withOpened(s.list, s.at, "/new", 5000);
+    expect(listOf(s)).toEqual([...eight.slice(1), "/new"]);
+    // the clock put back an hour: f1 is still the one opened longest ago, f2 after it
+    s = withOpened(s.list, s.at, "/f1", 5000 - 3_600_000);
+    s = withOpened(s.list, s.at, "/later", 5000 - 3_600_000);
+    expect(listOf(s)).toEqual(["/f1", "/f3", "/f4", "/f5", "/f6", "/f7", "/new", "/later"]);
+  });
+  it("keeps times only for the folders listed", () => {
+    expect(withOpened('["/a"]', '{"/a":1,"/gone":2}', "/b", 3)).toEqual({ list: '["/a","/b"]', at: '{"/a":1,"/b":3}' });
+  });
+  it("starts the times over when they are unreadable, the list as it was", () => {
+    expect(withOpened('["/a","/b"]', "{oops", "/a", 7)).toEqual({ list: '["/a","/b"]', at: '{"/a":7}' });
+    expect(withOpened('["/a","/b"]', "[1]", "/c", 7)).toEqual({ list: '["/a","/b","/c"]', at: '{"/c":7}' });
+  });
+
+  // a list kept by the old version: newest first, no times
+  it("reads a list saved by the old version in its saved order, and opening one of it leaves every row where it was", () => {
+    const old = JSON.stringify(["/new", "/mid", "/old"]);
+    expect(openedOf(old)).toEqual(["/new", "/mid", "/old"]);
+    expect(listOf(openAll(["/old", "/new", "/mid"], { list: old, at: null }))).toEqual(["/new", "/mid", "/old"]);
+    expect(listOf(openAll(["/x"], { list: old, at: null }))).toEqual(["/new", "/mid", "/old", "/x"]);
+  });
+  it("counts the old version's folders as opened before any opened since, the lower the longer ago", () => {
+    const old = JSON.stringify(eight); // f0 newest … f7 oldest
+    // a ninth: f7, the lowest, leaves
+    let s: Kept = withOpened(old, null, "/new1", 1000);
+    expect(listOf(s)).toEqual([...eight.slice(0, 7), "/new1"]);
+    // f6, the lowest left, opened again, so f5 goes next
+    s = withOpened(s.list, s.at, "/f6", 1001);
+    s = withOpened(s.list, s.at, "/new2", 1002);
+    expect(listOf(s)).toEqual(["/f0", "/f1", "/f2", "/f3", "/f4", "/f6", "/new1", "/new2"]);
+    // the old version's folders go first, even before new1 (opened before f6 and new2)
+    s = openAll(["/new3", "/new4", "/new5", "/new6", "/new7"], s, 2000);
+    expect(listOf(s)).toEqual(["/f6", "/new1", "/new2", "/new3", "/new4", "/new5", "/new6", "/new7"]);
+    // then, all with a time, the one opened longest ago: new1
+    s = withOpened(s.list, s.at, "/new8", 3000);
+    expect(listOf(s)).toEqual(["/f6", "/new2", "/new3", "/new4", "/new5", "/new6", "/new7", "/new8"]);
   });
 });
 
@@ -111,14 +212,71 @@ describe("the tabs kept per folder (GA-113)", () => {
 
 describe("what is kept on this computer, through localStorage (GA-113)", () => {
   afterEach(() => { vi.unstubAllGlobals(); });
-  it("remembers the folders you open, newest first, and forgets one on Remove from the list", () => {
+  it("remembers the folders you open, each new one at the bottom, and forgets one on Remove from the list", () => {
     const m = fakeStorage();
     rememberFolder("/a");
     rememberFolder("/b");
     rememberFolder("/a");
     expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/a", "/b"]);
+    rememberFolder("/c");
+    rememberFolder("/b");
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/a", "/b", "/c"]);
     forgetFolder("/a");
-    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/b"]);
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/b", "/c"]);
+  });
+
+  // GA-157 QA: what rememberFolder and forgetFolder keep, and what a restart reads back
+  it("keeps when each folder was last opened next to the list, under gizai.editor.openedAt", () => {
+    const m = fakeStorage();
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000); rememberFolder("/a");
+    now.mockReturnValue(2_000); rememberFolder("/b");
+    now.mockReturnValue(3_000); rememberFolder("/a");
+    expect(m.get(OPENED_KEY)).toBe('["/a","/b"]');
+    expect(JSON.parse(m.get(OPENED_AT_KEY)!)).toEqual({ "/a": 3_000, "/b": 2_000 });
+    now.mockRestore();
+  });
+  it("after a restart reads the same list in the same order, and the next ninth still drops the one opened longest ago", async () => {
+    const m = fakeStorage();
+    const now = vi.spyOn(Date, "now");
+    const eight = Array.from({ length: 8 }, (_, i) => `/f${i}`);
+    eight.forEach((f, i) => { now.mockReturnValue(1_000 + i); rememberFolder(f); });
+    now.mockReturnValue(2_000); rememberFolder("/f0");
+    now.mockReturnValue(2_001); rememberFolder("/f4");
+    const kept = { list: m.get(OPENED_KEY), at: m.get(OPENED_AT_KEY) };
+    now.mockRestore();
+    // a restart: the module loaded afresh, on what localStorage kept
+    vi.resetModules();
+    const again = await import("./editor");
+    expect(again.openedOf(localStorage.getItem(again.OPENED_KEY))).toEqual(eight);
+    expect([m.get(OPENED_KEY), m.get(OPENED_AT_KEY)]).toEqual([kept.list, kept.at]);
+    again.rememberFolder("/f5");
+    expect(again.openedOf(m.get(OPENED_KEY) ?? null)).toEqual(eight);
+    again.rememberFolder("/new");
+    expect(again.openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/f0", "/f2", "/f3", "/f4", "/f5", "/f6", "/f7", "/new"]);
+  });
+  it("reads a list saved by the old version (no times) in its saved order; a listed folder stays put, a new one joins at the bottom", () => {
+    const m = fakeStorage();
+    m.set(OPENED_KEY, JSON.stringify(["/c", "/b", "/a"]));
+    rememberFolder("/a");
+    rememberFolder("/c");
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/c", "/b", "/a"]);
+    rememberFolder("/d");
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/c", "/b", "/a", "/d"]);
+    expect(Object.keys(openedAtOf(m.get(OPENED_AT_KEY) ?? null)).sort()).toEqual(["/a", "/c", "/d"]);
+  });
+  it("Remove from the list takes the folder and its time off, the others where they were; opened again, it joins at the bottom", () => {
+    const m = fakeStorage();
+    for (const f of ["/a", "/b", "/c"]) rememberFolder(f);
+    forgetFolder("/b");
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/a", "/c"]);
+    expect(Object.keys(openedAtOf(m.get(OPENED_AT_KEY) ?? null)).sort()).toEqual(["/a", "/c"]);
+    forgetFolder("/x");
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/a", "/c"]);
+    rememberFolder("/b");
+    expect(openedOf(m.get(OPENED_KEY) ?? null)).toEqual(["/a", "/c", "/b"]);
+    for (const f of ["/a", "/c", "/b"]) forgetFolder(f);
+    expect([m.get(OPENED_KEY), m.get(OPENED_AT_KEY)]).toEqual(["[]", "{}"]);
   });
   it("keeps and loads each folder's tabs", () => {
     fakeStorage();

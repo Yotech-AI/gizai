@@ -373,7 +373,7 @@ describe("Memory entries for agents that share one folder (GA-96)", () => {
 });
 
 // GA-113 QA: the Editor section, above Agents. It folds like Agents and Memory (the caret, the heading's text), its fold is
-// kept in gizai.sidebar.folded with theirs, and it lists the folders you opened (gizai.editor.opened, newest first).
+// kept in gizai.sidebar.folded with theirs, and it lists the folders you opened (gizai.editor.opened, in its saved order: GA-157).
 describe("the Editor section (GA-113)", () => {
   const OPENED = "gizai.editor.opened";
   it("sits between Projects and Agents, open at first, with + to open a folder before its caret", () => {
@@ -385,7 +385,7 @@ describe("the Editor section (GA-113)", () => {
   it("says Open a folder while no folder was opened yet", () => {
     expect(section(html(), "Editor")).toMatch(/<button class="nav-item"><svg[^>]*lucide-folder-code[^>]*>.*?<\/svg><span>Open a folder<\/span><\/button>/);
   });
-  it("lists the folders you opened, newest first, each linking to its Editor page", () => {
+  it("lists the folders you opened, in their saved order, each linking to its Editor page", () => {
     store.set(OPENED, JSON.stringify(["/home/you/Herd/kade-portal", "/home/you/Herd/invoice-api"]));
     const editor = section(reload(), "Editor");
     expect([...editor.matchAll(/<a class="nav-item" href="([^"]+)"[^>]*>.*?<span>([^<]+)<\/span>/g)].map((m) => [m[1], m[2]])).toEqual([
@@ -399,6 +399,26 @@ describe("the Editor section (GA-113)", () => {
     slots.length = 0; slot = 0;
     const page = renderToStaticMarkup(<Sidebar {...props} route={{ page: "editor", id: "/home/you/Herd/kade-portal" }} />);
     expect(section(page, "Editor")).toContain('<a class="nav-item on" href="#/editor/%2Fhome%2Fyou%2FHerd%2Fkade-portal"');
+  });
+  // GA-157 QA: a click on a row opens its Editor page, which remembers the folder (rememberFolder): every row stays put
+  it("keeps every row in its place when a folder in it opens, and marks only that one", async () => {
+    const { rememberFolder } = await import("../lib/editor");
+    const ids = ["kade-portal", "invoice-api", "blog", "shop"].map((n) => `/home/you/Herd/${n}`);
+    store.set(OPENED, JSON.stringify(ids));
+    const rows = (page: string) => [...section(page, "Editor").matchAll(/<a class="nav-item( on)?" href="([^"]+)"/g)].map((m) => [decodeURIComponent(m[2]!.replace("#/editor/", "")), !!m[1]]);
+    for (const id of [ids[2]!, ids[0]!, ids[3]!, ids[1]!]) {
+      rememberFolder(id);
+      slots.length = 0; slot = 0;
+      const page = renderToStaticMarkup(<Sidebar {...props} route={{ page: "editor", id }} />);
+      expect(rows(page)).toEqual(ids.map((x) => [x, x === id]));
+    }
+  });
+  it("shows a folder opened for the first time at the bottom", async () => {
+    const { rememberFolder } = await import("../lib/editor");
+    store.set(OPENED, JSON.stringify(["/home/you/Herd/kade-portal", "/home/you/Herd/invoice-api"]));
+    rememberFolder("/home/you/Herd/blog");
+    const names = [...section(reload(), "Editor").matchAll(/<a class="nav-item" href="[^"]+"[^>]*>.*?<span>([^<]+)<\/span>/g)].map((m) => m[1]);
+    expect(names).toEqual(["kade-portal", "invoice-api", "blog"]);
   });
   it("folds with its caret, leaving only the heading, and shows its list again", () => {
     store.set(OPENED, JSON.stringify(["/home/you/Herd/kade-portal"]));

@@ -9,7 +9,7 @@ In short: a release is a GitHub Release with a version tag, `vX.Y.Z`, on the `pr
 | Branch | What it holds | How it changes |
 |---|---|---|
 | `main` | Development. Cards' branches start here, and their pull requests merge here. | Pull requests, merged on GitHub |
-| `production` | The released version: what `install.sh` (Linux and macOS) and `install.ps1` (Windows) install, and where release tags point. | Only a pull request from `main`. It is protected: no direct pushes, no force pushes, no deleting. |
+| `production` | The released version: what `install.sh` (Linux and macOS) and `install.ps1` (Windows) install, where release tags point, and where the one-line installs read `scripts/get.sh` and `scripts/get.ps1` from. | Only a pull request from `main`. It is protected: no direct pushes, no force pushes, no deleting. |
 
 ## When to release
 
@@ -46,24 +46,27 @@ Replace `X.Y.Z` with the new version.
    git grep -n 'X.Y.Z' -- Cargo.toml package.json src-tauri/tauri.conf.json Cargo.lock package-lock.json
    ```
 
-   Commit it as `Bump version to X.Y.Z`, push the branch, and merge its pull request into `main` once its CI checks pass:
+   Commit it as `Bump version to X.Y.Z`, push the branch, and open its pull request into `main`. A pull request that changes nothing but the version skips the build and the tests, so its checks pass within a minute or two: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which the bump starts as it changes `src-tauri/tauri.conf.json`. Merge it as soon as they report:
 
    ```sh
    gh pr view <number> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.name): \(.status) \(.conclusion)"'
    ```
 
-   Each of the three must say `COMPLETED SUCCESS`. A check that is still `IN_PROGRESS` needs a few more minutes (the Windows build is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
+   Each must say `COMPLETED SUCCESS`. The full check comes in step 2, on the release's pull request.
+
+   `scripts/version-only.mjs` decides, in each check's "Version only?" step: only these five files may change (the three above and the two lock files), and in them only Gizai's version, from one old version to one new version everywhere (in `Cargo.lock`, the versions of Gizai's own crates). Before you push, `node scripts/version-only.mjs origin/main HEAD` says the same, or what else changes. A pull request that changes anything else, a dependency in `Cargo.lock` say, gets the full checks, about 12 minutes: wait until they all say `COMPLETED SUCCESS` (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
 
    Gizai checks the bump. An update installs nothing when the release's `Cargo.toml` says another version, and it checks `gizai --version` after installing. A forgotten bump would otherwise offer the same update forever.
 
-2. **Merge `main` into `production`** with a pull request and a merge commit (never squash or rebase):
+2. **Merge `main` into `production`** with a pull request and a merge commit (never squash or rebase). This pull request is the release's full check: CI and Install build, test and install exactly what goes to production, on Linux, macOS and Windows. Wait for all of it before you merge:
 
    ```sh
    gh pr create --base production --head main --title "Release vX.Y.Z" --body "What's in it, in a few lines."
+   gh pr view <number> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.name): \(.status) \(.conclusion)"'
    gh pr merge <number> --merge
    ```
 
-   CI runs on this pull request too. Its checks should pass at once, as `main` already passed them.
+   That's five checks, about 12 minutes: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which runs as the release changes `src-tauri/tauri.conf.json`. Each must say `COMPLETED SUCCESS`. A check that is still `IN_PROGRESS` needs a few more minutes (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
 
 3. **Create the release** on `production`, with notes made from the merged pull requests:
 
@@ -119,12 +122,14 @@ Every release must keep this working, because the Gizai that updates runs the **
   - Only an install that stopped between its renames (seconds) can leave a mix. Settings → Updates then says to try again or to run `./install.sh`.
 - **Stop** ends the update while it gets the source or builds. Quitting Gizai does that too.
 - **So `install.sh` must keep these working:** `--build-only`, `--skip-build`, `GIZAI_PREFIX` and `XDG_DATA_HOME`, with macOS's own bash 3.2 and BSD tools too. **And `install.ps1`:** `-BuildOnly`, `-SkipBuild` and `GIZAI_PREFIX`, with Windows PowerShell 5.1 (what an update runs) and PowerShell 7. CI checks that both scripts parse and that their checks (`--check`, `-Check`) pass.
+- **The one-line installs run the release's installer too.** `scripts/get.sh` (`curl -fsSL https://gizai.app/install.sh | sh`) and `scripts/get.ps1` (`irm https://gizai.app/install.ps1 | iex`) are read from `production`: gizai.app sends its two addresses on to them there, so they must keep their names and place. What they get themselves comes from GitHub, never from the website. They get the same tag as an update, shallow, into `~/.local/share/gizai-src` (`%LOCALAPPDATA%\gizai-src` on Windows), never into the data folder. Then they run its `install.sh --check` and `install.sh` (`install.ps1 -Check` and `install.ps1`), with the flags they were given. So `--check` and `-Check` must keep working too. CI checks that both scripts parse and runs their checks against the pull request's own commit.
 - **Only an installed Gizai updates itself.** That is a Gizai that runs as `<prefix>/lib/gizai/gizai` (on macOS also `<prefix>/lib/gizai/Gizai.app/Contents/MacOS/gizai`, when it starts from the Dock), or on Windows as a `gizai.exe` with `install.ps1`'s `gizai-installed.txt` next to it. A dev build (`scripts/run.sh`) or a test build says why it doesn't, and never installs anything.
 - **From a terminal** it works as before: `git pull` in a checkout of `production`, then `./install.sh` (on Windows `.\install.ps1`).
 - **Headless test and screenshot runs** (`GIZAI_SELFTEST` or `GIZAI_ROUTE` set) skip the automatic check, unless `GIZAI_RELEASES_URL` is set too.
 - **Settings for tests and forks:**
   - `GIZAI_REPO`: the repository the tag is fetched from. Default `https://github.com/Yotech-AI/gizai.git`.
   - `GIZAI_RELEASES_URL`: what the check reads. Default: GitHub's latest release of `GIZAI_REPO`. It also takes `http://` and `file://` addresses.
+  - The one-line installs read both too, and `GIZAI_REF`: a tag, branch or commit to get instead of the latest release.
 
 ## Testing an update without touching a real Gizai
 

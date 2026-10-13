@@ -368,6 +368,12 @@ pub(crate) fn live_run(st: &AppState, thread_id: &str) -> Option<String> {
     st.chat.live.lock().unwrap().get(thread_id).map(|l| l.run_id.clone()).filter(|r| !r.is_empty())
 }
 
+/// The Team Lead is answering in the chat, as the Chat page shows it: also while the answer is starting, before its
+/// Claude Code has (`live_run` is None then), and between an answer and the one for messages queued meanwhile.
+pub(crate) fn answering(st: &AppState, thread_id: &str) -> bool {
+    st.chat.live.lock().unwrap().contains_key(thread_id)
+}
+
 /// What a turn runs with: the Team Lead, the coding CLI the chat runs on now, its program, and the MCP helper.
 struct Plan {
     agent: Member,
@@ -979,7 +985,7 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
          - After a tool from outside Gizai, a call of yours that acts (runs, agents, columns, attach_file, update_checkout, memory's writes, merge_pull_request) isn't run: Gizai keeps it under your answer for {you} to approve with one click or discard. Say in a sentence what each such call does; don't make it again. A later message starts with what {you} decided, in square brackets.\n\
          - {you} links Gizai items in a message as Markdown links with a gizai: target: [GA-12 - Fix the login](gizai:task/GA-12), [Giz AI](gizai:project/GA), [Name](gizai:client/<id>), and the same for agent, person and doc. After the slash comes the task's identifier, the project's key or the item's id, which the gizai tools take: look the item up when you need it. You may link items the same way in your answers.\n\
          - Files {you} adds to a message are named after it, each with the path of a copy in your folder: read them there. attach_file takes those paths, so you can attach such a file to a task, project or client when {you} asks.\n\
-         - When that line says a project's linked folder ({you}'s own checkout, where new cards copy vendor/ and node_modules/ from) is outdated, ask {you} once in this chat, when that project comes up, whether to update it. Say exactly what will happen: any branch switch, how many commits it moves and which installs run. Call update_checkout only after a yes in this chat (switch only when they agreed to the switch); never update a folder without that yes.\n\
+         - When that line says a project's linked folder ({you}'s own checkout, where new cards copy vendor/ and node_modules/ from) is outdated, ask {you} once in this chat, when that project comes up, whether to update it. Say exactly what will happen: any branch switch, how many commits it moves and which installs run. Call update_checkout only after a yes in this chat (switch only when they agreed to the switch, stash only when they agreed to the stash); never update a folder without that yes.\n\
          - Your instructions below also cover task runs; in chat, never write a GIZAI_RESULT line.\n\
          Answer in {you}'s language, short and plain.\n\n\
          {copies}\

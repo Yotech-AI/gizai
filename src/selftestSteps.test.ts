@@ -177,7 +177,7 @@ describe("the steps that set a scene up", () => {
   });
 });
 
-describe("steps without a name (scripts/shot-cage.sh, scripts/readme-gif.sh) work as before", () => {
+describe("steps without a name (scripts/shot-cage.sh) work as before", () => {
   it("go to a route and click a bare selector 1.2 s after the step before, with no stills and no report", async () => {
     page = [new FakeEl('a[href="#/board"]', "Board", { left: 10, top: 10, width: 10, height: 10 })];
     const reports = await run(["#/tasks", 'a[href="#/board"]']);

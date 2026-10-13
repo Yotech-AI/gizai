@@ -91,6 +91,10 @@
   --term-bright-cyan: #86d1f7;
   --term-bright-white: #fafafb;
   --scrim: rgba(0, 0, 0, 0.55);
+  --band-subtle-line: rgba(160, 211, 235, 0.10);
+  --band-subtle-glow: rgba(20, 100, 128, 0.08);
+  --band-line: var(--band-subtle-line);
+  --band-glow: var(--band-subtle-glow);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
   --shadow-drawer: -24px 0 48px rgba(0, 0, 0, 0.5);
   --shadow-drag: 0 16px 36px rgba(0, 0, 0, 0.5);
@@ -157,6 +161,8 @@
   --term-bright-cyan: #06577f;
   --term-bright-white: #f3f4f7;
   --scrim: rgba(20, 22, 27, 0.28);
+  --band-subtle-line: rgba(32, 108, 137, 0.14);
+  --band-subtle-glow: rgba(201, 227, 239, 0.35);
   --shadow-pop: 0 12px 32px rgba(15, 17, 23, 0.14);
   --shadow-drawer: -24px 0 48px rgba(15, 17, 23, 0.12);
   --shadow-drag: 0 16px 36px rgba(15, 17, 23, 0.18);
@@ -190,6 +196,8 @@
   --size-tree-row: 28px;
   --size-tab: 36px;
   --size-statusbar: 24px;
+  --size-band: 128px;
+  --size-band-min: 80px;
   --size-term-tab: 32px;
   --size-term-panel: 30%;
   --size-term-panel-min: 120px;

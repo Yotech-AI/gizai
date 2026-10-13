@@ -49,7 +49,9 @@ export function useTerminalPanel(folder: string, path: string, off: string | nul
   const visible = open && !!current;
   useEffect(() => { if (current) lastTab.set(folder, current); }, [folder, current]);
 
-  // Show in Editor put one of this folder's terminals in the panel: the panel opens on its tab.
+  // Show in Editor put one of this folder's terminals in the panel: the panel opens on its tab, and the folder keeps it as
+  // shown. Put there before the Editor opened, the panel opened with it (above); after that, it opens now.
+  useEffect(() => { if (placedIds.length > 0) keepShown(folder, true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const seen = useRef(placed);
   useEffect(() => {
     const had = new Set(seen.current ? seen.current.split("\n") : []);

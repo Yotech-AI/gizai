@@ -63,7 +63,7 @@ Each terminal has a row in the sidebar, with what runs in it on the right, or "e
 ## A card's worktree
 
 - While an agent works in a card's worktree, the Editor shows it read-only, and a new terminal there waits until the run ends.
-- A card that isn't pinned to you stays read-only in the Editor until **Edit anyway**, which puts your changes in its worktree, uncommitted, for the agent's next run. A new terminal there asks for Edit anyway first.
+- A card that isn't pinned to you stays read-only in the Editor until **Edit anyway**, which puts your changes in its worktree, uncommitted, for the agent's next run. A shell can change files too: the folder picker asks for Edit anyway before it starts a terminal there, and the Editor's terminal panel stays off until you press it.
 
 ### Work on a card yourself
 

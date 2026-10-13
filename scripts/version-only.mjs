@@ -18,11 +18,11 @@
 import { execFileSync } from "node:child_process";
 
 const FILES = ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "src-tauri/tauri.conf.json"];
-// Where the JSON files keep the package's own version.
+// Where the JSON files keep the package's own version: the keys to it, by the name messages give it.
 const JSON_VERSIONS = {
-  "package.json": [["version"]],
-  "package-lock.json": [["version"], ["packages", "", "version"]],
-  "src-tauri/tauri.conf.json": [["version"]],
+  "package.json": { version: ["version"] },
+  "package-lock.json": { version: ["version"], 'packages[""].version': ["packages", "", "version"] },
+  "src-tauri/tauri.conf.json": { version: ["version"] },
 };
 
 class Answer extends Error {
@@ -58,7 +58,8 @@ function versionOnly(baseRev, headRev) {
   const raw = git(["diff", "--raw", "-z", "--no-renames", "--no-abbrev", from, head]).split("\0");
   const edited = new Set();
   for (let i = 0; i + 1 < raw.length; i += 2) {
-    const [, oldMode, newMode, status] = raw[i].match(/^:(\d+) (\d+) \w+ \w+ (\w+)$/) ?? cant(`git diff said: ${raw[i]}`);
+    const entry = raw[i].match(/^:(\d+) (\d+) \w+ \w+ (\w+)$/) ?? cant(`git diff said: ${raw[i]}`);
+    const [, oldMode, newMode, status] = entry;
     const path = raw[i + 1];
     if (!FILES.includes(path)) no(`${path} changes too.`);
     if (status !== "M") no(`${path} ${{ A: "is added", D: "is removed" }[status] ?? "changes its type"}.`);
@@ -112,7 +113,9 @@ function versionsOnly({ path, before, after }, changes, old, now) {
     const other = before[i].includes(`"${old}"`) && after[i].startsWith(start)
       ? after[i].slice(start.length).match(/^"(\d+\.\d+\.\d+)"/)?.[1]
       : undefined;
-    if (other && after[i] === before[i].replaceAll(`"${old}"`, `"${other}"`)) no(`${path} goes to ${other}, Cargo.toml to ${now}.`);
+    if (other && after[i] === before[i].replaceAll(`"${old}"`, `"${other}"`)) {
+      no(`${path} goes to ${other}, Cargo.toml to ${now}.`);
+    }
     no(`${path} changes line ${i + 1} too.`);
   }
 }
@@ -134,17 +137,22 @@ function onlyVersions(file, places, old, now) {
       return no(`${file.path} isn't valid JSON.`);
     }
   });
-  for (const place of places) {
-    const name = place.map((key, i) => (i === 0 ? key : /^\w+$/.test(key) ? `.${key}` : `[${JSON.stringify(key)}]`)).join("");
-    const parent = (doc) => place.slice(0, -1).reduce((o, key) => (o !== null && typeof o === "object" ? o[key] : undefined), doc);
-    const key = place[place.length - 1];
-    const was = parent(before)?.[key];
-    const is = parent(after)?.[key];
+  for (const [name, place] of Object.entries(places)) {
+    const key = place.at(-1);
+    const was = holder(before, place)?.[key];
+    const is = holder(after, place)?.[key];
     if (was !== old) no(`${file.path} had ${was === undefined ? `no ${name}` : `${name} ${was}`}, Cargo.toml ${old}.`);
     if (is !== now) no(`${file.path} ${is === undefined ? `has no ${name}` : `keeps ${name} at ${is}`}.`);
-    parent(after)[key] = old;
+    holder(after, place)[key] = old;
   }
   if (JSON.stringify(after) !== JSON.stringify(before)) no(`${file.path} changes another ${old} to ${now} too.`);
+}
+
+// The object in a JSON document that holds the last of these keys, if there is one.
+function holder(doc, place) {
+  const isObject = (o) => o !== null && typeof o === "object";
+  const found = place.slice(0, -1).reduce((at, key) => (isObject(at) ? at[key] : undefined), doc);
+  return isObject(found) ? found : undefined;
 }
 
 // The indexes of Cargo.toml's lines with version under [workspace.package].

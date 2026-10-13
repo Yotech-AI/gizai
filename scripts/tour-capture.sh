@@ -1,27 +1,37 @@
 #!/usr/bin/env bash
-# The product tour's stills (GA-148), for the video (GA-149): Gizai's eight features in the website's order, scene by
-# scene, in dark and in light, each scene in a HEADLESS cage (never on your screen) on a fresh copy of fake data
-# (.devdata/tour), made up from start to end (crates/gizai-core/examples/prep_tour.rs). The screen is 1600x1040 CSS
-# pixels at scale 2, so 3200x2080 pixels, without the window's title bar: the 13-inch MacBook Air's shape with room
-# for the whole board (the video draws the stills at 80%, at the MacBook's 2560x1664).
+# The product tour's stills (GA-148, GA-149): Gizai's eight features in the website's order, scene by scene, in dark and
+# in light, each scene in a HEADLESS cage (never on your screen) on a fresh copy of fake data (.devdata/tour), made up
+# from start to end (crates/gizai-core/examples/prep_tour.rs). The tour video and the README's GIFs are made from these
+# stills in the website's repository, which has the Remotion project; this repository keeps only the capture, which
+# needs the app. The screen is 1600x1040 CSS pixels at scale 2, so 3200x2080 pixels, without the window's title bar:
+# the 13-inch MacBook Air's shape with room for the whole board (the video draws the stills at 80%, at 2560x1664).
 # Each scene opens a page and clicks one element per step; every step has a still before its click and one after, and
-# video/capture/<theme>/scenes.json lists the scenes in order with their steps, stills and the box of what each step
-# clicked (x, y, width and height in the stills' pixels). Nothing reads your ~/.claude or your Gizai's data: Gizai runs
+# <out>/<theme>/scenes.json lists the scenes in order with their steps, stills and the box of what each step clicked
+# (x, y, width and height in the stills' pixels). Nothing reads your ~/.claude or your Gizai's data: Gizai runs
 # in a fake home in .devdata/tour, with its data, cache and config in it, so every path it shows reads ~/…; its projects'
 # folders are in the fake ~/Projects, its only Editor folder; and Claude Code and Codex are fakes in its ~/.local/bin
 # (scripts/tour/fake-claude.sh and fake-codex.sh).
 # Needs the release build (made when it is missing or stale), cage, grim, wlr-randr and ffmpeg.
-# usage: scripts/tour-capture.sh [dark|light|both] [scene number…]
-#   scripts/tour-capture.sh              every scene, in both themes
-#   scripts/tour-capture.sh dark 3 4     scenes 3 and 4 in dark (scenes.json lists every scene captured so far)
+# usage: scripts/tour-capture.sh [--out <folder>] [dark|light|both] [scene number…]
+#   scripts/tour-capture.sh                       every scene, in both themes, into .devdata/tour/capture (git ignores it)
+#   scripts/tour-capture.sh --out ~/site/capture  the same into that folder: <theme>/<scene>/ and <theme>/scenes.json
+#   scripts/tour-capture.sh dark 3 4              scenes 3 and 4 in dark (scenes.json lists every scene captured so far)
 set -uo pipefail
+USAGE="usage: scripts/tour-capture.sh [--out <folder>] [dark|light|both] [scene number…]"
+# --out is a folder of your own, from where you are: read it before the script goes to the repository's root
+OUT=
+if [ "${1:-}" = --out ]; then
+  [ -n "${2:-}" ] || { echo "$USAGE"; exit 1; }
+  OUT=$(realpath -m -- "$2"); shift 2
+fi
 cd "$(dirname "$0")/.."
 GZ=$PWD
+OUT=${OUT:-$GZ/.devdata/tour/capture}
 for tool in cage grim wlr-randr ffmpeg dbus-run-session python3 git; do
   command -v "$tool" > /dev/null || { echo "tour-capture needs $tool"; exit 1; }
 done
 THEMES=${1:-both}; shift || true
-case "$THEMES" in both) THEMES="dark light" ;; dark|light) ;; *) echo "usage: scripts/tour-capture.sh [dark|light|both] [scene number…]"; exit 1 ;; esac
+case "$THEMES" in both) THEMES="dark light" ;; dark|light) ;; *) echo "$USAGE"; exit 1 ;; esac
 ONLY=" $* "
 
 source scripts/app-ready.sh
@@ -30,7 +40,7 @@ gz_app || { echo "could not build the app"; exit 1; }
 # The screen: 1600x1040 CSS pixels of page under the window's title bar (37 px), at scale 2.
 SCALE=2; PAGE_W=1600; PAGE_H=1040; TITLE=37
 MODE_SIZE="$((PAGE_W * SCALE))x$(((PAGE_H + TITLE) * SCALE))"
-T=$GZ/.devdata/tour; BASE=$T/base; LIVE=$T/live; OUT=$GZ/video/capture
+T=$GZ/.devdata/tour; BASE=$T/base; LIVE=$T/live
 # The fake home, and Gizai's data folder in it. Claude Code and Codex are the tour's fakes, as `claude` and `codex` in
 # its ~/.local/bin; the cage's PATH has that folder and the system's, none of your own, so no real CLI can start.
 FAKE_HOME=$LIVE/home; DATA=$FAKE_HOME/.local/share/gizai
@@ -40,7 +50,9 @@ PATH_IN_CAGE=$FAKE_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 prepare() {
   echo "making the fake data in .devdata/tour"
   # the projects' repositories go in the fake home's ~/Projects, so the Editor and the terminals show ~/Projects/…
-  rm -rf "$T" && mkdir -p "$FAKE_HOME/.local/bin" "$FAKE_HOME/.local/share/claude" "$FAKE_HOME/.cache" "$FAKE_HOME/.config"
+  # everything of the last capture but its stills (.devdata/tour/capture, when there is no --out)
+  rm -rf "$BASE" "$LIVE" "$T/run" "$T/logs" "$T/ids.sh" "$T/titles" "$T/runner.sh" &&
+    mkdir -p "$FAKE_HOME/.local/bin" "$FAKE_HOME/.local/share/claude" "$FAKE_HOME/.cache" "$FAKE_HOME/.config"
   cp crates/gizai-agents/tests/fixtures/models-init.jsonl "$FAKE_HOME/.local/share/claude/"
   cp scripts/tour/fake-claude.sh "$FAKE_HOME/.local/bin/claude" && chmod +x "$FAKE_HOME/.local/bin/claude"
   cp scripts/tour/fake-codex.sh "$FAKE_HOME/.local/bin/codex" && chmod +x "$FAKE_HOME/.local/bin/codex"
@@ -122,7 +134,7 @@ for name in sorted(os.listdir(root)):
                   for st in s["steps"]]})
 out = {"theme": theme, "screen": {"width": width, "height": height, "scale": scale}, "box": "x, y, width and height in the stills' pixels", "scenes": scenes}
 json.dump(out, open(os.path.join(root, "scenes.json"), "w"), indent=2)
-print(f"video/capture/{theme}/scenes.json: {len(scenes)} scenes, {sum(len(s['steps']) for s in scenes)} steps")
+print(f"{os.path.join(root, 'scenes.json')}: {len(scenes)} scenes, {sum(len(s['steps']) for s in scenes)} steps")
 PY
 }
 
@@ -166,5 +178,5 @@ for theme in $THEMES; do
   bad=$(find "$OUT/$theme" -name '*.png' -exec ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {} \; | grep -vc "^$((PAGE_W * SCALE)),$((PAGE_H * SCALE))\$")
   [ "$bad" = 0 ] || { echo "$bad stills in $theme are not $((PAGE_W * SCALE))x$((PAGE_H * SCALE))"; fail=1; }
 done
-du -sh "$OUT" | cut -f1 | sed 's/^/video\/capture: /'
+echo "$OUT: $(du -sh "$OUT" | cut -f1)"
 exit $fail

@@ -1,5 +1,0 @@
-# Remotion's packages, its Chrome Headless Shell (node_modules/.remotion) and webpack's cache (node_modules/.cache)
-node_modules/
-.cache/
-# the masters render.mjs encodes docs/tour/ from
-out/

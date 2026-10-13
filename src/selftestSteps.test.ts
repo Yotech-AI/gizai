@@ -1,7 +1,7 @@
 // GA-148 QA: the steps mode (GIZAI_SELFTEST_MODE=steps:…) as the product tour's capture uses it. A named click
 // ("<name>[@ms]=<selector>", with an optional :text(words)) takes a still before and one after the click, notes the
 // clicked element's box in screen pixels (after scrolling it into view), and the steps are reported at the end with the
-// page's size and theme; "theme:", "wait:" and "term:" set things up without stills; and steps without a name ("#/route",
+// page's size and theme; "theme:", "wait:", "term:" and "scroll:" set things up without stills; and steps without a name ("#/route",
 // a bare selector) work as before: no stills and no report. The Tauri commands behind it are tour_still { name } and
 // tour_steps { json }. There is no DOM here, so a small fake document stands in for the page.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,15 +35,22 @@ type FakeDoc = { documentElement: { dataset: Record<string, string> }; querySele
 /** What happened, in order, with the (fake) time: stills, clicks and scrolls. */
 let events: string[] = [];
 let page: FakeEl[] = [];
+/** Each scroll's options, and the element's scroll-margin-bottom while it scrolled. */
+let scrolls: { css: string; options: unknown; marginBottom: string }[] = [];
 
 class FakeEl {
+  style: Record<string, string> = {};
   constructor(public css: string, public textContent: string, public rect: Rect, public scrollTo?: Rect) {}
   getBoundingClientRect() {
     const { left, top, width, height } = this.rect;
     return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top };
   }
   click() { events.push(`click ${this.css} ${this.textContent} @${Date.now()}`); }
-  scrollIntoView() { events.push(`scroll ${this.css}`); if (this.scrollTo) this.rect = this.scrollTo; }
+  scrollIntoView(options?: unknown) {
+    events.push(`scroll ${this.css}`);
+    scrolls.push({ css: this.css, options, marginBottom: this.style.scrollMarginBottom ?? "" });
+    if (this.scrollTo) this.rect = this.scrollTo;
+  }
 }
 
 const fakeWindow = { devicePixelRatio: 2, innerWidth: 1280, innerHeight: 832, location: { hash: "" } };
@@ -75,7 +82,7 @@ const at = (e: string) => Number(e.split("@").at(-1));
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
   vi.setSystemTime(0);
-  events = []; page = []; themes.length = 0; term.list = []; term.input = []; invoked.length = 0;
+  events = []; page = []; scrolls = []; themes.length = 0; term.list = []; term.input = []; invoked.length = 0;
   fakeWindow.location.hash = "";
   fakeDocument.documentElement.dataset = {};
 });
@@ -174,6 +181,37 @@ describe("the steps that set a scene up", () => {
     const reports = await run(["term:ls", "a=.a"]);
     expect(term.input).toEqual([]);
     expect(reports[0].errors).toEqual(["term:ls: no terminal is open"]);
+  });
+
+  // GA-149, round 3: at 1600 × 1040 the card's Runs tab is already on screen, low on the page, so clicking it showed
+  // nothing new; the Review scene scrolls first.
+  it("scroll:<selector> scrolls just far enough to show the element and 150px under it, then puts its margin back, with no still and no click", async () => {
+    const tab = new FakeEl(".tabs button.tab", "Runs 2", { left: 560, top: 800, width: 96, height: 42 }, { left: 560, top: 640, width: 96, height: 42 });
+    page = [new FakeEl(".tabs button.tab", "Comments 2", { left: 300, top: 800, width: 120, height: 42 }), tab];
+    const reports = await run(["scroll:.tabs button.tab:text(Runs)", "runs=.tabs button.tab:text(Runs)"]);
+    expect(scrolls).toEqual([{ css: ".tabs button.tab", options: { block: "nearest", inline: "nearest" }, marginBottom: "150px" }]);
+    expect(tab.style.scrollMarginBottom).toBe("");
+    // the named click finds the tab in view where the scroll left it: no second scroll, its box from there
+    expect(events.map((e) => e.split(" @")[0])).toEqual(["scroll .tabs button.tab", "still runs-before", "click .tabs button.tab Runs 2", "still runs-after"]);
+    expect(reports[0].steps[0].box).toEqual({ x: 1120, y: 1280, width: 192, height: 84 });
+    expect(reports[0].errors).toEqual([]);
+  });
+
+  it("scroll:<selector> waits for the page to settle after scrolling, before the next step's still", async () => {
+    page = [new FakeEl(".a", "A", { left: 10, top: 10, width: 10, height: 10 })];
+    await run(["scroll:.a", "a=.a"]);
+    const before = events.find((e) => e.startsWith("still a-before"))!;
+    // 400 ms after the scroll, then the named click's own 700 ms
+    expect(at(before)).toBeGreaterThanOrEqual(400 + 700);
+  });
+
+  it("scroll:<selector> says so when there is nothing to scroll to (after waiting 10 s), and goes on", async () => {
+    page = [new FakeEl(".a", "A", { left: 10, top: 10, width: 10, height: 10 }), new FakeEl(".hidden", "H", { left: 0, top: 0, width: 0, height: 0 })];
+    const reports = await run(["scroll:.nothing", "scroll:.hidden", "a=.a"]);
+    expect(Date.now()).toBeGreaterThanOrEqual(20000);
+    expect(scrolls).toEqual([]);
+    expect(events.map((e) => e.split(" @")[0])).toEqual(["still a-before", "click .a A", "still a-after"]);
+    expect(reports[0].errors).toEqual(["scroll:.nothing: nothing to scroll to", "scroll:.hidden: nothing to scroll to"]);
   });
 });
 

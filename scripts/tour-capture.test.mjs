@@ -1,116 +1,173 @@
-// Tests for the product tour's stills and what makes them (GA-149, round 2): video/capture/<theme>/ holds the eight
-// scenes in the website's order and scenes.json matches the stills there; the capture uses made-up data only, in a fake
-// home, so no real project, client, folder or user name and no real home folder can show; the Editor and Terminal is
-// one short scene; and the video's frame never zooms. The stills' pixels are checked by eye and OCR at QA, not here.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+// Tests for the product tour's capture (GA-149, round 3). This repository keeps only the capture, which needs the app:
+// scripts/tour-capture.sh writes its stills and scenes.json to --out <folder>, or to .devdata/tour/capture, which git
+// ignores; the tour video and the README's GIFs are made from those stills in the website's repository. The screen is
+// 1600 × 1040 CSS pixels at scale 2, so every still is 3200 × 2080; the eight scenes are in the website's order; and
+// the capture uses made-up data only, in a fake home, so no real project, client, folder or user name and no real home
+// folder can show. The capture itself runs in a headless cage (cage, grim, wlr-randr), so it is run by hand, not here:
+// these tests read the script, and run its argument handling on Linux.
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const CAPTURE = join(ROOT, "video", "capture");
-const THEMES = ["dark", "light"];
-const SCREEN = { width: 2560, height: 1664 };
+const SCRIPT = join(ROOT, "scripts", "tour-capture.sh");
 /** The website's feature rows 01 to 08 (design/website/README.md, GA-144), as the card lists them. */
 const WEBSITE_ORDER = ["01-board", "02-chat", "03-clis", "04-review", "05-editor", "06-memory", "07-tools", "08-inbox"];
 
 const read = (...parts) => readFileSync(join(ROOT, ...parts), "utf8");
-const scenesOf = (theme) => JSON.parse(read("video", "capture", theme, "scenes.json"));
+const sh = read("scripts", "tour-capture.sh");
+const git = (...args) => spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
 
-function pngSize(buf) {
-  expect(buf.subarray(1, 4).toString("latin1")).toBe("PNG");
-  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+/** The script's `scene <n> <name> "<title>" <route> <steps…>` lines, with their steps, joined over line ends. */
+function scenes() {
+  const body = sh.slice(sh.indexOf("# The website's eight features")).replace(/\\\n\s*/g, " ");
+  return [...body.matchAll(/^scene (\d+) (\S+) "([^"]+)" (\S+)((?: +(?:"[^"]*"|'[^']*'))*)/gm)].map((m) => ({
+    n: Number(m[1]), name: m[2], folder: `${m[1].padStart(2, "0")}-${m[2]}`, title: m[3], route: m[4],
+    steps: [...m[5].matchAll(/"([^"]*)"|'([^']*)'/g)].map((s) => s[1] ?? s[2]),
+  }));
 }
 
-describe.each(THEMES)("video/capture/%s/", (theme) => {
-  const json = scenesOf(theme);
+/** Runs the script's argument handling (everything up to where OUT gets its default) from `cwd`, and prints OUT, the
+ *  folder it went to and the arguments left. The rest needs the cage, so it doesn't run. */
+function args(cwd, ...argv) {
+  const head = sh.slice(0, sh.indexOf("\n", sh.indexOf("OUT=${OUT:-")) + 1);
+  const r = spawnSync("bash", ["-c", `${head}printf '%s\\n' "$OUT" "$PWD" "$*"`, SCRIPT, ...argv], { cwd, encoding: "utf8" });
+  const [out, pwd, rest] = r.stdout.split("\n");
+  return { status: r.status, stdout: r.stdout, out, pwd, rest };
+}
 
-  it("scenes.json is for its theme and lists the eight scenes in the website's order, numbered 1 to 8", () => {
-    expect(json.theme).toBe(theme);
-    expect(json.screen).toEqual({ ...SCREEN, scale: 2 });
-    expect(json.scenes.map((s) => s.name)).toEqual(WEBSITE_ORDER);
-    expect(json.scenes.map((s) => s.scene)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    for (const scene of json.scenes) expect(scene.steps.length).toBeGreaterThan(0);
+describe("the screen: 1600 × 1040 CSS pixels at scale 2, so 3200 × 2080 stills", () => {
+  it("PAGE_W, PAGE_H and SCALE say so, and nothing in the script still names the old 1280 × 832 or 2560 × 1664", () => {
+    expect(sh).toMatch(/^SCALE=2; PAGE_W=1600; PAGE_H=1040; TITLE=37$/m);
+    expect(sh).not.toMatch(/\b(1280|832|2560|1664)\b/);
+    expect(sh).toMatch(/1600x1040 CSS pixels at scale 2, so 3200x2080 pixels/);
   });
 
-  it("holds only those scenes' folders: none left from the first round's ten", () => {
-    const folders = readdirSync(join(CAPTURE, theme), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-    expect(folders.sort()).toEqual(WEBSITE_ORDER);
-    expect(readdirSync(join(CAPTURE, theme)).filter((f) => !folders.includes(f))).toEqual(["scenes.json"]);
+  it("the screen's mode, the crop, the size checks and scenes.json's screen all follow from them", () => {
+    // the cage's screen: the page and the window's title bar, at scale 2
+    expect(sh).toContain('MODE_SIZE="$((PAGE_W * SCALE))x$(((PAGE_H + TITLE) * SCALE))"');
+    expect(sh).toContain("--custom-mode $MODE_SIZE --scale $SCALE");
+    // each still: the screen's lowest PAGE_W × PAGE_H at scale 2, without the title bar
+    expect(sh).toContain('crop=$((PAGE_W * SCALE)):$((PAGE_H * SCALE)):0:ih-$((PAGE_H * SCALE))');
+    // the page's size as the app reports it, and every still's, are checked against the same numbers
+    expect(sh).toContain('python3 - "$dir/steps.json" "$((PAGE_W * SCALE))" "$((PAGE_H * SCALE))"');
+    expect(sh).toContain('grep -vc "^$((PAGE_W * SCALE)),$((PAGE_H * SCALE))\\$"');
+    // scenes.json's screen: the stills' size in pixels and the scale
+    expect(sh).toContain('scenes_json() {  # <theme>\n  python3 - "$OUT/$1" "$1" "$T/titles" "$((PAGE_W * SCALE))" "$((PAGE_H * SCALE))" "$SCALE"');
+    expect(sh).toMatch(/"screen": \{"width": width, "height": height, "scale": scale\}/);
+  });
+});
+
+describe("where the stills go: --out <folder>, or .devdata/tour/capture", () => {
+  it("the usage names --out, and the stills, steps.json and scenes.json all go under OUT", () => {
+    expect(sh).toContain("# usage: scripts/tour-capture.sh [--out <folder>] [dark|light|both] [scene number…]");
+    expect(sh).toContain('local dir=$OUT/$theme/$name steps');
+    expect(sh).toContain('GIZAI_TOUR_DIR="$dir"');
+    expect(sh).toContain('python3 - "$OUT/$1"');
+    expect(sh).not.toMatch(/video\//);
   });
 
-  it.each(WEBSITE_ORDER)("%s: its stills are exactly the steps' before and after, and steps.json says the same as scenes.json", (name) => {
-    const scene = json.scenes.find((s) => s.name === name);
-    const folder = join(CAPTURE, theme, name);
-    const listed = scene.steps.flatMap((s) => [s.before, s.after]);
-    for (const path of listed) expect(path.startsWith(`${name}/`)).toBe(true);
-    expect(readdirSync(folder).filter((f) => f.endsWith(".png")).map((f) => `${name}/${f}`).sort()).toEqual([...listed].sort());
-    const steps = JSON.parse(readFileSync(join(folder, "steps.json"), "utf8"));
-    expect(steps.errors).toEqual([]);
-    expect(steps.viewport).toEqual({ ...SCREEN, scale: 2 });
-    expect(steps.steps.map((s) => ({ name: s.name, before: `${name}/${s.before}`, after: `${name}/${s.after}`, box: s.box, selector: s.selector })))
-      .toEqual(scene.steps);
+  it("a new capture keeps the stills of earlier ones: only the scene it captures again is emptied", () => {
+    const prepare = sh.slice(sh.indexOf("prepare() {"), sh.indexOf("\n}\n", sh.indexOf("prepare() {")));
+    const wipe = prepare.match(/rm -rf [^&\n]+/g);
+    expect(wipe).toEqual(['rm -rf "$BASE" "$LIVE" "$T/run" "$T/logs" "$T/ids.sh" "$T/titles" "$T/runner.sh" ']);
+    const removals = [...sh.matchAll(/rm -rf ([^&\n]+)/g)].map((m) => m[1].trim());
+    expect(removals.filter((r) => /OUT|dir/.test(r))).toEqual(['"$dir"']);
   });
 
-  it("every still is a 2560 × 1664 PNG, and every clicked box lies inside it", () => {
-    for (const step of json.scenes.flatMap((s) => s.steps)) {
-      for (const still of [step.before, step.after]) expect(pngSize(readFileSync(join(CAPTURE, theme, still)))).toEqual(SCREEN);
-      const { x, y, width, height } = step.box;
-      expect(width).toBeGreaterThan(0);
-      expect(height).toBeGreaterThan(0);
-      expect(x).toBeGreaterThanOrEqual(0);
-      expect(y).toBeGreaterThanOrEqual(0);
-      expect(x + width).toBeLessThanOrEqual(SCREEN.width);
-      expect(y + height).toBeLessThanOrEqual(SCREEN.height);
+  it(".devdata/ is ignored by git, so the default folder's stills never get committed", () => {
+    for (const f of [".devdata/tour/capture/dark/scenes.json", ".devdata/tour/capture/light/01-board/open-card-before.png"]) {
+      expect(git("check-ignore", "-q", f).status).toBe(0);
+    }
+    expect(git("ls-files", ".devdata").stdout).toBe("");
+  });
+
+  describe.runIf(process.platform === "linux")("its arguments (run by bash, as on Linux, where the capture runs)", () => {
+    it("without --out the stills go to .devdata/tour/capture in the repository, wherever it is run from", () => {
+      const r = args(join(ROOT, "src"), "dark", "3", "4");
+      expect(r.status).toBe(0);
+      expect(r.out).toBe(join(realpathSync(ROOT), ".devdata", "tour", "capture"));
+      expect(r.pwd).toBe(realpathSync(ROOT));
+      expect(r.rest).toBe("dark 3 4");
+      expect(args(ROOT).out).toBe(join(realpathSync(ROOT), ".devdata", "tour", "capture"));
+    });
+
+    it("--out <folder> is read from where it is run, before the script goes to the repository's root", () => {
+      const from = realpathSync(mkdtempSync(join(tmpdir(), "tour-out-")));
+      try {
+        const relative = args(from, "--out", "site/capture", "light", "5");
+        expect(relative.status).toBe(0);
+        expect(relative.out).toBe(join(from, "site", "capture"));
+        expect(relative.pwd).toBe(realpathSync(ROOT));
+        expect(relative.rest).toBe("light 5");
+        // an absolute folder stays itself, and the folder needn't exist yet: the capture makes it
+        const absolute = args(from, "--out", join(from, "elsewhere", "stills"));
+        expect(absolute.out).toBe(join(from, "elsewhere", "stills"));
+        expect(absolute.rest).toBe("");
+        expect(existsSync(join(from, "site"))).toBe(false);
+      } finally {
+        rmSync(from, { recursive: true, force: true });
+      }
+    });
+
+    it("--out without a folder prints the usage and stops", () => {
+      const r = args(ROOT, "--out");
+      expect(r.status).toBe(1);
+      expect(r.stdout).toBe("usage: scripts/tour-capture.sh [--out <folder>] [dark|light|both] [scene number…]\n");
+    });
+  });
+});
+
+describe("the scenes: eight, in the website's order, as in round 2", () => {
+  const list = scenes();
+
+  it("numbered 1 to 8, in the website's order, each with at least one named click", () => {
+    expect(list.map((s) => s.folder)).toEqual(WEBSITE_ORDER);
+    expect(list.map((s) => s.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    for (const s of list) {
+      expect(s.steps.some((step) => /^[a-z0-9][a-z0-9-]*(@\d+)?=/.test(step))).toBe(true);
     }
   });
 
+  it("the named clicks are round 2's fifteen steps", () => {
+    const named = list.map((s) => [s.folder, s.steps.filter((st) => /^[a-z-]+(@\d+)?=/.test(st)).map((st) => st.split(/[@=]/)[0])]);
+    expect(named).toEqual([
+      ["01-board", ["open-card"]],
+      ["02-chat", ["approve"]],
+      ["03-clis", ["agents-tab", "usage"]],
+      ["04-review", ["open-card", "runs"]],
+      ["05-editor", ["open-folder", "open-project", "terminal"]],
+      ["06-memory", ["open-link", "graph"]],
+      ["07-tools", ["settings", "use-playwright"]],
+      ["08-inbox", ["inbox", "done-continue"]],
+    ]);
+  });
+
+  it("the Review scene scrolls the card's Runs tab into view (and 150px under it) before it clicks it", () => {
+    const review = list.find((s) => s.folder === "04-review");
+    expect(review.steps).toEqual(["wait:2000", 'open-card=[data-card="NWS-2"]', "scroll:.tabs button.tab:text(Runs)", "runs=.tabs button.tab:text(Runs)"]);
+  });
+
   it("the Editor and Terminal is one short scene: open a folder, pick a project in ~/Projects, then its Terminal", () => {
-    const editor = json.scenes.find((s) => s.name === "05-editor");
-    expect(editor.steps.map((s) => s.name)).toEqual(["open-folder", "open-project", "terminal"]);
-    expect(editor.steps[1].selector).toMatch(/title="~\/Projects\/[a-z-]+"/);
-    expect(editor.steps[2].selector).toMatch(/term-btn/);
-    // no separate terminals scene any more
-    expect(json.scenes.some((s) => /terminal/.test(s.name))).toBe(false);
+    const editor = list.find((s) => s.folder === "05-editor");
+    expect(editor.steps.slice(1).map((s) => s.split(/[@=]/)[0])).toEqual(["open-folder", "open-project", "terminal"]);
+    expect(editor.steps[2]).toMatch(/title="~\/Projects\/[a-z-]+"/);
+    expect(editor.steps[3]).toMatch(/term-btn/);
+    expect(list.some((s) => /terminal/.test(s.name))).toBe(false);
   });
 
-  it("the CLI scene opens Settings → Agents and runs (Coding CLIs), then Usage", () => {
-    const clis = json.scenes.find((s) => s.name === "03-clis");
+  it("the CLI scene shows Claude Code and Codex: Settings → Agents and runs, then Usage", () => {
+    const clis = list.find((s) => s.folder === "03-clis");
     expect(clis.title).toMatch(/Claude Code and Codex/);
-    expect(clis.steps.map((s) => s.name)).toEqual(["agents-tab", "usage"]);
-  });
-});
-
-describe("dark and light are the same tour", () => {
-  it("the same scenes and steps, in the same order", () => {
-    const shape = (theme) => scenesOf(theme).scenes.map((s) => ({ name: s.name, title: s.title, steps: s.steps.map((st) => [st.name, st.selector]) }));
-    expect(shape("light")).toEqual(shape("dark"));
-  });
-});
-
-describe("the video follows the capture", () => {
-  const source = read("video", "src", "scenes.ts");
-
-  it("video/src/scenes.ts's ORDER is the website's order, with a numbered caption for each scene", () => {
-    const order = [...source.match(/export const ORDER = \[([^\]]*)\]/)[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(order).toEqual(WEBSITE_ORDER);
-    WEBSITE_ORDER.forEach((name, i) => {
-      expect(source).toMatch(new RegExp(`"${name}": \\{ number: "0${i + 1}", name: "[^"]+", line: "[^"]+" \\}`));
-    });
-    expect(source).toMatch(/"03-clis": \{[^}]*Claude Code and Codex/);
+    expect(clis.steps.slice(1).map((s) => s.split("=")[0])).toEqual(["agents-tab", "usage"]);
   });
 
-  it("the frame never zooms: the stills fill it at their own size; the only scaling is the cursor's and the opening logo's", () => {
-    const code = (f) => read("video", "src", f).replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
-    const files = readdirSync(join(ROOT, "video", "src")).filter((f) => /\.(ts|tsx)$/.test(f));
-    const scaling = files.filter((f) => /scale\(|\bzoom\b|camera/i.test(code(f)));
-    expect(scaling.sort()).toEqual(["Cursor.tsx", "Ends.tsx"]);
-    // Ends.tsx: the logo on its own, before the first scene, grows by 2.5% at most; the closing doesn't move
-    expect(code("Ends.tsx").match(/scale\([^)]*\)/g)).toEqual(["scale(${1 + 0.025 * progress})"]);
-    expect(code("Ends.tsx").slice(code("Ends.tsx").indexOf("export const Closing"))).not.toMatch(/scale\(/);
-    const tour = read("video", "src", "Tour.tsx");
-    expect(tour).toMatch(/position: "absolute", left: 0, top: 0, width: WIDTH, height: HEIGHT/);
-    expect(tour).not.toMatch(/transform/);
+  it("each scene is captured in dark and in light, the theme set by its first step", () => {
+    expect(sh).toContain('case "$THEMES" in both) THEMES="dark light" ;; dark|light) ;; *) echo "$USAGE"; exit 1 ;; esac');
+    expect(sh).toContain('steps="theme:$theme;$(IFS=\';\'; echo "$*")"');
   });
 });
 
@@ -128,11 +185,6 @@ describe("the capture uses made-up data only", () => {
     expect(read(file)).not.toMatch(REAL);
   });
 
-  it.each(THEMES)("%s: scenes.json and the steps.json files name no real user or folder", (theme) => {
-    const files = [join(CAPTURE, theme, "scenes.json"), ...WEBSITE_ORDER.map((n) => join(CAPTURE, theme, n, "steps.json"))];
-    for (const f of files) expect(readFileSync(f, "utf8")).not.toMatch(REAL);
-  });
-
   it("prep_tour makes three made-up projects for three made-up clients, and an owner who isn't a real person here", () => {
     const prep = read("crates/gizai-core/examples/prep_tour.rs");
     const projects = [...prep.matchAll(/project\("([^"]+)", "([A-Z]+)"/g)].map((m) => [m[1], m[2]]);
@@ -146,7 +198,6 @@ describe("the capture uses made-up data only", () => {
   });
 
   it("Gizai runs in the cage with a fake home, its data, cache and config in it, and only the fakes' bin on its PATH", () => {
-    const sh = read("scripts/tour-capture.sh");
     expect(sh).toMatch(/FAKE_HOME=\$LIVE\/home; DATA=\$FAKE_HOME\/\.local\/share\/gizai/);
     expect(sh).toMatch(/PATH_IN_CAGE=\$FAKE_HOME\/\.local\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin\n/);
     const run = sh.slice(sh.indexOf("env -i "), sh.indexOf("timeout -k"));
@@ -154,6 +205,8 @@ describe("the capture uses made-up data only", () => {
       'XDG_CACHE_HOME="$FAKE_HOME/.cache"', 'XDG_CONFIG_HOME="$FAKE_HOME/.config"', "WLR_BACKENDS=headless"]) {
       expect(run).toContain(v);
     }
+    // the fake data lives in .devdata/tour, apart from the stills' folder
+    expect(sh).toMatch(/^T=\$GZ\/\.devdata\/tour; BASE=\$T\/base; LIVE=\$T\/live$/m);
     // the fakes are Claude Code and Codex, at ~/.local/bin/claude and ~/.local/bin/codex in the fake home
     expect(sh).toContain('cp scripts/tour/fake-claude.sh "$FAKE_HOME/.local/bin/claude"');
     expect(sh).toContain('cp scripts/tour/fake-codex.sh "$FAKE_HOME/.local/bin/codex"');

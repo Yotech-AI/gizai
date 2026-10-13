@@ -37,7 +37,7 @@ After an answer used a tool from outside GizAi (an MCP server, the web, the brow
 - each with a line about what it does and a preview: a note's new text and what changes, the card and agent, the settings that change, the file and where it goes;
 - each with **Approve** and **Discard**, and **Approve all** when there are several.
 
-Approve runs exactly that call once, with every other rule in force; Discard runs nothing. The chat notes what happened and the Team Lead hears it in its next answer. Until you decide, the chat waits for you at the top of [the Inbox](inbox.md), also after a restart.
+Approve runs exactly that call once, with every other rule in force; Discard runs nothing. The chat notes what happened and the Team Lead hears it in its next answer. Approving doesn't start a new answer: once nothing waits and the Team Lead isn't answering, a last note says its answer is done, so send a message to go on. Until you decide, the chat waits for you at the top of [the Inbox](inbox.md), also after a restart.
 
 The rules behind it: [docs/agent-tools.md](../agent-tools.md#safety-rules).
 

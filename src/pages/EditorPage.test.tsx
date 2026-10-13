@@ -819,6 +819,30 @@ describe("the terminal panel: the Terminal button, its states and the keys (GA-1
     expect(JSON.parse(store.get("gizai.editor.terminal") ?? "[]"), "the panel shows, so the folder keeps it as shown").toEqual([FOLDER]);
   });
 
+  it("after Show in Editor opened it, the panel shows again when the folder opens again; hidden, it stays hidden", async () => {
+    h.terms = [session(), session({ id: "term-2", name: "kade-portal 2" })];
+    h.placed = "term-2";
+    await open();
+    expect([panelShown(), h.termView?.id]).toEqual([true, "term-2"]);
+    // leave the Editor (#/tasks): the panel's view goes, and leaves its place (TerminalView's leaveIn)
+    async function leaveAndComeBack() {
+      root = () => null;
+      render();
+      h.placed = "";
+      h.termView = null;
+      await open();
+    }
+    await leaveAndComeBack();
+    expect([panelShown(), h.termView?.id], "kept as shown: it opens again, on the same terminal").toEqual([true, "term-2"]);
+    expect(opens(), "no new shell").toEqual([]);
+    await click("Hide");
+    expect(panelShown()).toBe(false);
+    expect(JSON.parse(store.get("gizai.editor.terminal")!), "hiding clears what the folder keeps").toEqual([]);
+    await leaveAndComeBack();
+    expect(panelShown(), "hidden, it stays hidden when the folder opens again").toBe(false);
+    expect(h.calls.filter((c) => c.startsWith("terminalClose")), "no shell closed").toEqual([]);
+  });
+
   it("with the focus in the terminal Ctrl+W, Ctrl+P, Ctrl+B and Ctrl+Shift+F don't reach the Editor, and Ctrl+` still hides the panel", async () => {
     await open();
     await clickRow("src");

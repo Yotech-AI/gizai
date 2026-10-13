@@ -3310,6 +3310,18 @@ async function terminalPanelProbe(phase: "a" | "b", card: string) {
   out.shownAgain = !!(await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000));
   check(out.shownAgain, `after Show in Editor opened it, the panel shows again when the folder opens again (kept: ${localStorage.getItem("gizai.editor.terminal")})`);
   if (!out.shownAgain) { btn()?.click(); await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000); }
+  // hidden after that, it stays hidden when the folder opens again: hiding clears what the folder keeps
+  btn()?.click();
+  await waitFor(() => (!panel() ? true : null), 2000);
+  window.location.hash = "#/tasks";
+  await sleep(500);
+  window.location.hash = `#/editor/${encodeURIComponent(kade.id)}`;
+  await waitFor(() => btn(), 3000);
+  await sleep(700);
+  out.hiddenAgain = !panel() && btn()?.getAttribute("aria-pressed") === "false";
+  check(out.hiddenAgain, `hidden after Show in Editor, the panel stays hidden when the folder opens again (kept: ${localStorage.getItem("gizai.editor.terminal")})`);
+  btn()?.click();
+  check(await waitFor(() => (panel()?.contains(term.element ?? null) && shownTab() === id ? true : null), 3000), "the button shows it again, on the same terminal");
 
   // 11. while another place has the view (the page, in a second window later), the panel shows the placeholder with Show here,
   // and its tab says so; Show here brings the view back

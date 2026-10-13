@@ -77,11 +77,9 @@ There is no "Local-first and open" row: open source isn't a feature, and local-f
 **Get GizAi:** label Install; lead "One line in a terminal installs GizAi on your computer. It's free, for Linux,
 macOS and Windows." Then:
 
-- Linux and macOS: `curl -fsSL https://gizai.ai/install.sh | sh`
-- Windows · PowerShell: `irm https://gizai.ai/install.ps1 | iex`
+- Linux and macOS: `curl -fsSL https://gizai.app/install.sh | sh`
+- Windows · PowerShell: `irm https://gizai.app/install.ps1 | iex`
 - Or build from source: the README's Install steps (https://github.com/Yotech-AI/gizai#install).
-
-`gizai.ai` is a placeholder until Jefsev confirms the domain; the installer itself comes in a later card.
 
 ## What the design decides
 

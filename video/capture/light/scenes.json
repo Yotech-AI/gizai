@@ -198,7 +198,7 @@
           "box": {
             "x": 522,
             "y": 1102,
-            "width": 732,
+            "width": 932,
             "height": 60
           },
           "selector": ".ed-picker .opt[title=\"~/Herd/kade-portal\"]"

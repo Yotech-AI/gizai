@@ -373,3 +373,14 @@ describe("the sidebar's Editor rows: a card's title on one line (GA-151)", () =>
     expect(rule(terminalCss, ".nav-item[data-term] .card-id")).toEqual(["flex: none"]);
   });
 });
+
+describe("the sidebar's section headings: the + and the caret in the middle of their hover background (GA-158)", () => {
+  it("the CSS: a 20 x 20 box with no padding of its own, its icon centred; no theme or other rule changes that", () => {
+    expect(rule(componentsCss, ".nav-label button")).toEqual(expect.arrayContaining(["width: 20px", "height: 20px", "padding: 0", "display: grid", "place-items: center"]));
+    // the browser's own button padding is what pushed the icon 3px right: no other rule pads these buttons again
+    const others = [componentsCss, appCss, terminalCss].flatMap((css) => css.split("\n"))
+      .filter((l) => /\.nav-label[^{]*button[^{]*\{/.test(l) && !l.startsWith(".nav-label button {") && !l.startsWith(".nav-label button:hover {"));
+    expect(others).toEqual([]);
+    expect(rule(componentsCss, ".nav-label button:hover")).toEqual(["background: var(--hover)", "color: var(--text)"]);
+  });
+});

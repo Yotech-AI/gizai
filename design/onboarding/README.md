@@ -128,7 +128,9 @@ eyebrow ("Step 2 of 4").
 The app as it is today, nothing new but the chat's title: the sidebar (Chat current, with "working"), the top bar (Chat /
 Welcome to GizAi; the Team Lead chip "working"), Recent with the one chat (its pulse), your message on the right and the
 Team Lead's answer starting under its name: the text so far, the teal caret, "Writing…". The composer waits with "Queue a
-message for when this answer is done…" and Stop. Teal here is right: an agent is at work.
+message for when this answer is done…" and Stop. Teal here is right: an agent is at work. The app's sidebar has no logo
+today (the brandbook leaves bringing the logo into the app to a card of its own), so this frame has none either; the
+onboarding's top bar carries it.
 
 ### On every step
 

@@ -3,58 +3,50 @@
 GizAi's homepage, designed in Figma from GA-52's brandbook, for Jefsev's review. Desktop first: the sub-pages (one per
 feature) and mobile come later, and so does building the site.
 
+**Round 2** follows Jefsev's review of 13 Oct 2026 ("the basics are there, but it lacks personality"): ADA moves up
+after the tour; eight features in a new order, with row 01 open by default; one line to install; the logo's pink as the
+site's accent; the mountains' wireframe lines through the page; and the mountains fixed along the bottom of the window.
+
 - **Figma:** the file Giz-AI, page **Website: Home (desktop)** (node `37:2`):
   https://www.figma.com/design/Q2dp2xiv8MMm90Xwj3ToCI/Giz-AI?node-id=37-2
-  - `Home · Dark` (`40:27`) and `Home · Light` (`41:292`): the whole page, 1440 × 6560, top to bottom.
-  - `Features · row 01 on hover · Dark` (`42:557`) and `· Light` (`42:673`): the features with row 01 open.
-  - `Homepage components` (`37:16`): Cursor, Theme switch, Code block, Feature row, Tour frame and Note.
-  - Blue dashed notes on the canvas: right of each page, the page each feature row opens and what its screenshot shows;
-    left of the dark page, how the parts behave. Each row also carries its address as a Dev Mode annotation.
-  - In Figma's prototype view, hovering a feature row opens it (an interactive component, While hovering).
-- **From the brandbook** (page Brandbook, `5:2`): the Logo, Button, Badge, Card label and Mountains components, the
-  `GizAi colour` variables (modes Dark and Light), the `GizAi size` radii and the `Web/…` text styles. Each page frame
-  sets the colour mode, so one set of components draws both themes.
+  - `Home · Dark` (`40:27`) and `Home · Light` (`41:292`): the whole page, 1440 × 5929, top to bottom.
+  - `Features · row 03 on hover · Dark` (`42:557`) and `· Light` (`42:673`): row 03 open under the pink plus cursor,
+    row 01 closed.
+  - `In the window · Dark` (`62:973`) and `· Light` (`62:1203`): the page in a 1440 × 900 window at four scroll
+    positions, with the mountains fixed along the bottom.
+  - `Homepage components` (`37:16`): Cursor, Theme switch, Tour frame, Note, Plus mark, Rule, Section label, Install
+    line, Point glyph and Feature row.
+  - `About this page` (`43:721`), above the pages: what changed in round 2, and the website's pink rule.
+  - Blue dashed notes: left of the dark page, how the parts behave; right of it, the page each feature row opens and
+    what its screenshot or GIF shows. Each row also carries its address as a Dev Mode annotation.
+  - In Figma's prototype view, hovering a closed feature row opens it (an interactive component, While hovering).
+- **From the brandbook** (page Brandbook, `5:2`): the Logo, Button, Link, Badge, Card label and Mountains components,
+  the `GizAi colour` variables (modes Dark and Light) and the `Web/…` text styles. Each page frame sets the colour mode,
+  so one set of components draws both themes.
 
 ## The page, top to bottom
 
-1. **Top bar**, 72 px, sticky: the logo; Tour, Features, ADA and Get GizAi, which scroll to their section; View on
-   GitHub (https://github.com/Yotech-AI/gizai); the dark and light switch.
+1. **Top bar**, 72 px, sticky, with a 1 px line under it: the logo; Tour, ADA, Features and Get GizAi, which scroll to
+   their section; View on GitHub (https://github.com/Yotech-AI/gizai); the dark and light switch.
 2. **Hero**: the mark at 72 px, the headline, one line, Get GizAi (primary) and View on GitHub (secondary), then the
-   product tour in a 1280 × 832 frame.
-3. **Features**: ten numbered rows, full width, split by thin lines, with the number large in low contrast.
-4. **ADA**: the term, its copy and three points, on the `side` surface.
-5. **Get GizAi**: the README's install commands for Linux, macOS and Windows in mono blocks. No download buttons.
-6. **Footer**: the logo, Made by YoTech, GitHub and MIT licence.
-7. **The mountain band** along the bottom: the Mountains component, Website hero (GA-139's `mountains-hero.svg`),
-   3840 × 448 at 1:1, centred and cut at the sides, at Medium (`band-hero-line`, `band-hero-glow`).
+   product tour in a 1280 × 832 frame, with a plus at each corner.
+3. **ADA**, right after the tour: the outlined ADA and what the letters stand for; the headline and the three
+   paragraphs; the three points in a strip of lines.
+4. **Features**: eight numbered rows, guide to guide, split by 1 px lines. Row 01 is open.
+5. **Get GizAi**: one line to install per system, each with Copy, and Or build from source.
+6. **Footer**: the logo, Made by YoTech, GitHub and MIT licence; under it the mountains' empty sky.
+7. **The mountain band**, fixed along the bottom of the window, behind everything.
 
 ## The words
 
-**Headline (Display):** Your agents build it. You review.
+**Headline (Display):** Your agents build it. You review. ("review" in pink)
 
 **The line under it (Lead):** GizAi is a free desktop app where a team of AI coding agents works through your board
 and hands every card back to you for review.
 
-**Features:** eyebrow Features, title What GizAi does, lead "One app, from the card you write to the pull request you
-merge." The rows are the card's ten, in its order and words; each name is an H2 without its full stop, as the
-brandbook's headings are.
+**ADA** (copy kept from round 1)
 
-| # | Name (H2) | Opens | Hover shows |
-|---|---|---|---|
-| 01 | The board decides who works | `/features/board` | GIF: an Auto column picks up the next card, which gets its own branch |
-| 02 | A Team Lead you talk to | `/features/team-lead` | GIF: the chat turns a request into cards, with a one-click approval |
-| 03 | Tested before you see it | `/features/testing` | Screenshot: a card in Testing, the QA run and its pull request |
-| 04 | A code editor, free | `/features/code-editor` | Screenshot: the Editor on a card worktree, git marks, search, Open in |
-| 05 | Terminals, free | `/features/terminal` | GIF: a terminal in a card worktree, in the Editor's panel |
-| 06 | Bring your own CLI | `/features/cli` | Screenshot: the Coding CLIs settings, accounts and usage limits |
-| 07 | Memory | `/features/memory` | Screenshot: linked notes and the graph |
-| 08 | Tools per agent | `/features/tools` | Screenshot: an agent's tools, each with its switch |
-| 09 | The Inbox | `/features/inbox` | Screenshot: a question, an approval and a Run this for me |
-| 10 | Local-first and open | `/features/local-first` | Screenshot: the same board on Linux, macOS and Windows |
-
-**ADA**
-
-- Eyebrow: A new kind of app. Headline (H1): **Not an IDE. An ADA.**
+- Label: A new kind of app. Headline (H1): **Not an IDE. An ADA.** ("ADA" in pink)
 - An Agentic Development Application (ADA) is an application where a team of AI agents builds your software through
   your board. You write the cards. The agents pick them up, do the work and hand it back, and you review and decide.
 - An IDE with an AI assistant is built around you writing code. The assistant helps in the file you have open, one
@@ -66,28 +58,64 @@ brandbook's headings are.
   side.** Every card gets its own agent, git worktree and branch. **You review and decide.** Nothing reaches your main
   branch until you merge it.
 
-**Get GizAi:** eyebrow Install; lead "GizAi builds from source on your own computer: there are no downloads or
-installers. Its install script checks what is missing, builds GizAi and installs it for you alone, without sudo or
-administrator rights." Then what every system needs, and per system its extra needs, the commands from the README's
-Install section, and where it installs.
+**Features:** label Features, title What GizAi does, lead "One app, from the card you write to the pull request you
+merge." Each name is an H2 without its full stop, as the brandbook's headings are.
+
+| # | Name (H2) | Text | Opens | Open shows |
+|---|---|---|---|---|
+| 01 | The board decides who works | Agents sit on columns, and Auto columns pick up cards by priority. Every card gets its own git worktree and branch. | `/features/board` | GIF: an Auto column picks up the next card, which gets its own worktree and branch |
+| 02 | A Team Lead you talk to | A chat that turns your requests into cards, starts agents and checks the board. It asks you only what it can't decide, and you approve in one click. | `/features/team-lead` | GIF: the chat turns a request into cards and starts agents; a one-click approval |
+| 03 | Bring your own CLI | Claude Code, Codex, Gemini or another coding CLI, on your own machine, with your own logins and accounts. See each account's usage limits and move agents to one with room. | `/features/cli` | Screenshot: Settings, Coding CLIs, the accounts and their usage limits |
+| 04 | Tested before you see it | QA runs the tests, adds missing ones and opens the pull request. You review and merge, and DevOps releases. | `/features/testing` | Screenshot: a card in Testing, the QA run, its tests and pull request |
+| 05 | The Editor and Terminal, built in | Open a project or a card's worktree, see its git status and edit, with your own shell in the panel under the code. Free, like the rest of GizAi. | `/features/editor-and-terminal` | GIF: the Editor on a card's worktree, git marks, a shell under the code |
+| 06 | Memory | Decisions and gotchas as linked notes, with a graph. Agents learn on every card, and one client's notes never reach another's. | `/features/memory` | Screenshot: linked notes and their graph |
+| 07 | Tools per agent | MCP servers, web search and a hidden browser for testing web pages. Each stays off until you switch it on. | `/features/tools` | Screenshot: an agent's tools, each with its switch |
+| 08 | The Inbox | Questions, approvals and cards to review in one place. "Run this for me" for the commands an agent may not run. | `/features/inbox` | Screenshot: a question, an approval and a Run this for me |
+
+There is no "Local-first and open" row: open source isn't a feature, and local-first is part of row 03.
+
+**Get GizAi:** label Install; lead "One line in a terminal installs GizAi on your computer. It's free, for Linux,
+macOS and Windows." Then:
+
+- Linux and macOS: `curl -fsSL https://gizai.ai/install.sh | sh`
+- Windows · PowerShell: `irm https://gizai.ai/install.ps1 | iex`
+- Or build from source: the README's Install steps (https://github.com/Yotech-AI/gizai#install).
+
+`gizai.ai` is a placeholder until Jefsev confirms the domain; the installer itself comes in a later card.
 
 ## What the design decides
 
-- **Pink only for the brand.** The logo is pink (`#f472b6` on dark, `#c0287a` on light); the one other pink on the
-  first screen is the Review badge in the picture of the board, as the brandbook allows. Buttons, links, focus and the
-  cursor are the accent blue.
-- **The hero shows the mark, not the wordmark again.** The top bar already has the logo with its name, so the hero's
-  logo is the G at 72 px: the first big picture is the Review glyph the brand is built on.
-- **A feature row** (Feature row, State=Closed) is the number (Geist Bold 88, `line-2`), the name (Web/H2, one line in
-  520 px) and the text (Web/Lead, `text-2`). **On hover and on keyboard focus** (State=Hover) the row grows to show a
-  screenshot or GIF of 1120 × 700, drawn at 560 × 350, under the text it shows; the number brightens to `text-3`; the
-  mouse cursor becomes Cursor/Kind=Open, a 56 px accent circle with a plus and a 2 px `bg` ring. One row is open at a
-  time; it opens over about 200 ms, at once with reduced motion. A click opens the feature page.
+- **Pink on the website (new rule).** The brandbook's "at most one pink thing per website screen" is lifted for the
+  website. The logo's pink (`#f472b6` on dark, `#c0287a` on light) is the site's accent: the logo, the section labels
+  and their 40 px line, one key word in a headline (review, ADA), the open feature row's number and its 160 px line, both
+  cursors, the install prompts and the Review glyph in ADA's third point. Never on buttons, links, focus or body text,
+  never behind text, and never a fill bigger than the cursor: no pink walls. Pink text is 7.2:1 on the dark `bg` and
+  5.5:1 on white. Inside the app, pink still means only "needs you".
+- **Why pink says "review".** The mark is the board's Review glyph, so the site's pink lands where you come in: the
+  headline's "review", the third ADA point (You review and decide) with the Review glyph, the open row and the cursor.
+- **The lines**, from the mountains' wireframe, all 1 px: two guides 40 px in from the window's sides run the whole page
+  (`line`); a rule across the window starts each section; where lines cross, an 11 px plus in `text-3` (the plus the
+  cursor carries). The feature numbers and the big ADA are outlined in 1 px `text-3`. The mesh itself is the mountain
+  band. herdr.dev's bold numbers, rhythm and contrast, kept cleaner: no background grid, no pink fills.
+- **The mountains, fixed.** GA-139's website hero (`mountains-hero.svg`, 3840 × 448 at 1:1, centred and cut at the
+  sides, `band-hero-line` and `band-hero-glow`) is the page's lowest layer, `position: fixed` along the bottom of the
+  window, like the app's band. The sections are see-through; what holds content stays solid and covers it: the tour,
+  the screenshots, the install lines, the top bar. At the end of the page the footer stands in the band's empty sky.
+  `aria-hidden`, `pointer-events: none`, no motion; it goes with forced colours, on paper and under 560 px high.
+- **A feature row** (Feature row, State=Closed) is the number (Geist Bold 112, outlined in 1 px `text-3`), the name
+  (Web/H2, in 520 px), one to three sentences (Web/Lead, `text-2`) and the feature page's address (Web/Code, `text-3`,
+  with an arrow). **Open** (State=Open): the number fills pink under a 160 px pink line, the address takes the accent,
+  and the screenshot or GIF (1120 × 700, drawn at 560 × 350) shows under the text, in the site theme.
+- **Opening rows.** Row 01 is open when the page loads. Hover (after 150 ms at rest, so passing over rows doesn't open
+  each one) or keyboard focus opens a row over 200 ms and closes the open one; with reduced motion it opens at once.
+  When a row above closes, the page scrolls by the same amount, so the row under the pointer stays put. The whole row is
+  one link to its address; over it the pointer becomes the cursor (Cursor/Kind=Open): a 56 px pink circle with a plus,
+  ringed in `bg`. Keyboards and touch keep the accent focus ring.
 - **The tour plays muted and loops**, with a Pause button (WCAG 2.2.2). With reduced motion it shows its first frame and
-  a Play button. Its cursor (Cursor/Kind=Tour) is a circle with a dot.
-- **Install commands** stack by system, each in a Code block with a Copy button that copies only the commands. The
-  longest line fits a 880 px block without wrapping.
-- **The mountain band** sits under the footer, which stands in its empty sky; nothing else sits on it.
+  a Play button. Its cursor (Cursor/Kind=Tour) is a pink ring with a dot, the Review glyph again: a suggestion for the
+  tour cards (GA-148, GA-149).
+- **Install lines** (Install line) show one command on one line: the system above it, the prompt in pink, the command in
+  Web/Code, and Copy, which copies the command without the prompt and says Copied for 2 s.
 
 ## Placeholders
 
@@ -95,5 +123,13 @@ The Figma MCP can't place images or video, so these are frames that say their si
 
 - **The product tour:** `Tour frame`, 2560 × 1664 drawn at 1280 × 832, a dark and a light version (the `Version`
   property). The sketch of the board behind the label shows what the tour opens on.
-- **The feature screenshots and GIFs:** in Feature row, State=Hover, 1120 × 700 drawn at 560 × 350, ten features in two
-  themes each (`Media label` and `Media`).
+- **The feature screenshots and GIFs:** in Feature row, State=Open, 1120 × 700 drawn at 560 × 350, eight features in two
+  themes each (`Media label` and `Media`), drawn as a wireframe of the app.
+
+## What the MCP couldn't do
+
+- Place images, GIFs or video: the tour and the screenshots are placeholders.
+- Mark the band fixed and the top bar sticky for the prototype (`scrollBehavior` isn't in its plugin API). On the
+  canvas the band sits at the end of the page; `In the window` shows it fixed. In Figma, Prototype → Scroll behavior →
+  Fixed on the band (and Sticky on the top bar) would add it to the prototype.
+- Close row 01 when another row opens in the prototype: an interactive component only changes itself.

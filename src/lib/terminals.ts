@@ -437,6 +437,7 @@ function dropWebgl(v: View) {
 }
 
 // ---------- places ----------
+// (The hooks below give the same snapshot on a server render, so a page rendered to HTML, as tests do, has the list.)
 
 /** The place that asked last shows the view (design §5): a place asks when it shows, and Show here asks again. */
 export function showIn(id: string, place: TerminalPlace): void {
@@ -460,19 +461,19 @@ export function leaveIn(id: string, place: TerminalPlace): void {
 
 /** Every open terminal, in the order they were opened. */
 export function useTerminals(): TerminalSession[] {
-  return useSyncExternalStore(subscribe, () => sessions);
+  return useSyncExternalStore(subscribe, () => sessions, () => sessions);
 }
 /** Whether the list has come from the backend yet (before that, an address of a terminal can't be called closed). */
 export function useTerminalsLoaded(): boolean {
-  return useSyncExternalStore(subscribe, () => loaded);
+  return useSyncExternalStore(subscribe, () => loaded, () => loaded);
 }
 /** Where the terminal's view shows now, or null. */
 export function useShownIn(id: string): TerminalPlace | null {
-  return useSyncExternalStore(subscribe, () => shown.get(id) ?? null);
+  return useSyncExternalStore(subscribe, () => shown.get(id) ?? null, () => shown.get(id) ?? null);
 }
 /** Whether the terminal's view is made (xterm.js loaded and attached), so a place can put it in. */
 export function useViewMade(id: string): boolean {
-  return useSyncExternalStore(subscribe, () => views.has(id));
+  return useSyncExternalStore(subscribe, () => views.has(id), () => views.has(id));
 }
 
 /** Puts the view in the place's element: the first time it opens there (after the font has loaded); then it only moves.
@@ -524,7 +525,7 @@ export function fitView(id: string) {
 
 /** The terminal's size now (columns × rows), as last sent to the backend; null before its view is made. */
 export function useTerminalSize(id: string): { cols: number; rows: number } | null {
-  return useSyncExternalStore(subscribe, () => views.get(id)?.sent ?? null);
+  return useSyncExternalStore(subscribe, () => views.get(id)?.sent ?? null, () => views.get(id)?.sent ?? null);
 }
 
 /** Clear, in the page's ⋯ menu: empties the scrollback and the screen but for the line the prompt is on. */

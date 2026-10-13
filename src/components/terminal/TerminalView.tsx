@@ -90,6 +90,8 @@ function TerminalFind({ id, input, onClose }: { id: string; input: React.RefObje
   const [opts, setOpts] = useState<FindOptions>({ caseSensitive: false, wholeWord: false, regex: false });
   const [result, setResult] = useState<{ index: number; count: number } | null>(null);
   useEffect(() => onFindResults(id, setResult), [id]);
+  // the box has the focus when it opens (from the menu too, where it appears after the focus was asked for)
+  useEffect(() => { input.current?.focus(); input.current?.select(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const valid = !opts.regex || (() => { try { new RegExp(query); return true; } catch { return false; } })();
   const run = (q: string, o: FindOptions, how: "next" | "previous" | "typed") => {
     if (!q || (o.regex && !(() => { try { new RegExp(q); return true; } catch { return false; } })())) { findIn(id, "", o); setResult(null); return; }

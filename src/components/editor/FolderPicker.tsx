@@ -66,7 +66,7 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
   useLayoutEffect(() => {
     const h = ref.current?.getBoundingClientRect().height ?? 0;
     setTop(Math.max(8, Math.min(at.y, window.innerHeight - h - 8)));
-  }, [at.y, folders]);
+  }, [at.y, folders, asking, failed]);
 
   const byHand = (f: EditorFolder) => !!(f.taskId && tasks.get(f.taskId)?.byHand);
   const groups = useMemo(() => currentFirst(pickerGroups(folders ?? [], roots, query, byHand), current), [folders, roots, query, tasks, current]); // eslint-disable-line react-hooks/exhaustive-deps

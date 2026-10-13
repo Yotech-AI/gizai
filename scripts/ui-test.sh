@@ -79,7 +79,11 @@
 #     closes; Ctrl+Shift+C and Ctrl+Shift+V copy and paste (when the cage has a clipboard); a second place takes the view
 #     and the page offers Show here, which takes it back; WebGL draws where hardware WebGL2 exists, and the DOM renderer
 #     draws the same screen with WebGL off and after its context is lost; yes for 10 s keeps the window drawing and
-#     Ctrl+C stops it within a second; closing the terminal disposes of its view.
+#     Ctrl+C stops it within a second; closing the terminal disposes of its view. GA-136 (TF1): KADE-1 isn't pinned to you, so
+#     the picker asks first and Edit anyway starts it; its row is in the sidebar's Terminal (between Projects and Editor,
+#     KADE-1 in mono, selected), its tab on the page in a 32px strip, and the top bar says the folder, sh and the size; + after
+#     the tabs starts another terminal there without a picker, and exit closes it (its row and tab go, the page shows the
+#     first again); with both closed the sidebar has one row, New terminal, and the page is #/terminal.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail

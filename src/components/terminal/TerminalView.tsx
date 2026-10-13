@@ -1,26 +1,27 @@
 // A place for a terminal (GA-135, TF0; design §3 and §5): the Terminal page has one, and the Editor's terminal panel
 // (TF2). When this place shows the terminal, the terminal's one view moves in, fits it and sends the size; when another
 // place asked for it later, this place says where it is, with Show here. Find (Ctrl+Shift+F, Cmd+F on macOS) floats at
-// the top right, so the terminal keeps its size.
+// the top right, so the terminal keeps its size; the Terminal page's ⋯ → Find opens it too (findAsk, GA-136).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, CaseSensitive, Maximize2, Regex, WholeWord, X } from "lucide-react";
 import type { TerminalSession } from "../../types";
 import {
-  attachView, detachView, endFind, findIn, fitView, focusTerminal, leaveIn, onFindResults, placeKey, platformOf, samePlace,
-  showIn, termKey, useShownIn, useTerminals, useViewMade, type FindOptions, type TerminalPlace,
+  attachView, detachView, endFind, findIn, fitView, focusTerminal, folderNameOf, leaveIn, onFindResults, placeKey, platformOf,
+  samePlace, showIn, termKey, useShownIn, useTerminals, useViewMade, type FindOptions, type TerminalPlace,
 } from "../../lib/terminals";
-
-/** The folder's own name, as the Editor names it ("gizai", or a card's identifier for its worktree). */
-const folderName = (s: TerminalSession) => s.folderPath.split(/[\\/]/).filter(Boolean).pop() ?? s.folderPath;
 
 /** Where the terminal shows instead of here (design §8): "gizai 2 is on its own page." */
 export function awayText(s: TerminalSession, shown: TerminalPlace | null): string {
   if (shown?.kind === "page") return `${s.name} is on its own page.`;
-  if (shown?.kind === "panel") return `${s.name} is in ${folderName(s)}'s Editor.`;
+  if (shown?.kind === "panel") return `${s.name} is in ${folderNameOf(s)}'s Editor.`;
   return `${s.name} isn't shown anywhere.`;
 }
 
-export function TerminalView({ id, place, autoFocus = false }: { id: string; place: TerminalPlace; autoFocus?: boolean }) {
+export function TerminalView({ id, place, autoFocus = false, findAsk = 0 }: {
+  id: string; place: TerminalPlace; autoFocus?: boolean;
+  /** Counts up each time the place's own Find is chosen (the page's ⋯ menu): find opens. */
+  findAsk?: number;
+}) {
   const s = useTerminals().find((x) => x.id === id);
   const shown = useShownIn(id);
   const made = useViewMade(id);
@@ -29,6 +30,10 @@ export function TerminalView({ id, place, autoFocus = false }: { id: string; pla
   const [finding, setFinding] = useState(false);
   const findBox = useRef<HTMLInputElement>(null);
   const key = placeKey(place);
+  function openFind() {
+    setFinding(true);
+    requestAnimationFrame(() => { findBox.current?.focus(); findBox.current?.select(); });
+  }
 
   // this place asks for the terminal when it shows, and gives it back when it goes
   useLayoutEffect(() => {
@@ -48,6 +53,12 @@ export function TerminalView({ id, place, autoFocus = false }: { id: string; pla
   }, [id, here, made]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (!here) setFinding(false); }, [here]);
+  const findAsked = useRef(findAsk);
+  useEffect(() => {
+    if (findAsk === findAsked.current) return;
+    findAsked.current = findAsk;
+    if (here) openFind();
+  }, [findAsk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!s) return <div className="term-place" />;
   if (!here) {
@@ -61,10 +72,6 @@ export function TerminalView({ id, place, autoFocus = false }: { id: string; pla
       </div>
     );
   }
-  const openFind = () => {
-    setFinding(true);
-    requestAnimationFrame(() => { findBox.current?.focus(); findBox.current?.select(); });
-  };
   return (
     <div className={`term-place${s.ended ? " ended" : ""}`}
       onKeyDown={(e) => {
@@ -83,6 +90,8 @@ function TerminalFind({ id, input, onClose }: { id: string; input: React.RefObje
   const [opts, setOpts] = useState<FindOptions>({ caseSensitive: false, wholeWord: false, regex: false });
   const [result, setResult] = useState<{ index: number; count: number } | null>(null);
   useEffect(() => onFindResults(id, setResult), [id]);
+  // the box has the focus when it opens (from the menu too, where it appears after the focus was asked for)
+  useEffect(() => { input.current?.focus(); input.current?.select(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const valid = !opts.regex || (() => { try { new RegExp(query); return true; } catch { return false; } })();
   const run = (q: string, o: FindOptions, how: "next" | "previous" | "typed") => {
     if (!q || (o.regex && !(() => { try { new RegExp(q); return true; } catch { return false; } })())) { findIn(id, "", o); setResult(null); return; }

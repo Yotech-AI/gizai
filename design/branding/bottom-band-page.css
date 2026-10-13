@@ -1,0 +1,141 @@
+/* This page only (design/branding/bottom-band.html): its layout around the frames, and stand-ins for what the app draws by
+   other means: CodeMirror's code in the Editor and the composer's empty line. The frames hold the app's markup, on the
+   app's stylesheets, band.css and band-tokens.css. */
+
+/* Lucide's look, which lucide-react puts on each icon as attributes */
+svg.icon { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+
+/* tokens.css's aliases resolve where they are declared, on the page's root; a frame in the other theme declares them
+   again, so they take its colours */
+[data-theme] { --st-review: var(--needs); --st-done: var(--success); --st-blocked: var(--danger); --pr-urgent: var(--danger);
+  --syn-meta: var(--syn-keyword); --syn-tag: var(--syn-function); --syn-attribute: var(--syn-type); --syn-number: var(--syn-string);
+  --syn-variable: var(--text); --syn-property: var(--text); --syn-operator: var(--text-2); --syn-punctuation: var(--text-2);
+  --syn-invalid: var(--danger); --git-added: var(--diff-add); --git-deleted: var(--diff-del); }
+
+/* ---------- the page ---------- */
+html, body { height: auto; }
+body { margin: 0; }
+.dz { max-width: 1520px; margin: 0 auto; padding: 40px 40px 120px; }
+.dz code { padding: 1px 5px; border-radius: var(--radius-s); background: var(--selected); font-family: var(--font-mono); font-size: .9em; }
+.dz-head h1 { margin: 10px 0 8px; font-size: var(--fs-xl); line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
+.dz-kicker { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: var(--fs-sm); }
+.dz-lead { max-width: 110ch; margin: 0 0 10px; color: var(--text); font-size: var(--fs-md); line-height: 1.55; }
+.dz-p { max-width: 120ch; margin: 8px 0 12px; color: var(--text-2); line-height: 1.6; }
+.dz-p b, .dz-notes b { color: var(--text); font-weight: 600; }
+.dz-notes { max-width: 128ch; margin: 8px 0 20px; padding-left: 20px; color: var(--text-2); line-height: 1.6; }
+.dz-notes li { margin: 5px 0; }
+.dz-switches { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; margin: 18px 0 10px; }
+.dz-show { display: flex; align-items: center; gap: 10px; }
+.dz-show .seg button { padding: 0 10px; }
+.dz-show .seg button[aria-pressed="true"] { background: var(--selected); color: var(--text); }
+.dz-toc { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 8px; }
+.dz-toc a { padding: 4px 10px; border: 1px solid var(--line-2); border-radius: var(--radius-pill); color: var(--text-2); font-size: var(--fs-sm); text-decoration: none; }
+.dz-toc a:hover { background: var(--hover); color: var(--text); }
+.dz-sec { margin-top: 64px; padding-top: 28px; border-top: 1px solid var(--line); }
+.dz-sec h2 { margin: 0 0 8px; font-size: var(--fs-lg); font-weight: 650; letter-spacing: -.01em; }
+.dz-sec h3 { margin: 40px 0 6px; font-size: var(--fs-md); font-weight: 600; }
+.dz-pick { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--radius-pill); color: var(--text); font-size: var(--fs-xs); font-weight: 600; }
+
+/* ---------- frames: an app window, or a strip of one ---------- */
+.shot { margin: 18px 0 0; }
+.shot-label, .vitem figcaption, .vhead { margin: 0 0 8px; color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .02em; }
+.shot-label b { color: var(--text-2); font-weight: 600; }
+.win { position: relative; display: flex; overflow: hidden; max-width: 1440px; border: 1px solid var(--line-2); border-radius: var(--radius-l); background: var(--bg); color: var(--text);
+  box-shadow: var(--shadow-pop); font-family: var(--font-sans); font-size: var(--fs); line-height: 1.45; }
+.win .side { flex: none; width: var(--size-side); height: auto; }
+.win > .main { flex: 1; min-width: 0; min-height: 0; }
+.win.strip { box-shadow: none; }
+/* A frame isn't the window: its band sits at the frame's bottom (absolute, in the frame's own stacking context, where the
+   app's is fixed, in the page's) and the app's sizes by the window (100vh) follow the frame's height */
+.win[data-band] { position: relative; isolation: isolate; }
+.win .band { position: absolute; height: var(--band-h); }
+.win .col-body { max-height: calc(var(--frame-h) - 210px); }
+.variants { display: flex; flex-direction: column; gap: 18px; margin: 16px 0 0; }
+.vrow { display: grid; gap: 6px; }
+.vitems { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; }
+.vitem { max-width: 100%; margin: 0; }
+.vitem .tip { max-width: 100%; margin: 6px 0 0; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+
+/* the Show switches: a theme, a strength */
+[data-show="dark"] .shot.light, [data-show="dark"] .vrow.light { display: none; }
+[data-show="light"] .shot.dark, [data-show="light"] .vrow.dark { display: none; }
+[data-strength-show="subtle"] [data-strength]:not([data-strength="subtle"]),
+[data-strength-show="medium"] [data-strength]:not([data-strength="medium"]),
+[data-strength-show="strong"] [data-strength]:not([data-strength="strong"]) { display: none; }
+
+/* ---------- the artwork on its own: 1:1 in a strip that scrolls sideways, and as windows of each width ---------- */
+.art-scroll { max-width: 1440px; overflow-x: auto; border: 1px solid var(--line-2); border-radius: var(--radius-l); }
+.art-scroll > .win { max-width: none; border: 0; border-radius: 0; }
+.widths { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.width-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: end; gap: 16px; }
+.width-row .what { color: var(--text-2); font-size: var(--fs-sm); line-height: 1.45; }
+.width-row .what b { display: block; color: var(--text); font-family: var(--font-mono); font-weight: 500; }
+.scaled { position: relative; overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--radius); }
+.scaled > .win { max-width: none; border: 0; border-radius: 0; box-shadow: none; }
+.dz-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; max-width: 1440px; margin: 14px 0; }
+.dz-fact { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); }
+.dz-fact b { display: block; font-family: var(--font-mono); font-size: var(--fs-md); font-weight: 500; }
+.dz-fact span { color: var(--text-3); font-size: var(--fs-xs); }
+
+/* ---------- a still picture of CodeMirror with the code theme (src/lib/codeTheme.ts) ---------- */
+.ed-code { flex: 1; min-height: 0; overflow: hidden; padding: 4px 0; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: calc(12.5px + var(--ui-grow, 0px)); line-height: 1.6; }
+.ed-code .ln { display: flex; min-width: max-content; height: 20px; }
+.ed-code .no { flex: none; box-sizing: border-box; width: calc(3ch + 24px); padding: 0 8px 0 16px; color: var(--text-3); text-align: right; user-select: none; }
+.ed-code .fd { flex: none; width: 22px; }
+.ed-code .tx { padding: 0 24px 0 6px; white-space: pre; }
+.ed-code .ln.active { background: var(--hover); }
+.ed-code .ln.active .no { color: var(--text); }
+.ed-code .cursor { display: inline-block; width: 2px; height: 18px; margin-right: -2px; vertical-align: -4px; background: var(--text); }
+.syn-keyword { color: var(--syn-keyword); } .syn-string { color: var(--syn-string); } .syn-number { color: var(--syn-number); }
+.syn-comment { color: var(--syn-comment); } .syn-function { color: var(--syn-function); } .syn-type { color: var(--syn-type); }
+.syn-variable { color: var(--syn-variable); } .syn-property { color: var(--syn-property); } .syn-tag { color: var(--syn-tag); }
+.syn-attribute { color: var(--syn-attribute); } .syn-operator { color: var(--syn-operator); } .syn-punctuation { color: var(--syn-punctuation); }
+.syn-meta { color: var(--syn-meta); }
+/* the composer's empty line: CodeMirror's placeholder */
+.composer-editor .cm-content { color: var(--text); font-size: var(--fs-chat, var(--fs)); }
+.composer-editor .cm-placeholder { color: var(--text-3); }
+/* Settings scrolled to its end: the frame shows the bottom of the page */
+.content.at-end { display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
+
+/* ---------- not a status: the band in three colours, beside what teal, magenta and blue mean ---------- */
+.cmp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 1440px; }
+.cmp .win { height: 190px; flex-direction: column; justify-content: flex-start; gap: 10px; padding: 14px 16px; }
+.cmp .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cmp .card { width: 230px; cursor: default; }
+.cmp-say { margin: 6px 0 0; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.45; }
+.cmp-say b { color: var(--text-2); }
+
+/* ---------- the website's hero (GA-52): the same land, closer up ---------- */
+.site { display: block; }
+.site-nav { display: flex; align-items: center; gap: 22px; height: 60px; padding: 0 40px; color: var(--text-2); font-size: var(--fs); }
+.site-nav b { margin-right: auto; color: var(--text); font-size: var(--fs-md); font-weight: 700; }
+.hero { position: relative; isolation: isolate; height: 520px; overflow: hidden; }
+.hero-band { position: absolute; left: 0; right: 0; bottom: 0; z-index: -1; height: 448px; color: var(--band-line); background: linear-gradient(transparent 20%, var(--band-glow)); pointer-events: none; }
+.hero-band > svg { display: block; width: 100%; height: 100%; }
+.hero-text { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 56px 40px 0; text-align: center; }
+.hero-text h1 { margin: 0; font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -.02em; }
+.hero-text p { max-width: 60ch; margin: 0; color: var(--text-2); font-size: 17px; line-height: 1.55; }
+.hero-text .acts { display: flex; gap: 10px; margin-top: 6px; }
+.hero-text .btn { height: 38px; padding: 0 16px; }
+
+/* ---------- tables, code and swatches ---------- */
+.dz-table { width: 100%; max-width: 1440px; margin: 12px 0 8px; border-collapse: collapse; font-size: var(--fs-sm); }
+.dz-table th { padding: 8px 12px; border-bottom: 1px solid var(--line-2); color: var(--text-3); font-weight: 600; text-align: left; white-space: nowrap; }
+.dz-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--text-2); line-height: 1.5; vertical-align: top; }
+.dz-table td:first-child { color: var(--text); }
+.dz-table b { color: var(--text); font-weight: 600; }
+.dz-table .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dz-table .low { color: var(--warning); }
+.dz-table tr.pick td { background: var(--accent-soft); }
+.sw { display: inline-block; width: 14px; height: 14px; margin-right: 6px; border: 1px solid var(--line-2); border-radius: var(--radius-s); vertical-align: -2px; }
+.dz-code { max-width: 1440px; margin: 10px 0 16px; padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--side);
+  color: var(--text); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.6; white-space: pre; }
+.dz-code .c { color: var(--syn-comment); }
+
+/* ---------- held still for the frames ---------- */
+/* the chat scrolled to its latest message, as it opens */
+.chat-scroll.at-end { display: flex; flex-direction: column; justify-content: flex-end; }
+.chat-scroll.at-end > .chat-col { width: 100%; }
+/* a frame is a picture: its lists show no scrollbar */
+.win .col-body, .win .ed-tree, .win .chat-threads-list, .win .chat-scroll, .win .board, .win .side-main { scrollbar-width: none; }
+.win > .site { flex: 1; min-width: 0; }

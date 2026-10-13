@@ -2882,6 +2882,8 @@ export async function terminalProbe(folder: string) {
   // GA-137: MODE=terminal:panel-a:<card> and terminal:panel-b:<card> run the Editor's terminal panel's probe instead
   const panel = /^panel-([ab]):(.+)$/.exec(folder);
   if (panel) return terminalPanelProbe(panel[1] as "a" | "b", panel[2] ?? "");
+  // GA-146: MODE=terminal:picker runs the folder picker's probe instead
+  if (folder === "picker") return pickerProbe();
   const errors: string[] = [];
   const out: Record<string, unknown> = {};
   const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
@@ -3451,5 +3453,168 @@ async function terminalPanelProbe(phase: "a" | "b", card: string) {
   check(await waitFor(() => (!panel() ? true : null), 3000), "closing its terminals hides the panel");
   check(Number(localStorage.getItem(PANEL_SHARE)) === kept, "the kept height is still 45%");
   await sleep(1500);
+  return done();
+}
+
+// GIZAI_SELFTEST_MODE=terminal:picker on route terminal (GA-146 QA; scripts/ui-test.sh gives GFW-1, GFW-2, KADE-1 and
+// KADE-123 worktrees, with titles of one line, two lines and more, beside a project's linked folder and a folder in ~/Herd,
+// in a scratch home folder). The folder picker as New terminal opens it (the Terminal page's button and the sidebar's +) and
+// as the Editor's (the Editor page's Open a folder and the sidebar's +), at the default sizes, the largest and compact:
+// 480px wide inside the window; a card's title on at most two lines, cut off after the second, in a row as tall as it and
+// never shorter than a project's; no row over another; every card title starting at one place; the glyph and the identifier
+// on the title's first line; the tooltip starting with the full title; project and folder rows one row high with the path
+// on the right; ↑, ↓ and Escape; and the Editor's picker opening a folder (Enter) and a card's worktree (a click).
+
+/** The cards scripts/ui-test.sh gives worktrees, and how many lines each title shows at the default sizes (KADE-1's is cut). */
+const PICKER_LINES: Record<string, number> = { "GFW-1": 1, "GFW-2": 2, "KADE-1": 2, "KADE-123": 1 };
+const PICKER_CUT = new Set(["KADE-1"]);
+
+async function pickerProbe() {
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const done = () => ({ ok: errors.length === 0, errors, ...out });
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const rect = (el: Element | null | undefined) => el?.getBoundingClientRect() ?? new DOMRect();
+  const titles = new Map((await listTasks({ openOnly: false })).map((t) => [t.identifier, t.title]));
+  const folders = await editorFolders();
+  out.folders = folders.map((f) => `${f.kind} ${f.name}`);
+  const site = folders.find((f) => f.kind === "root" && f.name === "picker-site");
+  const kade = folders.find((f) => f.kind === "card" && f.name === "KADE-1");
+  check(site && kade && folders.some((f) => f.kind === "project") && Object.keys(PICKER_LINES).every((n) => folders.some((f) => f.kind === "card" && f.name === n)),
+    `the folders are a project's, picker-site in ~/Herd and the cards ${Object.keys(PICKER_LINES).join(", ")} (${(out.folders as string[]).join(", ")})`);
+
+  /** Opens a picker with `click` and waits until its cards show their titles and it has found its place. */
+  const open = async (click: (() => void) | undefined, label: string) => {
+    if (!click) return null;
+    click();
+    const p = await waitFor(() => {
+      const el = q<HTMLElement>(`.ed-picker[aria-label="${label}"]`);
+      const cards = el ? [...el.querySelectorAll<HTMLElement>('.opt[data-kind="card"]')] : [];
+      return cards.length >= 4 && cards.every((c) => c.querySelector(".label")?.textContent) ? el : null;
+    }, 8000);
+    await nextFrame(); await sleep(100);
+    return p;
+  };
+  const close = async (picker: HTMLElement, at: string) => {
+    picker.querySelector("input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    check(await waitFor(() => (!picker.isConnected ? true : null), 2000), `${at}: Escape closes the picker`);
+  };
+
+  /** Everything about where the open picker's rows are; `exact` checks the line counts at the default sizes too. */
+  const measure = (picker: HTMLElement, at: string, exact: boolean) => {
+    const box = rect(picker);
+    const want = Math.min(480, window.innerWidth - 16);
+    check(Math.abs(box.width - want) < 0.6 && box.left >= 7.5 && box.right <= window.innerWidth - 7.5 && box.top >= 7.5 && box.bottom <= window.innerHeight - 7.5,
+      `${at}: the picker is ${want}px wide, inside the window (${r1(box.left)}, ${r1(box.top)} to ${r1(box.right)}, ${r1(box.bottom)} in ${window.innerWidth} × ${window.innerHeight})`);
+    const rows = [...picker.querySelectorAll<HTMLElement>(".ed-picker-list .opt")];
+    const cards = rows.filter((r) => r.dataset.kind === "card");
+    const others = rows.filter((r) => r.dataset.kind !== "card");
+    const plain = rect(others[0]).height;
+    const seen: Record<string, unknown> = { box: [r1(box.left), r1(box.top), r1(box.width)], row: r1(plain) };
+    // project and folder rows: one row high, the name and the path on one line, the path on the right ending in an ellipsis
+    check(others.length >= 2 && others.every((r) => Math.abs(rect(r).height - plain) < 0.6), `${at}: project and folder rows are one row high (${others.map((r) => r1(rect(r).height)).join(", ")})`);
+    for (const r of others) {
+      const where = r.querySelector<HTMLElement>(".where"), label = r.querySelector<HTMLElement>(".label");
+      const cs = where ? getComputedStyle(where) : null;
+      const mid = (el: Element | null) => (rect(el).top + rect(el).bottom) / 2;
+      check(where && label && cs?.whiteSpace === "nowrap" && cs.textOverflow === "ellipsis" && rect(where).right <= rect(r).right + 0.5
+          && Math.abs(mid(where) - mid(r)) < 1 && Math.abs(mid(label) - mid(r)) < 1 && rect(label).right <= rect(where).left + 0.5,
+        `${at}: ${label?.textContent}'s row has its name and, on the right, its path on one line (${where?.textContent})`);
+    }
+    const lefts: number[] = [];
+    for (const r of cards) {
+      const id = r.querySelector<HTMLElement>(".card-id"), label = r.querySelector<HTMLElement>(".label"), st = r.querySelector<HTMLElement>(".st");
+      const name = id?.textContent ?? "";
+      if (!label || !id || !st) { errors.push(`${at}: ${name} has no glyph, identifier or title`); continue; }
+      const ls = getComputedStyle(label);
+      const lh = ls.lineHeight.endsWith("px") ? parseFloat(ls.lineHeight) : 1.45 * parseFloat(ls.fontSize);
+      const lb = rect(label), rb = rect(r);
+      const lines = Math.round(lb.height / lh);
+      const cut = label.scrollHeight > label.clientHeight + 1;
+      seen[name] = { lines, cut, row: r1(rb.height), id: r1(rect(id).width) };
+      check(lines >= 1 && lines <= 2 && (!cut || (lines === 2 && ls.getPropertyValue("-webkit-line-clamp") === "2" && ls.overflow === "hidden")),
+        `${at}: ${name}'s title shows on ${lines} lines${cut ? ", cut" : ""}: at most two, a longer one cut off after the second`);
+      if (exact && name in PICKER_LINES) check(lines === PICKER_LINES[name] && cut === PICKER_CUT.has(name), `${at}: ${name}'s title shows on ${lines} lines${cut ? ", cut" : ""}, not ${PICKER_LINES[name]}${PICKER_CUT.has(name) ? ", cut" : ""}`);
+      check(lb.top >= rb.top - 0.5 && lb.bottom <= rb.bottom + 0.5 && rb.height >= plain - 0.5,
+        `${at}: ${name}'s row (${r1(rb.top)} to ${r1(rb.bottom)}) holds its title (${r1(lb.top)} to ${r1(lb.bottom)}) and is at least a row high (${r1(plain)})`);
+      if (lines === 1) check(Math.abs(rb.height - plain) < 0.6, `${at}: ${name}'s one-line row is a row high (${r1(rb.height)}, not ${r1(plain)})`);
+      if (lines === 2) check(rb.height > plain + lh / 2, `${at}: ${name}'s two-line row is taller than a row (${r1(rb.height)})`);
+      // the glyph, the identifier and how it stands sit on the title's first line
+      const first = lb.top + lh / 2;
+      for (const [what, el] of [["glyph", st], ["identifier", id], ["stand", r.querySelector(".stand")]] as const) {
+        if (!el) continue;
+        const c = (rect(el).top + rect(el).bottom) / 2;
+        check(Math.abs(c - first) < 1.5, `${at}: ${name}'s ${what} sits on the title's first line (its middle at ${r1(c)}, the line's at ${r1(first)})`);
+      }
+      check(r.title.includes("\n") && r.title.split("\n")[0] === titles.get(name), `${at}: ${name}'s tooltip starts with its full title (${JSON.stringify(r.title)})`);
+      lefts.push(lb.left);
+    }
+    check(cards.length >= 4 && lefts.every((x) => Math.abs(x - lefts[0]!) < 0.6), `${at}: every card title starts at one place (${lefts.map(r1).join(", ")})`);
+    // no row over another
+    const ordered = rows.map((r) => rect(r)).sort((a, b) => a.top - b.top);
+    for (let k = 1; k < ordered.length; k++) check(ordered[k - 1]!.bottom <= ordered[k]!.top + 0.5, `${at}: row ${k} (down to ${r1(ordered[k - 1]!.bottom)}) runs over row ${k + 1} (from ${r1(ordered[k]!.top)})`);
+    out[at] = seen;
+  };
+  /** ↓ and ↑ choose the next row and the one before. */
+  const keys = async (picker: HTMLElement, at: string) => {
+    const input = picker.querySelector<HTMLInputElement>("input");
+    const chosen = () => [...picker.querySelectorAll(".ed-picker-list .opt")].findIndex((o) => o.getAttribute("aria-selected") === "true");
+    const got = [chosen()];
+    for (const key of ["ArrowDown", "ArrowDown", "ArrowUp"]) {
+      input?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      await sleep(50);
+      got.push(chosen());
+    }
+    check(got.join() === "0,1,2,1", `${at}: ↓ and ↑ choose the next row and the one before (${got.join(", ")})`);
+  };
+
+  // 1. New terminal: the Terminal page's button, at the default sizes, the largest and compact; then the sidebar's +
+  window.location.hash = "#/terminal";
+  const newBtn = await waitFor(() => q<HTMLButtonElement>(".term-new"));
+  const sizes: [string, Partial<Parameters<typeof setAppearance>[0]>, boolean][] = [
+    ["New terminal", {}, true], ["New terminal, the largest text", { ui: 16.5 }, false], ["New terminal, compact", { ui: 13.5, density: "compact" }, false]];
+  for (const [at, look, exact] of sizes) {
+    setAppearance(look, false);
+    await nextFrame();
+    const picker = await open(newBtn ? () => newBtn.click() : undefined, "New terminal in");
+    if (!picker) { errors.push(`${at}: the Terminal page's New terminal didn't open the picker with the cards`); continue; }
+    measure(picker, at, exact);
+    if (exact) await keys(picker, at);
+    await close(picker, at);
+  }
+  setAppearance({ ui: 13.5, density: "comfortable" }, false);
+  await nextFrame();
+  const sideTerm = q<HTMLButtonElement>('.side .nav-section[aria-label="Terminal"] .nav-label button[aria-label="New terminal"]');
+  const sidePicker = await open(sideTerm ? () => sideTerm.click() : undefined, "New terminal in");
+  if (!sidePicker) errors.push("the sidebar's + on Terminal didn't open the picker with the cards");
+  else { measure(sidePicker, "New terminal from the sidebar", true); await close(sidePicker, "New terminal from the sidebar"); }
+
+  // 2. the Editor's own picker: the Editor page's Open a folder (Enter opens picker-site), then the sidebar's + (a click on
+  // KADE-1 opens its worktree)
+  window.location.hash = "#/editor";
+  // the Terminal page has an .ed-empty with a primary button too, until the Editor page takes its place
+  const openBtn = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".ed-page .ed-empty .btn.primary")].find((b) => b.textContent === "Open a folder"));
+  const edPicker = await open(openBtn ? () => openBtn.click() : undefined, "Open a folder");
+  if (!edPicker) errors.push(`the Editor page's Open a folder didn't open the picker with the cards (${window.location.hash}, the button ${openBtn ? "there" : "missing"}, pickers: ${[...document.querySelectorAll(".ed-picker")].map((x) => x.getAttribute("aria-label")).join(", ")}, page: ${textOf(q(".main")).slice(0, 120)})`);
+  else {
+    measure(edPicker, "Open a folder", true);
+    await keys(edPicker, "Open a folder");
+    const input = edPicker.querySelector<HTMLInputElement>("input");
+    if (input) typeInto(input, "picker-site");
+    await sleep(100);
+    input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    out.openedSite = await waitFor(() => (site && window.location.hash === `#/editor/${encodeURIComponent(site.id)}` ? window.location.hash : null), 5000);
+    check(out.openedSite && !edPicker.isConnected, `Enter in the Editor's picker opens picker-site and closes it (${window.location.hash})`);
+  }
+  const sideEd = await waitFor(() => q<HTMLButtonElement>('.side .nav-section[aria-label="Editor"] .nav-label button[aria-label="Open a folder"]'));
+  const sideEdPicker = await open(sideEd ? () => sideEd.click() : undefined, "Open a folder");
+  if (!sideEdPicker) errors.push("the sidebar's + on Editor didn't open the picker with the cards");
+  else {
+    measure(sideEdPicker, "Open a folder from the sidebar", true);
+    [...sideEdPicker.querySelectorAll<HTMLElement>('.opt[data-kind="card"]')].find((o) => o.querySelector(".card-id")?.textContent === "KADE-1")?.click();
+    out.openedCard = await waitFor(() => (kade && window.location.hash === `#/editor/${encodeURIComponent(kade.id)}` ? window.location.hash : null), 5000);
+    check(out.openedCard && !sideEdPicker.isConnected, `a click on KADE-1 in the Editor's picker opens its worktree (${window.location.hash})`);
+  }
   return done();
 }

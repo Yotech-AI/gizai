@@ -100,6 +100,14 @@
 #     KADE-1 in mono, selected), its tab on the page in a 32px strip, and the top bar says the folder, sh and the size; + after
 #     the tabs starts another terminal there without a picker, and exit closes it (its row and tab go, the page shows the
 #     first again); with both closed the sidebar has one row, New terminal, and the page is #/terminal.
+# 17. folder picker (GA-146), with four cards' worktrees (titles of one, two and more lines; identifiers of three widths:
+#     GFW-1, KADE-1, KADE-123), a project's linked folder and a folder in ~/Herd, in a scratch home folder: New terminal's
+#     picker (the Terminal page and the sidebar's +, at the default sizes, the largest and compact) and the Editor's (the
+#     Editor page and the sidebar's +) are 480px wide inside the window; a card's title shows on at most two lines, cut off
+#     after the second, in a row as tall as it (a one-line row as high as before); no row runs over another; every card
+#     title starts at one place, with the glyph and the identifier on its first line; the tooltip starts with the full
+#     title; project and folder rows are one row high with the path on the right; ↑, ↓ and Escape; in the Editor's picker
+#     Enter opens a folder and a click opens a card's worktree.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -175,4 +183,25 @@ rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home/Herd/panel-site
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-a:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=120 scripts/smoke-cage.sh || fail=1
 # the same WebKit storage (.devdata/xdg): a restart
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-b:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+fresh
+# GA-146: GFW-1, GFW-2, KADE-1 and KADE-123 (KADE-3, renumbered for a wider identifier) get worktrees, with titles of one
+# line, two lines and more; Kade portal is linked to ~/Herd/kade-portal, and ~/Herd/picker-site is a folder in ~/Herd
+rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home/Herd/kade-portal .devdata/uitest-home/Herd/picker-site
+python3 - "$PWD/.devdata/uitest-home/Herd/kade-portal" <<'PY'
+import os, sqlite3, sys, time
+c = sqlite3.connect('.devdata/uitest/gizai.db')
+c.execute("update tasks set identifier='KADE-123' where identifier='KADE-3'")
+titles = {'GFW-1': None, 'GFW-2': 'Figma 3: overview, newsletters, recruitment, campaigns and exports for the spring',
+          'KADE-1': 'Brandbook in Figma: the GizAi logo, favicon, colours, type, icons, illustrations, photography, tone of voice'
+                    ' and every template we send to clients, with a page per channel', 'KADE-123': None}
+for ident, title in titles.items():
+    c.execute("update tasks set branch=?, title=coalesce(?, title) where identifier=?", (f"gizai/{ident.lower()}-picker", title, ident))
+    key = c.execute("select p.key from tasks t join projects p on p.id = t.project_id where t.identifier=?", (ident,)).fetchone()[0]
+    os.makedirs(f".devdata/uitest/worktrees/{key}/{ident}", exist_ok=True)
+now = int(time.time() * 1000)
+c.execute("insert into repos(id, created_at, updated_at, project_id, provider, remote_url, local_path) select 'picker-repo', ?, ?, id, 'git',"
+          " 'https://example.invalid/kade-portal.git', ? from projects where key='KADE'", (now, now, sys.argv[1]))
+c.commit()
+PY
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:picker GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

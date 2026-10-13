@@ -70,6 +70,7 @@ The Team Lead reads its own read-only copy of each active project's code: `<data
 
 When a project's linked folder has dependencies behind main (`vendor/` or `node_modules/` missing, or a lock file that differs from main's), the Team Lead tells you what an update would do. After your yes it updates the folder:
 
+- with uncommitted changes in tracked files, only if you agreed: put them in git's stash first (git stash pop brings them back);
 - a fast-forward to main, switching branch only if you agreed;
 - then `composer install` or `npm ci`;
 - never a merge, a reset or the setup command.

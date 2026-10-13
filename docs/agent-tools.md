@@ -149,7 +149,7 @@ Only what a per-run switch can give, checked against the installed CLIs' own fil
   - `create_agent` and `update_agent`: the fields that change (from → to; new instructions as a diff);
   - `add_column` and `set_column`: the column and what changes;
   - `attach_file`: the file, its size and where it goes;
-  - `update_checkout`: the project and the folder;
+  - `update_checkout`: the project, the folder, and whether it stashes first;
   - `merge_pull_request`: the card and its pull request;
   - and why approving fails as things are now, when Gizai can tell (a note that changed since the Team Lead read it, a file it can't read).
 

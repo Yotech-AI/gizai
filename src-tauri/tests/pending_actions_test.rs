@@ -1033,3 +1033,41 @@ fn the_approve_paragraph_in_the_docs_says_a_last_note_says_the_answer_is_done() 
                                        brackets. {sentence}")), "{approve}");
     assert_eq!(docs.matches(sentence).count(), 1);
 }
+
+// ---- GA-156: update_checkout with stash ----
+
+#[tokio::test]
+async fn an_update_checkout_with_stash_waits_with_the_field_stash_first() {
+    let t = setup();
+    let thread = t.marked("Look it up in Otus, then update KADE and put my changes in git's stash first");
+    let labels = |id: &str| fields(&t.view(&thread, id)).into_iter().map(|f| f.0).collect::<Vec<_>>();
+    let stash = t.keep(&thread, "update_checkout", json!({"project": "KADE", "stash": true})).await;
+    let f = fields(&t.view(&thread, &stash));
+    assert_eq!(field(&f, "Stash first"), &("Stash first".to_string(), None, "yes: uncommitted changes in tracked files go to git's stash".to_string()));
+    assert_eq!(labels(&stash), ["Project", "Folder", "Stash first"]);
+    assert_eq!(t.view(&thread, &stash)["preview"]["line"], "Update KADE's linked folder to main as last fetched");
+    // with switch too, both; without stash (or with stash false), no such field
+    let both = t.keep(&thread, "update_checkout", json!({"project": "KADE", "stash": true, "switch": true})).await;
+    assert_eq!(labels(&both), ["Project", "Folder", "Stash first", "Switch branch"]);
+    let no = t.keep(&thread, "update_checkout", json!({"project": "KADE", "stash": false})).await;
+    assert_eq!(labels(&no), ["Project", "Folder"]);
+    let plain = t.keep(&thread, "update_checkout", json!({"project": "KADE"})).await;
+    assert_eq!(labels(&plain), ["Project", "Folder"]);
+}
+
+#[test]
+fn update_checkout_takes_stash_in_the_cards_words() {
+    let tool = tools::catalog().into_iter().find(|d| d.name == "update_checkout").expect("the tool is in the catalog");
+    let stash = &tool.input_schema["properties"]["stash"];
+    assert_eq!(stash["type"], "boolean", "{stash}");
+    assert_eq!(stash["description"], "When tracked files have uncommitted changes: put them in git's stash first (they stay there: git stash pop \
+                                      brings them back), then update. Only when the user agreed to the stash in this chat");
+    assert!(tool.description.contains("Changes nothing, and says why, with uncommitted changes unless stash is true, a merge or rebase in progress"),
+            "{}", tool.description);
+    assert_eq!(tool.input_schema["required"], json!(["project"]), "stash is optional");
+    let lead = include_str!("../../docs/features/team-lead.md");
+    assert!(lead.contains("After your yes it updates the folder:\n\n- with uncommitted changes in tracked files, only if you agreed: put them \
+                           in git's stash first (git stash pop brings them back);\n- a fast-forward to main"), "the first bullet in docs/features/team-lead.md");
+    let docs = include_str!("../../docs/agent-tools.md");
+    assert!(docs.contains("- `update_checkout`: the project, the folder, and whether it stashes first;"), "docs/agent-tools.md");
+}

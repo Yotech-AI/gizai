@@ -291,6 +291,7 @@ async fn the_system_prompt_names_each_copy_and_stays_the_same_while_the_commit_l
     assert!(!sys(0).contains("linked repositories"), "{}", sys(0));
     assert!(sys(0).contains("ask Jeffrey once in this chat") || sys(0).contains("once in this chat, when that project comes up"), "{}", sys(0));
     assert!(sys(0).contains("Call update_checkout only after a yes in this chat") && sys(0).contains("never update a folder without that yes"), "{}", sys(0));
+    assert!(sys(0).contains("(switch only when they agreed to the switch, stash only when they agreed to the stash)"), "GA-156: {}", sys(0));
     let head = String::from_utf8(std::process::Command::new("git").args(["rev-parse", "--short=7", "main"]).current_dir(&repo).output().unwrap().stdout).unwrap();
     for (i, text) in [(0, "what changed in KADE?"), (1, "and since then?")] {
         let prompt = calls[i]["prompt"].as_str().unwrap();

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# The product tour's stills (GA-148), for the video (GA-149): Gizai's ten features, scene by scene, in dark and in light,
-# each scene in a HEADLESS cage (never on your screen) on a fresh copy of fake data (.devdata/tour). The screen is a
+# The product tour's stills (GA-148), for the video (GA-149): Gizai's eight features in the website's order, scene by
+# scene, in dark and in light, each scene in a HEADLESS cage (never on your screen) on a fresh copy of fake data
+# (.devdata/tour), made up from start to end (crates/gizai-core/examples/prep_tour.rs). The screen is a
 # 13-inch MacBook Air's: 2560x1664 pixels at scale 2 (1280x832 CSS pixels), without the window's title bar.
 # Each scene opens a page and clicks one element per step; every step has a still before its click and one after, and
 # video/capture/<theme>/scenes.json lists the scenes in order with their steps, stills and the box of what each step
-# clicked (x, y, width and height in the stills' pixels). Nothing reads your ~/.claude or your Gizai's data: HOME,
-# XDG_DATA_HOME and Gizai's data folder are all in .devdata/tour, and Claude Code is a fake (scripts/tour/fake-claude.sh).
+# clicked (x, y, width and height in the stills' pixels). Nothing reads your ~/.claude or your Gizai's data: Gizai runs
+# in a fake home in .devdata/tour, with its data, cache and config in it, so every path it shows reads ~/…; its projects'
+# folders are in the fake ~/Projects, its only Editor folder; and Claude Code and Codex are fakes in its ~/.local/bin
+# (scripts/tour/fake-claude.sh and fake-codex.sh).
 # Needs the release build (made when it is missing or stale), cage, grim, wlr-randr and ffmpeg.
 # usage: scripts/tour-capture.sh [dark|light|both] [scene number…]
 #   scripts/tour-capture.sh              every scene, in both themes
@@ -27,31 +30,28 @@ gz_app || { echo "could not build the app"; exit 1; }
 SCALE=2; PAGE_W=1280; PAGE_H=832; TITLE=37
 MODE_SIZE="$((PAGE_W * SCALE))x$(((PAGE_H + TITLE) * SCALE))"
 T=$GZ/.devdata/tour; BASE=$T/base; LIVE=$T/live; OUT=$GZ/video/capture
-# Claude Code is the tour's fake (scripts/tour/fake-claude.sh), as `claude` in the fake home's ~/.local/bin; the cage's
-# PATH has that folder and the system's, none of your own, so no real claude can start.
-FAKE=$LIVE/home/.local/bin/claude
-PATH_IN_CAGE=$LIVE/home/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The fake home, and Gizai's data folder in it. Claude Code and Codex are the tour's fakes, as `claude` and `codex` in
+# its ~/.local/bin; the cage's PATH has that folder and the system's, none of your own, so no real CLI can start.
+FAKE_HOME=$LIVE/home; DATA=$FAKE_HOME/.local/share/gizai
+PATH_IN_CAGE=$FAKE_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 # --- the fake data, once per capture: made in $LIVE (its paths are the ones every scene uses), then kept as $BASE ---
 prepare() {
   echo "making the fake data in .devdata/tour"
-  # the Kade portal's repository sits in the fake home's ~/Herd, so the Editor and the terminals show ~/Herd/kade-portal
-  local data=$LIVE/xdg/data/gizai repo=$LIVE/home/Herd/kade-portal
-  rm -rf "$T" && mkdir -p "$repo" "$LIVE/xdg/data" "$LIVE/home/.local/bin"
-  mkdir -p "$LIVE/home/.local/share/claude"
-  cp crates/gizai-agents/tests/fixtures/models-init.jsonl "$LIVE/home/.local/share/claude/"
-  cp scripts/tour/fake-claude.sh "$LIVE/home/.local/bin/claude" && chmod +x "$LIVE/home/.local/bin/claude"
+  # the projects' repositories go in the fake home's ~/Projects, so the Editor and the terminals show ~/Projects/…
+  rm -rf "$T" && mkdir -p "$FAKE_HOME/.local/bin" "$FAKE_HOME/.local/share/claude" "$FAKE_HOME/.cache" "$FAKE_HOME/.config"
+  cp crates/gizai-agents/tests/fixtures/models-init.jsonl "$FAKE_HOME/.local/share/claude/"
+  cp scripts/tour/fake-claude.sh "$FAKE_HOME/.local/bin/claude" && chmod +x "$FAKE_HOME/.local/bin/claude"
+  cp scripts/tour/fake-codex.sh "$FAKE_HOME/.local/bin/codex" && chmod +x "$FAKE_HOME/.local/bin/codex"
   (source scripts/env.sh &&
-    cargo run -q -p gizai-core --example demo -- "$data" > /dev/null &&
-    cargo run -q -p gizai-core --example prep_readme -- "$data" "$repo" "$FAKE" > /dev/null &&
-    cargo run -q -p gizai-core --example prep_tour -- "$data" "$repo" "$LIVE/home" "$FAKE" > "$T/ids.sh") || return 1
+    cargo run -q -p gizai-core --example prep_tour -- "$DATA" "$FAKE_HOME" > "$T/ids.sh") || return 1
   # the terminals' shell in the fake home: a short prompt, and git without a pager
-  printf '%s\n' "PS1='\\[\\e[1;34m\\]\\w\\[\\e[0m\\] \\$ '" 'export GIT_PAGER=cat' > "$LIVE/home/.bashrc"
-  printf '%s\n' '[ -f ~/.bashrc ] && . ~/.bashrc' > "$LIVE/home/.bash_profile"
+  printf '%s\n' "PS1='\\[\\e[1;34m\\]\\w\\[\\e[0m\\] \\$ '" 'export GIT_PAGER=cat' > "$FAKE_HOME/.bashrc"
+  printf '%s\n' '[ -f ~/.bashrc ] && . ~/.bashrc' > "$FAKE_HOME/.bash_profile"
   cp -a "$LIVE" "$BASE"
 }
 prepare || { echo "could not make the fake data"; exit 1; }
-# the ids the scenes open (KADE1=…, THREAD=…): prep_tour prints them as shell assignments
+# the ids the scenes open (NWS1=…, THREAD=…): prep_tour prints them as shell assignments
 source "$T/ids.sh"
 
 # --- one scene in one theme: a fresh copy of the data, Gizai in the cage, the steps, the stills cropped ---
@@ -76,10 +76,10 @@ for k in \$(pgrep -P \$APP); do pg=\$(ps -o pgid= -p \$k | tr -d ' '); [ -n "\$p
 kill \$APP 2>/dev/null; wait \$APP 2>/dev/null
 RUN
   chmod +x "$runner"
-  env -i HOME="$LIVE/home" SHELL=/bin/bash PATH="$PATH_IN_CAGE" USER=jeffrey LANG=en_US.UTF-8 XDG_RUNTIME_DIR="$DEV" \
+  env -i HOME="$FAKE_HOME" SHELL=/bin/bash PATH="$PATH_IN_CAGE" USER=alex LANG=en_US.UTF-8 XDG_RUNTIME_DIR="$DEV" \
     WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
-    GIZAI_DATA_DIR="$LIVE/xdg/data/gizai" GIZAI_ROUTE="$route" GIZAI_SELFTEST_MODE="steps:$steps" GIZAI_TOUR_DIR="$dir" \
-    XDG_DATA_HOME="$LIVE/xdg/data" XDG_CACHE_HOME="$LIVE/xdg/cache" XDG_CONFIG_HOME="$LIVE/xdg/config" \
+    GIZAI_DATA_DIR="$DATA" GIZAI_ROUTE="$route" GIZAI_SELFTEST_MODE="steps:$steps" GIZAI_TOUR_DIR="$dir" \
+    XDG_DATA_HOME="$FAKE_HOME/.local/share" XDG_CACHE_HOME="$FAKE_HOME/.cache" XDG_CONFIG_HOME="$FAKE_HOME/.config" \
     __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
     timeout -k 5 150 dbus-run-session -- cage -- "$runner" > "$T/logs/$theme-$name.log" 2>&1
   [ -s "$dir/steps.json" ] || { echo "  $theme $name: no steps.json (see .devdata/tour/logs/$theme-$name.log)"; return 1; }
@@ -104,7 +104,7 @@ PY
   return $ok
 }
 
-# --- scenes.json: every scene captured in that theme, in order ---
+# --- scenes.json: every scene below captured in that theme, in order ---
 scenes_json() {  # <theme>
   python3 - "$OUT/$1" "$1" "$T/titles" <<'PY'
 import json, os, sys
@@ -113,7 +113,7 @@ titles = dict(l.split("\t", 1) for l in open(sys.argv[3]).read().splitlines() if
 scenes = []
 for name in sorted(os.listdir(root)):
     f = os.path.join(root, name, "steps.json")
-    if not os.path.isfile(f): continue
+    if name not in titles or not os.path.isfile(f): continue  # only the scenes below, never an old folder
     s = json.load(open(f))
     scenes.append({"scene": int(name.split("-")[0]), "name": name, "title": titles.get(name, name),
         "steps": [{"name": st["name"], "before": f"{name}/{st['before']}", "after": f"{name}/{st['after']}", "box": st["box"], "selector": st["selector"]}
@@ -139,31 +139,23 @@ scene() {
   for theme in $THEMES; do capture "$theme" "$folder" "$@" || fail=1; done
 }
 
-REPO=$LIVE/home/Herd/kade-portal
-REPO_ID=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REPO")
-scene 1 board "The board: cards in columns, one being worked on" board \
-  "wait:3000" 'open-card=[data-card="KADE-1"]'
-scene 2 live-run "That card's live run" board \
-  "wait:8000" "#/task/$KADE1" "wait:1000" 'live-run@3000=section.run-card.live .run-stream' 'changes@2500=.task-tabs a.tab[href$="/changes"]'
-scene 3 chat "The Team Lead chat: a request, the cards it made, Approve" "chat/$THREAD" \
-  "wait:1500" 'approve@2500=.pending-actions .pa-card .pa-actions .btn.primary' 'open-card=.tool-card a.tc-label[href^="#/task/"]:text(Driver app: API)'
-scene 4 review "Tested before you see it: a card in Review with its pull request and QA's result" board \
-  "wait:2000" 'open-card=[data-card="KADE-2"]' 'runs=.tabs button.tab:text(Runs)'
-scene 5 editor "The Code Editor: the file tree with git status, a file open, a card's Changes" "editor/$REPO_ID" \
-  "wait:1500" 'open-app=.ed-tree .ed-row[data-path="app"]' 'open-models=.ed-tree .ed-row[data-path="app/Models"]' \
-  'open-file=.ed-tree .ed-row[data-path="app/Models/Shipment.php"]' "#/task/$KADE2/changes" "wait:1500" \
-  'changed-file=button.chg-file[data-path="routes/api.php"]'
-scene 6 terminals "Terminals: the sidebar's Terminal section, a terminal page, the panel in the Editor" board \
-  "wait:1000" 'new-terminal=.side [aria-label="Terminal"] button.nav-item:text(New terminal)' \
-  'pick-folder@2000=.ed-picker .opt[title="~/Herd/kade-portal"]' "term:git log --oneline --decorate -4 && git status --short" "wait:1500" \
-  'show-in-editor@3000=.btn:text(Show in Editor)'
-scene 7 clis "Bring your own CLI: Settings → Coding CLIs, and Usage → Subscription with two accounts" settings/appearance \
+# The website's eight features, a few clicks each.
+scene 1 board "The board, and a quick look at a card's live run" board \
+  "wait:7000" 'open-card@3000=[data-card="NWS-1"]'
+scene 2 chat "The Team Lead chat: a request, the cards it made, Approve" "chat/$THREAD" \
+  "wait:1500" 'approve@2500=.pending-actions .pa-card .pa-actions .btn.primary'
+scene 3 clis "Bring your own CLI: Claude Code and Codex in Settings → Coding CLIs, then Usage → Subscription" settings/appearance \
   "wait:1000" 'agents-tab=.tabs[aria-label="Settings"] .tab:text(Agents and runs)' 'usage=.side .nav-item:text(Usage)'
-scene 8 memory "Memory: a note with its links, then the graph" "memory/$NOTE" \
+scene 4 review "Tested before you see it: a card in Review with its pull request and QA's result" board \
+  "wait:2000" 'open-card=[data-card="NWS-2"]' 'runs=.tabs button.tab:text(Runs)'
+scene 5 editor "The Editor and Terminal: a project opens in the Editor, then its Terminal" board \
+  "wait:1500" 'open-folder=.side [aria-label="Editor"] button.nav-item:text(Open a folder)' \
+  'open-project@2000=.ed-picker .opt[title="~/Projects/northwind-shop"]' 'terminal@2500=.btn.term-btn'
+scene 6 memory "Memory: a note with its links, then the graph" "memory/$NOTE" \
   "wait:1000" 'open-link=.mem-note .note-view a.wikilink:text(Deploy steps)' 'graph@4000=.seg.mem-views button:text(Graph)'
-scene 9 tools "Tools per agent: an agent's form → Tools" "agent/$BACKEND" \
+scene 7 tools "Tools per agent: an agent's form → Tools" "agent/$BACKEND" \
   "wait:1000" 'settings=.entity-head .actions .btn.ghost:text(Settings)' 'use-playwright=.drawer .ma-server label.check:text(playwright)'
-scene 10 inbox "The Inbox: a question, and Run this for me" board \
+scene 8 inbox "The Inbox: a question, and Run this for me" board \
   "wait:1000" 'inbox=.side .nav-item:text(Inbox)' 'done-continue@2500=.run-for-me-card .btn.sm.primary'
 
 # --- scenes.json for each theme captured, and the stills' size checked ---

@@ -25,8 +25,7 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 - **The board decides who works.** Each column holds the agents that work its cards, so cards move from builder to tester to you by themselves. [Read more](docs/features/board.md)
 - **A Team Lead you talk to.** Ask the Team Lead in chat to plan work, make cards or start agents, and Approve with one click (or Approve all) the steps that wait for your OK. [Read more](docs/features/team-lead.md)
 - **Tested before you see it.** A QA agent tests a card before it reaches your Review, and opens its pull request on GitHub. [Read more](docs/features/testing.md)
-- **A code editor, free.** Read what a card changed, and edit a project's files with a file tree, tabs and search. [Read more](docs/features/code-editor.md)
-- **Terminals, free.** Open your own shell in a project's folder or a card's worktree, as many as you like. [Read more](docs/features/terminal.md)
+- **The Editor and Terminal, built in.** Open a project or a card's worktree, see its git status and edit it, with your own shell in a panel under the code or on its own page. [Read more](docs/features/editor-and-terminal.md)
 - **Bring your own CLI.** Each agent runs on the coding CLI you pick, like Claude Code, Codex or Gemini, on your own login. [Read more](docs/features/cli.md)
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
 - **Tools per agent.** Give each agent only the commands, folders, MCP servers, web access and hidden browser it needs. [Read more](docs/features/tools.md)
@@ -68,7 +67,7 @@ The details are in [docs/install.md](docs/install.md): what each system needs, u
 
 - [Install](docs/install.md): what each system needs, updates, your data, and when macOS or Windows warns.
 - [Settings](docs/settings.md): what each tab holds, how GizAi looks, and the tray.
-- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [Testing](docs/features/testing.md) · [Code editor](docs/features/code-editor.md) · [Terminals](docs/features/terminal.md) · [CLIs](docs/features/cli.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md) · [Local-first](docs/features/local-first.md)
+- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [CLIs](docs/features/cli.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md) · [Local-first](docs/features/local-first.md)
 - [Memory in depth](docs/memory.md): folders, properties, links, search, and how runs get notes.
 - [Agent tools in depth](docs/agent-tools.md): MCP servers, signing in, the web, the browser and the safety rules.
 - [Linux, macOS and Windows](docs/PLATFORMS.md): what differs on each system.

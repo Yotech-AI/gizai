@@ -13,7 +13,7 @@ What QA checks and writes comes from the QA Agent's starting instructions, which
 
 - A card with Testing off skips Testing columns: a done answer sends it on to the column after them, Review in the usual flow.
 - A DevOps run never sends a card to QA.
-- A card you build yourself is tested the same way after you hand it over, and a failed test sends it back to you ([Work on a card yourself](code-editor.md#work-on-a-card-yourself)).
+- A card you build yourself is tested the same way after you hand it over, and a failed test sends it back to you ([Work on a card yourself](editor-and-terminal.md#work-on-a-card-yourself)).
 
 ## GizAi pushes after every run
 
@@ -41,7 +41,7 @@ A run of a project linked to GitHub or Bitbucket gets git settings in its enviro
 ## Review on GitHub
 
 - **Open pull request** pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh.
-- **A merge on GitHub** moves the card to Review's next column (Deploy; Done for a team without a Deploy column) and removes its worktree. What the card changed stays readable in [its Changes](code-editor.md#a-cards-changes).
+- **A merge on GitHub** moves the card to Review's next column (Deploy; Done for a team without a Deploy column) and removes its worktree. What the card changed stays readable in [its Changes](editor-and-terminal.md#a-cards-changes).
 - **Settings → GitHub** shows whether gh is found and logged in and how pushes go, with Check connection for every linked project and Log in with GitHub. GizAi never stores a token or password.
 
 ## Review on Bitbucket Cloud

@@ -1,0 +1,22 @@
+{
+  "name": "gizai-tour",
+  "private": true,
+  "description": "GizAi's product tour video (GA-149), made with Remotion from the stills in capture/ (GA-148). Apart from the app: not a workspace.",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "node render.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.535",
+    "@remotion/fonts": "4.0.535",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.535"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.3"
+  }
+}

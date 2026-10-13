@@ -1,6 +1,6 @@
 # Tools per agent
 
-Each agent gets the commands its role allows, the folders you give it, and only the tools you switch on for it.
+Each agent gets the commands its role allows, the folders you give it, and the tools you switch on for it.
 
 ## Off until you switch it on
 
@@ -37,7 +37,7 @@ MCP servers and the browser work on Claude Code. Codex and Gemini agents show th
 
 ## Built-in tools
 
-**Built-in tools** lists what the agent's CLI offers: GizAi's catalog merged with what the CLI itself reports. For Claude Code that is its list from the agent's last run, or **Ask Claude Code again**, which starts it without a login. Each tool says what it allows and how risky it is.
+**Built-in tools** lists what the agent's CLI offers: GizAi's catalog merged with what the CLI itself reports. For Claude Code that is its list from the agent's last run, or **Ask Claude Code again**, which starts it without a login. Each tool says what it allows and how risky it is; a few, like Read and Grep, are always on.
 
 **Slash commands and skills**, in Built-in tools, lets a Claude Code agent's task runs use your slash commands and skills, like `/design`, plugins' too.
 

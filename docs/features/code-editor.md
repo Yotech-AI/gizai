@@ -7,7 +7,7 @@ Read what a card changed and edit a project's files inside GizAi, with no extra 
 Every card has two tabs at the top: Card and Changes.
 
 - **Changes** lists the files the card changed under their folders on the left, and shows every file's diff on the right, one below the other.
-- The changes come from the card's worktree, uncommitted files included, against main.
+- The changes come from the card's worktree, uncommitted files included, since its branch left main.
 - In the Runs tab, a run that committed has **Show changes**: only what that run committed.
 - Keys: n and p for the next and previous file, Alt+↓ and Alt+↑ for the next and previous change, [ folds the list, and Esc goes back to Card.
 

@@ -13,7 +13,7 @@ Where each setting lives, how GizAi looks, and what happens when you close its w
 | MCP servers | The outside services agents can use, and the built-in browser |
 | GitHub and Bitbucket | gh and how pushes go, Check connection, and your Bitbucket login |
 
-Each feature's doc says which settings it uses: [Updates](install.md#updates), [the Editor's folders](features/code-editor.md#the-editor), [Data](features/board.md#a-worktree-for-every-card), [Notifications](features/inbox.md#notifications), [Coding CLIs](features/cli.md), [Runs](features/board.md#runs), [MCP servers](features/tools.md#mcp-servers) and [GitHub and Bitbucket](features/testing.md#review-on-github).
+Each feature's doc says which settings it uses: [Updates](install.md#updates), [the Editor's folders](features/code-editor.md#the-editor), [Data](features/board.md#a-worktree-for-every-card), [Notifications](features/inbox.md#notifications), [Coding CLIs](features/cli.md), [Runs](features/board.md#when-agents-start) and [their limits](features/board.md#runs), [MCP servers](features/tools.md#mcp-servers) and [GitHub and Bitbucket](features/testing.md#review-on-github).
 
 ## Appearance
 

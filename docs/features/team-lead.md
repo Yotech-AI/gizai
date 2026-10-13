@@ -43,7 +43,7 @@ The rules behind it: [docs/agent-tools.md](../agent-tools.md#safety-rules).
 
 ## The board check
 
-Agent settings → Chat → Check the board every 15 min, off until you turn it on. It looks for answered questions, held and stuck cards, and cards no agent will start.
+Agent settings → Chat → Check the board every 15 min, off until you turn it on; the minutes go from 5 to 1440. It looks for answered questions, held and stuck cards, and cards no agent will start.
 
 Only something new starts it. It gets agents going again (Continue or Run), and asks you what it can't decide in a chat of its own, labelled Question or Approval, at the top of your Inbox.
 

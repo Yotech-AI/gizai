@@ -10,13 +10,13 @@ Card GA-166. Research only: nothing here is built, and nothing changes in the ap
 4. **GitHub's traffic needs Administration read**, which `GITHUB_TOKEN` can't be given, so the workflow needs a fine-grained token in a secret. [V] GitHub counts "full clones (not fetches)". [V] `get.sh` and the updater never run `git clone`, and GA's own CI adds clones many times a day, so clones are a weak install count. [I]
 5. **The numbers live in a new private repository, `Yotech-AI/gizai-stats`**, with the workflow. Its weekly `README.md` is the one place to read them. Nothing changes in GA, and no CI runs on `main`. Whether the numbers should be public is open question 1.
 6. **The AUR has votes and popularity** (votes that lose 2% of their weight a day): they measure goodwill, not installs. [V] pkgstats, which Arch users opt into, counts AUR packages too. [V] **Homebrew's public analytics include public third-party taps**, so `yotech-ai/tap/gizai` gets install counts for 30, 90 and 365 days. [V]
-7. **Cards:** S1, the stats workflow; S2, the package rows once GA-165's packages exist; G1, the "No telemetry" sentence in GA; W1, the website's README. Jefsev first changes 9 settings by hand (§5.6), and there are 10 open questions (§7).
+7. **Cards:** S1, the stats workflow; S2, the package rows once GA-165's packages exist; G1, the "No telemetry" sentence in GA; W1, the website's README. Jefsev first changes 9 settings by hand (§5.5), and there are 10 open questions (§7).
 
 ## 2. The project now
 
 ### 2.1 What GizAi is, and how it's built
 
-- **For its users:** GizAi is a desktop app where a team of AI agents builds your software through your board, while you review. Each card gets its own git worktree, and everything runs on your own computer (README.md:24). [V]
+- **For its users:** GizAi is a desktop app where a team of AI agents builds your software through your board, while you review. Each card gets its own git worktree, and everything runs on your own computer (README.md:25). [V]
 - **How it's built:** Rust (a Cargo workspace: `crates/gizai-core`, `crates/gizai-agents`, `crates/gizai-mcp` and `src-tauri`, Cargo.toml:3) with Tauri 2, and a React 19 front end in TypeScript, built with Vite 8 (package.json:38, :51, :63). [V] Data lives in one folder on your computer (docs/install.md:143-145). [V]
 - **How it's installed:** from source only, with no downloads or binaries (docs/install.md:5; docs/RELEASING.md:100). [V] The one line, `curl -fsSL https://gizai.app/install.sh | sh` or `irm https://gizai.app/install.ps1 | iex` (docs/install.md:14, :20), gets the latest release's source and runs its `install.sh` or `install.ps1`. "Run it again to update" (docs/install.md:23). [V]
 - **How it's released:** a GitHub Release with a tag `vX.Y.Z` on `production`. `main` changes only by pull requests, and `production` is protected (docs/RELEASING.md:5, :9-12). [V] There are five releases from v0.7.1 to v0.10.0, the newest on 13 Oct, none with assets (GitHub's releases API). [V]
@@ -36,7 +36,7 @@ What the feature touches is who asks what of whom when GizAi is installed, updat
 | GA's CI | github.com (`actions/checkout`, and `get.sh`/`get.ps1` checks of `production`) | the repository | ci.yml:37, :118, :135-139, :158-162 [V] |
 | GA-165's AUR package and tap (not built yet) | `github.com/Yotech-AI/gizai/archive/refs/tags/vX.Y.Z.tar.gz` | GitHub's tarball of the tag | GA-165's `docs/research/packaging.md` on its branch (4f8579c), lines 135, 298, 450 [V] |
 
-Nothing in the app asks gizai.app. The only places gizai.app appears in the code are the lines `get.sh` and `get.ps1` *show* (scripts/get.sh:17-20; scripts/get.ps1:36-40), and a test checks that what `get.sh` downloads never comes from gizai.app (scripts/get.test.mjs:372-401). [V]
+Nothing in the app asks gizai.app. A search of the code (`rg gizai\.app`, leaving out the docs) finds only the app's identifier `ai.gizai.app` (src-tauri/tauri.conf.json:6), the lines `get.sh` and `get.ps1` *show* (scripts/get.sh:17-20; scripts/get.ps1:36-40), and tests. One of those tests checks that what `get.sh` downloads never comes from gizai.app (scripts/get.test.mjs:372-401). [V] The app's window can't fetch anything from the web either: its content security policy allows only `connect-src ipc: http://ipc.localhost` (src-tauri/tauri.conf.json:18). [V]
 
 ### 2.3 The website: where gizai.app is hosted (what I found)
 
@@ -100,7 +100,7 @@ On 12 October GA had 62 workflow runs (GitHub's Actions API), [V] so CI alone co
 
 - **What GitHub gives:** "full clones (not fetches), visitors from the past 14 days, referring sites, and popular content". "Full clones and visitor information update hourly, while referring sites and popular content sections update daily." Times are UTC. [V: GitHub Docs, Viewing traffic to a repository]
 - **The API:** `GET /repos/{owner}/{repo}/traffic/clones` and `/traffic/views`. Each gives a total and a breakdown "per day or week for the last 14 days" (`per=day`, the default, or `per=week`; weeks begin on Monday; timestamps are UTC midnight). `/traffic/popular/referrers` and `/traffic/popular/paths` give "the top 10 … over the last 14 days", with no breakdown per day. [V: GitHub REST, Repository traffic] So referrers and paths are saved as a dated snapshot each day, and the snapshots overlap and can't be added up. [I]
-- **The token:** the four endpoints need the repository permission **Administration: read**, for fine-grained personal access tokens and for GitHub Apps. [V: GitHub Docs, the permissions pages for fine-grained tokens and for GitHub Apps] `GITHUB_TOKEN` can't get it: its permission keys are `actions`, `artifact-metadata`, `attestations`, `checks`, `code-quality`, `contents`, `copilot-requests`, `deployments`, `discussions`, `id-token`, `issues`, `packages`, `pages`, `pull-requests`, `security-events`, `statuses` and `vulnerability-alerts`, with no `administration`. [V: workflow syntax, `permissions`] So the workflow reads traffic with a **fine-grained token Jefsev makes** (§5.6) and commits with its own `GITHUB_TOKEN`.
+- **The token:** the four endpoints need the repository permission **Administration: read**, for fine-grained personal access tokens and for GitHub Apps. [V: GitHub Docs, the permissions pages for fine-grained tokens and for GitHub Apps] `GITHUB_TOKEN` can't get it: its permission keys are `actions`, `artifact-metadata`, `attestations`, `checks`, `code-quality`, `contents`, `copilot-requests`, `deployments`, `discussions`, `id-token`, `issues`, `packages`, `pages`, `pull-requests`, `security-events`, `statuses` and `vulnerability-alerts`, with no `administration`. [V: workflow syntax, `permissions`] So the workflow reads traffic with a **fine-grained token Jefsev makes** (§5.5) and commits with its own `GITHUB_TOKEN`.
 - **Where its data lives:** in a new private repository, `Yotech-AI/gizai-stats`, which holds the workflow, the data and the numbers file (§4.2).
 - **No CI:** nothing in GA changes, so GA's CI (ci.yml:6-9) never sees it. The stats repository has no other workflow. Also, "events triggered by the `GITHUB_TOKEN` will not create a new workflow run", apart from `workflow_dispatch`, `repository_dispatch` and some pull request events. [V]
 - **Scheduling:** "Scheduled workflows run on the latest commit on the default branch." Runs "can be delayed during periods of high loads … High load times include the start of every hour." "In a public repository, scheduled workflows are automatically disabled when no repository activity has occurred in 60 days", and that doesn't apply to a private one. Failure mails go to "the user who last modified the cron syntax in the workflow file". [V: GitHub Docs, events that trigger workflows] So the run is at 03:17 UTC.
@@ -121,7 +121,7 @@ GA-165 (on its branch, not merged) proposes the AUR package `gizai` and the tap 
   - Events "can include: the package and non-private GitHub tap names", Homebrew "retains analytics events in InfluxDB for 365 days", and "Aggregate reports and their JSON representations are available from the Homebrew analytics site". Users opt out with `brew analytics off` or `HOMEBREW_NO_ANALYTICS=1`. [V: docs.brew.sh/Analytics]
   - `https://formulae.brew.sh/api/analytics/install/30d.json` (13 Sep to 13 Oct, 22,448 formulae) lists tap formulae by their full name, like `anomalyco/tap/opencode` with 40,958 installs. [V]
   - So `yotech-ai/tap/gizai` would appear there, and in `90d.json` and `365d.json`, counted only on Macs that left analytics on. Whether a formula with very few installs is listed I couldn't see, as the file was too big for my fetch. [I]
-- **The tap's GitHub traffic.** `brew install yotech-ai/tap/gizai` taps the repository first, which clones it, so the tap's clones roughly count first installs on Macs. `brew update` fetches, and fetches aren't counted. [I] The workflow saves the tap's traffic with the same token once the tap exists (§5.6, step 7).
+- **The tap's GitHub traffic.** `brew install yotech-ai/tap/gizai` taps the repository first, which clones it, so the tap's clones roughly count first installs on Macs. `brew update` fetches, and fetches aren't counted. [I] The workflow saves the tap's traffic with the same token once the tap exists (§5.5, step 7).
 - **No download counts for the tarball.** GitHub counts downloads of release assets only, not of its automatic source archives. GizAi's releases have no assets. [V: releases API; I: the archives, backed by the long-open request isaacs/github#593] See open question 5.
 
 ### 3.5 One place to read them
@@ -381,7 +381,9 @@ jobs:
           mkdir -p data/packages
           for f in aur pkgstats homebrew; do [ -f "data/packages/$f.json" ] || echo '{}' > "data/packages/$f.json"; done
           # The AUR's RPC (curl's --globoff, for the [] in arg[]): NumVotes and Popularity. No package: no result.
-          if curl -fsS --globoff "https://aur.archlinux.org/rpc/v5/info?arg[]=$AUR_PACKAGE" > new.json; then
+          # A bot check answers with a web page, not JSON: that's a warning too.
+          if curl -fsS --globoff "https://aur.archlinux.org/rpc/v5/info?arg[]=$AUR_PACKAGE" > new.json \
+              && jq -e '.resultcount' new.json > /dev/null 2>&1; then
             if [ "$(jq '.resultcount' new.json)" = 1 ]; then
               jq -S --slurpfile n new.json --arg day "$today" \
                 '.[$day] = ($n[0].results[0] | {votes: .NumVotes, popularity: .Popularity})' data/packages/aur.json > merged.json
@@ -403,9 +405,12 @@ jobs:
           # Homebrew's public analytics: installs of the formula over the last 30, 90 and 365 days ("1,203" is text).
           counts='{}'
           for days in 30 90 365; do
-            n=$(curl -fsS "https://formulae.brew.sh/api/analytics/install/${days}d.json" \
-              | jq --arg f "$FORMULA" '[.items[] | select(.formula == $f) | .count | gsub(","; "") | tonumber] | first')
-            counts=$(jq -c --arg k "installs_${days}d" --argjson n "$n" '.[$k] = $n' <<< "$counts")
+            if n=$(curl -fsS "https://formulae.brew.sh/api/analytics/install/${days}d.json" \
+                | jq --arg f "$FORMULA" '[.items[] | select(.formula == $f) | .count | gsub(","; "") | tonumber] | first'); then
+              counts=$(jq -c --arg k "installs_${days}d" --argjson n "$n" '.[$k] = $n' <<< "$counts")
+            else
+              echo "::warning::Homebrew's ${days}-day analytics didn't answer."
+            fi
           done
           if [ "$(jq '.installs_365d' <<< "$counts")" != null ]; then
             jq -S --arg day "$today" --argjson c "$counts" '.[$day] = $c' data/packages/homebrew.json > merged.json
@@ -533,6 +538,7 @@ def newest: to_entries | last;
 
 What I verified of this draft, and what not:
 - **Verified:** the endpoints, permissions and response fields (`count`, `uniques`, `clones[]`/`views[]` with `timestamp`; `referrer`; `path`, `title`) [V: GitHub REST]. The GraphQL filters and operators (`_geq`, `_lt`, `_in`), `requestSource`, `clientRequestPath`, `userAgent`, `clientRequestHTTPHost`, `edgeResponseStatus` and `limit: 10000` [V: Cloudflare docs]. `--globoff` and the AUR, pkgstats and Homebrew fields [V].
+- **Run here, in parts:** jq 1.8.2 ran the building blocks on sample answers. Sorting a sample Cloudflare answer by script and client, with a 403 left out, gave `{"install.ps1":{"powershell":3},"install.sh":{"bot":2,"browser":1,"curl":3,"other":2}}`. The nested `+=` counts, the date arithmetic of `readme.jq` (2026-11-09 minus 7 days is 2026-11-02), `"1,203"` to 1203 and the "–" helpers also worked. [V] The whole programs couldn't run here, as this run refuses any command with a `$` in it.
 - **Checked by card S1 first:**
   - the variable types `string!` and `Time!` (Cloudflare's examples use `string` [V]; `Time` I didn't see written) [I];
   - that the free plan allows a one-day range [I];

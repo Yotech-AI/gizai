@@ -1,6 +1,7 @@
 # Installs Gizai from source on macOS (install.sh) and Windows (install.ps1) into a scratch folder, the way Gizai's own
 # update does: build only, then install, then install again over it (which replaces the programs). Then it uninstalls.
-# A release build takes a while, so it runs only on pull requests that change an installer, and by hand.
+# A release build takes a while, so it runs only on pull requests that change an installer, and by hand. A pull request
+# into main that only bumps Gizai's version passes without building or installing (the "Version only?" step).
 # It signs, releases and uploads nothing.
 name: Install
 
@@ -35,18 +36,32 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # The version bump's pull request into main changes src-tauri/tauri.conf.json but nothing to install: the
+      # release's pull request into production installs it (docs/RELEASING.md). Skipped step by step, as in ci.yml, so
+      # the checks keep their names.
+      - name: Version only?
+        id: version
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        shell: bash
+        run: |
+          git fetch --quiet --no-tags --depth=2 origin "$GITHUB_SHA" || exit 0
+          if node scripts/version-only.mjs HEAD^1 HEAD; then echo "only=true" >> "$GITHUB_OUTPUT"; fi
+
       - uses: actions/setup-node@v4
+        if: steps.version.outputs.only != 'true'
         with:
           node-version: 22
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.version.outputs.only != 'true'
 
       - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.only != 'true'
 
       # macOS's own bash 3.2, as on a Mac. A scratch prefix and data folder: nothing goes in ~/Applications.
       - name: install.sh (macOS)
-        if: runner.os == 'macOS'
+        if: steps.version.outputs.only != 'true' && runner.os == 'macOS'
         env:
           GIZAI_PREFIX: ${{ runner.temp }}/gizai
           GIZAI_DATA_DIR: ${{ runner.temp }}/gizai-data
@@ -68,7 +83,7 @@ jobs:
       # Windows PowerShell 5.1, which Gizai's update runs. The Start menu shortcut must carry Gizai's AppUserModelID,
       # without which Windows shows none of its notifications.
       - name: install.ps1 (Windows)
-        if: runner.os == 'Windows'
+        if: steps.version.outputs.only != 'true' && runner.os == 'Windows'
         shell: powershell
         env:
           GIZAI_PREFIX: ${{ runner.temp }}\gizai

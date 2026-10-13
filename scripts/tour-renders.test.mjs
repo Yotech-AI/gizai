@@ -12,8 +12,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TOUR = join(ROOT, "docs", "tour");
 const MB = 1000 * 1000;
 const THEMES = ["dark", "light"];
-/** The video's size and the stills', 2560 × 1664 (video/src/scenes.ts), and the card's 60 to 90 seconds. */
-const VIDEO = { width: 2560, height: 1664, fps: 30, minSeconds: 60, maxSeconds: 90 };
+/** The video's size and the stills', 2560 × 1664 (video/src/scenes.ts), and the card's 45 to 60 seconds (round 2: a shorter tour). */
+const VIDEO = { width: 2560, height: 1664, fps: 30, minSeconds: 45, maxSeconds: 60 };
 
 // MP4: the boxes down to the video track's sample description, its media header and its frame times.
 function mp4Info(buf) {
@@ -157,7 +157,7 @@ describe("docs/tour/ holds the tour's renders", () => {
   });
 
   describe.each(THEMES)("%s", (theme) => {
-    it("the MP4 is H.264, 2560 × 1664 at 30 fps, 60 to 90 s long, under 25 MB, with its index first for the web", () => {
+    it("the MP4 is H.264, 2560 × 1664 at 30 fps, 45 to 60 s long, under 25 MB, with its index first for the web", () => {
       expect(statSync(file(theme, ".mp4")).size).toBeLessThan(25 * MB);
       const mp4 = mp4Info(readFileSync(file(theme, ".mp4")));
       expect(mp4.codec).toBe("avc1");
@@ -250,7 +250,7 @@ describe("the app leaves video/ alone", () => {
       return { sha: meta.split(" ")[1], path };
     });
     const stills = index.filter((f) => f.path.startsWith("video/capture/") && f.path.endsWith(".png"));
-    expect(stills.length).toBeGreaterThanOrEqual(2 * 2 * 22); // a before and an after for 22 steps, in two themes
+    expect(stills.length).toBe(2 * 2 * 15); // a before and an after for 15 steps, in two themes
     const shas = new Set(stills.map((f) => f.sha));
     expect(index.filter((f) => !f.path.startsWith("video/capture/") && shas.has(f.sha)).map((f) => f.path)).toEqual([]);
   });

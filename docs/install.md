@@ -1,8 +1,10 @@
 # Install GizAi
 
-GizAi builds from source on your own computer and installs for you alone, without sudo or administrator rights.
+GizAi builds from source on your own computer and installs for you alone, without sudo or administrator rights. It runs on Linux, on Macs with Apple silicon and on Windows 11.
 
-There are no downloads or installers, on any system. The install script checks what is missing, builds GizAi and installs it. The `production` branch holds the released version; `main` is development.
+There are no downloads, installers or binaries, on any system. The install script checks what is missing, builds GizAi and installs it. The `production` branch holds the released version; `main` is development.
+
+GizAi is early: its version is still 0.x. Every release is on [GitHub Releases](https://github.com/Yotech-AI/gizai/releases).
 
 ## What every system needs
 
@@ -107,7 +109,7 @@ You can still update from a terminal with `git pull`, then `./install.sh` (on Wi
 
 ## Your data
 
-GizAi keeps your data in `~/.local/share/gizai` on Linux, `~/Library/Application Support/Gizai` on macOS and `%APPDATA%\Gizai` on Windows. `GIZAI_DATA_DIR` points it elsewhere. One GizAi runs per data folder.
+GizAi keeps your data in one folder on your computer: the database, logs, worktrees and backups. It is `~/.local/share/gizai` on Linux, `~/Library/Application Support/Gizai` on macOS and `%APPDATA%\Gizai` on Windows, and `GIZAI_DATA_DIR` points it elsewhere. One GizAi runs per data folder.
 
 It cleans up after itself when it starts and once a day while it runs:
 
@@ -115,9 +117,15 @@ It cleans up after itself when it starts and once a day while it runs:
 - **Keys for the Team Lead's tools** (`api_tokens` in `gizai.db`): each one lasts a chat answer or board check, and is removed a day after it expired or was revoked.
 - **Backups** (`backups/`): one before every update, install and database upgrade, and `gizai --backup` makes one when you ask. The newest 20 are kept. Their names use your local time, like `gizai-before-update-20261009-143502-123.db`.
 
+## No telemetry
+
+GizAi doesn't report on you or your work. Its release check only asks GitHub for the latest release, and sends nothing about you ([Updates](#updates)).
+
+Your code still goes where you send it: your agents' coding CLIs work with their own providers, and GizAi pushes a card's branch to your project's own remote.
+
 ## Read more
 
-- [Local-first and open](features/local-first.md): what stays on your computer.
+- [Bring your own CLI](features/cli.md#on-your-own-machine): your own machine, your logins and accounts, and your keys.
 - [Settings](settings.md): where each setting lives.
 - [docs/PLATFORMS.md](PLATFORMS.md): what differs on Linux, macOS and Windows.
-- [docs/RELEASING.md](RELEASING.md): how a release is made and how GizAi updates itself.
+- [docs/RELEASING.md](RELEASING.md): how a release is made, how GizAi updates itself, and what its release check reads.

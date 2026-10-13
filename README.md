@@ -30,7 +30,6 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
 - **Tools per agent.** Give each agent only the commands, folders, MCP servers, web access and hidden browser it needs. [Read more](docs/features/tools.md)
 - **The Inbox.** Questions, approvals, commands to run and cards to review wait for you in one list. [Read more](docs/features/inbox.md)
-- **Local-first and open.** GizAi runs on your computer with your own repositories, data and logins, without telemetry, under the MIT licence. [Read more](docs/features/local-first.md)
 
 ## Install
 
@@ -67,7 +66,7 @@ The details are in [docs/install.md](docs/install.md): what each system needs, u
 
 - [Install](docs/install.md): what each system needs, updates, your data, and when macOS or Windows warns.
 - [Settings](docs/settings.md): what each tab holds, how GizAi looks, and the tray.
-- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [CLIs](docs/features/cli.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md) · [Local-first](docs/features/local-first.md)
+- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [CLIs](docs/features/cli.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md)
 - [Memory in depth](docs/memory.md): folders, properties, links, search, and how runs get notes.
 - [Agent tools in depth](docs/agent-tools.md): MCP servers, signing in, the web, the browser and the safety rules.
 - [Linux, macOS and Windows](docs/PLATFORMS.md): what differs on each system.
@@ -89,4 +88,6 @@ On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) 
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). GizAi is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.
+MIT, see [LICENSE](LICENSE): read the code, change it and build it yourself. The whole app is free, with the agents, the Team Lead's chat, the Editor and the terminals; the plan for paid features is hosted services only, like an encrypted backup and sync ([docs/PAID-FEATURES.md](docs/PAID-FEATURES.md)).
+
+GizAi is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.

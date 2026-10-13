@@ -385,6 +385,9 @@ fn update_checkout(cx: &Cx, a: &Args) -> Result<Preview, String> {
     let p = resolve::project(cx, &a.req("project")?)?;
     let folder = a.opt("folder").or_else(|| p.repo_path.clone()).unwrap_or_else(|| "none linked".into());
     let mut fields = vec![field("Project", format!("{} ({})", p.name, p.key)), field("Folder", folder)];
+    if a.flag("stash").unwrap_or(false) {
+        fields.push(field("Stash first", "yes: uncommitted changes in tracked files go to git's stash"));
+    }
     if a.flag("switch").unwrap_or(false) {
         fields.push(field("Switch branch", format!("yes, to {} first", p.default_branch)));
     }

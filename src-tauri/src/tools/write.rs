@@ -713,7 +713,8 @@ fn allowed_attachment(cx: &Cx, raw: &str, path: &std::path::Path) -> Result<(), 
 }
 
 /// Chat only: starts the update of a project's linked folder to main (`code::start_update`), after the user said yes in
-/// the chat. Only the project's linked folder can be updated; the result comes later as a system message in the chat.
+/// the chat; `switch` and `stash` only when they agreed to those too. Only the project's linked folder can be updated;
+/// the result comes later as a system message in the chat.
 pub(crate) async fn update_checkout(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let Some(thread) = cx.thread else {
         return Err("update_checkout works only in chat, after the user said yes there".into());
@@ -729,7 +730,7 @@ pub(crate) async fn update_checkout(cx: &Cx<'_>, a: &Args) -> Result<Value, Stri
     }
     // Not a folder that the Team Lead's own folders (agent form → Folders) set to read.
     crate::folders::lead_may_update(cx.st, std::path::Path::new(&linked))?;
-    let will = crate::code::start_update(cx.st, thread, &p, a.flag("switch").unwrap_or(false)).await?;
+    let will = crate::code::start_update(cx.st, thread, &p, a.flag("switch").unwrap_or(false), a.flag("stash").unwrap_or(false)).await?;
     Ok(json!({"ok": true, "done": "started", "folder": linked, "will": will,
               "result": "comes as a message in this chat when the update ends",
               "link": link("project", &p.id, &format!("{} ({})", p.name, p.key))}))

@@ -12,8 +12,9 @@
 //! copies vendor/ and node_modules/ from), locally and without a fetch (`gizai_agents::checkout::status`). When its
 //! dependencies are behind main, the turn's line gets a note: on a chat's first turn, and again when it changes. The
 //! Team Lead then offers to update the folder, and `update_checkout` does that in the background once you said yes
-//! (`start_update`); never at the same time as a card's preparation copying from the same folder (`folder_lock`). The
-//! Editor's Update (`editor`) shares both: one update per folder at a time (`begin_update`), under the same lock.
+//! (`start_update`), putting uncommitted changes in git's stash first only when you agreed to that too; never at the
+//! same time as a card's preparation copying from the same folder (`folder_lock`). The Editor's Update (`editor`)
+//! shares both: one update per folder at a time (`begin_update`), under the same lock.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -403,18 +404,19 @@ pub fn updating(st: &AppState, folder: &Path) -> Option<String> {
 }
 
 /// `update_checkout` from the chat `thread`: checks the linked folder of `project` (`checkout::plan`) and, when nothing
-/// is in the way, starts its update in the background: to main as last fetched for the copies, switching to the
-/// default branch first only with `switch`, then the installs that are needed, never the setup command. Returns what
-/// it will do; or why it changes nothing. When the update has ended its result is posted in the chat as a system
-/// message, and the chat's next turn hears it once.
-pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch: bool) -> Result<String, String> {
+/// is in the way, starts its update in the background: to main as last fetched for the copies, putting uncommitted
+/// changes in tracked files in git's stash first only with `stash`, switching to the default branch first only with
+/// `switch`, then the installs that are needed, never the setup command. Returns what it will do; or why it changes
+/// nothing. When the update has ended its result is posted in the chat as a system message, and the chat's next turn
+/// hears it once.
+pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch: bool, stash: bool) -> Result<String, String> {
     let folder = project.repo_path.clone().filter(|r| !r.trim().is_empty())
         .ok_or_else(|| format!("{} has no linked folder", project.key))?;
     let folder = PathBuf::from(folder);
     let running = begin_update(st, &folder)
         .ok_or_else(|| format!("an update of {} is already running: nothing changed", folder.display()))?;
     let (p, dir) = (project.clone(), folder.clone());
-    let will = tokio::task::spawn_blocking(move || plan(&p, &dir, switch)).await.map_err(|e| e.to_string())??;
+    let will = tokio::task::spawn_blocking(move || plan(&p, &dir, switch, stash)).await.map_err(|e| e.to_string())??;
     running.says(&will.said());
     let (st2, thread, p, dir) = (st.clone(), thread.to_string(), project.clone(), folder.clone());
     tokio::spawn(async move {
@@ -425,7 +427,7 @@ pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch
         let _held = lock.lock().await;
         let (p2, dir2) = (p.clone(), dir.clone());
         let ended = tokio::task::spawn_blocking(move || {
-            let plan = plan(&p2, &dir2, switch).map_err(Ended::Refused)?;
+            let plan = plan(&p2, &dir2, switch, stash).map_err(Ended::Refused)?;
             let path = crate::runs::command_path();
             checkout::update(&dir2, &plan, Some(path.as_os_str())).map_err(Ended::Stopped)
         }).await.unwrap_or_else(|e| Err(Ended::Refused(e.to_string())));
@@ -437,9 +439,9 @@ pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch
 }
 
 /// The checks before an update of `p`'s linked folder `dir`, against main as last fetched (`git::start_point`).
-fn plan(p: &Project, dir: &Path, switch: bool) -> Result<checkout::Plan, String> {
+fn plan(p: &Project, dir: &Path, switch: bool, stash: bool) -> Result<checkout::Plan, String> {
     let main = crate::git::start_point(p, dir, None).map_err(plain)?;
-    checkout::plan(dir, dir, &p.default_branch, &main, switch)
+    checkout::plan(dir, dir, &p.default_branch, &main, switch, stash)
 }
 
 /// Why an update didn't end well: the checks refused it when it was its turn, or a step failed.
@@ -449,12 +451,16 @@ enum Ended {
 }
 
 /// The update's end: the chat's system message (with the end of the output when it stopped), and the short sentence
-/// for the next turn's line.
+/// for the next turn's line. Uncommitted changes it put in git's stash come first, with how to get them back.
 fn update_said(key: &str, dir: &Path, ended: &Result<checkout::Updated, Ended>) -> (String, String) {
     let folder = format!("{key}'s linked folder {}", dir.display());
+    let in_stash = |files: &[String]| format!("{} (git -C {} stash pop brings them back)", checkout::stash_said(files), dir.display());
     match ended {
         Ok(u) => {
             let mut did = vec![];
+            if !u.stashed.is_empty() {
+                did.push(in_stash(&u.stashed));
+            }
             if let Some(from) = &u.switched_from {
                 did.push(if from.is_empty() { "switched to the default branch".to_string() } else { format!("switched from {from} to the default branch") });
             }
@@ -476,7 +482,11 @@ fn update_said(key: &str, dir: &Path, ended: &Result<checkout::Updated, Ended>) 
             (text.clone(), text)
         }
         Err(Ended::Stopped(s)) => {
-            let before = if s.done.is_empty() { String::new() } else { format!(" Before that it {}.", list(&s.done)) };
+            let stash = checkout::stash_said(&s.stashed);
+            let done: Vec<String> = s.done.iter()
+                .map(|d| if !s.stashed.is_empty() && *d == stash { in_stash(&s.stashed) } else { d.clone() })
+                .collect();
+            let before = if done.is_empty() { String::new() } else { format!(" Before that it {}.", list(&done)) };
             let text = format!("The update of {folder} stopped: {}.{before}", s.why);
             let output = if s.output.trim().is_empty() { String::new() } else { format!("\n\n```\n{}\n```", s.output.trim()) };
             (format!("{text}{output}"), text)

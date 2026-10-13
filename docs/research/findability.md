@@ -107,7 +107,7 @@ git-worktree, mcp, code-review, developer-tools, desktop-app, tauri, rust, linux
 
 - **From the brief:** 18 of its 19 topics.
 - **Dropped:** `local-first` (§3.0).
-- **Added:** `mcp` (agents get MCP servers, `docs/features/tools.md:11`, and the Team Lead's tools are an MCP server,
+- **Added:** `mcp` (agents get MCP servers, `docs/features/tools.md:13`, and the Team Lead's tools are an MCP server,
   `gizai-mcp`) and `agent-orchestration`, which the lists of tools like GizAi use.
 - **How many public repositories use each** (GitHub search, 13 Oct 2026) [V]:
 
@@ -197,14 +197,14 @@ Codex CLI or Gemini CLI. Made for freelancers and software companies with severa
 ## What it is
 
 GizAi is an Agentic Development Application (ADA). You write the cards; agents build them side by side, each card in
-its own git worktree and branch; a QA agent tests every card and opens its pull request; and you review and merge.
+its own git worktree and branch; a QA agent tests the card and opens its pull request; and you review and merge.
 Everything runs on your own computer, with your own git repositories, logins and coding CLIs.
 
 ## Made for work with several clients
 
 - **Clients, projects and cards in one app.** Clients with their contacts, projects with their own repository and docs,
   and every card on one board.
-- **Memory kept apart per client.** Agents keep notes on every card, and a note about one client or project never
+- **Memory kept apart per client.** Agents keep notes as they work, and a note about one client or project never
   reaches a run for another.
 - **Several accounts per CLI.** Add a second Claude Code or Codex CLI account, see the usage limits of each, and move
   an agent or a chat to another account.
@@ -216,7 +216,7 @@ A new install starts with five agents. Each runs on the CLI you pick, with its o
 - **Team Lead:** you chat with it (its chat runs on Claude Code). It turns requests into cards, starts agents and
   answers their questions before they reach you.
 - **Backend and Frontend Agents** build the cards in To do.
-- **QA Agent** tests each card, adds missing tests and opens the pull request.
+- **QA Agent** tests the cards, adds missing tests and opens the pull requests.
 - **DevOps Agent** releases what you merged, when you ask.
 
 Add a **Design Agent** for a Design column, or agents with roles and instructions of your own, like an **R&D Agent**
@@ -254,7 +254,7 @@ At the end, `README.md:116` becomes:
 | Free, open source | `README.md:112-114`, `LICENSE` |
 | Works through your board, in parallel; a worktree and branch per card | `docs/features/board.md:3`, `:39`, `:43`, `:47` |
 | Claude Code, Codex CLI, Gemini CLI (or another) | `docs/features/cli.md:7`, `docs/memory.md:4-5` |
-| QA tests every card and opens the pull request | `docs/features/testing.md:3`, `:8-9` |
+| QA tests the card and opens its pull request (a card with Testing off skips it, so no "every") | `docs/features/testing.md:3`, `:8-9`, `:14` |
 | On your own computer, your own repositories and logins | `docs/features/cli.md:13-18` |
 | Clients with contacts, projects with docs, cards on a board | `docs/features/board.md:7-8` |
 | Memory kept apart per client | `docs/features/memory.md:21-22`; `docs/memory.md:178-180` ("a note about another client or another project never goes in, not even its path") |
@@ -306,7 +306,7 @@ Two things are left out on purpose:
 | productName `"Gizai"` | `src-tauri/tauri.conf.json:3` | `install.sh:177` and `install.ps1:193` grep for it to know a checkout. It names `Gizai.app`, which `crates/gizai-agents/src/update.rs:205` (`ends_with("Gizai.app/Contents/MacOS")`) and `install.sh:37`, `:216`, `:246-262` look for. A rename breaks updates on macOS. |
 | Identifier `ai.gizai.app` | `tauri.conf.json:6` | Windows' AppUserModelID for notifications and the Start menu shortcut (`docs/PLATFORMS.md:46`, `:73`) |
 | Window title `"Gizai"` | `tauri.conf.json:15` | Window rules and the headless tests may match it. Check before the app's rebrand. |
-| Data folders `~/Library/Application Support/Gizai`, `%APPDATA%\Gizai`, `~/.local/share/gizai` | `src-tauri/src/lib.rs:132-140` | everyone's data |
+| Data folders `~/Library/Application Support/Gizai`, `%APPDATA%\Gizai`, `~/.local/share/gizai` | `src-tauri/src/lib.rs:131-148` | everyone's data |
 | Desktop entry `Name=Gizai`, Start menu `Gizai.lnk` | `install.sh:339`; `install.ps1:89` | an update would leave the old shortcut next to a new one |
 | `gizai`, `gizai-mcp`, `GIZAI_*`, `GIZAI_RESULT`, `refs/gizai/merged/…`, the crate names, the repository slug | everywhere | commands, settings, parsers and links |
 
@@ -421,7 +421,8 @@ forms"; helper).
   - how you installed: the one-line install, `install.sh` or `install.ps1` from a clone, or an update from inside
     GizAi (required);
   - the command you ran;
-  - the output of `./install.sh --check` or `.\install.ps1 -Check` (they name what's missing, `README.md:54`; required);
+  - the output of `./install.sh --check` or `.\install.ps1 -Check` (they show what is missing, `docs/install.md:61`,
+    `:115`; required);
   - the end of the output or of `<data folder>/update/update.log` (`docs/RELEASING.md:114`);
   - `rustc --version` and `node --version`;
   - on Linux, WebKitGTK's version.
@@ -490,7 +491,8 @@ forms"; helper).
    - `docs/memory.md:346-352` repeats the list, and `:318` describes the graph.
    - A docs-only fix.
 3. **Try the check list on a Mac or a Windows 11 PC.**
-   - `docs/PLATFORMS.md:79-93` lists 11 checks that only you have done so far.
+   - `docs/PLATFORMS.md:79-93` lists 11 checks to run by hand on an Apple silicon Mac and a Windows 11 PC, written
+     for you (`:81`).
    - Run them on your machine and report each, with the install form.
    - Labels: `good first issue`, `help wanted`.
 4. **Windows: long paths in worktrees.**
@@ -536,7 +538,8 @@ forms"; helper).
    be sourced directly from users" [V] (developers.google.com, "Software app" and "Review snippet"; helper). Keep it for meaning,
    don't add ratings, and fix three things:
    - `downloadUrl` points at `/#get-gizai`, which isn't a download: use `installUrl`;
-   - `operatingSystem` should say "Linux, macOS (Apple silicon), Windows 11" (`README.md:46`, `docs/install.md:67`);
+   - `operatingSystem` should say "Linux, macOS (Apple silicon), Windows 11" (`docs/install.md:3`: "It runs on Linux,
+     on Macs with Apple silicon and on Windows 11");
    - add `featureList` (the eight feature names) and `screenshot` (a still).
 5. **FAQPage does nothing in Google any more:** "This feature will no longer appear in Google Search starting May 7,
    2026" [V] (Google Search Central changelog). Keep the questions as text on the page, and keep or drop the markup.
@@ -605,7 +608,7 @@ Lengths are characters. Google cuts titles at about 60, so the search words come
 | `/features/board` | Run Claude Code and Codex CLI in parallel · GizAi (48) | Agents sit on your board's columns and work cards side by side, each in its own git worktree and branch, from builder to QA to your review. (139) | run multiple Claude Code agents in parallel; parallel Claude Code worktrees; a kanban board for coding agents |
 | `/features/team-lead` | A Team Lead agent that plans your board and runs agents · GizAi (63) | Chat with the Team Lead: it turns requests into cards, starts agents, answers their questions first and asks for your OK in one click. (134) | coding agent orchestrator; AI team lead agent; AI dev team |
 | `/features/cli` | Claude Code, Codex CLI and Gemini CLI, several accounts · GizAi (62) | Every agent runs on Claude Code, Codex CLI, Gemini CLI or another CLI, with your own logins. Add a second Claude Code or Codex CLI account and see its limits. (156) | Claude Code multiple accounts; Claude Code usage limits; Codex CLI GUI |
-| `/features/testing` | A QA agent tests every card and opens its pull request · GizAi (62) | A QA agent runs the tests, lint and typecheck in the card's own worktree, adds missing tests and opens the pull request before the card reaches you. (148) | AI QA agent; AI agent writes tests; review AI pull requests |
+| `/features/testing` | A QA agent tests your cards and opens the pull request · GizAi (62) | A QA agent runs the tests, lint and typecheck in the card's own worktree, adds missing tests and opens the pull request before the card reaches you. (148) | AI QA agent; AI agent writes tests; review AI pull requests |
 | `/features/editor-and-terminal` | A code editor and terminal for your agents' worktrees · GizAi (61) | A code editor and your own terminals, inside GizAi. Open a project or a card's worktree, check its git status, edit, and run commands under the code. (149) | review coding agent changes; git worktree editor; editor with terminal |
 | `/features/memory` | Memory for AI coding agents, kept apart per client · GizAi (58) | Decisions and gotchas as linked notes with a graph. Every agent run gets the notes for its card, and one client's notes never reach another's. (142) | memory for coding agents; Claude Code memory per project |
 | `/features/tools` | MCP servers, web search and a browser, per agent · GizAi (56) | Give each agent only the commands, folders, MCP servers, web search and hidden browser it needs. Every tool stays off until you switch it on. (141) | MCP servers per agent; MCP server manager |

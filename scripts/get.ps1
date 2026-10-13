@@ -1,5 +1,6 @@
 # GizAi's one-line install for Windows, in PowerShell (Windows PowerShell 5.1 or PowerShell 7):
-#   irm https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1 | iex
+#   irm https://gizai.app/install.ps1 | iex
+# The website sends gizai.app/install.ps1 on to this script, scripts/get.ps1 on the production branch, on GitHub.
 # It gets the source of the latest release, the tag Gizai's own update fetches (docs/RELEASING.md), into
 # %LOCALAPPDATA%\gizai-src, or updates it there. Then it runs that release's install.ps1 with Windows PowerShell:
 # install.ps1 -Check first, then install.ps1, which builds and installs Gizai as it does from a clone. Run it again to
@@ -32,9 +33,11 @@ param(
   # A program that fails is no PowerShell error here (PowerShell 7.3 and later can make it one): its exit code says.
   $PSNativeCommandUseErrorActionPreference = $false
 
+  # What this script gets comes from GitHub, so an install never depends on the website: the source from $DefaultRepo,
+  # the latest release from GitHub's API. The one lines it only shows you are gizai.app's.
   $DefaultRepo = 'https://github.com/Yotech-AI/gizai.git'
-  $GetPs1 = 'https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1'
-  $GetSh = 'https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh'
+  $GetPs1 = 'https://gizai.app/install.ps1'
+  $GetSh = 'https://gizai.app/install.sh'
 
   function Say([string]$Text) { Write-Output $Text }
   function Step([string]$Text) { Write-Output ''; Write-Output "== $Text" }

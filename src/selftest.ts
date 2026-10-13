@@ -3463,12 +3463,15 @@ async function terminalPanelProbe(phase: "a" | "b", card: string) {
   return done();
 }
 
-// GIZAI_SELFTEST_MODE=steps:<step>;<step>… (scripts/shot-cage.sh, scripts/readme-gif.sh, scripts/tour-capture.sh), run after
+// GIZAI_SELFTEST_MODE=steps:<step>;<step>… (scripts/shot-cage.sh, scripts/tour-capture.sh), run after
 // the start route opens. A step is one of:
 //  - "#/route": goes there;
 //  - "theme:dark" or "theme:light": Settings → Appearance's theme, for this start only (not kept);
 //  - "wait:<ms>": waits that long;
 //  - "term:<command>": types the command and Enter in the newest terminal (the tour's Terminals scene);
+//  - "scroll:<selector>": scrolls just far enough to show the element and the 150px under it, so what opens under it
+//    shows too and the page doesn't jump when that is shorter (the tour's Review scene: the card's Runs tab, low on the
+//    page at the tour's screen size);
 //  - "<name>=<selector>" or "<name>@<ms>=<selector>" (GA-148, the product tour): a named click. It waits for the element,
 //    scrolls it into view when it isn't, notes its box (in the screen's pixels) and clicks it; with GIZAI_TOUR_DIR set
 //    (scripts/tour-capture.sh) it takes a still before the click and one <ms> after it (1500 by default), and at the end
@@ -3511,6 +3514,12 @@ export async function runSteps(steps: string[], api: { still: (name: string) => 
       for (let i = 0; i < 50 && !last; i++) { await sleep(100); last = (await terminalList()).at(-1); }
       if (last) await terminalInput(last.id, `${step.slice(5)}\r`).catch((e) => errors.push(`${step}: ${e}`));
       else errors.push(`${step}: no terminal is open`);
+      continue;
+    }
+    if (step.startsWith("scroll:")) {
+      const el = await waitFor(() => findStep(step.slice(7)), 10000);
+      if (el) { el.style.scrollMarginBottom = "150px"; el.scrollIntoView({ block: "nearest", inline: "nearest" }); el.style.scrollMarginBottom = ""; await settled(400); }
+      else errors.push(`${step}: nothing to scroll to`);
       continue;
     }
     const m = STEP_NAME.exec(step);

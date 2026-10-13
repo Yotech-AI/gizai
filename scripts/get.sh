@@ -1,6 +1,7 @@
 #!/bin/sh
 # GizAi's one-line install for Linux and macOS:
-#   curl -fsSL https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh | sh
+#   curl -fsSL https://gizai.app/install.sh | sh
+# The website sends gizai.app/install.sh on to this script, scripts/get.sh on the production branch, on GitHub.
 # It gets the source of the latest release, the tag Gizai's own update fetches (docs/RELEASING.md), into
 # ${XDG_DATA_HOME:-~/.local/share}/gizai-src, or updates it there. Then it runs that release's install.sh with bash:
 # install.sh --check first, then install.sh, which builds and installs Gizai as it does from a clone. Run it again to
@@ -13,8 +14,10 @@
 # A POSIX sh script, for dash and macOS's sh. It does everything in main, called on its last line, so a download cut
 # short runs nothing.
 
+# What this script gets comes from GitHub, so an install never depends on the website: the source from DEFAULT_REPO,
+# the latest release from GitHub's API. The one line for Windows, which it only shows you, is gizai.app's.
 DEFAULT_REPO=https://github.com/Yotech-AI/gizai.git
-GET_PS1=https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1
+GET_PS1=https://gizai.app/install.ps1
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
@@ -32,7 +35,7 @@ words() {
 usage() {
   cat <<'USAGE'
 GizAi's one-line install for Linux and macOS:
-  curl -fsSL https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh | sh
+  curl -fsSL https://gizai.app/install.sh | sh
 It gets the source of GizAi's latest release into ~/.local/share/gizai-src (or updates it there), then runs that
 release's install.sh: --check first, then the install. Run it again to update.
 

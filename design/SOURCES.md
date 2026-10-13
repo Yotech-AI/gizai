@@ -9,3 +9,6 @@
 - `design/code-editor/` holds the Code Editor's designs, as pages that open from disk on the app's own stylesheets.
   `editor.html` is the Editor (GA-105), built by `node design/code-editor/gen-editor.mjs`; its new components are in
   `editor.css` and its new tokens in `editor-tokens.css`, until F2 moves them into `components.css` and `tokens.json`.
+- `design/branding/` holds Gizai's own artwork: the wireframe mountains along the bottom of the window (GA-139), drawn
+  from a fixed seed by `node design/branding/gen-bottom-band.mjs` as `mountains.svg` (the app) and `mountains-hero.svg`
+  (the website), with their page `bottom-band.html`, `band.css` and the `band-*` tokens in `new-tokens.json`.

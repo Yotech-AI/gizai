@@ -1,0 +1,79 @@
+{
+  "note": "GA-139 (the mountains along the bottom of the window): the band's tokens for design/tokens.json, in its format. The frontend card adds band-line and band-glow, with the pair of the strength Jefsev picked (and points them at it), to color.tokens after scrim, and the sizes to size.tokens after size-statusbar, then runs node scripts/tokens-css.ts. Made by gen-bottom-band.mjs.",
+  "color": {
+    "tokens": [
+      {
+        "name": "band-subtle-line",
+        "value": {
+          "dark": "rgba(160, 211, 235, 0.10)",
+          "light": "rgba(32, 108, 137, 0.14)"
+        },
+        "usage": "Subtle: the lines (currentColor of the band's SVG)."
+      },
+      {
+        "name": "band-subtle-glow",
+        "value": {
+          "dark": "rgba(20, 100, 128, 0.08)",
+          "light": "rgba(201, 227, 239, 0.35)"
+        },
+        "usage": "Subtle: the glow at the bottom edge, fading to nothing at the band's top."
+      },
+      {
+        "name": "band-medium-line",
+        "value": {
+          "dark": "rgba(160, 211, 235, 0.17)",
+          "light": "rgba(32, 108, 137, 0.24)"
+        },
+        "usage": "Medium: the lines (currentColor of the band's SVG)."
+      },
+      {
+        "name": "band-medium-glow",
+        "value": {
+          "dark": "rgba(20, 100, 128, 0.15)",
+          "light": "rgba(201, 227, 239, 0.65)"
+        },
+        "usage": "Medium: the glow at the bottom edge, fading to nothing at the band's top."
+      },
+      {
+        "name": "band-strong-line",
+        "value": {
+          "dark": "rgba(160, 211, 235, 0.38)",
+          "light": "rgba(32, 108, 137, 0.50)"
+        },
+        "usage": "Strong: the lines (currentColor of the band's SVG)."
+      },
+      {
+        "name": "band-strong-glow",
+        "value": {
+          "dark": "rgba(20, 100, 128, 0.36)",
+          "light": "rgba(201, 227, 239, 1.00)"
+        },
+        "usage": "Strong: the glow at the bottom edge, fading to nothing at the band's top."
+      },
+      {
+        "name": "band-line",
+        "value": "{band-medium-line}",
+        "usage": "The band's lines: the strength Jefsev picks (the proposal until then)."
+      },
+      {
+        "name": "band-glow",
+        "value": "{band-medium-glow}",
+        "usage": "The band's glow: the strength Jefsev picks."
+      }
+    ]
+  },
+  "size": {
+    "tokens": [
+      {
+        "name": "size-band",
+        "value": "128px",
+        "usage": "The band's height in a window 915px high or more; lower windows get 14% of their height (clamp(size-band-min, 14vh, size-band))."
+      },
+      {
+        "name": "size-band-min",
+        "value": "80px",
+        "usage": "The band's least height; under 560px of window height the band goes."
+      }
+    ]
+  }
+}

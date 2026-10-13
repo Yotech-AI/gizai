@@ -1,5 +1,5 @@
-//! The README's demo data, on top of `example demo`: a team of agents with a Team Lead, a short chat with it, and
-//! project KADE linked to `<git repo>` with Claude Code pointed at `<fake claude>`, so `scripts/readme-gif.sh` can
+//! The product tour's demo data, on top of `example demo`: a team of agents with a Team Lead, a short chat with it, and
+//! project KADE linked to `<git repo>` with Claude Code pointed at `<fake claude>`, so `scripts/tour-capture.sh` can
 //! show a card being worked on (the Backend Agent's instructions end with FAKE_HANG, which keeps the fake running).
 //! usage: cargo run -p gizai-core --example prep_readme -- <data dir> <git repo> <fake claude>
 use gizai_core::chat::{self, NewMessage};

@@ -3456,7 +3456,7 @@ async function terminalPanelProbe(phase: "a" | "b", card: string) {
   return done();
 }
 
-// GIZAI_SELFTEST_MODE=steps:<step>;<step>… (scripts/shot-cage.sh, scripts/readme-gif.sh, scripts/tour-capture.sh), run after
+// GIZAI_SELFTEST_MODE=steps:<step>;<step>… (scripts/shot-cage.sh, scripts/tour-capture.sh), run after
 // the start route opens. A step is one of:
 //  - "#/route": goes there;
 //  - "theme:dark" or "theme:light": Settings → Appearance's theme, for this start only (not kept);

@@ -40,7 +40,15 @@ try {
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: "inherit", cwd: HERE, shell: process.platform === "win32" });
-const remotion = (...args) => run(npx, ["remotion", ...args, "--log=warn"]);
+// Headless Chrome now and then crashes while it loads the page ("Page crashed!"); a second try goes through.
+const remotion = (...args) => {
+  try {
+    run(npx, ["remotion", ...args, "--log=warn"]);
+  } catch {
+    console.log("Remotion failed; trying once more");
+    run(npx, ["remotion", ...args, "--log=warn"]);
+  }
+};
 const ffmpeg = (...args) => run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", ...args]);
 
 mkdirSync(DOCS, { recursive: true });

@@ -94,8 +94,9 @@ param(
         if ($url -like 'file:*') {
           $release = Get-Content -LiteralPath ([Uri]$url).LocalPath -Raw | ConvertFrom-Json
         } else {
-          # GitHub takes TLS 1.2 or newer, which Windows PowerShell 5.1 may not offer by itself.
-          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          # GitHub takes TLS 1.2 or newer, which Windows PowerShell 5.1 may not offer by itself. A locked-down PowerShell
+          # may refuse this; the request may still work.
+          try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
           $release = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 60
         }
         $tag = "$($release.tag_name)"

@@ -115,7 +115,7 @@ GizAi runs the coding CLIs installed on Windows itself, like `claude.exe` or npm
 | `.\install.ps1` | Installs, or updates (your data is backed up first) |
 | `.\install.ps1 -Uninstall` | Removes GizAi and keeps your data in `%APPDATA%\Gizai` |
 
-If PowerShell won't run scripts, start these the way the block above does: `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check`.
+If PowerShell won't run scripts, start these the way the block above does: `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check`. The one line needs no such change: it starts `install.ps1` that way itself.
 
 ## Not signed
 

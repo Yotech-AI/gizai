@@ -264,8 +264,8 @@ function TerminalSection({ route, tasks, youId, folded, onFold }: { route: Route
   );
 }
 
-/** Editor (GA-113), between Terminal and Agents: the folders you opened, newest first (at most 8), each with how it
- *  stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
+/** Editor (GA-113), between Terminal and Agents: the folders you opened (at most 8), each where it joined the list, a new
+ *  one at the bottom like a new terminal (GA-157). Each says how it stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
  *  to a person, "updating" while Update runs, else behind main ("3 behind", GA-114), else how many files changed, else
  *  ahead. A card's row is its identifier and its title, on one line (cut short, the tooltip starts with it whole; GA-151).
  *  Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,

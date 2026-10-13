@@ -9,7 +9,8 @@ feature) and mobile come later, and so does building the site.
   - `Features · row 01 on hover · Dark` (`42:557`) and `· Light` (`42:673`): the features with row 01 open.
   - `Homepage components` (`37:16`): Cursor, Theme switch, Code block, Feature row, Tour frame and Note.
   - Blue dashed notes on the canvas: right of each page, the page each feature row opens and what its screenshot shows;
-    left of the dark page, how the parts behave.
+    left of the dark page, how the parts behave. Each row also carries its address as a Dev Mode annotation.
+  - In Figma's prototype view, hovering a feature row opens it (an interactive component, While hovering).
 - **From the brandbook** (page Brandbook, `5:2`): the Logo, Button, Badge, Card label and Mountains components, the
   `GizAi colour` variables (modes Dark and Light), the `GizAi size` radii and the `Web/…` text styles. Each page frame
   sets the colour mode, so one set of components draws both themes.

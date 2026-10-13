@@ -10,7 +10,7 @@ import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
-import { forgetFolder, rememberFolder } from "./lib/editor";
+import { OPENED_KEY, forgetFolder, openedOf, rememberFolder } from "./lib/editor";
 import { tellMain } from "./lib/behind";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
@@ -3755,7 +3755,8 @@ async function editorRowsProbe() {
   if (caret()?.getAttribute("aria-expanded") === "false") { caret()?.click(); await nextFrame(); }
 
   // 1. none open: the Open a folder row, one row high; it and + open the picker, Escape closes it
-  for (const f of folders) forgetFolder(f.id);
+  // every folder kept open, those of earlier runs on the same WebKit storage too (~/Herd/panel-site, GA-137)
+  for (const id of openedOf(localStorage.getItem(OPENED_KEY))) forgetFolder(id);
   const openRow = await waitFor(() => { const b = section.querySelector<HTMLButtonElement>(".nav-list > button.nav-item"); return b && textOf(b) === "Open a folder" ? b : null; });
   check(openRow && Math.abs(rect(openRow).height - rect(plainRow).height) < 0.6, `with none open the Editor has its Open a folder row, a row high (${r1(rect(openRow).height)}, not ${r1(rect(plainRow).height)})`);
   for (const [what, el] of [["the Open a folder row", openRow], ["+", section.querySelector<HTMLButtonElement>('.nav-label button[aria-label="Open a folder"]')]] as const) {

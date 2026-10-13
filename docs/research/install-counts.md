@@ -19,7 +19,7 @@ Card GA-166. Research only: nothing here is built, and nothing changes in the ap
 - **For its users:** GizAi is a desktop app where a team of AI agents builds your software through your board, while you review. Each card gets its own git worktree, and everything runs on your own computer (README.md:25). [V]
 - **How it's built:** Rust (a Cargo workspace: `crates/gizai-core`, `crates/gizai-agents`, `crates/gizai-mcp` and `src-tauri`, Cargo.toml:3) with Tauri 2, and a React 19 front end in TypeScript, built with Vite 8 (package.json:38, :51, :63). [V] Data lives in one folder on your computer (docs/install.md:143-145). [V]
 - **How it's installed:** from source only, with no downloads or binaries (docs/install.md:5; docs/RELEASING.md:100). [V] The one line, `curl -fsSL https://gizai.app/install.sh | sh` or `irm https://gizai.app/install.ps1 | iex` (docs/install.md:14, :20), gets the latest release's source and runs its `install.sh` or `install.ps1`. "Run it again to update" (docs/install.md:23). [V]
-- **How it's released:** a GitHub Release with a tag `vX.Y.Z` on `production`. `main` changes only by pull requests, and `production` is protected (docs/RELEASING.md:5, :9-12). [V] There are five releases from v0.7.1 to v0.10.0, the newest on 13 Oct, none with assets (GitHub's releases API). [V]
+- **How it's released:** a GitHub Release with a tag `vX.Y.Z` on `production`. `main` changes only by pull requests, and `production` is protected (docs/RELEASING.md:5, :9-12). [V] The latest five releases, v0.7.1 to v0.10.0 (the newest on 13 Oct), have no assets (GitHub's releases API). [V]
 - **How it's tested:** CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `main` (ci.yml:6-9). It builds and tests on Linux, macOS and Windows, and runs the checks of `get.sh` and `get.ps1` (ci.yml:112-169). [V] The Install workflow runs on pull requests that change an installer, and by hand (install.yml:8-15). [V]
 
 ### 2.2 What goes where on the network
@@ -40,7 +40,7 @@ Nothing in the app asks gizai.app. A search of the code (`rg gizai\.app`, leavin
 
 ### 2.3 The website: where gizai.app is hosted (what I found)
 
-- **DNS:** the zone's nameservers are `carter.ns.cloudflare.com` and `lorna.ns.cloudflare.com`. `gizai.app` resolves to `188.114.96.2` and `188.114.97.2`, Cloudflare addresses, with a TTL of 300 seconds, so the record is proxied. [V: dns.google] `www.gizai.app` has no record. [V]
+- **DNS:** the zone's nameservers are `carter.ns.cloudflare.com` and `lorna.ns.cloudflare.com`. `gizai.app` resolves to `188.114.96.2` and `188.114.97.2`, Cloudflare addresses, with a TTL of 300 seconds, so the record is proxied. [V: dns.google] `www.gizai.app` points to Cloudflare too (`188.114.96.5`, `188.114.97.5`) and sends visitors on to `gizai.app`: fetching `https://www.gizai.app/install.sh` ended at gizai.app's own 302. [V] So counting only the host `gizai.app`, where every fetch ends, counts none twice. [I]
 - **Served by Cloudflare:** `https://gizai.app/cdn-cgi/trace`, which only Cloudflare answers, gives `h=gizai.app`. [V]
 - **Pages:** `https://gizai-website.pages.dev/` serves the same site, and its `/install.sh` gives the same 302. So a Cloudflare Pages project named `gizai-website` holds the site and applies its `_redirects`. [V] The live site has GW-2's feature pages (`https://gizai.app/features/board/`). [V]
 - **The redirects:** `https://gizai.app/install.sh` answers `302 Found` with `Location: https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh`, and `/install.ps1` the same for `get.ps1`. [V] They come from GW's `public/_redirects`, added in GW-2 (Yotech-AI/gizai-website pull request #2, merged 13 Oct):
@@ -92,9 +92,9 @@ What each event adds to each count:
 | `brew install yotech-ai/tap/gizai` (once published) | 0 | 0 (tarball) | – | – | – | 1, unless analytics are off [V] | 1 for the tap's first clone [I] |
 | `brew upgrade` | 0 | 0 | – | – | – | probably 1 [I] | 0: a fetch [I] |
 
-**What no count can tell apart:** a first install from a re-run. The request is the same, and GizAi sends nothing to tell them apart, as the "No telemetry" promise says. With no IP addresses there are no unique visitors either: Cloudflare offers no uniques per path in this dataset. [I] The **ratios** still help. Requests per week by curl or PowerShell, minus the browser and bot share, is an upper bound on one-line installs and terminal updates. GitHub's unique cloners and Homebrew's and pkgstats' counts are lower bounds per channel. [I]
+**What no count can tell apart:** a first install from a re-run. The request is the same, and GizAi sends nothing to tell them apart, as the "No telemetry" promise says. With no IP addresses there are no unique visitors either: Cloudflare offers no uniques per path in this dataset. [I] Bounds still help. A week's requests by curl or PowerShell are an upper bound on that week's one-line installs and terminal updates together. Homebrew's and pkgstats' counts are lower bounds for their channels, as people can switch Homebrew's analytics off and must opt in to pkgstats. [I]
 
-On 12 October GA had 62 workflow runs (GitHub's Actions API), [V] so CI alone could add well over a hundred clones a day. [I] A GitHub community answer (2020, not marked as staff) says an Action "will count as one unique cloner, no matter how many times it clones". [secondary] If that holds, **unique cloners** suffer less from CI than clones do. But `get.sh`'s checks in CI fetch without a login, so each runner may count as its own cloner. [I]
+On 12 October GA had 62 workflow runs (GitHub's Actions API). [V] So CI alone could add well over a hundred clones a day. [I] A GitHub community answer (2020, not marked as staff) says an Action "will count as one unique cloner, no matter how many times it clones". [secondary] If that holds, **unique cloners** suffer less from CI than clones do. But `get.sh`'s checks in CI fetch without a login, so each runner may count as its own cloner. [I]
 
 ### 3.3 GitHub's 14 days: the scheduled workflow
 
@@ -103,7 +103,7 @@ On 12 October GA had 62 workflow runs (GitHub's Actions API), [V] so CI alone co
 - **The token:** the four endpoints need the repository permission **Administration: read**, for fine-grained personal access tokens and for GitHub Apps. [V: GitHub Docs, the permissions pages for fine-grained tokens and for GitHub Apps] `GITHUB_TOKEN` can't get it: its permission keys are `actions`, `artifact-metadata`, `attestations`, `checks`, `code-quality`, `contents`, `copilot-requests`, `deployments`, `discussions`, `id-token`, `issues`, `packages`, `pages`, `pull-requests`, `security-events`, `statuses` and `vulnerability-alerts`, with no `administration`. [V: workflow syntax, `permissions`] So the workflow reads traffic with a **fine-grained token Jefsev makes** (§5.5) and commits with its own `GITHUB_TOKEN`.
 - **Where its data lives:** in a new private repository, `Yotech-AI/gizai-stats`, which holds the workflow, the data and the numbers file (§4.2).
 - **No CI:** nothing in GA changes, so GA's CI (ci.yml:6-9) never sees it. The stats repository has no other workflow. Also, "events triggered by the `GITHUB_TOKEN` will not create a new workflow run", apart from `workflow_dispatch`, `repository_dispatch` and some pull request events. [V]
-- **Scheduling:** "Scheduled workflows run on the latest commit on the default branch." Runs "can be delayed during periods of high loads … High load times include the start of every hour." "In a public repository, scheduled workflows are automatically disabled when no repository activity has occurred in 60 days", and that doesn't apply to a private one. Failure mails go to "the user who last modified the cron syntax in the workflow file". [V: GitHub Docs, events that trigger workflows] So the run is at 03:17 UTC.
+- **Scheduling:** "Scheduled workflows run on the latest commit on the default branch." Runs "can be delayed during periods of high loads … High load times include the start of every hour." "In a public repository, scheduled workflows are automatically disabled when no repository activity has occurred in 60 days" (public repositories only). Failure mails go to "the user who last modified the cron syntax in the workflow file". [V: GitHub Docs, events that trigger workflows] So the run is at 03:17 UTC.
 
 ### 3.4 AUR and Homebrew counts (once GA-165's packages exist)
 
@@ -132,7 +132,9 @@ GA-165 (on its branch, not merged) proposes the AUR package `gizai` and the tap 
 
 To add after the first paragraph of "No telemetry" (docs/install.md:155), once card S1 runs:
 
-> The website, gizai.app, only counts how often its two install lines are fetched: from Cloudflare's own totals, it keeps one number a day for each script and kind of program (curl, PowerShell, a browser), and no IP addresses or anything else about who fetched them.
+> The website, gizai.app, keeps a daily count of how often its two install lines are fetched, per script and kind of program (curl, PowerShell, a browser), from Cloudflare's own totals, and no IP addresses or anything else about who fetched them.
+
+It says "keeps" because Cloudflare, which serves the site, sees every request, as any web host does (§5.6).
 
 If Jefsev wants the other counts named too (open question 8), a second sentence:
 
@@ -183,7 +185,7 @@ If Jefsev wants the other counts named too (open question 8), a second sentence:
 - *Pros:*
   - The numbers stay private until Jefsev decides.
   - Nothing changes in GA: no workflow, no secrets, no runs in GA's Actions tab.
-  - A private repository's schedule isn't switched off after 60 quiet days. [V]
+  - GitHub switches schedules off after 60 quiet days only "in a public repository" [V], so this one stays on.
   - It can hold the website's numbers and the packages' numbers too, which aren't GA's.
 - *Cons:*
   - One more repository, and one more Gizai project if agents are to build in it.
@@ -224,7 +226,7 @@ There is no screen in the app or on the website. The only thing anyone reads is 
 │                                                                               │
 │ ## Week by week                                                               │
 │ Week of     install.sh  install.ps1  Other  GitHub views  GitHub clones  Tap  │
-│ 2026-11-02          38           11      7     1204 (388)       77 (31)    –  │
+│ 2026-11-02          38           11      7     1204 (388)      640 (52)  3 (3) │
 │ 2026-10-26          ...                                                       │
 │                                                                               │
 │ ## Packages          ## Where GitHub's visitors came from   ## Most viewed    │
@@ -249,7 +251,7 @@ Every file is JSON, keyed by date (`YYYY-MM-DD`, UTC) or month, with sorted keys
 
 **Why "the highest":** GitHub's numbers for a day grow until the day is over, and then stay the same until the day leaves the 14 days. The workflow runs every day, so each day is read about 13 times after it is over, and its highest value is its final one. [I] Cloudflare's days are over when they are read, so they're simply replaced.
 
-### 5.3 The workflow, in full (draft, untested)
+### 5.3 The workflow, in full (a draft: its jq is tested in parts, the whole has never run)
 
 Two files in `Yotech-AI/gizai-stats`: `.github/workflows/stats.yml` and `readme.jq`. Nothing else is needed: the first run makes `data/`, and the first Monday run, or a run by hand, writes `README.md`.
 
@@ -326,7 +328,8 @@ jobs:
           rm -f new.json
 
       # gizai.app's install lines: the three days before today, which are over, asked again in case Cloudflare's
-      # numbers came in late. Requests from real clients only (requestSource "eyeball"), answered without an error.
+      # numbers came in late. Requests from real clients only (requestSource "eyeball"), answered without an error, on
+      # gizai.app only: www.gizai.app sends its visitors on to gizai.app, so each fetch counts once.
       # What goes into the file: per day, per script and per kind of client, a count. Not the user agent itself.
       - name: gizai.app's install lines
         env:
@@ -542,6 +545,7 @@ What I verified of this draft, and what not:
 - **Checked by card S1 first:**
   - the variable types `string!` and `Time!` (Cloudflare's examples use `string` [V]; `Time` I didn't see written) [I];
   - that the free plan allows a one-day range [I];
+  - that it takes `clientRequestPath_in` and the host filter. Cloudflare marks `clientRequestPath_like` "All plans", and `in` is one of the operators for every field, but the host filter's plan isn't listed [I];
   - that requests for the Pages custom domain appear in the zone's `httpRequestsAdaptiveGroups` [I];
   - that `jq` 1.7 on `ubuntu-24.04` runs `readme.jq` as written [I].
 - **The user agents:** PowerShell 7 sends `Mozilla/5.0 (<platform>; <OS>; <culture>) PowerShell/<version>` (PowerShell's `PSUserAgent.cs`). [V] Windows PowerShell 5.1's `WindowsPowerShell/5.1…` [I] matches the same `PowerShell` test. curl sends `curl/<version>` unless told otherwise. [I]
@@ -603,8 +607,8 @@ Nothing in this list is done by this card. In order:
    - Expiration: one year, with a reminder in your calendar.
    - If the organisation asks for approval, approve it in Yotech-AI → Settings → Personal access tokens → Pending requests. [V: "pending until it is reviewed"; I: the menu's place]
 4. **GitHub: the secret.** In `gizai-stats`, Settings → Secrets and variables → Actions: add `TRAFFIC_TOKEN` with that token.
-5. **Cloudflare: make the API token.** My Profile → API Tokens → Create Token → Custom token: permission Zone → Analytics → Read, for the zone `gizai.app` only. Save it in `gizai-stats` as the secret `CLOUDFLARE_API_TOKEN`. With the cf CLI (CLAUDE.md asks for it, and GW has no Wrangler configuration): `cf auth login`, then `cf cli search "create an API token"` finds the command. I couldn't run cf here, so I name no exact command. [I]
-6. **Cloudflare: the zone ID.** gizai.app → Overview → API → Zone ID (or `cf cli search "list zones"`). Save it in `gizai-stats` as the *variable* `CLOUDFLARE_ZONE_ID`; it isn't secret.
+5. **Cloudflare: make the API token.** My Profile → API Tokens → Create Token → Custom token [I: the menu's place]: permission Zone → Analytics → Read [V: the permission's name], for the zone `gizai.app` only. Save it in `gizai-stats` as the secret `CLOUDFLARE_API_TOKEN`. With the cf CLI (CLAUDE.md asks for it, and GW has no Wrangler configuration): `cf auth login`, then `cf cli search "create an API token"` finds the command. I couldn't run cf here, so I name no exact command. [I]
+6. **Cloudflare: the zone ID.** gizai.app → Overview → API → Zone ID [I: the menu's place] (or `cf cli search "list zones"`). Save it in `gizai-stats` as the *variable* `CLOUDFLARE_ZONE_ID`; it isn't secret.
 7. **Once the tap exists (GA-165):** edit the token to add `Yotech-AI/homebrew-tap`, and add the variable `TAP_REPO` = `Yotech-AI/homebrew-tap`.
 8. **After S1 merges:** Actions → Stats → Run workflow, once, to see the first numbers. A token that expires shows as a failed run and a mail to whoever last changed the cron line. [V]
 9. **Just look, change nothing:** in Cloudflare, Workers & Pages → `gizai-website` → Settings: is it built from Git (`Yotech-AI/gizai-website`, branch `main`)? Is `gizai.app` its custom domain? Is Web Analytics off? It can stay off, as it adds a script to the site and counts nothing here. Tell the card's comments what you see (open question 2).
@@ -619,7 +623,7 @@ Nothing in this list is done by this card. In order:
 - **What we don't keep:** IP addresses, user agents, rows per request, cookies, anything from the app. The Cloudflare query never asks for an IP address (§5.3). [design]
 - **What Cloudflare sees:** each request, with its IP address, as it does today for every page of the site it serves. What Cloudflare keeps is its own policy, and the free plan doesn't change it. [I] The sentence in §3.6 says "keeps", about us, for that reason.
 - **The tokens only read:**
-  - Administration: read on one or two repositories. That also shows those repositories' settings, so it covers no other repository. [I]
+  - Administration: read on one or two repositories. It can read those repositories' settings too, but nothing of any other repository. [I]
   - Analytics: read on one zone.
   - Both are secrets of the private repository. A workflow on a pull request from one of the repository's own branches gets its secrets, so a card that edits the workflow could print them. [I] So review S1's and S2's pull requests as usual. GitHub masks secrets in logs. [I]
 - **No third-party actions:** only `actions/checkout@v4`, as GA's CI uses (ci.yml:37). [V]
@@ -700,7 +704,7 @@ In order. None needs a screen design, so all start in **To do**. There is no fro
   - gizai.app is served by Cloudflare Pages, project `gizai-website`, with whatever Jefsev found in §5.5 step 9;
   - `public/_redirects` sends the two install lines to `get.sh` and `get.ps1` on GA's `production`;
   - the stats workflow in `Yotech-AI/gizai-stats` reads Cloudflare's totals for exactly those two paths, so renaming them or moving the site off the zone stops the counts.
-  - It also replaces "the deploy comes in its own card" (README.md:30 at ffe5aa6) with how the site is deployed now.
+  - It also replaces "the deploy comes in its own card" (README.md:30 at ffe5aa6, still there after GW-4, as the pull requests' diffs show) with how the site is deployed now.
 - **Acceptance:**
   - [ ] The README names the Pages project, the two paths and the stats repository.
   - [ ] It says the site keeps no IP addresses, in the words of §3.6.
@@ -730,7 +734,8 @@ All read on 2026-10-13.
 | gizai.app, the site and its redirects (fetched) | https://gizai.app, https://gizai.app/install.sh, https://gizai.app/install.ps1, https://gizai.app/features/board/ |
 | Cloudflare's trace for gizai.app | https://gizai.app/cdn-cgi/trace |
 | The Pages project's own address | https://gizai-website.pages.dev/, https://gizai-website.pages.dev/install.sh |
-| DNS (Google's resolver): NS, A, www | https://dns.google/resolve?name=gizai.app&type=NS, …&type=A, https://dns.google/resolve?name=www.gizai.app&type=CNAME |
+| DNS (Google's resolver): NS, A, www | https://dns.google/resolve?name=gizai.app&type=NS, …&type=A, https://dns.google/resolve?name=www.gizai.app&type=A |
+| www.gizai.app (fetched) | https://www.gizai.app/, https://www.gizai.app/install.sh |
 | GW pull request #2 (`public/_redirects`, the install lines) | `gh pr view 2` / `gh pr diff 2 --repo Yotech-AI/gizai-website` |
 | GA's releases and workflow runs (public API) | https://api.github.com/repos/Yotech-AI/gizai/releases?per_page=5, https://api.github.com/repos/Yotech-AI/gizai/actions/runs?per_page=2&created=2026-10-12 |
 | GitHub Docs, Viewing traffic to a repository | https://docs.github.com/en/repositories/viewing-activity-and-data-for-your-repository/viewing-traffic-to-a-repository |

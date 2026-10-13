@@ -3035,7 +3035,8 @@ export async function terminalProbe(folder: string) {
 // Ctrl+Shift+F finds in the terminal, none of them reaching the Editor; the drag handle between 120px of code and 120px of
 // terminal, a double click and ↑ ↓; another folder at the same height with its own terminals, Ctrl+Shift+` and closing its
 // last tab; whether it shows kept per folder; a terminal opened elsewhere as a tab; Own page with the same view; the
-// placeholder with Show here; Show in Editor opening the panel on its tab. (b) After the restart: the same height.
+// placeholder with Show here; Show in Editor opening the panel on its tab, which then shows again when the folder opens
+// again, and once hidden stays hidden. (b) After the restart: the same height.
 
 const PANEL_SHARE = "gizai.editor.panel";
 

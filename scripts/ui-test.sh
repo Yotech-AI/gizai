@@ -88,7 +88,8 @@
 #     handle stops at 120px of code and 120px of terminal, a double click gives 30% back, ↑ and ↓ move it 5%; another folder
 #     opens it at the same height with its own terminals, Ctrl+Shift+` adds one and closing the last tab hides it; a
 #     terminal opened elsewhere is a tab; Own page shows the same view on #/terminal/<id>; Show in Editor opens the panel on
-#     its tab; while another place has the view the panel shows the placeholder with Show here. (b) After a restart the
+#     its tab, it shows again when the folder opens again and, once hidden, stays hidden; while another place has the view
+#     the panel shows the placeholder with Show here. (b) After a restart the
 #     panel opens at the height kept, in both folders.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh

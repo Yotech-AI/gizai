@@ -5,7 +5,8 @@ import lightCapture from "../capture/light/scenes.json";
 
 export type Theme = "dark" | "light";
 export type Box = { x: number; y: number; width: number; height: number };
-export type Step = { name: string; before: string; after: string; box: Box };
+/** quick: its after-still is only a menu the next click is in, so it holds briefly. */
+export type Step = { name: string; before: string; after: string; box: Box; quick?: boolean };
 export type CapturedScene = { scene: number; name: string; title: string; steps: Step[] };
 export type Caption = { number: string; name: string; line: string };
 export type Scene = CapturedScene & { caption: Caption };
@@ -37,6 +38,9 @@ const CAPTIONS: Record<string, Caption> = {
   "08-inbox": { number: "08", name: "The Inbox", line: "Questions, approvals and Run this for me, in one place." },
 };
 
+/** The steps that only open a menu for the next click: the Editor's folder picker. */
+const QUICK: Record<string, string[]> = { "05-editor": ["open-folder"] };
+
 const CAPTURES: Record<Theme, { scenes: CapturedScene[] }> = { dark: darkCapture, light: lightCapture };
 
 /** The theme's scenes in the website's order. Fails loudly when the capture and ORDER don't match. */
@@ -48,7 +52,12 @@ export function scenesFor(theme: Theme): Scene[] {
     if (!scene) throw new Error(`capture/${theme}/scenes.json has no scene ${name}`);
     return {
       ...scene,
-      steps: scene.steps.map((step) => ({ ...step, before: `${theme}/${step.before}`, after: `${theme}/${step.after}` })),
+      steps: scene.steps.map((step) => ({
+        ...step,
+        before: `${theme}/${step.before}`,
+        after: `${theme}/${step.after}`,
+        quick: QUICK[name]?.includes(step.name) ?? false,
+      })),
       caption: CAPTIONS[name],
     };
   });

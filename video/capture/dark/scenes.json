@@ -10,7 +10,7 @@
     {
       "scene": 1,
       "name": "01-board",
-      "title": "The board: cards in columns, one being worked on",
+      "title": "The board, and a quick look at a card's live run",
       "steps": [
         {
           "name": "open-card",
@@ -22,50 +22,19 @@
             "width": 564,
             "height": 262
           },
-          "selector": "[data-card=\"KADE-1\"]"
+          "selector": "[data-card=\"NWS-1\"]"
         }
       ]
     },
     {
       "scene": 2,
-      "name": "02-live-run",
-      "title": "That card's live run",
-      "steps": [
-        {
-          "name": "live-run",
-          "before": "02-live-run/live-run-before.png",
-          "after": "02-live-run/live-run-after.png",
-          "box": {
-            "x": 570,
-            "y": 606,
-            "width": 1276,
-            "height": 640
-          },
-          "selector": "section.run-card.live .run-stream"
-        },
-        {
-          "name": "changes",
-          "before": "02-live-run/changes-before.png",
-          "after": "02-live-run/changes-after.png",
-          "box": {
-            "x": 695,
-            "y": 104,
-            "width": 271,
-            "height": 84
-          },
-          "selector": ".task-tabs a.tab[href$=\"/changes\"]"
-        }
-      ]
-    },
-    {
-      "scene": 3,
-      "name": "03-chat",
+      "name": "02-chat",
       "title": "The Team Lead chat: a request, the cards it made, Approve",
       "steps": [
         {
           "name": "approve",
-          "before": "03-chat/approve-before.png",
-          "after": "03-chat/approve-after.png",
+          "before": "02-chat/approve-before.png",
+          "after": "02-chat/approve-after.png",
           "box": {
             "x": 1184,
             "y": 1218,
@@ -73,18 +42,37 @@
             "height": 52
           },
           "selector": ".pending-actions .pa-card .pa-actions .btn.primary"
+        }
+      ]
+    },
+    {
+      "scene": 3,
+      "name": "03-clis",
+      "title": "Bring your own CLI: Claude Code and Codex in Settings \u2192 Coding CLIs, then Usage \u2192 Subscription",
+      "steps": [
+        {
+          "name": "agents-tab",
+          "before": "03-clis/agents-tab-before.png",
+          "after": "03-clis/agents-tab-after.png",
+          "box": {
+            "x": 1277,
+            "y": 152,
+            "width": 301,
+            "height": 84
+          },
+          "selector": ".tabs[aria-label=\"Settings\"] .tab:text(Agents and runs)"
         },
         {
-          "name": "open-card",
-          "before": "03-chat/open-card-before.png",
-          "after": "03-chat/open-card-after.png",
+          "name": "usage",
+          "before": "03-clis/usage-before.png",
+          "after": "03-clis/usage-after.png",
           "box": {
-            "x": 1356,
-            "y": 810,
-            "width": 468,
-            "height": 36
+            "x": 20,
+            "y": 1372,
+            "width": 454,
+            "height": 64
           },
-          "selector": ".tool-card a.tc-label[href^=\"#/task/\"]:text(Driver app: API)"
+          "selector": ".side .nav-item:text(Usage)"
         }
       ]
     },
@@ -101,9 +89,9 @@
             "x": 1996,
             "y": 546,
             "width": 564,
-            "height": 196
+            "height": 232
           },
-          "selector": "[data-card=\"KADE-2\"]"
+          "selector": "[data-card=\"NWS-2\"]"
         },
         {
           "name": "runs",
@@ -122,141 +110,55 @@
     {
       "scene": 5,
       "name": "05-editor",
-      "title": "The Code Editor: the file tree with git status, a file open, a card's Changes",
+      "title": "The Editor and Terminal: a project opens in the Editor, then its Terminal",
       "steps": [
         {
-          "name": "open-app",
-          "before": "05-editor/open-app-before.png",
-          "after": "05-editor/open-app-after.png",
+          "name": "open-folder",
+          "before": "05-editor/open-folder-before.png",
+          "after": "05-editor/open-folder-after.png",
           "box": {
-            "x": 504,
-            "y": 320,
-            "width": 502,
-            "height": 56
+            "x": 20,
+            "y": 1104,
+            "width": 454,
+            "height": 64
           },
-          "selector": ".ed-tree .ed-row[data-path=\"app\"]"
+          "selector": ".side [aria-label=\"Editor\"] button.nav-item:text(Open a folder)"
         },
         {
-          "name": "open-models",
-          "before": "05-editor/open-models-before.png",
-          "after": "05-editor/open-models-after.png",
+          "name": "open-project",
+          "before": "05-editor/open-project-before.png",
+          "after": "05-editor/open-project-after.png",
           "box": {
-            "x": 504,
-            "y": 544,
-            "width": 502,
-            "height": 56
+            "x": 522,
+            "y": 1186,
+            "width": 932,
+            "height": 60
           },
-          "selector": ".ed-tree .ed-row[data-path=\"app/Models\"]"
+          "selector": ".ed-picker .opt[title=\"~/Projects/northwind-shop\"]"
         },
         {
-          "name": "open-file",
-          "before": "05-editor/open-file-before.png",
-          "after": "05-editor/open-file-after.png",
+          "name": "terminal",
+          "before": "05-editor/terminal-before.png",
+          "after": "05-editor/terminal-after.png",
           "box": {
-            "x": 504,
-            "y": 712,
-            "width": 502,
-            "height": 56
+            "x": 2111,
+            "y": 25,
+            "width": 180,
+            "height": 52
           },
-          "selector": ".ed-tree .ed-row[data-path=\"app/Models/Shipment.php\"]"
-        },
-        {
-          "name": "changed-file",
-          "before": "05-editor/changed-file-before.png",
-          "after": "05-editor/changed-file-after.png",
-          "box": {
-            "x": 508,
-            "y": 682,
-            "width": 494,
-            "height": 56
-          },
-          "selector": "button.chg-file[data-path=\"routes/api.php\"]"
+          "selector": ".btn.term-btn"
         }
       ]
     },
     {
       "scene": 6,
-      "name": "06-terminals",
-      "title": "Terminals: the sidebar's Terminal section, a terminal page, the panel in the Editor",
-      "steps": [
-        {
-          "name": "new-terminal",
-          "before": "06-terminals/new-terminal-before.png",
-          "after": "06-terminals/new-terminal-after.png",
-          "box": {
-            "x": 20,
-            "y": 884,
-            "width": 454,
-            "height": 64
-          },
-          "selector": ".side [aria-label=\"Terminal\"] button.nav-item:text(New terminal)"
-        },
-        {
-          "name": "pick-folder",
-          "before": "06-terminals/pick-folder-before.png",
-          "after": "06-terminals/pick-folder-after.png",
-          "box": {
-            "x": 522,
-            "y": 1102,
-            "width": 932,
-            "height": 60
-          },
-          "selector": ".ed-picker .opt[title=\"~/Herd/kade-portal\"]"
-        },
-        {
-          "name": "show-in-editor",
-          "before": "06-terminals/show-in-editor-before.png",
-          "after": "06-terminals/show-in-editor-after.png",
-          "box": {
-            "x": 2208,
-            "y": 25,
-            "width": 244,
-            "height": 52
-          },
-          "selector": ".btn:text(Show in Editor)"
-        }
-      ]
-    },
-    {
-      "scene": 7,
-      "name": "07-clis",
-      "title": "Bring your own CLI: Settings \u2192 Coding CLIs, and Usage \u2192 Subscription with two accounts",
-      "steps": [
-        {
-          "name": "agents-tab",
-          "before": "07-clis/agents-tab-before.png",
-          "after": "07-clis/agents-tab-after.png",
-          "box": {
-            "x": 1277,
-            "y": 152,
-            "width": 301,
-            "height": 84
-          },
-          "selector": ".tabs[aria-label=\"Settings\"] .tab:text(Agents and runs)"
-        },
-        {
-          "name": "usage",
-          "before": "07-clis/usage-before.png",
-          "after": "07-clis/usage-after.png",
-          "box": {
-            "x": 20,
-            "y": 1372,
-            "width": 454,
-            "height": 64
-          },
-          "selector": ".side .nav-item:text(Usage)"
-        }
-      ]
-    },
-    {
-      "scene": 8,
-      "name": "08-memory",
+      "name": "06-memory",
       "title": "Memory: a note with its links, then the graph",
       "steps": [
         {
           "name": "open-link",
-          "before": "08-memory/open-link-before.png",
-          "after": "08-memory/open-link-after.png",
+          "before": "06-memory/open-link-before.png",
+          "after": "06-memory/open-link-after.png",
           "box": {
             "x": 1558,
             "y": 900,
@@ -267,8 +169,8 @@
         },
         {
           "name": "graph",
-          "before": "08-memory/graph-before.png",
-          "after": "08-memory/graph-after.png",
+          "before": "06-memory/graph-before.png",
+          "after": "06-memory/graph-after.png",
           "box": {
             "x": 2161,
             "y": 27,
@@ -280,14 +182,14 @@
       ]
     },
     {
-      "scene": 9,
-      "name": "09-tools",
+      "scene": 7,
+      "name": "07-tools",
       "title": "Tools per agent: an agent's form \u2192 Tools",
       "steps": [
         {
           "name": "settings",
-          "before": "09-tools/settings-before.png",
-          "after": "09-tools/settings-after.png",
+          "before": "07-tools/settings-before.png",
+          "after": "07-tools/settings-after.png",
           "box": {
             "x": 2309,
             "y": 192,
@@ -298,8 +200,8 @@
         },
         {
           "name": "use-playwright",
-          "before": "09-tools/use-playwright-before.png",
-          "after": "09-tools/use-playwright-after.png",
+          "before": "07-tools/use-playwright-before.png",
+          "after": "07-tools/use-playwright-after.png",
           "box": {
             "x": 664,
             "y": 840,
@@ -311,14 +213,14 @@
       ]
     },
     {
-      "scene": 10,
-      "name": "10-inbox",
+      "scene": 8,
+      "name": "08-inbox",
       "title": "The Inbox: a question, and Run this for me",
       "steps": [
         {
           "name": "inbox",
-          "before": "10-inbox/inbox-before.png",
-          "after": "10-inbox/inbox-after.png",
+          "before": "08-inbox/inbox-before.png",
+          "after": "08-inbox/inbox-after.png",
           "box": {
             "x": 20,
             "y": 156,
@@ -329,8 +231,8 @@
         },
         {
           "name": "done-continue",
-          "before": "10-inbox/done-continue-before.png",
-          "after": "10-inbox/done-continue-after.png",
+          "before": "08-inbox/done-continue-before.png",
+          "after": "08-inbox/done-continue-after.png",
           "box": {
             "x": 2206,
             "y": 794,

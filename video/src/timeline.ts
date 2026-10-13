@@ -16,7 +16,8 @@ const SECONDS = {
   settle: 0.12, // the cursor rests on its target before it clicks
   clickDelay: 0.08, // from the click to the crossfade from before to after
   clickFade: 0.3,
-  hold: 1.25, // on the after-still
+  hold: 1.1, // on the after-still
+  quickHold: 0.7, // on a menu the next click is in
   lastHold: 2.2, // a scene's last step holds longer, to read its caption
   outroFade: 0.6,
   outro: 4,
@@ -67,7 +68,7 @@ export function buildTimeline(scenes: Scene[], options: Options): Timeline {
       if (i > 0) shots.push({ kind: "still", src: step.before, at: stepStart, fade: fade(SECONDS.stepFade) });
       const arrive = stepStart + move;
       const click = arrive + fr(SECONDS.settle);
-      const end = click + fr(i === scene.steps.length - 1 ? SECONDS.lastHold : SECONDS.hold);
+      const end = click + fr(i === scene.steps.length - 1 ? SECONDS.lastHold : step.quick ? SECONDS.quickHold : SECONDS.hold);
       shots.push({ kind: "still", src: step.after, at: click + fr(SECONDS.clickDelay), fade: fade(SECONDS.clickFade) });
       const timedStep: TimedStep = { ...step, start: stepStart, arrive, click, end, from: at, to };
       t = end;

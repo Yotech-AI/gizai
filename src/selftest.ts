@@ -5,11 +5,11 @@ import { emit } from "@tauri-apps/api/event";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Terminal } from "@xterm/xterm";
-import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, setAgentStatus, terminalClose, terminalList } from "./api";
+import { appInfo, archiveTask, chatMessages, editorFolders, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, setAgentStatus, terminalClose, terminalList, terminalOpen } from "./api";
 import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
-import { hardwareWebgl2, probeView, setWebglAllowed } from "./lib/terminals";
+import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
 
@@ -2825,6 +2825,9 @@ const termRowHeight = (term: Terminal) => (term.element?.querySelector(".xterm-s
 const domRows = (host: HTMLElement) => [...host.querySelectorAll(".xterm-rows > div")].map((r) => (r.textContent ?? "").replace(/ /g, " ").trimEnd());
 
 export async function terminalProbe(folder: string) {
+  // GA-137: MODE=terminal:panel-a:<card> and terminal:panel-b:<card> run the Editor's terminal panel's probe instead
+  const panel = /^panel-([ab]):(.+)$/.exec(folder);
+  if (panel) return terminalPanelProbe(panel[1] as "a" | "b", panel[2] ?? "");
   const errors: string[] = [];
   const out: Record<string, unknown> = {};
   const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
@@ -3020,5 +3023,318 @@ export async function terminalProbe(folder: string) {
   // the shell ends with the terminal
   await Promise.race([terminalClose(id).catch(() => {}), sleep(4000)]);
   check(await waitFor(() => (probeView(id) === null ? true : null), 3000), "closing the terminal disposes of its view");
+  return done();
+}
+
+// ---------- the Editor's terminal panel (GA-137, TF2) ----------
+// GIZAI_SELFTEST_MODE=terminal:panel-a:<card>, then terminal:panel-b:<card>, on route terminal (scripts/ui-test.sh: /bin/sh
+// as the shell, a scratch home folder with ~/Herd/panel-site, the card's worktree with a README.md), two starts on the same
+// WebKit storage. (a) The Terminal button between Fetch and Open in, off on a card that isn't pinned to you until Edit
+// anyway; the panel at 30% of the code column with a terminal in the folder's root (pwd) that has the focus; the button and
+// Ctrl+` hide it and the shell keeps running; Ctrl+` from inside the terminal; Ctrl+W, Ctrl+P and Ctrl+B go to the shell and
+// Ctrl+Shift+F finds in the terminal, none of them reaching the Editor; the drag handle between 120px of code and 120px of
+// terminal, a double click and ↑ ↓; another folder at the same height with its own terminals, Ctrl+Shift+` and closing its
+// last tab; whether it shows kept per folder; a terminal opened elsewhere as a tab; Own page with the same view; the
+// placeholder with Show here; Show in Editor opening the panel on its tab. (b) After the restart: the same height.
+
+const PANEL_SHARE = "gizai.editor.panel";
+
+async function terminalPanelProbe(phase: "a" | "b", card: string) {
+  const errors: string[] = [];
+  const out: Record<string, unknown> = { phase };
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const done = () => ({ ok: errors.length === 0, errors, ...out });
+
+  const folders = await editorFolders();
+  const kade = folders.find((f) => f.kind === "card" && f.name === card);
+  const site = folders.find((f) => f.kind === "root" && f.name === "panel-site");
+  if (!kade || !site) { errors.push(`no folders ${card} and panel-site (${folders.map((f) => `${f.kind} ${f.name}`).join(", ")})`); return done(); }
+  if (phase === "a") { localStorage.removeItem(PANEL_SHARE); localStorage.removeItem("gizai.editor.terminal"); }
+
+  const btn = () => q<HTMLButtonElement>(".topbar .term-btn");
+  const panel = () => q<HTMLElement>(".ed-main > .term-panel");
+  const ht = (el: Element | null | undefined) => el?.getBoundingClientRect().height ?? 0;
+  const sizes = () => ({ col: Math.round(ht(q(".ed-main")) * 10) / 10, panel: Math.round(ht(panel()) * 10) / 10, code: Math.round(ht(q(".ed-main > .ed-code")) * 10) / 10 });
+  const shareNow = () => { const s = sizes(); return s.col ? (s.panel / s.col) * 100 : 0; };
+  const openFolder = async (f: { id: string; name: string }) => {
+    window.location.hash = `#/editor/${encodeURIComponent(f.id)}`;
+    return waitFor(() => (q(".ed-crumbs b")?.textContent === f.name ? btn() : null), 8000);
+  };
+  /** Ctrl+` (Ctrl+Shift+` with shift) on the page, outside the terminal. */
+  const backquote = (shift = false) => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: shift ? "~" : "`", code: "Backquote", keyCode: 192, ctrlKey: true, shiftKey: shift, bubbles: true, cancelable: true }));
+  const inFolder = async (f: { id: string }) => (await terminalList()).filter((s) => s.folder === f.id);
+  const shownTab = () => q(".term-panel .term-tab[aria-selected=true]")?.getAttribute("data-term") ?? null;
+  const viewInPanel = (id: string) => waitFor(() => { const v = probeView(id); return v && v.renderer !== "none" && panel()?.contains(v.term.element ?? null) ? v : null; }, 10000);
+  const pwdIn = async (term: Terminal, path: string) => {
+    await waitFor(() => termLines(term).some((l) => l.trim()), 10000); // the prompt
+    await sleep(300);
+    termType(term, "pwd\r");
+    return waitFor(() => (termLines(term).some((l) => l.trim() === path) ? path : null), 5000);
+  };
+
+  if (phase === "b") {
+    // after a restart: the share kept, in the card's folder and in another one
+    const kept = Number(localStorage.getItem(PANEL_SHARE));
+    out.kept = kept;
+    check(kept >= 40 && kept <= 50, `the height kept before the restart is still there (${localStorage.getItem(PANEL_SHARE)})`);
+    for (const f of [kade, site]) {
+      if (!(await openFolder(f))) { errors.push(`no Terminal button in ${f.name}'s Editor`); continue; }
+      if (f === kade) { buttonByText(document, "Edit anyway")?.click(); await waitFor(() => (btn()?.getAttribute("aria-disabled") !== "true" ? true : null), 3000); }
+      btn()?.click();
+      const id = await waitFor(shownTab, 10000);
+      if (!id || !(await viewInPanel(id))) { errors.push(`the panel didn't open in ${f.name} after the restart: ${q(".error-banner")?.textContent ?? "no error shown"}`); continue; }
+      await sleep(200);
+      out[`share_${f.name}`] = { ...sizes(), share: Math.round(shareNow() * 10) / 10 };
+      check(Math.abs(shareNow() - kept) < 0.6, `after the restart the panel in ${f.name} has the kept height (${JSON.stringify(out[`share_${f.name}`])}, kept ${kept})`);
+    }
+    for (const s of await terminalList()) await Promise.race([terminalClose(s.id).catch(() => {}), sleep(3000)]);
+    return done();
+  }
+
+  // 1. the Terminal button, between Fetch and Open in; off on a card that isn't pinned to you, until Edit anyway
+  if (!(await openFolder(kade))) { errors.push(`no Terminal button in ${card}'s Editor`); return done(); }
+  const acts = [...(btn()?.parentElement?.children ?? [])].map((el) => (el.classList.contains("term-btn") ? "Terminal" : textOf(el)));
+  out.topBar = acts;
+  const at = acts.indexOf("Terminal");
+  check(textOf(btn()) === "Terminal" && (acts[at + 1] ?? "").startsWith("Open in") && (at === 0 || /^Fetch/.test(acts[at - 1] ?? "")),
+    `the Terminal button is between Fetch and Open in (${acts.join(" | ")})`);
+  const offTitle = await waitFor(() => (btn()?.getAttribute("aria-disabled") === "true" && btn()?.title.includes(":") ? btn()!.title : null), 5000);
+  out.offTitle = offTitle ?? btn()?.title;
+  check(offTitle && new RegExp(`^${card} (is .+'s card|isn't assigned to anyone): press Edit anyway first, since a shell can change its files\\.$`).test(offTitle),
+    `on a card that isn't pinned to you the button is off (aria-disabled), its tooltip saying why (${out.offTitle})`);
+  check(!btn()?.disabled, "off is aria-disabled, not disabled, so its tooltip shows");
+  btn()?.click();
+  backquote();
+  await sleep(800);
+  check(!panel() && (await inFolder(kade)).length === 0, "while it is off the button and Ctrl+` start nothing");
+  const edit = buttonByText(document, "Edit anyway");
+  if (!edit) { errors.push("no Edit anyway"); return done(); }
+  edit.click();
+  const onTitle = await waitFor(() => (btn()?.getAttribute("aria-disabled") !== "true" ? btn()!.title : null), 3000);
+  check(onTitle === "Show the terminal (Ctrl+`)" && btn()?.getAttribute("aria-pressed") === "false", `after Edit anyway the button is on (${onTitle})`);
+
+  // 2. the button opens the panel at 30% of the column, with a terminal in the folder's root that has the focus
+  btn()?.click();
+  const id = await waitFor(shownTab, 10000);
+  if (!id) { errors.push(`the button didn't open the panel with a terminal: ${q(".error-banner")?.textContent ?? "no error shown"}`); return done(); }
+  const v = await viewInPanel(id);
+  if (!v) { errors.push("the terminal's view didn't show in the panel"); return done(); }
+  const term = v.term;
+  await sleep(250);
+  out.opened = { ...sizes(), share: Math.round(shareNow() * 10) / 10, rows: term.rows, cols: term.cols };
+  check(Math.abs(shareNow() - 30) < 0.6, `the panel opens at 30% of the column (${JSON.stringify(out.opened)})`);
+  check(btn()?.getAttribute("aria-pressed") === "true" && btn()?.title === "Hide the terminal (Ctrl+`)", `the button is pressed while the panel shows (${btn()?.title})`);
+  check(document.activeElement === term.textarea, "the new terminal has the focus");
+  const list1 = await inFolder(kade);
+  check(list1.length === 1 && list1[0]?.id === id, `one terminal in the folder, in TF0's store (${list1.map((s) => s.name).join(", ")})`);
+  const name = list1[0]?.name ?? "";
+  out.tabsHeight = ht(q(".term-panel .term-tabs"));
+  check(Math.abs(Number(out.tabsHeight) - 32) < 0.6, `the panel's tabs are 32px high (${out.tabsHeight})`);
+  const own = buttonByText(panel()!, "Own page"), hide = buttonByText(panel()!, "Hide");
+  check(own?.title === `Open ${name} on its own page` && hide?.title === "Hide the terminal (Ctrl+`): its shells keep running", `the panel has Own page and Hide (${own?.title} | ${hide?.title})`);
+  const plus = q<HTMLButtonElement>(`.term-panel .term-tabs button[aria-label="New terminal in ${card}"]`);
+  check(plus?.title === `New terminal in ${card} (Ctrl+Shift+\`)` && plus.getAttribute("aria-disabled") !== "true", `+ is on, saying where (${plus?.title})`);
+  out.pwd = await pwdIn(term, kade.id);
+  check(out.pwd, `pwd prints the folder's root ${kade.id} (screen: ${JSON.stringify(termLines(term, true).filter(Boolean).slice(-4))})`);
+
+  // 3. the button again hides it, the shell keeps running; Ctrl+` shows it again on the same terminal, without a new one
+  btn()?.click();
+  check(await waitFor(() => (!panel() ? true : null), 2000), "pressing the button again hides the panel");
+  check(btn()?.getAttribute("aria-pressed") === "false" && btn()?.title === "Show the terminal (Ctrl+`)", "the button isn't pressed while the panel is hidden");
+  const hidden = (await inFolder(kade)).find((s) => s.id === id);
+  check(hidden && !hidden.ended, "the shell keeps running while the panel is hidden");
+  term.input("echo printed-while-hidden\r", true);
+  await sleep(400);
+  backquote();
+  check(await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000), "Ctrl+` shows the panel again with the same terminal");
+  check((await inFolder(kade)).length === 1, "showing it again starts no new terminal");
+  check(await waitFor(() => (termLines(term).some((l) => l.trim() === "printed-while-hidden") && termLines(term).some((l) => l.trim() === kade.id) ? true : null), 3000),
+    "what it printed before and while it was hidden is there");
+
+  // 4. Ctrl+` hides it from inside the terminal too, and shows it again
+  term.focus();
+  term.textarea?.dispatchEvent(termKeyEvent("keydown", { key: "`", code: "Backquote", keyCode: 192, ctrlKey: true }));
+  check(await waitFor(() => (!panel() ? true : null), 2000), "Ctrl+` hides the panel while the terminal has the focus");
+  backquote();
+  await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000);
+  check(await waitFor(() => (document.activeElement === term.textarea ? true : null), 2000), "shown with Ctrl+`, the terminal has the focus");
+
+  // 5. with the focus in the terminal, Ctrl+W, Ctrl+P and Ctrl+B go to the shell and none reaches the Editor; Ctrl+Shift+F
+  // finds in the terminal. A file is open first, so Ctrl+W has a tab to close.
+  q<HTMLElement>('.ed-side [role=treeitem][data-path="README.md"]')?.click();
+  const fileTab = () => q('.ed-main > .ed-tabs [role=tab][data-path="README.md"]');
+  check(await waitFor(fileTab, 3000), "README.md opens in a tab");
+  await sleep(200);
+  term.focus();
+  const typed: string[] = [];
+  const sub = term.onData((d) => typed.push(d));
+  for (const k of ["w", "p", "b"]) termCtrl(term, k);
+  await sleep(300);
+  out.keys = JSON.stringify(typed.join(""));
+  check(typed.join("") === "\x17\x10\x02", `Ctrl+W, Ctrl+P and Ctrl+B reach the shell (${out.keys})`);
+  check(fileTab() && !q(".ed-goto-pal") && !q(".ed-ask") && q<HTMLElement>(".ed-side")?.hidden === false,
+    "none of them reaches the Editor: the file's tab stays, Go to file doesn't open, the file tree stays");
+  term.input("\x05\x15", true);
+  termCtrl(term, "f", { shiftKey: true });
+  const findBox = await waitFor(() => q<HTMLInputElement>(".term-panel .term-find input"), 2000);
+  check(findBox && document.activeElement === findBox && !q(".ed-search-in"), "Ctrl+Shift+F finds in the terminal, not in the folder");
+  if (findBox) {
+    typeInto(findBox, "printed-while-hidden");
+    out.find = (await waitFor(() => { const t = q(".term-panel .term-find .count")?.textContent ?? ""; return /^\d+ of \d+$/.test(t) ? t : null; }, 3000)) ?? q(".term-panel .term-find .count")?.textContent;
+    check(/^\d+ of \d+$/.test(String(out.find)), `find in the terminal counts the matches (${out.find})`);
+    findBox.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true }));
+    await sleep(100);
+    check(!q(".term-find") && fileTab(), "Escape closes find; the file's tab is still there");
+  }
+  sub.dispose();
+
+  // 6. the drag handle: a 1px line with a 6px grab area; the height follows the pointer between 120px of code and 120px of
+  // terminal and is kept; a double click gives 30% back; ↑ and ↓ move it 5%
+  const handle = q<HTMLElement>(".term-panel > .term-handle");
+  if (!handle) { errors.push("no drag handle"); return done(); }
+  out.handle = { h: ht(handle), grab: getComputedStyle(handle, "::before").height, cursor: getComputedStyle(handle).cursor, now: handle.getAttribute("aria-valuenow") };
+  check(ht(handle) === 1 && getComputedStyle(handle, "::before").height === "6px" && getComputedStyle(handle).cursor === "row-resize", `the handle is a 1px line with a 6px grab area and the row-resize pointer (${JSON.stringify(out.handle)})`);
+  check(handle.getAttribute("role") === "separator" && handle.getAttribute("aria-label") === "Terminal panel's height" && handle.getAttribute("aria-valuenow") === "30",
+    "the handle is a separator named Terminal panel's height, at 30");
+  const drag = async (dy: number) => {
+    const r = handle.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    handle.dispatchEvent(pe("pointerdown", x, y));
+    for (let i = 1; i <= 4; i++) { handle.dispatchEvent(pe("pointermove", x, y + (dy * i) / 4)); await nextFrame(); }
+    handle.dispatchEvent(pe("pointerup", x, y + dy));
+    await sleep(150);
+    return sizes();
+  };
+  const start = sizes();
+  const grown = await drag(-80);
+  out.drag = { start, grown };
+  check(Math.abs(grown.panel - start.panel - 80) <= 2, `dragging the handle up 80px grows the panel 80px (${start.panel} → ${grown.panel})`);
+  check(Math.abs(Number(localStorage.getItem(PANEL_SHARE)) - shareNow()) < 0.2, `the share is kept when the pointer lets go (${localStorage.getItem(PANEL_SHARE)})`);
+  const top = await drag(-5000);
+  const bottom = await drag(5000);
+  out.drag = { start, grown, top, bottom };
+  check(Math.abs(top.code - 120) <= 1.5, `dragging to the top stops at 120px of code (${JSON.stringify(top)})`);
+  check(Math.abs(bottom.panel - 120) <= 1.5, `dragging to the bottom stops at 120px of terminal (${JSON.stringify(bottom)})`);
+  out.rowsAt120 = term.rows;
+  handle.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+  await sleep(200);
+  out.doubleClick = { ...sizes(), share: Math.round(shareNow() * 10) / 10, kept: localStorage.getItem(PANEL_SHARE) };
+  check(Math.abs(shareNow() - 30) < 0.6 && localStorage.getItem(PANEL_SHARE) === "30" && handle.getAttribute("aria-valuenow") === "30", `a double click on the handle gives 30% back (${JSON.stringify(out.doubleClick)})`);
+  handle.focus();
+  keyOn(handle, "ArrowUp");
+  await sleep(150);
+  out.arrowUp = { share: Math.round(shareNow() * 10) / 10, now: handle.getAttribute("aria-valuenow") };
+  check(Math.abs(shareNow() - 35) < 0.6 && handle.getAttribute("aria-valuenow") === "35", `↑ on the handle moves it 5% (${JSON.stringify(out.arrowUp)})`);
+  keyOn(handle, "ArrowDown");
+  await sleep(150);
+  check(Math.abs(shareNow() - 30) < 0.6, "↓ moves it back");
+  // 45% for the rest, and for the restart
+  const col = sizes().col;
+  await drag(-(0.45 * col - sizes().panel));
+  const kept = Number(localStorage.getItem(PANEL_SHARE));
+  out.kept = kept;
+  check(kept >= 44 && kept <= 46, `dragged to 45% (${kept})`);
+
+  // 7. another folder: hidden there until asked (kept per folder), then at the same height, with its own terminals; Ctrl+Shift+`
+  // starts another there; closing its last tab hides the panel, which hides nothing in the card's folder
+  if (!(await openFolder(site))) { errors.push("no Terminal button in panel-site's Editor"); return done(); }
+  await sleep(400);
+  check(!panel() && btn()?.title === "Show the terminal (Ctrl+`)" && btn()?.getAttribute("aria-disabled") !== "true", "in another folder the panel is hidden until it is asked for there, and the button is on");
+  btn()?.click();
+  const siteId = await waitFor(shownTab, 10000);
+  const sv = siteId ? await viewInPanel(siteId) : null;
+  if (!siteId || !sv) { errors.push(`the panel didn't open in panel-site: ${q(".error-banner")?.textContent ?? "no error shown"}`); return done(); }
+  await sleep(250);
+  out.otherFolder = { ...sizes(), share: Math.round(shareNow() * 10) / 10, kept };
+  check(Math.abs(shareNow() - kept) < 0.6, `in another folder the panel has the same height (${JSON.stringify(out.otherFolder)})`);
+  check(siteId !== id && !q(`.term-panel [data-term="${CSS.escape(id)}"]`), "its tabs are its own folder's terminals, not the card's");
+  out.sitePwd = await pwdIn(sv.term, site.id);
+  check(out.sitePwd, `pwd prints panel-site's root ${site.id}`);
+  backquote(true);
+  const second = await waitFor(() => { const t = shownTab(); return t && t !== siteId ? t : null; }, 10000);
+  check(second && document.querySelectorAll(".term-panel .term-tab").length === 2 && (await inFolder(site)).length === 2, "Ctrl+Shift+` starts a new terminal in a new tab");
+  for (const tid of [second, siteId]) {
+    if (!tid) continue;
+    q<HTMLButtonElement>(`.term-panel .term-tab[data-term="${CSS.escape(tid)}"] .x`)?.click();
+    for (let i = 0; i < 40 && (await inFolder(site)).some((s) => s.id === tid); i++) await sleep(100);
+    await sleep(200);
+  }
+  check(await waitFor(() => (!panel() ? true : null), 3000), "closing the last tab hides the panel");
+
+  // back in the card's folder: the panel shows again (kept per folder), at the same height, on its terminal. Edit anyway
+  // went with the page: + is off, saying why, and the button still shows and hides the panel
+  if (!(await openFolder(kade))) { errors.push(`no Terminal button in ${card}'s Editor, the second time`); return done(); }
+  check(await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 5000), "back in the card's folder its panel shows again, on its terminal");
+  await sleep(200);
+  check(Math.abs(shareNow() - kept) < 0.6, `and at the same height (${Math.round(shareNow() * 10) / 10}, kept ${kept})`);
+  const plus2 = await waitFor(() => { const b = q<HTMLButtonElement>(`.term-panel .term-tabs button[aria-label="New terminal in ${card}"]`); return b?.title === offTitle ? b : null; }, 3000)
+    ?? q<HTMLButtonElement>(`.term-panel .term-tabs button[aria-label="New terminal in ${card}"]`);
+  check(plus2?.getAttribute("aria-disabled") === "true" && plus2.title === offTitle && btn()?.getAttribute("aria-disabled") !== "true",
+    `before Edit anyway + is off with the reason, while the button still works (${plus2?.title})`);
+  btn()?.click();
+  check(await waitFor(() => (!panel() ? true : null), 2000), "the button hides the panel");
+  btn()?.click();
+  check(await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000) && (await inFolder(kade)).length === 1, "and shows it again, starting nothing");
+
+  // 8. a terminal of the same folder opened elsewhere (the Terminal page, the sidebar) is a tab in the panel
+  const other = await terminalOpen(kade.id, 0, 0, null);
+  check(await waitFor(() => q(`.term-panel .term-tab[data-term="${CSS.escape(other.id)}"]`), 4000), "a terminal of the same folder opened elsewhere is a tab in the panel");
+  out.tabs = [...document.querySelectorAll(".term-panel .term-tab")].map((t) => t.getAttribute("title"));
+
+  // 9. Own page: the same view moves to #/terminal/<id>, with the same screen
+  check(shownTab() === id, "the panel still shows the first terminal");
+  const lines = termLines(term).filter((l) => l.trim()).slice(-3);
+  buttonByText(panel()!, "Own page")?.click();
+  const onPage = await waitFor(() => (window.location.hash === `#/terminal/${encodeURIComponent(id)}` && q(".term-page .term-place")?.contains(term.element ?? null) ? true : null), 5000);
+  check(onPage && probeView(id)?.term === term, `Own page shows the same terminal on its own page, #/terminal/<id> (${window.location.hash})`);
+  check(lines.every((l) => termLines(term).some((x) => x.trim() === l.trim())) && termLines(term).some((l) => l.trim() === kade.id), "with the same screen: what it printed in the panel is there");
+
+  // 10. Show in Editor (TF1 calls showIn for the folder's panel, then opens the Editor): the panel opens on that terminal's
+  // tab, though another one was its tab, and also when it was hidden
+  showIn(other.id, { kind: "panel", folder: kade.id });
+  window.location.hash = `#/editor/${encodeURIComponent(kade.id)}`;
+  const otherV = await waitFor(() => { const x = probeView(other.id); return x && x.renderer !== "none" && panel()?.contains(x.term.element ?? null) ? x : null; }, 5000);
+  check(otherV && shownTab() === other.id, `Show in Editor opens the panel on that terminal's tab (${shownTab()})`);
+  btn()?.click();
+  await waitFor(() => (!panel() ? true : null), 2000);
+  window.location.hash = `#/terminal/${encodeURIComponent(id)}`;
+  await waitFor(() => (q(".term-page .term-place")?.contains(term.element ?? null) ? true : null), 5000);
+  showIn(id, { kind: "panel", folder: kade.id });
+  check(await waitFor(() => (/is in .+'s Editor\.Show here$/.test(q(".term-page .term-away")?.textContent ?? "") ? true : null), 2000), "the page says the terminal is in the Editor");
+  window.location.hash = `#/editor/${encodeURIComponent(kade.id)}`;
+  check(await waitFor(() => (panel()?.contains(term.element ?? null) && shownTab() === id ? true : null), 5000), "Show in Editor opens a hidden panel, on that terminal's tab");
+  // shown by Show in Editor, the panel is kept as shown in the folder: it is there when the folder opens again
+  window.location.hash = "#/tasks";
+  await sleep(500);
+  window.location.hash = `#/editor/${encodeURIComponent(kade.id)}`;
+  out.shownAgain = !!(await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000));
+  check(out.shownAgain, `after Show in Editor opened it, the panel shows again when the folder opens again (kept: ${localStorage.getItem("gizai.editor.terminal")})`);
+  if (!out.shownAgain) { btn()?.click(); await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000); }
+
+  // 11. while another place has the view (the page, in a second window later), the panel shows the placeholder with Show here,
+  // and its tab says so; Show here brings the view back
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;right:0;bottom:0;width:520px;height:240px;display:flex;flex-direction:column;z-index:100";
+  document.body.appendChild(box);
+  const root = createRoot(box);
+  root.render(createElement(TerminalView, { id, place: { kind: "page" } }));
+  const away = await waitFor(() => (box.contains(term.element ?? null) ? q(".term-panel .term-away") : null), 3000);
+  out.placeholder = away?.textContent;
+  check(away && away.textContent === `${name} is on its own page.Show here`, `the panel shows the placeholder with Show here (${away?.textContent})`);
+  const tabEl = q(`.term-panel .term-tab[data-term="${CSS.escape(id)}"]`);
+  check(tabEl?.getAttribute("title") === `${name} is on its own page.`, `the panel's tab says it is on its own page (${tabEl?.getAttribute("title")})`);
+  if (away) buttonByText(away, "Show here")?.click();
+  check(await waitFor(() => (panel()?.contains(term.element ?? null) ? true : null), 3000), "Show here brings the view back into the panel");
+  check(/is in .+'s Editor\.Show here$/.test(box.querySelector(".term-away")?.textContent ?? ""), "and the other place says it is in the Editor");
+  root.unmount();
+  box.remove();
+  await sleep(150);
+  check(panel()?.contains(term.element ?? null), "the panel keeps it when the other place goes");
+
+  // the shells end with their terminals; WebKit writes localStorage to disk a moment later
+  for (const s of await terminalList()) await Promise.race([terminalClose(s.id).catch(() => {}), sleep(3000)]);
+  check(await waitFor(() => (!panel() ? true : null), 3000), "closing its terminals hides the panel");
+  check(Number(localStorage.getItem(PANEL_SHARE)) === kept, "the kept height is still 45%");
+  await sleep(1500);
   return done();
 }

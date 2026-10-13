@@ -65,7 +65,10 @@ vi.mock("react", async (orig) => {
       h.effects.push(() => { s.cleanup?.(); const c = f(); s.cleanup = typeof c === "function" ? c : undefined; });
     }
   }) as typeof R.useEffect;
-  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect };
+  // a store read through useSyncExternalStore (the terminal panel reads TF0's, GA-137): its snapshot as it is now
+  const useSyncExternalStore = ((sub: (f: () => void) => () => void, get: () => unknown, server?: () => unknown) =>
+    (h.cur ? get() : R.useSyncExternalStore(sub, get, server))) as typeof R.useSyncExternalStore;
+  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect, useSyncExternalStore };
   return { ...R, default: { ...R, ...hooks }, ...hooks };
 });
 

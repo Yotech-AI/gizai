@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import { EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
-import type { DirEntry, EditorFolder, FolderGit, GitMark, OpenedFile, SearchHit, Task } from "../types";
+import type { DirEntry, EditorFolder, FolderGit, GitMark, OpenedFile, SearchHit, Task, TerminalSession } from "../types";
 
 type Inst = { slots: unknown[]; i: number };
 type EffectSlot = { effect: true; deps?: unknown[]; first: boolean; cleanup?: () => void };
@@ -23,6 +23,11 @@ const h = vi.hoisted(() => ({
   search: null as null | { onOpen: (hit: unknown) => void; folder: string },
   goto: null as null | { onOpen: (path: string) => void; folder: string },
   calls: [] as string[],
+  /** TF0's store as the terminal panel reads it, and the props of the terminal's view (GA-137 QA) */
+  terms: [] as TerminalSession[],
+  termView: null as null | { id: string; place: unknown; autoFocus?: boolean },
+  /** the terminals placed in the folder's panel (Show in Editor), one id per line, as useShownHere gives them */
+  placed: "",
 }));
 
 vi.mock("react", async (orig) => {
@@ -61,7 +66,10 @@ vi.mock("react", async (orig) => {
       h.effects.push(() => { s.cleanup?.(); const c = f(); s.cleanup = typeof c === "function" ? c : undefined; });
     }
   }) as typeof R.useEffect;
-  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect };
+  // a store read through useSyncExternalStore (the terminal panel reads TF0's, GA-137): its snapshot as it is now
+  const useSyncExternalStore = ((sub: (f: () => void) => () => void, get: () => unknown, server?: () => unknown) =>
+    (h.cur ? get() : R.useSyncExternalStore(sub, get, server))) as typeof R.useSyncExternalStore;
+  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect, useSyncExternalStore };
   return { ...R, default: { ...R, ...hooks }, ...hooks };
 });
 
@@ -95,6 +103,17 @@ vi.mock("../components/editor/Menus", async (orig) => ({ ...(await orig<object>(
 vi.mock("../router", async (orig) => ({ ...(await orig<object>()), go: (r: unknown) => { h.calls.push(`go ${JSON.stringify(r)}`); } }));
 // the question before closing a tab that isn't saved is put on the body: here it shows where it is made
 vi.mock("react-dom", async (orig) => ({ ...(await orig<object>()), createPortal: (children: ReactNode) => children }));
+// the terminals' store (TF0) and the terminal's view (GA-137 QA): the panel reads h.terms, a terminal it opens joins them
+vi.mock("../lib/terminals", async (orig) => ({
+  ...(await orig<object>()),
+  useTerminals: () => h.terms,
+  useTerminalsLoaded: () => true,
+  useShownHere: () => h.placed,
+  useShownIn: () => null,
+  noteOpened: (s: TerminalSession) => { if (!h.terms.some((x) => x.id === s.id)) h.terms = [...h.terms, s]; },
+  showIn: (id: string, place: unknown) => { h.calls.push(`showIn ${id} ${JSON.stringify(place)}`); },
+}));
+vi.mock("../components/terminal/TerminalView", () => ({ TerminalView: (p: { id: string; place: unknown; autoFocus?: boolean }) => { h.termView = p; return null; } }));
 
 // ---- the fake disk: a folder under a test root, in a git repository ----
 const ROOT = "/srv/test-root/Herd";
@@ -168,6 +187,12 @@ vi.mock("../api", async (orig) => {
     editorFiles: async () => [...disk.keys()].filter((p) => !ignored(p)).sort(),
     editorApps: () => Promise.resolve([]),
     getTask: () => (task ? Promise.resolve(task) : Promise.reject(new Error("no card"))),
+    terminalOpen: async (folder: string, cols: number, rows: number, name: string | null): Promise<TerminalSession> => {
+      h.calls.push(`terminalOpen ${folder} ${cols} ${rows} ${name}`);
+      const n = h.terms.length + 1;
+      return { id: `term-${n}`, name: n === 1 ? "kade-portal" : `kade-portal ${n}`, folder, folderPath: folder, taskId: null, shell: "sh", busy: null, ended: null, cols: 80, rows: 24, openedAt: n };
+    },
+    terminalClose: async (id: string) => { h.calls.push(`terminalClose ${id}`); h.terms = h.terms.filter((s) => s.id !== id); },
   };
 });
 
@@ -684,5 +709,182 @@ describe("closing a tab with text that isn't saved asks first (GA-128 QA)", () =
     expect(asks().map((a) => a.props["aria-label"])).toEqual(["Close app.ts"]);
     expect(tabs().map((t) => t.props["data-path"])).toEqual(["src/app.ts"]);
     expect(writes).toEqual([]);
+  });
+});
+
+// GA-137 QA: the Editor's terminal panel (TF2) on this page: the Terminal button's states and tooltips (design §4 and §8),
+// the panel with the folder's terminals, Ctrl+` and Ctrl+Shift+`, and the Editor's own keys staying out of the terminal's
+// way. TF0's store and the terminal's view are stand-ins (above); the cage probe (scripts/ui-test.sh, run 16) drives the
+// real panel, its shell and its heights.
+describe("the terminal panel: the Terminal button, its states and the keys (GA-137 QA)", () => {
+  type ButtonProps = { onClick: (e?: unknown) => unknown; title: string; disabled?: boolean; "aria-pressed"?: boolean; "aria-disabled"?: boolean };
+  const termButton = () => one((f) => f.type === "button" && String(f.props.className ?? "").includes("term-btn") && textOf(f.props.children as ReactNode).trim() === "Terminal", "Terminal buttons").props as ButtonProps;
+  const plus = () => one((f) => f.type === "button" && String(f.props["aria-label"] ?? "").startsWith("New terminal in "), "+ buttons").props as ButtonProps & { "aria-label": string };
+  const panelShown = () => findAll(tree, (f) => f.props.className === "term-panel").length === 1;
+  const termTabs = () => findAll(tree, (f) => f.props.role === "tab" && typeof f.props["data-term"] === "string").map((f) => f.props["data-term"]);
+  const opens = () => h.calls.filter((c) => c.startsWith("terminalOpen"));
+  const session = (more: Partial<TerminalSession> = {}): TerminalSession => ({
+    id: "term-1", name: "kade-portal", folder: FOLDER, folderPath: FOLDER, taskId: null, shell: "sh", busy: null, ended: null, cols: 80, rows: 24, openedAt: 1, ...more,
+  });
+  /** Ctrl+` (Ctrl+Shift+` with shift), from the page or from inside the terminal (its text field is in .term-place). */
+  async function backquote(shift = false, inTerminal = false) {
+    const e = Object.assign(new Event("keydown", { cancelable: true }), { key: shift ? "~" : "`", code: "Backquote", ctrlKey: true, metaKey: false, altKey: false, shiftKey: shift });
+    if (inTerminal) Object.defineProperty(e, "target", { get: () => ({ closest: (sel: string) => (sel === ".term-place" ? {} : null) }) });
+    win.dispatchEvent(e);
+    await settle();
+  }
+  /** A Ctrl key from inside the terminal. */
+  async function keyInTerminal(k: string, shift = false) {
+    const e = Object.assign(new Event("keydown", { cancelable: true }), { key: k, code: `Key${k.toUpperCase()}`, ctrlKey: true, metaKey: false, altKey: false, shiftKey: shift });
+    Object.defineProperty(e, "target", { get: () => ({ closest: (sel: string) => (sel === ".term-place" ? {} : null) }) });
+    win.dispatchEvent(e);
+    await settle();
+    return e.defaultPrevented;
+  }
+  const treeShown = () => one((f) => f.type === "aside", "asides").props.hidden === false;
+
+  beforeEach(() => { h.terms = []; h.termView = null; h.placed = ""; });
+  afterEach(() => { h.terms = []; h.termView = null; h.placed = ""; });
+
+  it("in a folder with no terminal, the button starts one in its root and shows the panel at 30%; pressed again it hides, and the shell keeps running", async () => {
+    await open();
+    let b = termButton();
+    expect([b.title, b["aria-pressed"], b["aria-disabled"], b.disabled]).toEqual(["Show the terminal (Ctrl+`)", false, undefined, undefined]);
+    expect(panelShown()).toBe(false);
+    await click("Terminal");
+    expect(opens(), "one terminal, in the folder's root").toEqual([`terminalOpen ${FOLDER} 0 0 null`]);
+    expect(panelShown()).toBe(true);
+    expect(h.termView, "the new terminal shows in the folder's panel, with the focus").toEqual({ id: "term-1", place: { kind: "panel", folder: FOLDER }, autoFocus: true });
+    const panel = one((f) => f.props.className === "term-panel", "panels").props as { style: Record<string, string> };
+    expect(panel.style["--term-share"]).toBe("30%");
+    b = termButton();
+    expect([b.title, b["aria-pressed"]]).toEqual(["Hide the terminal (Ctrl+`)", true]);
+    expect(JSON.parse(store.get("gizai.editor.terminal")!), "kept as shown in this folder").toEqual([FOLDER]);
+    await click("Terminal");
+    expect(panelShown()).toBe(false);
+    expect(termButton().title).toBe("Show the terminal (Ctrl+`)");
+    expect(h.calls.filter((c) => c.startsWith("terminalClose")), "hiding closes no shell").toEqual([]);
+    expect(JSON.parse(store.get("gizai.editor.terminal")!)).toEqual([]);
+    // Ctrl+` shows it again on the same terminal, without a new one; Ctrl+` hides it
+    await backquote();
+    expect([panelShown(), h.termView?.id, opens().length]).toEqual([true, "term-1", 1]);
+    await backquote();
+    expect(panelShown()).toBe(false);
+  });
+
+  it("opens at the height kept (a share of the column, the same for every folder)", async () => {
+    store.set("gizai.editor.panel", "42.5");
+    h.terms = [session()];
+    await open();
+    await backquote();
+    const panel = one((f) => f.props.className === "term-panel", "panels").props as { style: Record<string, string> };
+    expect(panel.style["--term-share"]).toBe("42.5%");
+  });
+
+  it("its tabs are the folder's terminals, with +, Own page and Hide; Ctrl+Shift+` starts another in a new tab", async () => {
+    h.terms = [session(), session({ id: "elsewhere", name: "gizai", folder: "/srv/test-root/Herd/gizai" }), session({ id: "term-2", name: "kade-portal 2", busy: "npm" })];
+    await open();
+    await backquote();
+    expect(termTabs(), "this folder's terminals only").toEqual(["term-1", "term-2"]);
+    const tabTitles = findAll(tree, (f) => f.props.role === "tab" && typeof f.props["data-term"] === "string").map((f) => f.props.title);
+    expect(tabTitles).toEqual(["kade-portal · waiting for a command", "kade-portal 2 · running npm"]);
+    expect([plus()["aria-label"], plus().title, plus()["aria-disabled"]]).toEqual(["New terminal in kade-portal", "New terminal in kade-portal (Ctrl+Shift+`)", undefined]);
+    expect(button("Own page").title).toBe("Open kade-portal on its own page");
+    expect(button("Hide").title).toBe("Hide the terminal (Ctrl+`): its shells keep running");
+    await backquote(true);
+    expect(opens()).toEqual([`terminalOpen ${FOLDER} 0 0 null`]);
+    expect(termTabs()).toEqual(["term-1", "term-2", "term-4"]);
+    expect(h.termView?.id, "the new tab shows").toBe("term-4");
+    await click("Hide");
+    expect(panelShown()).toBe(false);
+    expect(h.calls.filter((c) => c.startsWith("terminalClose"))).toEqual([]);
+  });
+
+  it("Own page moves the view to the terminal's page, #/terminal/<id>", async () => {
+    h.terms = [session()];
+    await open();
+    await backquote();
+    await click("Own page");
+    expect(h.calls).toContain(`showIn term-1 ${JSON.stringify({ kind: "page" })}`);
+    expect(h.calls).toContain(`go ${JSON.stringify({ page: "terminal", id: "term-1" })}`);
+  });
+
+  it("Show in Editor (TF1: showIn the folder's panel, then the Editor) opens the panel on that terminal's tab, and it is kept as shown in the folder", async () => {
+    h.terms = [session(), session({ id: "term-2", name: "kade-portal 2" })];
+    h.placed = "term-2";
+    await open();
+    expect([panelShown(), h.termView?.id], "the panel opens on the terminal put there").toEqual([true, "term-2"]);
+    expect(termButton()["aria-pressed"]).toBe(true);
+    // whether the panel shows is kept per folder (the card's What to build, 2): it shows, so the folder keeps it as shown
+    expect(JSON.parse(store.get("gizai.editor.terminal") ?? "[]"), "the panel shows, so the folder keeps it as shown").toEqual([FOLDER]);
+  });
+
+  it("with the focus in the terminal Ctrl+W, Ctrl+P, Ctrl+B and Ctrl+Shift+F don't reach the Editor, and Ctrl+` still hides the panel", async () => {
+    await open();
+    await clickRow("src");
+    await clickRow("src/app.ts");
+    await click("Terminal");
+    expect(panelShown()).toBe(true);
+    for (const k of ["w", "p", "b"]) expect(await keyInTerminal(k), `Ctrl+${k.toUpperCase()} is left to the shell`).toBe(false);
+    expect(await keyInTerminal("f", true), "Ctrl+Shift+F is left to the terminal's find").toBe(false);
+    expect(tabs().map((t) => t.props["data-path"]), "Ctrl+W closed no file").toEqual(["src/app.ts"]);
+    expect([h.goto, h.search], "Ctrl+P opened no Go to file, Ctrl+Shift+F no search in the folder").toEqual([null, null]);
+    expect(treeShown(), "Ctrl+B left the file tree").toBe(true);
+    await backquote(false, true);
+    expect(panelShown(), "Ctrl+` from inside the terminal hides the panel").toBe(false);
+    // the same keys outside the terminal are the Editor's
+    await key("b");
+    expect(treeShown()).toBe(false);
+    await key("p");
+    expect(h.goto).not.toBe(null);
+  });
+
+  it("is off while an agent works on the card, its tooltip saying why; the button, + and both keys start nothing", async () => {
+    folderInfo = folder({ name: "GA-118", kind: "card", taskId: "t118", readOnly: true, readOnlyWhy: "QA Agent is working on GA-118" });
+    await open();
+    const b = termButton();
+    expect([b["aria-disabled"], b.disabled, b.title, b["aria-pressed"]]).toEqual([true, undefined, "QA Agent is working on GA-118: a terminal there waits until its run ends.", false]);
+    await click("Terminal");
+    await backquote();
+    await backquote(true);
+    expect([opens(), panelShown()]).toEqual([[], false]);
+  });
+
+  it("a terminal opened before the agent started stays: the button still shows and hides the panel, and + is off saying why", async () => {
+    folderInfo = folder({ name: "GA-118", kind: "card", taskId: "t118", readOnly: true, readOnlyWhy: "QA Agent is working on GA-118" });
+    h.terms = [session({ name: "GA-118", taskId: "t118" })];
+    await open();
+    expect([termButton()["aria-disabled"], termButton().title]).toEqual([undefined, "Show the terminal (Ctrl+`)"]);
+    await click("Terminal");
+    expect(panelShown()).toBe(true);
+    expect([plus()["aria-disabled"], plus().title]).toEqual([true, "QA Agent is working on GA-118: a terminal there waits until its run ends."]);
+    await plus().onClick();
+    await settle();
+    await backquote(true);
+    expect(opens(), "+ and Ctrl+Shift+` start nothing").toEqual([]);
+    expect(panelShown()).toBe(true);
+    await click("Terminal");
+    expect(panelShown()).toBe(false);
+  });
+
+  it("on a card that isn't pinned to you the button is off until Edit anyway, then on", async () => {
+    folderInfo = folder({ name: "GA-112", kind: "card", taskId: "t112" });
+    task = { id: "t112", identifier: "GA-112", title: "Theirs", byHand: false, assigneeId: "a2", assigneeName: "Frontend Agent" } as unknown as Task;
+    await open();
+    expect([termButton()["aria-disabled"], termButton().title]).toEqual([true, "GA-112 is Frontend Agent's card: press Edit anyway first, since a shell can change its files."]);
+    await click("Terminal");
+    await backquote();
+    expect(opens()).toEqual([]);
+    await click("Edit anyway");
+    expect([termButton()["aria-disabled"], termButton().title]).toEqual([undefined, "Show the terminal (Ctrl+`)"]);
+    await click("Terminal");
+    expect([opens(), panelShown()]).toEqual([[`terminalOpen ${FOLDER} 0 0 null`], true]);
+  });
+
+  it("on your own card, pinned to you by hand, the button is on at once", async () => {
+    folderInfo = folder({ name: "GA-21", kind: "card", taskId: "t21" });
+    task = { id: "t21", identifier: "GA-21", title: "Mine", byHand: true, assigneeId: "u1", assigneeName: "You" } as unknown as Task;
+    await open();
+    expect([termButton()["aria-disabled"], termButton().title]).toEqual([undefined, "Show the terminal (Ctrl+`)"]);
   });
 });

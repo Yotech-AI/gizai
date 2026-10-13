@@ -132,10 +132,13 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\get.ps1", [ref]$tokens, [ref]$errs) | Out-Null
           if ($errs) { $errs; exit 1 }
           $env:LOCALAPPDATA = "$env:RUNNER_TEMP\get-ps1-7"
-          $get = [scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))
+          # In a PowerShell of its own, which must go on after it: piped into iex, get.ps1 returns rather than exit
+          # (that would close the window), with its result in $LASTEXITCODE.
+          $iex = "$env:RUNNER_TEMP\iex-get-ps1-7.ps1"
+          Set-Content -LiteralPath $iex -Value '& ([scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))) -Check; "returned $LASTEXITCODE"'
           foreach ($run in 1, 2) {
-            & $get -Check
-            if ($LASTEXITCODE -ne 0) { "get.ps1 -Check failed (run $run)"; exit 1 }
+            pwsh -NoProfile -File $iex | Tee-Object -Variable out
+            if (@($out)[-1] -ne 'returned 0') { "get.ps1 -Check didn't return 0 (run $run)"; exit 1 }
           }
           $head = git -C "$env:LOCALAPPDATA\gizai-src" rev-parse HEAD
           if ($head -ne $env:GITHUB_SHA) { "gizai-src is at $head, not at $env:GITHUB_SHA"; exit 1 }
@@ -151,10 +154,11 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\get.ps1", [ref]$tokens, [ref]$errs) | Out-Null
           if ($errs) { $errs; exit 1 }
           $env:LOCALAPPDATA = "$env:RUNNER_TEMP\get-ps1-5"
-          $get = [scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))
+          $iex = "$env:RUNNER_TEMP\iex-get-ps1-5.ps1"
+          Set-Content -LiteralPath $iex -Value '& ([scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))) -Check; "returned $LASTEXITCODE"'
           foreach ($run in 1, 2) {
-            & $get -Check
-            if ($LASTEXITCODE -ne 0) { "get.ps1 -Check failed (run $run)"; exit 1 }
+            powershell -NoProfile -ExecutionPolicy Bypass -File $iex | Tee-Object -Variable out
+            if (@($out)[-1] -ne 'returned 0') { "get.ps1 -Check didn't return 0 (run $run)"; exit 1 }
           }
           $head = git -C "$env:LOCALAPPDATA\gizai-src" rev-parse HEAD
           if ($head -ne $env:GITHUB_SHA) { "gizai-src is at $head, not at $env:GITHUB_SHA"; exit 1 }

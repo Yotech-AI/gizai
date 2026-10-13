@@ -36,8 +36,7 @@ export function useTerminalPanel(folder: string, path: string, off: string | nul
   const place = useMemo<TerminalPlace>(() => ({ kind: "panel", folder }), [folder]);
   // a terminal put in this panel (Show in Editor, or the panel's own tab)
   const placed = useShownHere(place);
-  const placedIds = placed ? placed.split("\n") : [];
-  const [open, setOpen] = useState(() => loadShown(folder) || placedIds.length > 0);
+  const placedIds = placed ? placed.split("\n") : [];  const [open, setOpen] = useState(() => loadShown(folder) || placedIds.length > 0);
   const [active, setActive] = useState<string | null>(() => placedIds[placedIds.length - 1] ?? lastTab.get(folder) ?? null);
   /** The next terminal to show takes the focus: after the button, a key, a tab or +; not when the page opens. */
   const [focusNext, setFocusNext] = useState(false);
@@ -46,8 +45,7 @@ export function useTerminalPanel(folder: string, path: string, off: string | nul
 
   const ids = here.map((s) => s.id);
   const current = active && ids.includes(active) ? active : ids[0] ?? null;
-  const visible = open && !!current;
-  useEffect(() => { if (current) lastTab.set(folder, current); }, [folder, current]);
+  const visible = open && !!current;  useEffect(() => { if (current) lastTab.set(folder, current); }, [folder, current]);
 
   // Show in Editor put one of this folder's terminals in the panel: the panel opens on its tab.
   const seen = useRef(placed);
@@ -211,7 +209,7 @@ function Handle({ panel, share, setShare }: { panel: React.RefObject<HTMLDivElem
         const m = measure();
         if (!m) return;
         e.preventDefault();
-        e.currentTarget.setPointerCapture?.(e.pointerId);
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* the pointer is gone already */ }
         drag.current = { y: e.clientY, ...m };
         e.currentTarget.classList.add("is-drag");
         panel.current?.parentElement?.classList.add("is-dragging");

@@ -240,7 +240,7 @@ What changes, file by file:
    - `Inner` gets `package: Option<String>`. `Updates::default` fills it from `up::PACKAGE`, ignoring an empty value, and `Updates::set_package` sets it for tests, as `set_exe` does (:109-112).
    - The `install_prefix` wrapper (:216-226) answers a package first: `Err` with the texts of §5.1. So `status`, `check`, `start` and `restart_command`, which all go through it (:232, :262, :334, :510, :546), refuse a package's install.
    - `UpdateStatus` (:162-189) gets `package` and `update_command` (contract in §6).
-3. `install.sh` and `install.ps1`: their build drops the variable too (`unset GIZAI_PACKAGE` in the build's subshell, install.sh:197-208; `Remove-Item Env:GIZAI_PACKAGE -ErrorAction SilentlyContinue` in install.ps1's build). So an install script's Gizai is never marked by accident.
+3. `install.sh` and `install.ps1`: their build drops the variable too. In install.sh that is `unset GIZAI_PACKAGE` in the build's subshell (install.sh:197-208). In install.ps1 it is `GIZAI_PACKAGE = $null` in `$quiet`, the variables its build sets and then restores (install.ps1:211-228) [V]. So an install script's Gizai is never marked by accident.
 4. The UI (PK2): `src/types.ts:441-459`, `UpdateSettings.tsx:27`, `:37-38` and `:66-67`, `UpdateNotice.tsx:60`, `src/lib/update.ts:30`.
 5. Docs: docs/RELEASING.md:126 and docs/PLATFORMS.md:41 and :70 get one sentence each: "A Gizai built by a package (`GIZAI_PACKAGE`, the AUR or Homebrew) never updates itself: its package manager does."
 
@@ -408,10 +408,11 @@ pkgname = gizai
 
 Notes on the draft:
 
-- **Source.** GitHub's tarball of the tag, renamed with `filename::url` (PKGBUILD(5)) [V]. Its folder is `gizai-0.10.0`: GitHub drops the tag's `v` [I: how GitHub names archive folders; PK3 checks it]. The checksum is the tarball's sha256, the same number the formula uses (§5.6).
+- **Source.** GitHub's tarball of the tag, renamed with `filename::url` (PKGBUILD(5)) [V]. Its folder is `gizai-0.10.0`, because GitHub drops the tag's `v`. yay's own AUR package builds `…/archive/v${pkgver}.tar.gz` the same way, in `$pkgname-$pkgver` [V: its PKGBUILD, fetched from the AUR's git]. The checksum is the tarball's sha256, the same number the formula uses (§5.6).
+- **The .SRCINFO's order** of fields is the one makepkg writes, as in yay's `.SRCINFO`: pkgdesc, pkgver, pkgrel, url, arch, license, makedepends, depends, optdepends, options, source, the checksums [V].
 - **prepare() and build()** follow Arch's Rust guidelines: `cargo fetch --locked --target host-tuple` in `prepare()`, and the build offline from the lock file in `build()` [V]. The Node guidelines put npm's cache in `$srcdir` (`--cache "${srcdir}/npm-cache"`) [V]. `CARGO_NET_OFFLINE=true` keeps the Tauri CLI's own `cargo build` offline too [I: the variable for cargo's `net.offline`]. The build commands are install.sh's own (install.sh:199-207) [V], plus `GIZAI_PACKAGE=aur`.
 - **check()** compares `gizai --version` with `pkgver`, the bump check Gizai's update makes (docs/RELEASING.md:59). On Linux nothing runs before Gizai prints its version: reading the login shell's PATH happens on macOS only (src-tauri/src/shell_path.rs:6-9, main.rs:25-33). [V] A full `cargo test --workspace` is left to CI, which runs it on every pull request (docs/PLATFORMS.md:76) [V], since it needs fake CLIs and takes long [I].
-- **options.** `!lto` [I]: makepkg's LTO flags would reach the C code that cc compiles for the bundled SQLite (Cargo.toml:11) [V], a known cause of failed Rust links. PK3 keeps it only if the build needs it. `!debug` [I]: `strip = true` (Cargo.toml:27) [V] leaves nothing for a debug package.
+- **options.** `!lto` [I]: makepkg's LTO flags would reach the C code that cc compiles for the bundled SQLite (Cargo.toml:11) [V], a known cause of failed Rust links. yay's PKGBUILD has `options=(!lto)` too, for its cgo build [V]. PK3 keeps it only if the build needs it. `!debug` [I]: `strip = true` (Cargo.toml:27) [V] leaves nothing for a debug package.
 - **x86_64 only.** Arch itself is x86_64, and aarch64 is Arch Linux ARM's (PKGBUILD wiki page) [V]. Gizai's CI builds Linux on `ubuntu-24.04` x86_64 only (docs/RELEASING.md:18) [V/I].
 - **The launcher and the desktop entry are copies** of install.sh's. When a release changes them, step 5 copies the change (§5.6). Q8 in §7 asks whether to give them one source in the repository later.
 - **One install at a time.** A script install and the package share the data folder, and an older build refuses a newer database (docs/RELEASING.md:26) [V]. A leftover `~/.local/share/applications/gizai.desktop` also hides `/usr/share/applications/gizai.desktop`, and `~/.local/bin` usually comes before `/usr/bin` on PATH [I]. The docs say to remove the script's install first (§5.7).
@@ -766,7 +767,7 @@ All read on 2026-10-13.
 
 | Source | Link |
 |---|---|
-| The AUR's git server: `git fetch --dry-run` of `gizai.git`, `gizai-git.git` (no `HEAD`) and `yay.git` (found) | https://aur.archlinux.org/gizai.git, https://aur.archlinux.org/gizai-git.git, https://aur.archlinux.org/yay.git |
+| The AUR's git server: `git fetch --dry-run` of `gizai.git`, `gizai-git.git` (no `HEAD`) and `yay.git` (found); yay's PKGBUILD and .SRCINFO (13.0.1-1), read with `git fetch` and `git show FETCH_HEAD:PKGBUILD` | https://aur.archlinux.org/gizai.git, https://aur.archlinux.org/gizai-git.git, https://aur.archlinux.org/yay.git |
 | The AUR's API and page (answered with Anubis's bot check) | https://aur.archlinux.org/rpc/v5/info?arg[]=gizai&arg[]=gizai-git, https://aur.archlinux.org/packages/gizai |
 | Arch's package search (gizai: 0 results; rust, rustup, nodejs, npm, webkit2gtk-4.1, libayatana-appindicator, hicolor-icon-theme, libdbus: one name per query) | https://archlinux.org/packages/search/json/?name=gizai |
 | The pacman hooks in desktop-file-utils 0.28-1 and gtk-update-icon-cache | https://archlinux.org/packages/extra/x86_64/desktop-file-utils/files/, https://archlinux.org/packages/extra/x86_64/gtk-update-icon-cache/files/ |
@@ -794,4 +795,4 @@ All read on 2026-10-13.
 | Microsoft Learn, "Install the Microsoft C++ (MSVC) Build Tools" (2026-08-20) | https://learn.microsoft.com/cpp/overview/acquire-msvc |
 | Repology's API (refused: 403) | https://repology.org/api/v1/project/gizai |
 
-Not read, so marked [I] where used: how GitHub names an archive's folder; pacman's rule on unversioned provides; cargo's rebuild on `option_env!`; where cargo's cache goes in Homebrew's build sandbox; whether Homebrew's sandbox allows `lsregister` in `post_install`; whether the Dock keeps a link's or the version's path; Homebrew's cleaner and the execute bit; the licences of pacman and Homebrew.
+Not read, so marked [I] where used: pacman's rule on unversioned provides; cargo's rebuild on `option_env!`; where cargo's cache goes in Homebrew's build sandbox; whether Homebrew's sandbox allows `lsregister` in `post_install`; whether the Dock keeps a link's or the version's path; Homebrew's cleaner and the execute bit; the licences of pacman and Homebrew.

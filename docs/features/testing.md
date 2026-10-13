@@ -65,4 +65,4 @@ Every rule: [docs/agent-tools.md](../agent-tools.md#the-team-lead-merges-pull-re
 
 - [The board decides who works](board.md): how cards move between columns.
 - [The Inbox](inbox.md): held cards and cards waiting for your review.
-- [docs/agent-tools.md](../agent-tools.md): the merge rules and what QA's tools may do.
+- [docs/agent-tools.md](../agent-tools.md): the merge rules in full, and the hidden browser QA can test web pages with.

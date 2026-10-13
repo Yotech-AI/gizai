@@ -4,7 +4,7 @@ Your own shell in a project's folder or a card's worktree, inside GizAi, as many
 
 ## Open a terminal
 
-Sidebar → Terminal, above Editor. A terminal opens in
+Sidebar → Terminal, above Editor. A terminal opens in:
 
 - a project's linked folder;
 - a folder in `~/Herd`;

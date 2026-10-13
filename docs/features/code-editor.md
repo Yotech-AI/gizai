@@ -15,7 +15,7 @@ After a merge, the changes stay readable. When a card's pull request is merged, 
 
 ## The Editor
 
-Sidebar → Editor, above Agents: a small code editor with syntax colours. It opens
+Sidebar → Editor, above Agents: a small code editor with syntax colours. It opens:
 
 - a project's linked folder;
 - a folder in Settings → General → Editor folders (`~/Herd` unless you change it);

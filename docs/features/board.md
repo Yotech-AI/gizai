@@ -44,7 +44,7 @@ Settings → Runs sets how many runs go at once, for all agents together. Pause 
 
 ## A worktree for every card
 
-Every card gets its own git worktree and branch, started from main on GitHub or Bitbucket when the project is linked. Worktrees start warm: per project, a new worktree gets
+Every card gets its own git worktree and branch, started from main on GitHub or Bitbucket when the project is linked. Worktrees start warm. Per project, a new worktree gets:
 
 - paths copied from your checkout (`cp --reflink=auto`);
 - missing dependencies installed (`composer install`, `npm ci`);

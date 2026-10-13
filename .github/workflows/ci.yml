@@ -105,6 +105,60 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Check
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # The one-line installs: get.sh passes sh -n, and get.ps1 parses in both PowerShells. Then each one's check runs
+      # the way the one line runs it, get.sh from a pipe (dash on Linux, macOS's own sh) and get.ps1 from memory (as
+      # irm | iex does), against this pull request's own commit (GIZAI_REF) and into a scratch folder: twice, so it
+      # gets the source, then updates it.
+      - name: Check get.sh
+        if: steps.version.outputs.only != 'true' && runner.os != 'Windows'
+        env:
+          GIZAI_REPO: ${{ github.workspace }}
+          GIZAI_REF: HEAD
+          XDG_DATA_HOME: ${{ runner.temp }}/get-sh
+        run: |
+          /bin/sh -n scripts/get.sh
+          cat scripts/get.sh | /bin/sh -s -- --check
+          cat scripts/get.sh | /bin/sh -s -- --check
+          test "$(git -C "$XDG_DATA_HOME/gizai-src" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Check get.ps1 (PowerShell 7)
+        if: steps.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GIZAI_REPO: ${{ github.workspace }}
+          GIZAI_REF: HEAD
+        run: |
+          $tokens = $null; $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\get.ps1", [ref]$tokens, [ref]$errs) | Out-Null
+          if ($errs) { $errs; exit 1 }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\get-ps1-7"
+          $get = [scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))
+          foreach ($run in 1, 2) {
+            & $get -Check
+            if ($LASTEXITCODE -ne 0) { "get.ps1 -Check failed (run $run)"; exit 1 }
+          }
+          $head = git -C "$env:LOCALAPPDATA\gizai-src" rev-parse HEAD
+          if ($head -ne $env:GITHUB_SHA) { "gizai-src is at $head, not at $env:GITHUB_SHA"; exit 1 }
+
+      - name: Check get.ps1 (Windows PowerShell 5.1)
+        if: steps.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        env:
+          GIZAI_REPO: ${{ github.workspace }}
+          GIZAI_REF: HEAD
+        run: |
+          $tokens = $null; $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\get.ps1", [ref]$tokens, [ref]$errs) | Out-Null
+          if ($errs) { $errs; exit 1 }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\get-ps1-5"
+          $get = [scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))
+          foreach ($run in 1, 2) {
+            & $get -Check
+            if ($LASTEXITCODE -ne 0) { "get.ps1 -Check failed (run $run)"; exit 1 }
+          }
+          $head = git -C "$env:LOCALAPPDATA\gizai-src" rev-parse HEAD
+          if ($head -ne $env:GITHUB_SHA) { "gizai-src is at $head, not at $env:GITHUB_SHA"; exit 1 }
+
       - run: npm ci
         if: steps.version.outputs.only != 'true'
 

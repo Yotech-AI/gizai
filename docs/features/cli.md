@@ -13,7 +13,7 @@ With only Codex installed, GizAi adds it under Settings → Coding CLIs and runs
 ## On your own machine
 
 - Everything runs on your computer, with your own git repositories and your own logins.
-- Every agent runs on a coding CLI you installed, on your own login or account of it.
+- Agents run on the coding CLIs you installed, with your own logins and accounts.
 - GizAi needs no account of its own.
 - Your data stays in one folder on your computer, and GizAi sends nothing about you: see [Your data](../install.md#your-data) and [No telemetry](../install.md#no-telemetry).
 

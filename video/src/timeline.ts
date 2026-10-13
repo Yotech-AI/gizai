@@ -1,5 +1,5 @@
 // The tour's timeline: when each scene and step starts, where the cursor goes and which stills show, all as plain
-// functions of the frame. The frame never zooms: every still fills it, at the same size, the whole tour. Durations are
+// functions of the frame. The frame never zooms: every still fills it, at the same size (80%), the whole tour. Durations are
 // in seconds, so the GIF's lower frame rate keeps the same pace.
 import { Easing, interpolate } from "remotion";
 import { HEIGHT, WIDTH, type Box, type Scene, type Step } from "./scenes";
@@ -106,7 +106,7 @@ export function sceneAt(tl: Timeline, frame: number): TimedScene | null {
   return tl.scenes.find((s) => s.start <= frame && frame < s.end) ?? null;
 }
 
-/** The cursor, in the still's pixels and the frame's (they are the same): it glides on a gentle arc, eased, from one click to the next. */
+/** The cursor, in the frame's pixels (the click boxes are scaled to them in scenes.ts): it glides on a gentle arc, eased, from one click to the next. */
 export function cursorAt(tl: Timeline, frame: number): Point {
   const step = stepAt(tl, frame);
   if (!step) return tl.cursorStart;

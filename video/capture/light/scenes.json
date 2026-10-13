@@ -1,8 +1,8 @@
 {
   "theme": "light",
   "screen": {
-    "width": 2560,
-    "height": 1664,
+    "width": 3200,
+    "height": 2080,
     "scale": 2
   },
   "box": "x, y, width and height in the stills' pixels",
@@ -36,8 +36,8 @@
           "before": "02-chat/approve-before.png",
           "after": "02-chat/approve-after.png",
           "box": {
-            "x": 1184,
-            "y": 1218,
+            "x": 1504,
+            "y": 1460,
             "width": 175,
             "height": 52
           },
@@ -68,7 +68,7 @@
           "after": "03-clis/usage-after.png",
           "box": {
             "x": 20,
-            "y": 1372,
+            "y": 1788,
             "width": 454,
             "height": 64
           },
@@ -86,7 +86,7 @@
           "before": "04-review/open-card-before.png",
           "after": "04-review/open-card-after.png",
           "box": {
-            "x": 1996,
+            "x": 2440,
             "y": 546,
             "width": 564,
             "height": 232
@@ -98,8 +98,8 @@
           "before": "04-review/runs-before.png",
           "after": "04-review/runs-after.png",
           "box": {
-            "x": 1039,
-            "y": 884,
+            "x": 1151,
+            "y": 1696,
             "width": 191,
             "height": 84
           },
@@ -130,7 +130,7 @@
           "after": "05-editor/open-project-after.png",
           "box": {
             "x": 522,
-            "y": 1186,
+            "y": 1322,
             "width": 932,
             "height": 60
           },
@@ -141,7 +141,7 @@
           "before": "05-editor/terminal-before.png",
           "after": "05-editor/terminal-after.png",
           "box": {
-            "x": 2111,
+            "x": 2751,
             "y": 25,
             "width": 180,
             "height": 52
@@ -160,7 +160,7 @@
           "before": "06-memory/open-link-before.png",
           "after": "06-memory/open-link-after.png",
           "box": {
-            "x": 1558,
+            "x": 1618,
             "y": 900,
             "width": 169,
             "height": 40
@@ -172,7 +172,7 @@
           "before": "06-memory/graph-before.png",
           "after": "06-memory/graph-after.png",
           "box": {
-            "x": 2161,
+            "x": 2801,
             "y": 27,
             "width": 129,
             "height": 48
@@ -191,8 +191,8 @@
           "before": "07-tools/settings-before.png",
           "after": "07-tools/settings-after.png",
           "box": {
-            "x": 2309,
-            "y": 192,
+            "x": 2949,
+            "y": 173,
             "width": 195,
             "height": 60
           },
@@ -203,8 +203,8 @@
           "before": "07-tools/use-playwright-before.png",
           "after": "07-tools/use-playwright-after.png",
           "box": {
-            "x": 664,
-            "y": 840,
+            "x": 1208,
+            "y": 1048,
             "width": 180,
             "height": 38
           },
@@ -234,7 +234,7 @@
           "before": "08-inbox/done-continue-before.png",
           "after": "08-inbox/done-continue-after.png",
           "box": {
-            "x": 2206,
+            "x": 2846,
             "y": 794,
             "width": 250,
             "height": 52

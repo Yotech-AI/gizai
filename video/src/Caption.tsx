@@ -1,5 +1,5 @@
-// A scene's caption at the bottom left: the feature's number and name from the website (Geist), and one short line
-// (Atkinson Hyperlegible Next).
+// A scene's caption at the bottom left (or right, when its scene says so): the feature's number and name from the website
+// (Geist), and one short line (Atkinson Hyperlegible Next).
 import type React from "react";
 import { NAME_FONT, TEXT_FONT } from "./fonts";
 import { COLORS, type Caption as CaptionText, type Theme } from "./scenes";
@@ -10,7 +10,7 @@ export const Caption: React.FC<{ caption: CaptionText; theme: Theme; opacity: nu
     <div
       style={{
         position: "absolute",
-        left: 48,
+        ...(caption.right ? { right: 48 } : { left: 48 }),
         bottom: 44,
         maxWidth: 1480,
         padding: "26px 40px 30px",

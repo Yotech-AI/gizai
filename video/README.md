@@ -56,9 +56,12 @@ What the tour does:
   click to click on a gentle arc, eased, and lands in the clicked element's box (its middle, or on a wide row towards
   the label on the left). At each click it presses in and sends out a ring.
 - **Each click** crossfades in 0.3 s from the still before it to the still after it.
-- **The frame never zooms**: every still fills it at its own size, the whole tour.
-- **The captions** sit at the bottom left: the feature's number in the logo's pink and its name in Geist, one line in
-  Atkinson Hyperlegible Next, both from `src/assets/fonts/`.
+- **The frame never zooms**: every still fills it, the whole tour. The stills are 3200 × 2080 (1600 × 1040 CSS pixels at
+  scale 2, so the whole board fits); the tour draws them at 80%, into 2560 × 1664, and the click boxes from
+  `scenes.json` with them. The cursor, the captions and the logo keep their own size.
+- **The captions** sit at the bottom left, over the sidebar's foot (in Tested before you see it at the bottom right,
+  as the card's runs open at the bottom left): the feature's number in the logo's pink and its name in Geist, one line
+  in Atkinson Hyperlegible Next, both from `src/assets/fonts/`.
 - **The opening** is the logo (`design/brand/logo-horizontal-on-<theme>.svg`); **the closing** is the logo and "An
   Agentic Development Application" over the mountains of the website's hero (`design/branding/mountains-hero.svg`).
 

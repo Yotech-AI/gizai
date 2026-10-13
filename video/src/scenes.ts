@@ -8,10 +8,13 @@ export type Box = { x: number; y: number; width: number; height: number };
 /** quick: its after-still is only a menu the next click is in, so it holds briefly. */
 export type Step = { name: string; before: string; after: string; box: Box; quick?: boolean };
 export type CapturedScene = { scene: number; name: string; title: string; steps: Step[] };
-export type Caption = { number: string; name: string; line: string };
+/** right: the caption sits at the bottom right, where the scene has room (bottom left is the sidebar's foot, by default). */
+export type Caption = { number: string; name: string; line: string; right?: boolean };
 export type Scene = CapturedScene & { caption: Caption };
 
-/** The stills' size, and the video's: a 13-inch MacBook Air's screen at scale 2, without the title bar. */
+/** The video's size: a 13-inch MacBook Air's screen at scale 2 (the website's 1280 × 832 frame at 2×). The stills are
+ *  bigger (scenes.json's screen: 1600 × 1040 CSS pixels at scale 2, so 3200 × 2080), to show the whole board; the tour
+ *  draws them at WIDTH / their width (80%), and their click boxes with them. */
 export const WIDTH = 2560;
 export const HEIGHT = 1664;
 
@@ -31,7 +34,8 @@ const CAPTIONS: Record<string, Caption> = {
   "01-board": { number: "01", name: "The board decides who works", line: "Agents pick up the cards on their columns. Watch one at work, live." },
   "02-chat": { number: "02", name: "A Team Lead you talk to", line: "Your request becomes cards. You approve in one click." },
   "03-clis": { number: "03", name: "Bring your own CLI", line: "Claude Code and Codex, with your own logins and their limits." },
-  "04-review": { number: "04", name: "Tested before you see it", line: "QA tests each card and opens its pull request." },
+  // at the bottom right: the card's runs open at the bottom left, under where the caption would be
+  "04-review": { number: "04", name: "Tested before you see it", line: "QA tests each card and opens its pull request.", right: true },
   "05-editor": { number: "05", name: "The Editor and Terminal, built in", line: "Open a project, then its terminal, right under the code." },
   "06-memory": { number: "06", name: "Memory", line: "Decisions and gotchas as linked notes, with a graph." },
   "07-tools": { number: "07", name: "Tools per agent", line: "MCP servers, web search and a browser, each off until you switch it on." },
@@ -41,11 +45,18 @@ const CAPTIONS: Record<string, Caption> = {
 /** The steps that only open a menu for the next click: the Editor's folder picker. */
 const QUICK: Record<string, string[]> = { "05-editor": ["open-folder"] };
 
-const CAPTURES: Record<Theme, { scenes: CapturedScene[] }> = { dark: darkCapture, light: lightCapture };
+type Capture = { screen: { width: number; height: number }; scenes: CapturedScene[] };
+const CAPTURES: Record<Theme, Capture> = { dark: darkCapture, light: lightCapture };
 
-/** The theme's scenes in the website's order. Fails loudly when the capture and ORDER don't match. */
+/** A box in the stills' pixels, in the video's. */
+const scaleBox = (b: Box, k: number): Box => ({ x: b.x * k, y: b.y * k, width: b.width * k, height: b.height * k });
+
+/** The theme's scenes in the website's order, their boxes in the video's pixels. Fails loudly when the capture and ORDER
+ *  don't match, or when the stills aren't the video's shape. */
 export function scenesFor(theme: Theme): Scene[] {
-  const captured = CAPTURES[theme].scenes;
+  const { screen, scenes: captured } = CAPTURES[theme];
+  const k = WIDTH / screen.width;
+  if (Math.abs(screen.height * k - HEIGHT) > 1) throw new Error(`capture/${theme}/scenes.json's stills are ${screen.width} × ${screen.height}, not the shape of ${WIDTH} × ${HEIGHT}`);
   if (captured.length !== ORDER.length) throw new Error(`capture/${theme}/scenes.json has ${captured.length} scenes, the tour ${ORDER.length}`);
   return ORDER.map((name) => {
     const scene = captured.find((s) => s.name === name);
@@ -56,6 +67,7 @@ export function scenesFor(theme: Theme): Scene[] {
         ...step,
         before: `${theme}/${step.before}`,
         after: `${theme}/${step.after}`,
+        box: scaleBox(step.box, k),
         quick: QUICK[name]?.includes(step.name) ?? false,
       })),
       caption: CAPTIONS[name],

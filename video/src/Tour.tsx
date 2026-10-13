@@ -1,5 +1,6 @@
 // The product tour: the opening, the eight scenes (each step's still before its click and after it, the cursor and the
-// caption), and the closing. Every still fills the frame at its own size: the frame never zooms.
+// caption), and the closing. Every still fills the frame, drawn at 80% (3200 × 2080 into 2560 × 1664), the same the
+// whole tour: the frame never zooms.
 import type React from "react";
 import { useMemo } from "react";
 import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";

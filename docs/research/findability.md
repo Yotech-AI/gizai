@@ -5,7 +5,8 @@ R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come 
 - **[V]** means verified in the code or in a primary source, named next to it.
 - **"helper"** next to a source means one of this run's research helpers read and quoted it, and I didn't open it
   again. I did re-read the sources that decide something: Anthropic's legal page, Google's post on Gemini CLI, Search
-  Central's changelog, giz.ai, the GitHub API, npm and gh's release source.
+  Central's changelog, giz.ai, the GitHub API, npm, GitHub's topic rules, and the source of `gh repo edit` and
+  `gh release create`.
 - **[I]** is my judgement.
 - Every web page was read on 2026-10-13.
 
@@ -99,7 +100,7 @@ Why this wording:
   (GitHub REST docs, "Update a repository"; helper)
 
 **Topics (20, GitHub's maximum: "Use lowercase letters, numbers, and hyphens. Use 50 characters or less. Add no more
-than 20 topics.")** [V] (docs.github.com, "Classifying your repository with topics"; helper)
+than 20 topics.")** [V] (docs.github.com, "Classifying your repository with topics")
 
 `claude-code, codex, gemini-cli, ai-agents, coding-agents, multi-agent, agentic-coding, agent-orchestration, kanban,
 git-worktree, mcp, code-review, developer-tools, desktop-app, tauri, rust, linux, macos, windows, omarchy`
@@ -131,7 +132,8 @@ git-worktree, mcp, code-review, developer-tools, desktop-app, tauri, rust, linux
 
 **Run this for me** (the flags are from GitHub CLI's manual and source: `gh repo edit [<repository>]`, `-d/--description`,
 `-h/--homepage`; `--add-topic` takes a comma-separated list and adds to the topics there are) [V]
-(cli.github.com/manual/gh_repo_edit; cli/cli `pkg/cmd/repo/edit/edit.go`; helper):
+(cli/cli `pkg/cmd/repo/edit/edit.go`: `Use: "edit [<repository>]"`, `StringSliceVar(&opts.AddTopics, "add-topic", …)`,
+and `newTopics.AddValues(opts.topicsCache)` then `AddValues(opts.AddTopics)`; the manual, helper):
 
 ```sh
 gh repo edit Yotech-AI/gizai --description 'Desktop app where AI coding agents work your kanban board in parallel on Claude Code, Codex CLI or Gemini CLI: a Team Lead you chat with, builders, QA, DevOps and roles you add, like Design or R&D. Each card gets its own git worktree. Built-in editor and terminal. Free and open source.' --homepage 'https://gizai.app' --add-topic 'claude-code,codex,gemini-cli,ai-agents,coding-agents,multi-agent,agentic-coding,agent-orchestration,kanban,git-worktree,mcp,code-review,developer-tools,desktop-app,tauri,rust,linux,macos,windows,omarchy'
@@ -373,7 +375,10 @@ What it means [I]:
   - name the CLIs in plain text, as what GizAi runs;
   - no logos, no ™, no "powered by" (GizAi supplies no AI);
   - never "Claude Code kanban", "Claude Code agent" or a CLI's name as a feature or page name;
-  - in a title that names a CLI, the sentence says GizAi runs it, and the title ends in "· GizAi".
+  - in a title that names a CLI, the sentence says GizAi runs it, and the title ends in "· GizAi";
+  - the README, the About and the website write the products' names, "Codex CLI" and "Gemini CLI";
+  - the docs may keep "Codex" and "Gemini" where they name the app's own labels in Settings → Coding CLIs
+    (`src/lib/clis.ts:7`: "Claude Code", "Codex", "Gemini", "Other") [V].
 
 ### 3.7 Community files
 

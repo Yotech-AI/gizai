@@ -115,6 +115,73 @@ export function lineHeightFor(glyph: number, row: number, dpr: number): number {
 }
 export const SCROLLBACK = 5000;
 
+// ---------- the words of the sidebar's rows and the page (GA-136, TF1; design §1, §3 and §8) ----------
+
+type Shown = Pick<TerminalSession, "name" | "folderPath" | "shell" | "busy" | "ended">;
+
+/** The folder's own name, as the Editor names it ("gizai", or a card's identifier for its worktree). */
+export const folderNameOf = (s: Pick<TerminalSession, "folderPath">) => s.folderPath.split(/[\\/]/).filter(Boolean).pop() ?? s.folderPath;
+
+/** What it does now, for a tooltip: "running npm", "waiting for a command", or why it ended ("zsh ended with exit code 2"). */
+export function doingWords(s: Shown): string {
+  if (s.ended) return s.ended.why ?? (s.ended.code === null ? `${s.shell} was ended by a signal` : `${s.shell} ended with exit code ${s.ended.code}`);
+  return s.busy ? `running ${s.busy}` : "waiting for a command";
+}
+
+/** A sidebar row's tooltip: "~/Herd/gizai · zsh · running npm"; for a card's worktree "KADE-41's worktree · …"; once ended
+ *  "KADE-41's worktree · zsh ended with exit code 2". */
+export function rowTitle(s: Shown, card: string | null): string {
+  const where = card ? `${card}'s worktree` : s.folderPath;
+  return s.ended ? `${where} · ${doingWords(s)}` : `${where} · ${s.shell} · ${doingWords(s)}`;
+}
+
+/** A tab's tooltip: "gizai 2 · running npm", "gizai · waiting for a command", "gizai 3 · ended". */
+export const tabTitle = (s: Shown) => `${s.name} · ${s.ended ? "ended" : s.busy ? `running ${s.busy}` : "waiting for a command"}`;
+
+/** Closing asks first only while a program runs in it; one that waits for a command, or has ended, closes at once. */
+export const asksToClose = (s: Pick<TerminalSession, "busy" | "ended">) => !s.ended && !!s.busy;
+/** The question under a row or a tab: "npm is still running in gizai 2. Close it and end npm?" */
+export const closeQuestion = (s: Pick<TerminalSession, "name" | "busy">) => `${s.busy} is still running in ${s.name}. Close it and end ${s.busy}?`;
+
+/** The bar of a terminal whose shell ended with another code than 0 (0 closes it): "The shell ended with exit code 2." */
+export function endedSay(end: TerminalSession["ended"]): string {
+  if (!end) return "";
+  if (end.code !== null) return `The shell ended with exit code ${end.code}.`;
+  return !end.why || / was ended by /.test(end.why) ? "The shell was ended by a signal." : sentence(end.why);
+}
+
+/** A message as a sentence, with its full stop ("Couldn't start zsh in ~/Herd/gizai: /usr/bin/zsh wasn't found."). */
+export function sentence(text: string): string {
+  const t = text.trim();
+  return !t || /[.!?…]$/.test(t) ? t : `${t}.`;
+}
+
+/** Folded Terminal's heading: "3 open", with "3 terminals are open" as its tooltip. */
+export const openWord = (n: number) => `${n} open`;
+export const openTip = (n: number) => (n === 1 ? "1 terminal is open" : `${n} terminals are open`);
+
+/** From this many open terminals, New terminal says how many are open, and that each keeps its shell running. */
+export const MANY_OPEN = 20;
+export const manyNote = (n: number) => (n >= MANY_OPEN ? `${n} terminals are open: each keeps its shell running until you close it.` : null);
+
+/** A card's worktree shows its identifier in mono: the name as it starts there ("KADE-41", "KADE-41 2"), not one given. */
+export const showsCardId = (name: string, identifier: string) => name === identifier || name.startsWith(`${identifier} `);
+
+/** The terminal `by` tabs on from `id` among `ids` (Ctrl+PgDn and Ctrl+PgUp, ← and →), round from the last to the first. */
+export function stepTerminal(ids: string[], id: string, by: 1 | -1): string | null {
+  if (!ids.length) return null;
+  const i = ids.indexOf(id);
+  return ids[(Math.max(i, by > 0 ? -1 : 0) + by + ids.length) % ids.length] ?? null;
+}
+
+/** The tab to show when the one on the page closed: the next in the folder, else the one before it, else none. `was` is
+ *  the folder's tabs when it was there, `now` the ids open now. */
+export function nextAfterClose(was: string[], id: string, now: string[]): string | null {
+  const i = was.indexOf(id);
+  const order = i < 0 ? was : [...was.slice(i + 1), ...was.slice(0, i).reverse()];
+  return order.find((x) => now.includes(x)) ?? null;
+}
+
 // ---------- the store ----------
 
 type Xterm = {
@@ -235,6 +302,12 @@ function setSessions(list: TerminalSession[]) {
 export function noteOpened(s: TerminalSession) {
   if (sessions.some((x) => x.id === s.id)) return;
   setSessions([...sessions, s]);
+}
+
+/** A terminal just changed (terminalRename's answer): its row, tab and page show it at once. */
+export function noteChanged(s: TerminalSession) {
+  if (!sessions.some((x) => x.id === s.id)) return;
+  setSessions(sessions.map((x) => (x.id === s.id ? s : x)));
 }
 
 function make(s: TerminalSession) {
@@ -445,7 +518,18 @@ export function fitView(id: string) {
   if (cols !== v.sent.cols || rows !== v.sent.rows) {
     v.sent = { cols, rows };
     terminalResize(id, cols, rows).catch(() => {});
+    changed(); // the page's top bar says the size
   }
+}
+
+/** The terminal's size now (columns × rows), as last sent to the backend; null before its view is made. */
+export function useTerminalSize(id: string): { cols: number; rows: number } | null {
+  return useSyncExternalStore(subscribe, () => views.get(id)?.sent ?? null);
+}
+
+/** Clear, in the page's ⋯ menu: empties the scrollback and the screen but for the line the prompt is on. */
+export function clearTerminal(id: string) {
+  views.get(id)?.term.clear();
 }
 
 /** Gives the view the code's rows for its font on this screen. */

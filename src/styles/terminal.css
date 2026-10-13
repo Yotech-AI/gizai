@@ -43,6 +43,9 @@
 .ed-tab.term-tab .state { font-size: var(--fs-xs); }
 .ed-tab.term-tab .x { margin-left: 2px; }
 .term-tabs > .btn.icon-only { width: 24px; height: 24px; }
+/* + is off while an agent works on the card: aria-disabled, so its tooltip still says why (GA-136) */
+.term-tabs > .btn[aria-disabled="true"] { pointer-events: auto; }
+.term-tabs > .btn[aria-disabled="true"]:hover { background: transparent; color: var(--text-2); }
 /* The panel's own buttons, on the right of its tabs: Own page, Hide. They stay there when the tabs scroll sideways. */
 .term-tabs .acts { position: sticky; right: 0; display: flex; flex: none; align-items: center; gap: 2px; margin-left: auto; padding: 0 var(--space-1); background: var(--side); box-shadow: inset 0 -1px 0 var(--line); }
 
@@ -95,7 +98,7 @@
 .term-host .xterm .xterm-viewport { background-color: var(--term-bg); }
 .term-place .term-away { flex: 1; }
 
-/* ---------- the Terminal page, simple for now (TF0; TF1 adds the tabs, the full top bar and the ended states) ---------- */
+/* ---------- the Terminal page with no terminal (TF0; TF1 adds the tabs, the full top bar and the ended states above) ---------- */
 /* #/terminal: the Editor's empty state with New terminal, and the terminals open now as links under it */
 .term-open { display: flex; flex-direction: column; align-self: stretch; margin-top: var(--space-2); border-top: 1px solid var(--line); }
 .term-open a { display: flex; align-items: center; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }

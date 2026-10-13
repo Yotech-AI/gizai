@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # The product tour's Claude Code (scripts/tour-capture.sh, GA-148): fake, like crates/gizai-agents/tests/fake-claude.sh,
 # but its run reads like real work on the CSV export: it reads files, edits the exporter, runs the tests and then keeps
-# working (it waits until Gizai stops it), so the board and the run show an agent at work. Asked for the model list, it
+# working (it waits until Gizai stops it), so the board and the run show an agent at work. It writes the files it
+# edits in its working folder (the card's worktree), so the card's Changes show them. Asked for the model list, it
 # answers like the tests' fake.
-here="$(cd "$(dirname "$0")/../../crates/gizai-agents/tests/fixtures" && pwd)"
+# The capture puts it in the fake home as ~/.local/bin/claude, with the tests' model list next to it in ~/.local/share/claude.
 case " $* " in *" --input-format stream-json "*)
   IFS= read -r _request
-  cat "$here/models-init.jsonl"
+  cat "$HOME/.local/share/claude/models-init.jsonl"
   cat > /dev/null
   exit 0 ;;
 esac
 case " $* " in *" --version "*|*" -v "*) echo "2.1.300 (Claude Code)"; exit 0 ;; esac
 cat > /dev/null   # the prompt
 trap 'exit 130' INT
-say() { printf '%s\n' "$1"; sleep "${2:-0.15}"; }
+say() { printf '%s\n' "$1"; sleep "${2:-0.8}"; }
 say '{"type":"system","subtype":"init","session_id":"T1","model":"claude-opus-5-5","tools":["Read","Edit","Write","Bash","Grep"]}'
 say '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will add the CSV export to the invoices table, with semicolons as Marloes asked. First the exporter that is there."},{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"Exporter","path":"app"}}]},"session_id":"T1"}'
 say '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"app/Exports/InvoiceExporter.php\napp/Filament/Resources/InvoiceResource.php","is_error":false}]},"session_id":"T1"}'

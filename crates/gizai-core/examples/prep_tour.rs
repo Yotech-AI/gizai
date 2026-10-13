@@ -116,8 +116,14 @@ fn main() {
 
     // the Kade portal on main, with a change not committed yet (the Editor's git status)
     git(repo, &["init", "-q", "-b", "main"]);
-    for (path, body) in PORTAL { write(repo, path, body); }
-    let base = commit(repo, "The Kade portal: shipments, invoices and drivers");
+    let mut base = String::new();
+    for (message, prefixes) in [("The Kade portal: Laravel and Filament", &["README", "composer", "routes/web", "app/Models/Driver"][..]),
+                                ("Invoices: the model, its Filament resource and an exporter", &["app/Models/Invoice", "app/Exports", "app/Filament"][..]),
+                                ("Public tracking of shipments by their code", &["app/Models/Shipment", "app/Http", "routes/api", "config", "tests", "database"][..])] {
+        for (path, body) in PORTAL.iter().filter(|(p, _)| prefixes.iter().any(|x| p.starts_with(x))) { write(repo, path, body); }
+        base = commit(repo, message);
+    }
+    assert_eq!(git(repo, &["status", "--porcelain"]), "", "every PORTAL file is in a commit");
     write(repo, "app/Models/Shipment.php", &PORTAL.iter().find(|(p, _)| *p == "app/Models/Shipment.php").unwrap().1
         .replace("    public function trackingCode", "    public function isLate(): bool\n    {\n        return $this->delivered_at === null && $this->created_at->lt(now()->subDays(2));\n    }\n\n    public function trackingCode"));
     write(repo, "app/Http/Middleware/LogTracking.php", "<?php\n\nnamespace App\\Http\\Middleware;\n\nclass LogTracking\n{\n    // who looks up which shipment, for the office's weekly report\n}\n");
@@ -143,7 +149,7 @@ fn main() {
     }).unwrap();
     let wt_s = wt.display().to_string();
     let run = |agent: &str, role: &str, from: &str, to: &str, outcome: &str, summary: &str, cost: i64| {
-        let r = runs::create(&db, agent, &k2.id, role, &ids::new_id(), &wt_s, &wt_s, &branch, "/dev/null").unwrap();
+        let r = runs::create_with_trigger(&db, agent, &k2.id, role, "assigned", &ids::new_id(), &wt_s, &wt_s, &branch, "/dev/null").unwrap();
         runs::set_base_sha(&db, &r, from).unwrap();
         runs::set_head_sha(&db, &r, to).unwrap();
         runs::finish(&db, &r, "succeeded", Some(&Outcome { outcome: outcome.into(), summary: summary.into(), issues: vec![] }), cost, 41_000, 5_200, None).unwrap();
@@ -189,7 +195,7 @@ fn main() {
     write(&sftp_wt, "app/Console/Commands/ImportShipments.php", "<?php\n\nnamespace App\\Console\\Commands;\n\nuse Illuminate\\Console\\Command;\nuse Illuminate\\Support\\Facades\\Storage;\n\nclass ImportShipments extends Command\n{\n    protected $signature = 'shipments:import {--date=}';\n\n    public function handle(): int\n    {\n        $file = 'outbox/shipments-'.($this->option('date') ?? today()->format('Ymd')).'.csv';\n        $rows = str_getcsv(Storage::disk('kade-sftp')->get($file), \"\\n\");\n        $this->info(count($rows).' shipments read from '.$file);\n\n        return self::SUCCESS;\n    }\n}\n");
     let sftp_wt_s = sftp_wt.display().to_string();
     db.write(None, |w| { w.conn().execute("UPDATE tasks SET branch=?2 WHERE id=?1", rusqlite::params![sftp, sftp_branch])?; Ok(()) }).unwrap();
-    let asked = runs::create(&db, &backend, &sftp, "backend", &ids::new_id(), &sftp_wt_s, &sftp_wt_s, sftp_branch, "/dev/null").unwrap();
+    let asked = runs::create_with_trigger(&db, &backend, &sftp, "backend", "assigned", &ids::new_id(), &sftp_wt_s, &sftp_wt_s, sftp_branch, "/dev/null").unwrap();
     runs::set_base_sha(&db, &asked, &base).unwrap();
     db.write(None, |w| { w.conn().execute("UPDATE runs SET cost_usd_micros=160000 WHERE id=?1", [&asked])?; Ok(()) }).unwrap();
     workflow::apply_outcome_with(&db, &asked, Some(&Outcome { outcome: "needs_decision".into(),

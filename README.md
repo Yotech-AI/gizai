@@ -206,6 +206,7 @@ source scripts/env.sh
 cargo test --workspace && npm test
 scripts/ui-test.sh        # UI tests in a headless compositor, never on your desktop
 scripts/readme-gif.sh     # remakes the GIF above
+scripts/tour-capture.sh   # the product tour's stills, in dark and light, into video/capture/
 ```
 
 On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds Gizai and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs Gizai from source on macOS and Windows with it (`.github/workflows/install.yml`).

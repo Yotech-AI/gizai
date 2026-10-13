@@ -263,6 +263,49 @@ fn quitting_gizai_ends_every_terminal_and_everything_it_started() {
     assert_eq!(told.lock().unwrap().last().cloned(), Some(vec![]));
 }
 
+/// The block in `src` that starts with `head`, up to its closing brace (its body opens with the first `{` that ends a
+/// line, so a pattern's `{ api, .. }` isn't taken for it).
+fn arm<'a>(src: &'a str, head: &str) -> &'a str {
+    let at = src.find(head).unwrap_or_else(|| panic!("no {head:?}"));
+    let open = at + src[at..].match_indices('{').find(|(i, _)| src[at + i + 1..].starts_with(['\n', '\r'])).unwrap().0;
+    let mut depth = 0;
+    for (i, c) in src[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' if depth == 1 => return &src[at..open + i + 1],
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    panic!("{head:?} never closes")
+}
+
+#[test]
+fn only_quitting_ends_the_terminals_and_closing_the_window_keeps_them() {
+    // GA-141: the test above calls terminal::end_all itself. The window can't be closed or Gizai quit in a test, so this
+    // reads the app's own event handler: Exit ends every terminal (quit::end_terminals runs terminal::end_all, and Exit
+    // waits for it), and closing the window only hides it, with no terminal ended. Nothing else ends them all.
+    let lib = include_str!("../src/lib.rs");
+    let quit = include_str!("../src/quit.rs");
+    let exit = arm(lib, "if let tauri::RunEvent::Exit = event");
+    assert!(exit.contains("quit::end_terminals("), "Exit doesn't end the terminals:\n{exit}");
+    assert!(exit.contains("terminals.join()"), "Exit doesn't wait for the terminals to end:\n{exit}");
+    let end_terminals = arm(quit, "pub fn end_terminals(");
+    assert!(end_terminals.contains("terminal::end_all("), "quit::end_terminals doesn't run terminal::end_all:\n{end_terminals}");
+
+    let close = arm(lib, "if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested");
+    assert!(close.contains("api.prevent_close()") && close.contains(".hide()"), "closing the window doesn't only hide it:\n{close}");
+    assert!(!close.to_lowercase().contains("terminal"), "closing the window reaches the terminals:\n{close}");
+    assert!(!include_str!("../src/unsaved.rs").to_lowercase().contains("terminal"), "unsaved.rs (the window's close) reaches the terminals");
+
+    assert_eq!(lib.matches("end_terminals(").count(), 1, "only Exit ends every terminal");
+    assert_eq!(quit.matches("end_all(").count(), 1, "only quit::end_terminals runs terminal::end_all");
+    for (file, src) in [("lib.rs", lib), ("commands.rs", include_str!("../src/commands.rs")), ("runs.rs", include_str!("../src/runs.rs")),
+                        ("chat.rs", include_str!("../src/chat.rs")), ("update.rs", include_str!("../src/update.rs"))] {
+        assert!(!src.contains("end_all(") && !src.contains("close_all("), "{file} ends every terminal");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn nothing_a_terminal_shows_or_is_sent_goes_under_gizais_data_folder() {

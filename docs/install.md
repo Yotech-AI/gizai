@@ -6,7 +6,7 @@ There are no downloads or installers, on any system. The install script checks w
 
 ## What every system needs
 
-- [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in: run `claude` once. Agents can also run on Codex, Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs). The Team Lead's chat needs Claude Code.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) or Codex, installed and logged in; for Claude Code, run `claude` once. The Team Lead's chat needs Claude Code. Agents can also run on Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs).
 - git, Rust ([rustup](https://rustup.rs)) and Node.js 20 or newer.
 - Optional, to review cards as pull requests on GitHub: the [GitHub CLI](https://cli.github.com) and an SSH key on your GitHub account. Settings → GitHub shows what's missing and can log gh in.
 - Optional, for a project on Bitbucket Cloud: an SSH key on your Bitbucket account and an API token with the scopes `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket` (Atlassian account → Security → API tokens). Save the token with your Atlassian email in Settings → Bitbucket. GizAi keeps them in your keychain.

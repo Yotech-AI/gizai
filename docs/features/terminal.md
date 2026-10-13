@@ -7,7 +7,7 @@ Your own shell in a project's folder or a card's worktree, inside GizAi, as many
 Sidebar → Terminal, above Editor. A terminal opens in:
 
 - a project's linked folder;
-- a folder in `~/Herd`;
+- a folder in the Editor's folders (`~/Herd` unless you change it in Settings → General → Editor folders);
 - a card's worktree.
 
 \+ opens the Editor's folder picker. A card's worktree waits while an agent works on it, and one that isn't pinned to you asks **Edit anyway** first.

@@ -16,7 +16,7 @@ With nothing there, it says "Nothing needs you."
 
 - **Blocked:** a start that couldn't work ([When agents start](board.md#when-agents-start)), or a push that failed ([GizAi pushes after every run](testing.md#gizai-pushes-after-every-run)).
 - **Stalled:** a run that ended twice without its result line ([One nudge](board.md#one-nudge)).
-- **Needs a decision:** an agent asked a question, or QA sent the card back three times. The Team Lead looks at an agent's question first ([Agents ask the Team Lead first](team-lead.md#agents-ask-the-team-lead-first)), so the card reaches you only when the Team Lead escalates it.
+- **Needs a decision:** an agent asked a question, or QA sent the card back three times. When Ask the Team Lead first is on and its limits allow, the Team Lead looks at an agent's question before you, and brings you only what it can't answer ([Agents ask the Team Lead first](team-lead.md#agents-ask-the-team-lead-first)).
 - **Waiting for your OK:** the Team Lead put the card in an Auto column, or changed it there, after it used a tool from outside GizAi ([docs/agent-tools.md](../agent-tools.md#safety-rules)).
 
 Dragging a held card back to To do or In progress takes the hold off.

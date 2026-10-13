@@ -74,7 +74,7 @@ A run that ends normally without its `GIZAI_RESULT` line is continued once by it
 - It happens only when a start is allowed now: agents not paused, the agent active, within its budget and cards at once, and room in Runs at once. Otherwise nothing changes.
 - If the nudged run also ends without a result, the card goes on hold "stalled" and shows in [the Inbox](inbox.md).
 
-How an agent waits for something inside its run: [Waiting in a run](tools.md#waiting-in-a-run).
+How an agent waits, during its run, for something outside it, like a CI run: [Waiting in a run](tools.md#waiting-in-a-run).
 
 ## Deploy
 

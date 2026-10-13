@@ -1,6 +1,6 @@
 # Tested before you see it
 
-A QA agent tests every card in its own worktree and opens its pull request, so the work that reaches your Review has passed.
+A QA agent tests a card in its own worktree before it reaches your Review, and opens its pull request on GitHub.
 
 ## How a card is tested
 
@@ -11,7 +11,7 @@ A QA agent tests every card in its own worktree and opens its pull request, so t
 
 What QA checks and writes comes from the QA Agent's starting instructions, which you can change in its form. After three rounds back, GizAi holds the card for you.
 
-- A card with Testing off skips Testing columns and goes straight to Review.
+- A card with Testing off skips Testing columns: a done answer sends it on to the column after them, Review in the usual flow.
 - A DevOps run never sends a card to QA.
 - A card you build yourself is tested the same way after you hand it over, and a failed test sends it back to you ([Work on a card yourself](code-editor.md#work-on-a-card-yourself)).
 

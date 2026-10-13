@@ -1,6 +1,6 @@
 # Tools per agent
 
-Each agent gets only the commands, folders and tools you give it; everything else is off.
+Each agent gets the commands its role allows, the folders you give it, and only the tools you switch on for it.
 
 ## Off until you switch it on
 

@@ -13,7 +13,9 @@ It runs on Linux, on Macs with Apple silicon and on Windows 11.
 
 ## No telemetry
 
-GizAi sends nothing about you or your work. Its only call home is the release check, which asks GitHub for the latest release ([Updates](../install.md#updates)).
+GizAi doesn't report on you or your work. Its release check only asks GitHub for the latest release, and sends nothing about you ([Updates](../install.md#updates)).
+
+Your code still goes where you send it: your agents' coding CLIs work with their own providers, and GizAi pushes a card's branch to your project's own remote.
 
 ## Your keys stay yours
 

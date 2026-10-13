@@ -8,7 +8,7 @@
 
 <div align="center">
 
-**A team of AI agents works through your board, on your own computer.**
+**A desktop app where a team of AI agents works through your board.**
 
 [Install](#install) · [Docs](#documentation) · [Releases](https://github.com/Yotech-AI/gizai/releases) · [Licence](LICENSE)
 
@@ -24,18 +24,18 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 
 - **The board decides who works.** Each column holds the agents that work its cards, so cards move from builder to tester to you by themselves. [Read more](docs/features/board.md)
 - **A Team Lead you talk to.** Ask the Team Lead in chat to plan work, make cards or start agents, and Approve with one click (or Approve all) the steps that wait for your OK. [Read more](docs/features/team-lead.md)
-- **Tested before you see it.** A QA agent tests every card and opens its pull request, so what reaches your Review has passed. [Read more](docs/features/testing.md)
+- **Tested before you see it.** A QA agent tests a card before it reaches your Review, and opens its pull request on GitHub. [Read more](docs/features/testing.md)
 - **A code editor, free.** Read what a card changed, and edit a project's files with a file tree, tabs and search. [Read more](docs/features/code-editor.md)
 - **Terminals, free.** Open your own shell in a project's folder or a card's worktree, as many as you like. [Read more](docs/features/terminal.md)
 - **Bring your own CLI.** Each agent runs on the coding CLI you pick, like Claude Code, Codex or Gemini, on your own login. [Read more](docs/features/cli.md)
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
 - **Tools per agent.** Give each agent only the commands, folders, MCP servers, web access and hidden browser it needs. [Read more](docs/features/tools.md)
 - **The Inbox.** Questions, approvals, commands to run and cards to review wait for you in one list. [Read more](docs/features/inbox.md)
-- **Local-first and open.** Your code, data and logins stay on your computer, with no telemetry, under the MIT licence. [Read more](docs/features/local-first.md)
+- **Local-first and open.** GizAi runs on your computer with your own repositories, data and logins, without telemetry, under the MIT licence. [Read more](docs/features/local-first.md)
 
 ## Install
 
-GizAi builds from source and installs for you alone, without sudo or administrator rights. Every system needs git, Rust, Node.js 20 or newer, and a coding CLI you're logged in to, like Claude Code.
+GizAi builds from source and installs for you alone, without sudo or administrator rights. Every system needs git, Rust, Node.js 20 or newer, and Claude Code or Codex, logged in.
 
 - **Linux:** also WebKitGTK 4.1, and for the tray icon `libayatana-appindicator` on Arch and Omarchy or `libayatana-appindicator3-1` on Debian and Ubuntu. `./install.sh --check` names the packages.
 - **macOS** on Apple silicon: also Apple's Command Line Tools, from `xcode-select --install`.
@@ -58,7 +58,7 @@ The details are in [docs/install.md](docs/install.md): what each system needs, u
 
 ## Getting started
 
-1. Install a coding CLI, like Claude Code or Codex, and log in to it. The Team Lead's chat needs Claude Code.
+1. Install Claude Code or Codex and log in to it. The Team Lead's chat needs Claude Code.
 2. For projects on GitHub, install gh and log in (`gh auth login`, or Settings → GitHub): QA opens the pull requests with it.
 3. Open GizAi: the workflow and five agents are ready. Talk to the Team Lead on the Chat page.
 4. Add a project with its git repository, and put a card in To do.

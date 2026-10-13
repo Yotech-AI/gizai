@@ -1,7 +1,13 @@
 # Research: make GizAi easier to find and understand (GA-167)
 
-R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come after your OK. **[V]** means verified in the
-code or a primary source (named next to it); **[I]** is my judgement. Every web page was read on 2026-10-13.
+R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come after your OK.
+
+- **[V]** means verified in the code or in a primary source, named next to it.
+- **"helper"** next to a source means one of this run's research helpers read and quoted it, and I didn't open it
+  again. I did re-read the sources that decide something: Anthropic's legal page, Google's post on Gemini CLI, Search
+  Central's changelog, giz.ai, the GitHub API, npm and gh's release source.
+- **[I]** is my judgement.
+- Every web page was read on 2026-10-13.
 
 ## 1. Summary
 
@@ -10,7 +16,7 @@ code or a primary source (named next to it); **[I]** is my judgement. Every web 
   gizai.app already has a sitemap, robots.txt and SoftwareApplication data, but no llms.txt, and its page titles hold
   no search words. [V] (GitHub API, live site)
 - **The biggest finding:** another company owns the name in search. Giz Inc. (giz.ai, "GizAI") is first for every
-  spelling. It holds github.com/GizAI and npm `@gizai`, and it now sells a CLI and MCP server for Claude Code and Codex.
+  spelling (the helper's searches). It holds github.com/GizAI and npm `@gizai`, and it now sells a CLI and MCP server for Claude Code and Codex.
   So "Giz AI" with a space is the worst spelling. One spelling, "GizAi", always next to "desktop app", "AI coding
   agents" or gizai.app, is the fix. A trademark search is worth doing before more goes into the name (§3.5).
 - **What the brief gets wrong** (§3.0):
@@ -45,8 +51,7 @@ code or a primary source (named next to it); **[I]** is my judgement. Every web 
   - GW-7 (PR #5, **open**) adds `/roadmap` and `/docs`. `/docs` holds copies of this repository's
     `docs/install.md`, `settings.md`, `features/*.md`, `agent-tools.md` and `memory.md`, made by `npm run docs:sync`
     (`src/data/docs.ts` in PR #5). [V] (`gh pr diff`)
-  - So GW-7 and GW-8's work is one open pull request, not two cards to come, and the docs' spelling will show on the
-    website.
+  - So the /roadmap and /docs work is one open pull request (GW-7), and the docs' spelling will show on the website.
 - **What this card touches:** README, `docs/`, new files in `.github/` and the root, `docs/RELEASING.md`; in GW
   `src/data/site.ts`, `src/content.config.ts` and `src/content/features/*.md`, `src/layouts/Feature.astro`,
   `src/pages/index.astro`, a new `llms.txt` route and a share-card render in `video/`. No app code.
@@ -58,7 +63,7 @@ code or a primary source (named next to it); **[I]** is my judgement. Every web 
 | Brief says | What is true | Source |
 |---|---|---|
 | "a Team Lead, builder, QA, Design and R&D agents" | A new install starts with five: Team Lead, Backend, Frontend, QA and DevOps. Design is a built-in role with its own instructions that you add. R&D is not a role GizAi has: an agent with any other role gets the Backend Agent's instructions under its own name, and you write its job. | `crates/gizai-core/src/seed.rs:32-35`, `:195-228`; `docs/features/board.md:20`, `:32-34` [V] |
-| "Claude Code, Codex or Gemini" | OpenAI calls the terminal tool "Codex CLI", and Google calls its tool "Gemini CLI". Since 18 June 2026, Gemini CLI serves only paid Gemini API keys; Google points everyone else to Antigravity CLI. | github.com/openai/codex README; github.com/google-gemini/gemini-cli README; Google Developers Blog, 19 May 2026 [V] |
+| "Claude Code, Codex or Gemini" | OpenAI calls the terminal tool "Codex CLI", and Google calls its tool "Gemini CLI". Since 18 June 2026, Gemini CLI serves only paid Gemini API keys; Google points everyone else to Antigravity CLI. | the READMEs of github.com/openai/codex and google-gemini/gemini-cli (helper); Google Developers Blog, 19 May 2026 [V] |
 | "Free, local, open source" | Free and open source, yes. But "local" reads as local models: the agents' models run at Anthropic, OpenAI or Google through the CLIs. Say "on your computer, with your own logins". | `docs/features/cli.md:13-20` [V]; wording [I] |
 | Topic `local-first` | That word means apps that sync local data without a server (CRDTs). It promises more than GizAi does, so drop it. | [I] |
 | A page titled "Claude Code kanban" | Anthropic: "you can't use the Claude Code or Anthropic names or logos as part of your own product, feature, or company name". A title may say that GizAi runs Claude Code. | code.claude.com/docs/en/legal-and-compliance.md [V] |
@@ -91,10 +96,10 @@ Why this wording:
 - The CLIs appear in the plain-text form Anthropic and Google allow: GizAi "runs Claude Code". [V] (§3.6)
 - It holds no apostrophe, so it fits in the single-quoted command below.
 - **The length:** GitHub documents no limit for the description. The 350 characters comes only from third parties. [V]
-  (GitHub REST docs, "Update a repository")
+  (GitHub REST docs, "Update a repository"; helper)
 
 **Topics (20, GitHub's maximum: "Use lowercase letters, numbers, and hyphens. Use 50 characters or less. Add no more
-than 20 topics.")** [V] (docs.github.com, "Classifying your repository with topics")
+than 20 topics.")** [V] (docs.github.com, "Classifying your repository with topics"; helper)
 
 `claude-code, codex, gemini-cli, ai-agents, coding-agents, multi-agent, agentic-coding, agent-orchestration, kanban,
 git-worktree, mcp, code-review, developer-tools, desktop-app, tauri, rust, linux, macos, windows, omarchy`
@@ -122,22 +127,22 @@ git-worktree, mcp, code-review, developer-tools, desktop-app, tauri, rust, linux
 - **What that means:** the big topics bring searchers, and the small ones (`git-worktree`, `agentic-coding`, `omarchy`)
   are where a new repository can show up near the top. [I]
 - **The brand rules:** `claude-code`, `codex` and `gemini-cli` are descriptive tags, fine under the plain-text rules.
-  Google's own repository uses `ai-agents` and `mcp-server`, not `gemini-cli`. [V] (google-gemini/gemini-cli)
+  Google's own repository uses `ai-agents` and `mcp-server`, not `gemini-cli`. [V] (google-gemini/gemini-cli; helper)
 
 **Run this for me** (the flags are from GitHub CLI's manual and source: `gh repo edit [<repository>]`, `-d/--description`,
 `-h/--homepage`; `--add-topic` takes a comma-separated list and adds to the topics there are) [V]
-(cli.github.com/manual/gh_repo_edit; cli/cli `pkg/cmd/repo/edit/edit.go`):
+(cli.github.com/manual/gh_repo_edit; cli/cli `pkg/cmd/repo/edit/edit.go`; helper):
 
 ```sh
 gh repo edit Yotech-AI/gizai --description 'Desktop app where AI coding agents work your kanban board in parallel on Claude Code, Codex CLI or Gemini CLI: a Team Lead you chat with, builders, QA, DevOps and roles you add, like Design or R&D. Each card gets its own git worktree. Built-in editor and terminal. Free and open source.' --homepage 'https://gizai.app' --add-topic 'claude-code,codex,gemini-cli,ai-agents,coding-agents,multi-agent,agentic-coding,agent-orchestration,kanban,git-worktree,mcp,code-review,developer-tools,desktop-app,tauri,rust,linux,macos,windows,omarchy'
 ```
 
 It changes only these three things. After it, the GitHub API should show the new description,
-`"homepage": "https://gizai.app"` and the 20 topics (checked in §3.1a once you've run it).
+`"homepage": "https://gizai.app"` and the 20 topics. I check that once you've run it, and note it here.
 
 ### 3.2 Social preview
 
-- **GitHub's rules** [V] (docs.github.com, "Customizing your repository's social media preview"):
+- **GitHub's rules** [V] (docs.github.com, "Customizing your repository's social media preview"; helper):
   - "a PNG, JPG, or GIF file under 1 MB … at least 640 by 320 pixels (1280 by 640 pixels for best display)";
   - "Until you add an image, repository links expand to show basic information about the repository and the owner's
     avatar";
@@ -259,7 +264,7 @@ At the end, `README.md:116` becomes:
 | A Design role; roles of your own | `seed.rs:195-197`, `:222`, `:224-228`; `board.md:20`, `:34`; `src-tauri/src/tools/mod.rs:433` |
 | Editor and Terminal | `docs/features/editor-and-terminal.md:3` |
 
-Two words are left out on purpose:
+Two things are left out on purpose:
 
 - "Gemini CLI" gets no limits claim: GizAi can't read them yet (`cli.md:56`).
 - "Several accounts" doesn't say "to get around limits". Anthropic's terms say Pro and Max limits "assume ordinary,
@@ -341,7 +346,7 @@ What it means [I]:
 - A search for any spelling lands on Giz Inc. first, even "gizai.app" on its own (helper's searches).
 - So never write "Giz AI".
 - Pair the name with what it is, in every title and the About: "GizAi, a desktop app for AI coding agents".
-- Give search engines one site name (WebSite data, §3.7).
+- Give search engines one site name (WebSite data, §3.8).
 - Tell AI assistants in llms.txt that GizAi isn't giz.ai.
 - The helper found no GIZ AI or GizAi trademark in a web search, but that isn't a clearance. A formal search (EUIPO
   TMview, USPTO, KIPO in Korea) before more goes into the name is question 1.
@@ -362,7 +367,8 @@ What it means [I]:
   - use a trademark "only as an adjective … never in the plural or possessive form": write "the limits of Gemini CLI",
     not "Gemini CLI's limits".
 - **OpenAI:** openai.com/brand answered 403, so its rules are unchecked. Its Codex licence gives no rights to its names
-  "except as required for reasonable and customary use in describing the origin of the Work" [V] (openai/codex LICENSE).
+  "except as required for reasonable and customary use in describing the origin of the Work" [V] (openai/codex LICENSE;
+  helper).
 - **So [I]:**
   - name the CLIs in plain text, as what GizAi runs;
   - no logos, no ™, no "powered by" (GizAi supplies no AI);
@@ -382,11 +388,11 @@ categories:
 | Announcements | announcement (only maintainers post) | each release's "What's new" (§3.9) |
 
 GitHub makes six to start with: Announcements, General, Ideas, Polls, Q&A and Show and tell [V] (docs.github.com,
-"Managing categories for discussions"). Remove General and Polls, so questions land in Q&A (question 6).
+"Managing categories for discussions"; helper). Remove General and Polls, so questions land in Q&A (question 6).
 
 **Issue forms**, in `.github/ISSUE_TEMPLATE/`. GitHub still calls issue forms a "public preview" [V]. Each form needs
 `name`, `description` and `body`, and `required` works in public repositories [V] (docs.github.com, "Syntax for issue
-forms").
+forms"; helper).
 
 - `bug.yml`: name "Bug report"; labels `bug`. Fields:
   - what happened (required);
@@ -417,12 +423,12 @@ forms").
   - Q&A in Discussions ("Questions go here");
   - the security policy ("Report a security problem privately");
   - the docs (gizai.app/docs once GW-7 is live).
-  [V] (docs.github.com, "Configuring issue templates")
+  [V] (docs.github.com, "Configuring issue templates"; helper)
 - Optionally `.github/pull_request_template.md`: what changed for the person using GizAi, how it was tested, the
-  systems tried. It is a box on GitHub's Community Standards list [V].
+  systems tried. It is a box on GitHub's Community Standards list [V] (github.com/cli/cli/community; helper).
 
 **CONTRIBUTING.md** (root), an outline. GitHub links it when someone opens an issue or a pull request, and from the
-`contribute` page [V]:
+`contribute` page [V] (docs.github.com, "Setting guidelines for repository contributors"; helper):
 
 1. GizAi in two lines, and where to talk: Discussions for questions and ideas, issues for bugs.
 2. Before you start: comment on an issue, or open one for anything bigger than a fix. Good first issues are labelled
@@ -449,7 +455,8 @@ forms").
 
 1. **Supported:** the latest release only. GizAi updates itself from releases (`docs/RELEASING.md:5`).
 2. **Report privately** with GitHub's private vulnerability reporting: the Security tab → Report a vulnerability. Never
-   in a public issue. [V] (docs.github.com, "Configuring private vulnerability reporting") It needs switching on (§5).
+   in a public issue. [V] (docs.github.com, "Configuring private vulnerability reporting"; helper) It needs switching on
+   (§6).
 3. **What counts:**
    - an agent getting past its allowed commands, folders or tools (`docs/features/tools.md`, `docs/agent-tools.md` →
      Safety rules);
@@ -506,19 +513,20 @@ forms").
 **What is missing or wrong:**
 
 1. **No llms.txt** (gizai.app/llms.txt answers 404) [V].
-   - Google Search ignores the file: "Doing so will neither harm nor help your site's visibility or rankings in Google
-     Search, as Google Search ignores them" [V] (developers.google.com, AI optimisation guide).
+   - Google Search doesn't use the file. Search Central's changelog of 15 June 2026: "these files aren't needed for
+     Google Search (and won't negatively or positively impact your visibility or rankings), it's fine if you want to
+     maintain these files for other services or systems that use them" [V] (developers.google.com/search/updates).
    - OpenAI, Anthropic and Perplexity don't say they read it either (helper [V]).
    - Coding agents fetch it, though, and Chrome's Lighthouse checks for it [V] (developer.chrome.com, Lighthouse
-     "llms.txt").
+     "llms.txt"; helper).
    - It's cheap, so add it, and expect help with AI assistants, not with rankings. [I]
 2. **The titles hold no search words.** A searcher for "run coding agents in parallel" or "kanban for AI coding
    agents" finds none in "The board decides who works · GizAi". New titles below.
 3. **No WebSite data, so no site name for Google.** Google wants WebSite data on the homepage with `name` and `url`,
-   and recommends `alternateName` [V] (developers.google.com, "Site names"). Add `name: "GizAi"` and
+   and recommends `alternateName` [V] (developers.google.com, "Site names"; helper). Add `name: "GizAi"` and
    `alternateName: ["Gizai"]` (the window still says Gizai). Not "Giz AI": that's Giz Inc.'s spelling.
 4. **SoftwareApplication can't earn a rich result.** Google requires `aggregateRating` or `review`, and "Ratings must
-   be sourced directly from users" [V] (developers.google.com, "Software app" and "Review snippet"). Keep it for meaning,
+   be sourced directly from users" [V] (developers.google.com, "Software app" and "Review snippet"; helper). Keep it for meaning,
    don't add ratings, and fix three things:
    - `downloadUrl` points at `/#get-gizai`, which isn't a download: use `installUrl`;
    - `operatingSystem` should say "Linux, macOS (Apple silicon), Windows 11" (`README.md:46`, `docs/install.md:67`);
@@ -527,8 +535,8 @@ forms").
    2026" [V] (Google Search Central changelog). Keep the questions as text on the page, and keep or drop the markup.
 6. `mountains-hero.svg`'s comment says "Gizai" in every page's source (§3.4).
 
-**The llms.txt draft**, at `/llms.txt` [V] for the format (llmstxt.org: an H1, a blockquote summary, text without
-headings, then H2 lists of links, with "Optional" last). It's built from `src/data/features.ts`, `src/data/docs.ts`
+**The llms.txt draft**, at `/llms.txt` [V] for the format (llmstxt.org, helper: an H1, a blockquote summary, text
+without headings, then H2 lists of links, with "Optional" last). It's built from `src/data/features.ts`, `src/data/docs.ts`
 and a short `src/data/llms.ts`, so new features and docs join by themselves:
 
 ```markdown
@@ -623,8 +631,8 @@ Lengths are characters. Google cuts titles at about 60, so the search words come
 **The format:** a share line, "What's new" in up to six bullets, how to update, then GitHub's list.
 
 - `gh release create` puts `--notes` or `--notes-file` text above the generated notes [V]: "Additional release notes
-  can be prepended to automatically generated notes" (cli.github.com/manual/gh_release_create); in the source,
-  `--notes-file` sets the body, and the REST API prepends a body to the generated notes.
+  can be prepended to automatically generated notes" (cli.github.com/manual/gh_release_create; helper). In the
+  source, `--notes-file` sets the body, and the REST API prepends a body to the generated notes (helper).
 - `--discussion-category` starts a discussion for the release [V] (cli/cli `pkg/cmd/release/create/create.go`). So
   every release also posts in Announcements.
 
@@ -650,7 +658,7 @@ GitHub's list goes under "All changes".
 
 - `.github/release.yml` (GA card) leaves out pull requests labelled `release`. The DevOps Agent labels the bump and
   release pull requests with it (`gh pr create … --label release`). [V] for the keys, `changelog.exclude.labels`
-  (docs.github.com, "Automatically generated release notes")
+  (docs.github.com, "Automatically generated release notes"; helper)
 - The step in `docs/RELEASING.md` becomes:
 
   ```sh
@@ -692,13 +700,13 @@ the name pass in one place, and the GW card waits for GW-7 instead of fighting i
 - `README.md` (§3.3);
 - the name in `README.md`, `CLAUDE.md`, `docs/PLATFORMS.md`, `docs/agent-tools.md`, `docs/RELEASING.md`,
   `docs/memory.md` and `docs/PAID-FEATURES.md` (§3.4);
-- `docs/memory.md:346-352` stays for good first issue 2, so first-timers have it;
+- but not `docs/memory.md:346-352`, which is left for good first issue 2;
 - `.github/ISSUE_TEMPLATE/bug.yml`, `feature.yml`, `install.yml` and `config.yml`;
 - `.github/pull_request_template.md`, `.github/release.yml`;
 - `CONTRIBUTING.md`, `SECURITY.md` (§3.7);
 - `docs/RELEASING.md` step 3 and the "What's new" format (§3.9).
 
-**Tests:** `npm test` and `cargo test --workspace` must pass, without changes to the tests.
+**Tests:** `npm test` and `cargo test --workspace` must pass, with the existing tests unchanged.
 
 - **The README:** `scripts/tour-renders.test.mjs` checks the tour's `<picture>`, the Development section and that the
   README names no `video/` folder, MP4, WebM or poster (`:116-143`). §3.3's text keeps all of that as it is.
@@ -752,7 +760,7 @@ SECURITY.md sends reports to a private channel. llms.txt repeats only public fac
    keep Announcements, Q&A, Ideas and Show and tell, remove General and Polls, and write the welcome post GitHub asks
    for.
 4. **Private vulnerability reporting:** Settings → Advanced Security (under "Security and quality") → Private
-   vulnerability reporting → Enable. [V] (docs.github.com)
+   vulnerability reporting → Enable. [V] (docs.github.com; helper)
 5. **A `release` label** for the release notes' exclude list. The default labels, `good first issue` and `help wanted`
    among them, exist already [V] (api.github.com/…/labels).
 6. **The good first issues** (§3.7): open them after the GA pull request is merged, so their links work.
@@ -780,7 +788,7 @@ Builds §5's GA list from §3.3, §3.4, §3.7 and §3.9.
 - [ ] "GizAi" in the docs of §3.4's table, with the paths, file names, quotes and dated records kept. `rg "Gizai"` on
   them finds only those.
 - [ ] `.github/ISSUE_TEMPLATE/` holds `bug.yml`, `feature.yml`, `install.yml` and `config.yml` as outlined, and each
-  parses.
+  passes §5's forms check.
 - [ ] `CONTRIBUTING.md`, `SECURITY.md`, `.github/pull_request_template.md` and `.github/release.yml` (exclude label
   `release`) exist.
 - [ ] `docs/RELEASING.md` step 3 has `--notes-file … --generate-notes --discussion-category "Announcements"`, the format
@@ -850,8 +858,8 @@ reads card 1's spelling once a release carries it.
 
 ## 9. Sources
 
-All read on 2026-10-13. "Helper" marks a page a research helper of this run read and quoted. I checked the ones marked
-[V] in the text myself.
+All read on 2026-10-13. "(helper)" marks a page one of this run's research helpers read and quoted, and I didn't open
+again.
 
 - This repository at `24535e3` (main), and Yotech-AI/gizai-website PRs #1 to #5 (`gh pr diff`)
 - GitHub API: https://api.github.com/repos/Yotech-AI/gizai, `/releases`, `/labels`, `/issues`, `/community/profile`; topic counts from https://api.github.com/search/repositories?q=topic:…

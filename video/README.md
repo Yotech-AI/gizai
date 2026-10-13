@@ -16,7 +16,7 @@ npm run typecheck
 ```
 
 `npm run render` needs `ffmpeg` on the PATH (for VP9 and the GIF's palette). The first render downloads Chrome Headless
-Shell into `node_modules/.remotion`, so it needs the network once. The whole render takes about ten minutes; the VP9
+Shell into `node_modules/.remotion`, so it needs the network once. The whole render takes about a quarter of an hour (16 threads); the VP9
 encode is the slow part.
 
 ## What it renders

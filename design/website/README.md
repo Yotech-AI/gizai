@@ -9,10 +9,10 @@ site's accent; the mountains' wireframe lines through the page; and the mountain
 
 - **Figma:** the file Giz-AI, page **Website: Home (desktop)** (node `37:2`):
   https://www.figma.com/design/Q2dp2xiv8MMm90Xwj3ToCI/Giz-AI?node-id=37-2
-  - `Home · Dark` (`40:27`) and `Home · Light` (`41:292`): the whole page, 1440 × 5929, top to bottom.
+  - `Home · Dark` (`40:27`) and `Home · Light` (`41:292`): the whole page, 1440 × 5833, top to bottom.
   - `Features · row 03 on hover · Dark` (`42:557`) and `· Light` (`42:673`): row 03 open under the pink plus cursor,
     row 01 closed.
-  - `In the window · Dark` (`62:973`) and `· Light` (`62:1203`): the page in a 1440 × 900 window at four scroll
+  - `In the window · Dark` (`67:2341`) and `· Light` (`67:2571`), under the pages,: the page in a 1440 × 900 window at four scroll
     positions, with the mountains fixed along the bottom.
   - `Homepage components` (`37:16`): Cursor, Theme switch, Tour frame, Note, Plus mark, Rule, Section label, Install
     line, Point glyph and Feature row.
@@ -102,7 +102,7 @@ macOS and Windows." Then:
   window, like the app's band. The sections are see-through; what holds content stays solid and covers it: the tour,
   the screenshots, the install lines, the top bar. At the end of the page the footer stands in the band's empty sky.
   `aria-hidden`, `pointer-events: none`, no motion; it goes with forced colours, on paper and under 560 px high.
-- **A feature row** (Feature row, State=Closed) is the number (Geist Bold 112, outlined in 1 px `text-3`), the name
+- **A feature row** (Feature row, State=Closed) is the number (Geist Bold 96, outlined in 1 px `text-3`), the name
   (Web/H2, in 520 px), one to three sentences (Web/Lead, `text-2`) and the feature page's address (Web/Code, `text-3`,
   with an arrow). **Open** (State=Open): the number fills pink under a 160 px pink line, the address takes the accent,
   and the screenshot or GIF (1120 × 700, drawn at 560 × 350) shows under the text, in the site theme.

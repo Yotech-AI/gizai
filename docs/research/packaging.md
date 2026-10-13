@@ -241,7 +241,7 @@ What changes, file by file:
    - The `install_prefix` wrapper (:216-226) answers a package first: `Err` with the texts of §5.1. So `status`, `check`, `start` and `restart_command`, which all go through it (:232, :262, :334, :510, :546), refuse a package's install.
    - `UpdateStatus` (:162-189) gets `package` and `update_command` (contract in §6).
 3. `install.sh` and `install.ps1`: their build drops the variable too (`unset GIZAI_PACKAGE` in the build's subshell, install.sh:197-208; `Remove-Item Env:GIZAI_PACKAGE -ErrorAction SilentlyContinue` in install.ps1's build). So an install script's Gizai is never marked by accident.
-4. The UI (PK2): `src/types.ts:441-460`, `UpdateSettings.tsx:27`, `:37-38` and `:66-67`, `UpdateNotice.tsx:60`, `src/lib/update.ts:30`.
+4. The UI (PK2): `src/types.ts:441-459`, `UpdateSettings.tsx:27`, `:37-38` and `:66-67`, `UpdateNotice.tsx:60`, `src/lib/update.ts:30`.
 5. Docs: docs/RELEASING.md:126 and docs/PLATFORMS.md:41 and :70 get one sentence each: "A Gizai built by a package (`GIZAI_PACKAGE`, the AUR or Homebrew) never updates itself: its package manager does."
 
 The tests that pin the trap stay: `only_a_gizai_in_prefix_lib_gizai_has_an_install_to_update` (crates/gizai-agents/tests/update_test.rs:200-208) still holds for a Gizai without the setting. [V] Cargo rebuilds a crate when a variable read with `option_env!` changes [I: from memory, not read today]. That doesn't matter for packages: makepkg and brew always build clean.
@@ -674,7 +674,7 @@ Order: **PK1 and PK2 at the same time** → a release that has both (the usual r
   - [ ] For `package: "aur"` and `"homebrew"`, every text of §5.1 shows word for word, and Copy copies `updateCommand`.
   - [ ] For any other package there's no command and no Copy.
   - [ ] Without `package`, Settings and the notice look exactly as today (the existing tests pass).
-  - [ ] Tests in `src/lib/update.test.ts` and `UpdateNotice.test.tsx`, and a test for the Update field.
+  - [ ] Tests in `src/lib/update.test.ts` and `UpdateNotice.test.tsx`, and a new `src/components/UpdateSettings.test.tsx` for the section's text and the Update field (there is none yet).
   - [ ] `npm test`, `npm run build` and `scripts/ui-test.sh` pass. The card's summary has a screenshot of Settings → Updates for a package, from `cage`.
 
 **Contract PK1 → PK2.** No new command: `update_status`, `check_for_updates`, `set_update_auto_check`, `start_update`, `stop_update` and `restart_gizai` stay as they are (src/api.ts:307-317). `UpdateStatus` gets two fields.

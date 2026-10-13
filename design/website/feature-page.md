@@ -25,7 +25,7 @@ dark and light. Mobile, the other pages and the website's build come later.
 |---|---|---|
 | 1 | Top bar | The homepage's bar, sticky, with the line art as its bottom border. |
 | 2 | Feature brandbox | The breadcrumb; the number in pink under a 160 px pink line; the name as the H1; the intro; the screenshot or GIF, 1280 × 832, with a plus at each corner. |
-| 3 | Feature paragraphs | A rule; two or three paragraphs, each an H2 and its text; the feature's doc on GitHub. |
+| 3 | Feature paragraphs | A rule; one centred column of two or three paragraphs, each an H2 above its text; under the last one, the feature's doc on GitHub. |
 | 4 | Feature FAQ | A rule; the label FAQ and an H2 on the left; three to six questions on the right. Left out when a feature has no questions worth asking. |
 | 5 | Pager | Previous and next, two cells split by a divider. |
 | 6 | Get GizAi | The install section from the homepage. |
@@ -106,10 +106,13 @@ mode of the frame they sit in.
 - **Feature media** (`86:145`): 1280 × 832, `surface/side` with a 1 px `line-2` border. Kind, Shows and Size fill the
   label, a design note that isn't on the site; Still turns on the capture itself. With Still off it is a wireframe of
   the app, as on the homepage.
-- **Paragraph** (`86:201`): an H2 (Web/H2, from x 240) and its text (Web/Lead, `text-2`, from x 800): the feature
-  rows' grid. 72 px under each; no lines between them.
-- **Feature paragraphs** (`89:259`): a rule, the Paragraphs slot, then Docs: "In the docs" (Web/Eyebrow, `text-3`)
-  over the address (Web/Code, accent, with an arrow), like the address on a feature row.
+- **Paragraph** (`86:201`): an H2 (Web/H2) and, 16 px under it, its text (Web/Lead, `text-2`), both as wide as the
+  column. 72 px under each; no lines between them.
+- **Feature paragraphs** (`89:259`): a rule, then one column, 680 wide and centred on the page (x 380 to 1060), 120 px
+  under the rule and 120 px above the next section. In it, the Paragraphs slot, then Docs, 72 px under the last
+  paragraph: "In the docs" (Web/Eyebrow, `text-3`) over the address (Web/Code, accent, with an arrow), like the
+  address on a feature row. The column is centred; its text is left-aligned. 680 is the FAQ's column width, about 70
+  characters a line in Web/Lead.
 - **FAQ item** (`86:223`; State = Closed, Open): see "The FAQ" below.
 - **Feature FAQ** (`89:290`): a rule; on the left the Section label FAQ and the title (H2); on the right the FAQ slot,
   680 wide, with a 1 px line under the last question.
@@ -182,7 +185,7 @@ The logo and one line on what GizAi is, then three columns of links; the page's 
 | | Releases ↗ | `https://github.com/Yotech-AI/gizai/releases` |
 | | View on GitHub ↗ | `https://github.com/Yotech-AI/gizai` |
 | YoTech | Made by YoTech ↗ | YoTech's website (the address is Jefsev's to give) |
-| | MIT licence ↗ | `https://github.com/Yotech-AI/gizai/blob/main/LICENSE` |
+| | Apache-2.0 licence ↗ | `https://github.com/Yotech-AI/gizai/blob/main/LICENSE` |
 
 The numbers in Features are Web/Code, `text-3`. ↗ (the component Leaves the site) marks a link that leaves the site.
 In Figma each link carries its address as an annotation.
@@ -268,7 +271,9 @@ closed.
   through it, so the bar is the first cell of the page's lines.
 - **The footer closes the grid.** A second rule ends the guides, and the column dividers make it a strip of cells like
   ADA's three points. The mountains stay behind it, then show alone in the sky.
-- **Paragraphs without lines.** They belong together, so space parts them, not rules; the grid is the feature rows'.
+- **Paragraphs in one centred column.** Each H2 sits above its text and the doc's address closes the column, so the
+  paragraphs read top to bottom. The FAQ under them keeps its title on the left, which sets the two sections apart.
+  The paragraphs belong together, so space parts them, not lines.
 - **Pink, as on the homepage:** the number and its 160 px line, the section label FAQ, an open question's 40 px line,
   a hovered previous or next. Never on links, buttons or body text.
 - **One H2 size.** Every section heading on a feature page is Web/H2, Get GizAi included, so the H1 in Web/Display

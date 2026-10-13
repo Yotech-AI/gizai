@@ -10,8 +10,11 @@ import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
+import { OPENED_KEY, forgetFolder, openedOf, rememberFolder } from "./lib/editor";
+import { tellMain } from "./lib/behind";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
+import type { FolderMain } from "./types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -2884,6 +2887,8 @@ export async function terminalProbe(folder: string) {
   if (panel) return terminalPanelProbe(panel[1] as "a" | "b", panel[2] ?? "");
   // GA-146: MODE=terminal:picker runs the folder picker's probe instead
   if (folder === "picker") return pickerProbe();
+  // GA-151: MODE=terminal:rows runs the probe of the sidebar's Editor rows instead
+  if (folder === "rows") return editorRowsProbe();
   const errors: string[] = [];
   const out: Record<string, unknown> = {};
   const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
@@ -3695,5 +3700,166 @@ async function pickerProbe() {
     out.openedCard = await waitFor(() => (kade && window.location.hash === `#/editor/${encodeURIComponent(kade.id)}` ? window.location.hash : null), 5000);
     check(out.openedCard && !sideEdPicker.isConnected, `a click on KADE-1 in the Editor's picker opens its worktree (${window.location.hash})`);
   }
+  return done();
+}
+
+// GIZAI_SELFTEST_MODE=terminal:rows on route terminal (GA-151 QA; scripts/ui-test.sh runs it after the picker's run, on the
+// same data: GFW-1 (a long title, 12 new files in its own repository), GFW-2 (a long title, pinned to you: by hand), KADE-1
+// (the longest title) and KADE-123 (titled "Fix") have worktrees, beside a project's linked folder and picker-site in
+// ~/Herd). With none open, the Editor section's Open a folder row and its + open the picker. Then the six open, at the
+// default sizes, the largest and compact: every row as tall as the sidebar's other rows and none over another; a card's
+// identifier whole on one line with its title right after it, on one line, a long one ending in an ellipsis and a short
+// one whole; how it stands ("12 changed", "by hand", "updating", and "3 behind" on a folder row) whole on the right; a card
+// row's tooltip starting with its full title, a by-hand row's and the folder rows' as before; the folded heading's
+// "1 behind" and the right-click menu.
+
+/** The cards' worktrees in the rows' run, whether each title is cut at the default sizes and what each row says. */
+const ROWS_CUT: Record<string, boolean> = { "GFW-1": true, "GFW-2": true, "KADE-1": true, "KADE-123": false };
+const ROWS_SAY: Record<string, string> = { "GFW-1": "12 changed", "GFW-2": "by hand", "KADE-1": "updating", "KADE-123": "" };
+
+async function editorRowsProbe() {
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const done = () => ({ ok: errors.length === 0, errors, ...out });
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const rect = (el: Element | null | undefined) => el?.getBoundingClientRect() ?? new DOMRect();
+  const mid = (el: Element | null | undefined) => (rect(el).top + rect(el).bottom) / 2;
+  const px = (v: string) => parseFloat(v) || 0;
+  const tasks = new Map((await listTasks({ openOnly: false })).map((t) => [t.identifier, t]));
+  const folders = await editorFolders();
+  out.folders = folders.map((f) => `${f.kind} ${f.name}`);
+  const cards = Object.keys(ROWS_CUT).map((n) => folders.find((f) => f.kind === "card" && f.name === n));
+  const site = folders.find((f) => f.kind === "root" && f.name === "picker-site");
+  const project = folders.find((f) => f.kind === "project");
+  if (!site || !project || cards.some((c) => !c)) {
+    errors.push(`the folders are a project's, picker-site and the cards ${Object.keys(ROWS_CUT).join(", ")} (${(out.folders as string[]).join(", ")})`);
+    return done();
+  }
+  check(tasks.get("GFW-2")?.byHand && !tasks.get("KADE-1")?.byHand && tasks.get("KADE-123")?.title === "Fix", "GFW-2 is pinned to you, KADE-1 isn't, KADE-123 is titled Fix");
+  const fakeMain = (more: Partial<FolderMain>): FolderMain => ({ mainLabel: "origin/main", fetchedAt: Date.now() - 120_000, fetchError: null, branch: "main",
+    onDefault: true, behind: 0, ahead: 0, uncommitted: 0, canUpdate: false, updateSays: "", updating: false, ...more });
+  // KADE-1 updating, picker-site 3 behind (the page tells the sidebar so, as Update and a fetch do)
+  const tell = () => {
+    tellMain(cards[2]!.id, fakeMain({ branch: "gizai/kade-1-picker", onDefault: false, updating: true, updateSays: "run npm ci" }));
+    tellMain(site.id, fakeMain({ behind: 3, canUpdate: true, updateSays: "move main 3 commits" }));
+    tellMain(project.id, fakeMain({}));
+  };
+
+  window.location.hash = "#/terminal";
+  const section = await waitFor(() => q<HTMLElement>('.side .nav-section[aria-label="Editor"]'));
+  // a plain row of the sidebar to compare with: the Terminal section's New terminal (no terminal is open)
+  const plainRow = await waitFor(() => q<HTMLElement>('.side .nav-section[aria-label="Terminal"] .nav-list > .nav-item'));
+  if (!section || !plainRow) { errors.push("the sidebar has no Editor section or no Terminal row"); return done(); }
+  const caret = () => section.querySelector<HTMLButtonElement>(".nav-label button[aria-expanded]");
+  if (caret()?.getAttribute("aria-expanded") === "false") { caret()?.click(); await nextFrame(); }
+
+  // 1. none open: the Open a folder row, one row high; it and + open the picker, Escape closes it
+  // every folder kept open, those of earlier runs on the same WebKit storage too (~/Herd/panel-site, GA-137)
+  for (const id of openedOf(localStorage.getItem(OPENED_KEY))) forgetFolder(id);
+  const openRow = await waitFor(() => { const b = section.querySelector<HTMLButtonElement>(".nav-list > button.nav-item"); return b && textOf(b) === "Open a folder" ? b : null; });
+  check(openRow && Math.abs(rect(openRow).height - rect(plainRow).height) < 0.6, `with none open the Editor has its Open a folder row, a row high (${r1(rect(openRow).height)}, not ${r1(rect(plainRow).height)})`);
+  for (const [what, el] of [["the Open a folder row", openRow], ["+", section.querySelector<HTMLButtonElement>('.nav-label button[aria-label="Open a folder"]')]] as const) {
+    el?.click();
+    const p = await waitFor(() => q<HTMLElement>('.ed-picker[aria-label="Open a folder"]'));
+    check(p, `${what} opens the folder picker`);
+    p?.querySelector("input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    check(await waitFor(() => (!q(".ed-picker") ? true : null), 2000), `Escape closes the picker ${what} opened`);
+  }
+
+  // 2. all six open, KADE-1 on top
+  for (const f of [project, site, ...cards.slice().reverse()]) rememberFolder(f!.id);
+  const rowOf = (name: string) => [...section.querySelectorAll<HTMLElement>(".nav-list > a.nav-item")]
+    .find((a) => textOf(a.querySelector(".card-id") ?? a.querySelector("span")) === name) ?? null;
+  const says = (name: string) => textOf(rowOf(name)?.querySelector(".meta"));
+  // wait for the folders' git (GFW-1's 12 changed) and the first editorMain answers, then tell
+  check(await waitFor(() => section.querySelectorAll(".nav-list > a.nav-item").length === 6 && says("GFW-1") === "12 changed" && says("GFW-2") === "by hand"
+    && cards.every((f) => rowOf(f!.name)?.querySelector(".faint")) ? true : null, 10000),
+    `the six rows show, GFW-1 says 12 changed and GFW-2 by hand (${[...section.querySelectorAll(".nav-list > a.nav-item")].map((a) => `${textOf(a)}`).join(" | ")})`);
+  await sleep(1000);
+  tell();
+  check(await waitFor(() => says("KADE-1") === "updating" && says("picker-site") === "3 behind" ? true : null, 3000),
+    `told, KADE-1 says updating and picker-site 3 behind (${says("KADE-1")}, ${says("picker-site")})`);
+
+  /** Where the Editor rows are and what they show; `exact` checks which titles are cut at the default sizes. */
+  const measure = (at: string, exact: boolean) => {
+    const rows = [...section.querySelectorAll<HTMLElement>(".nav-list > a.nav-item")];
+    const plain = rect(plainRow).height;
+    const seen: Record<string, unknown> = { row: r1(plain) };
+    check(rows.length === 6 && rows.every((r) => Math.abs(rect(r).height - plain) < 0.6),
+      `${at}: every Editor row is as tall as the sidebar's other rows (${r1(plain)}): ${rows.map((r) => r1(rect(r).height)).join(", ")}`);
+    const ordered = rows.map((r) => rect(r)).sort((a, b) => a.top - b.top);
+    for (let k = 1; k < ordered.length; k++) check(ordered[k - 1]!.bottom <= ordered[k]!.top + 0.5, `${at}: row ${k} (down to ${r1(ordered[k - 1]!.bottom)}) runs over row ${k + 1} (from ${r1(ordered[k]!.top)})`);
+    for (const f of cards) {
+      const name = f!.name, r = rowOf(name), task = tasks.get(name);
+      const id = r?.querySelector<HTMLElement>(".card-id"), title = r?.querySelector<HTMLElement>(".faint"), meta = r?.querySelector<HTMLElement>(".meta");
+      if (!r || !id || !title || !task) { errors.push(`${at}: ${name}'s row has no identifier or title`); continue; }
+      const rb = rect(r), ib = rect(id), tb = rect(title), rs = getComputedStyle(r), ts = getComputedStyle(title), is = getComputedStyle(id);
+      const cut = title.scrollWidth > title.clientWidth + 0.5;
+      seen[name] = { id: r1(ib.width), title: r1(tb.width), cut, says: textOf(meta) };
+      // the identifier: whole, on one line, never shrunk
+      check(textOf(id) === name && is.whiteSpace === "nowrap" && is.flexShrink === "0" && id.scrollWidth <= id.clientWidth + 0.5 && ib.height < 1.9 * px(is.fontSize),
+        `${at}: ${name}'s identifier shows whole on one line (${r1(ib.width)} × ${r1(ib.height)}, needs ${id.scrollWidth} wide)`);
+      // the title: right after it, on one line, ending in an ellipsis when it doesn't fit
+      check(Math.abs(tb.left - ib.right - px(rs.columnGap)) < 1, `${at}: ${name}'s title starts right after its identifier (${r1(ib.right)} to ${r1(tb.left)}, the gap ${rs.columnGap})`);
+      check(textOf(title) === task.title && ts.whiteSpace === "nowrap" && ts.textOverflow === "ellipsis" && ts.overflowX === "hidden" && tb.height < 1.9 * px(ts.fontSize),
+        `${at}: ${name}'s title is on one line, ending in an ellipsis when cut (${ts.whiteSpace}, ${ts.textOverflow}, ${ts.overflowX}, ${r1(tb.height)} high)`);
+      if (exact) check(cut === ROWS_CUT[name], `${at}: ${name}'s title is ${cut ? "" : "not "}cut, not as expected (${title.scrollWidth} in ${title.clientWidth})`);
+      if (task.title === "Fix") check(!cut, `${at}: ${name}'s short title shows whole (${title.scrollWidth} in ${title.clientWidth})`);
+      // how it stands: whole, on one line, on the right, the title not running under it
+      check(textOf(meta) === ROWS_SAY[name], `${at}: ${name}'s row says ${JSON.stringify(textOf(meta))}, not ${JSON.stringify(ROWS_SAY[name])}`);
+      if (meta) {
+        const mb = rect(meta), stand = meta.querySelector<HTMLElement>(".stand");
+        check(meta.scrollWidth <= meta.clientWidth + 0.5 && (!stand || stand.scrollWidth <= stand.clientWidth + 0.5) && mb.height < 1.9 * px(getComputedStyle(meta).fontSize)
+            && Math.abs(mb.right - (rb.right - px(rs.paddingRight))) < 1 && tb.right <= mb.left + 0.5,
+          `${at}: ${name}'s ${textOf(meta)} shows whole on the right (${r1(mb.left)} to ${r1(mb.right)}, the row to ${r1(rb.right)}, the title to ${r1(tb.right)})`);
+      } else check(tb.right <= rb.right - px(rs.paddingRight) + 0.5, `${at}: ${name}'s title stays inside its row`);
+      for (const [what, el] of [["identifier", id], ["title", title], ["standing", meta]] as const) {
+        if (el) check(Math.abs(mid(el) - mid(r)) < 1.5 && rect(el).top >= rb.top - 0.5 && rect(el).bottom <= rb.bottom + 0.5, `${at}: ${name}'s ${what} sits in the middle of its row (${r1(mid(el))}, the row's ${r1(mid(r))})`);
+      }
+      // the tooltip: the full title first; a by-hand row's as before
+      const tip = r.title;
+      if (task.byHand) check(tip === `${name} ${task.title}. Pinned to you: agents leave it alone`, `${at}: ${name}'s by-hand tooltip is as before (${JSON.stringify(tip)})`);
+      else check(tip.split("\n").length === 2 && tip.split("\n")[0] === task.title && tip.split("\n")[1]!.startsWith(f!.path), `${at}: ${name}'s tooltip is its full title, then its path and how it stands (${JSON.stringify(tip)})`);
+    }
+    // the folder rows: their name and how they stand, their tooltip as before
+    for (const f of [site, project]) {
+      const r = rowOf(f.name);
+      check(r && !r.querySelector(".card-id") && !r.title.includes("\n") && r.title.startsWith(f.path), `${at}: ${f.name}'s row and tooltip are a folder's, as before (${JSON.stringify(r?.title)})`);
+    }
+    const sm = rowOf("picker-site")?.querySelector<HTMLElement>(".meta");
+    check(sm && textOf(sm) === "3 behind" && sm.scrollWidth <= sm.clientWidth + 0.5, `${at}: picker-site says 3 behind, whole (${textOf(sm)})`);
+    out[at] = seen;
+  };
+
+  const looks: [string, Partial<Parameters<typeof setAppearance>[0]>, boolean][] = [
+    ["default sizes", {}, true], ["the largest text", { ui: 16.5, chat: 20, docs: 20 }, false], ["compact", { density: "compact" }, false],
+    ["the largest text, compact", { ui: 16.5, chat: 20, docs: 20, density: "compact" }, false]];
+  for (const [at, look, exact] of looks) {
+    setAppearance({ ui: 13.5, chat: 15, docs: 15, density: "comfortable", ...look }, false);
+    tell();
+    await nextFrame(); await sleep(150);
+    measure(at, exact);
+  }
+  setAppearance({ ui: 13.5, chat: 15, docs: 15, density: "comfortable" }, false);
+  await nextFrame();
+
+  // 3. folded, the heading says 1 behind; unfolded, the rows come back
+  caret()?.click();
+  const tag = await waitFor(() => section.querySelector<HTMLElement>(".fold-tag"), 2000);
+  check(textOf(tag) === "1 behind" && section.querySelectorAll("a.nav-item").length === 0, `folded, the Editor heading says 1 behind and hides its rows (${textOf(tag)})`);
+  caret()?.click();
+  check(await waitFor(() => section.querySelectorAll(".nav-list > a.nav-item").length === 6 && !section.querySelector(".fold-tag") ? true : null, 2000), "unfolded, the six rows are back");
+
+  // 4. a right click on a card's row: Copy path, Remove from the list, Open card; Escape closes it
+  const kade = rowOf("KADE-1");
+  const kb = rect(kade);
+  kade?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: kb.left + 40, clientY: kb.top + kb.height / 2 }));
+  const menu = await waitFor(() => q<HTMLElement>('.pop[role="menu"][aria-label="Folder"]'), 2000);
+  const items = [...(menu?.querySelectorAll("button.opt") ?? [])].map((b) => textOf(b));
+  out.menu = items;
+  check(["Copy path", "Remove from the list", "Open card"].every((x) => items.includes(x)), `a right click on KADE-1's row has Copy path, Remove from the list and Open card (${items.join(", ")})`);
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  check(await waitFor(() => (!q('.pop[role="menu"]') ? true : null), 2000), "Escape closes the right-click menu");
   return done();
 }

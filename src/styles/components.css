@@ -583,7 +583,9 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 /* ---------- sidebar: the Editor section, a FoldSection between Projects and Agents ---------- */
 /* How a folder stands, on the right of its row: one of "3 behind", "2 changed", "1 ahead", "By hand", "read-only" */
 .nav-item .stand { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: var(--fs-xs); font-weight: 500; white-space: nowrap; }
-.nav-item .card-id { font-family: var(--font-mono); font-size: var(--fs-sm); }
+/* A card's row stays one line high: its identifier and how it stands stay whole, its title between them gives way (GA-151) */
+.nav-item .card-id { flex: none; white-space: nowrap; font-family: var(--font-mono); font-size: var(--fs-sm); }
+.nav-item .card-id ~ .meta { flex: none; }
 /* Folded, the heading says how many folders are behind (Agents says how many agents are live) */
 .nav-label .fold-tag { margin: 0 6px 0 auto; color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: normal; text-transform: none; }
 

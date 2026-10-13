@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Terminal } from "@xterm/xterm";
-import { appInfo, archiveTask, chatMessages, editorFolders, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, setAgentStatus, terminalClose, terminalList, terminalOpen } from "./api";
+import { appInfo, archiveTask, chatMessages, editorFolders, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, setAgentStatus, terminalClose, terminalInput, terminalList, terminalOpen } from "./api";
 import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
@@ -3459,6 +3459,7 @@ async function terminalPanelProbe(phase: "a" | "b", card: string) {
 //  - "#/route": goes there;
 //  - "theme:dark" or "theme:light": Settings → Appearance's theme, for this start only (not kept);
 //  - "wait:<ms>": waits that long;
+//  - "term:<command>": types the command and Enter in the newest terminal (the tour's Terminals scene);
 //  - "<name>=<selector>" or "<name>@<ms>=<selector>" (GA-148, the product tour): a named click. It waits for the element,
 //    scrolls it into view when it isn't, notes its box (in the screen's pixels) and clicks it; with GIZAI_TOUR_DIR set
 //    (scripts/tour-capture.sh) it takes a still before the click and one <ms> after it (1500 by default), and at the end
@@ -3496,6 +3497,13 @@ export async function runSteps(steps: string[], api: { still: (name: string) => 
       continue;
     }
     if (step.startsWith("wait:")) { await sleep(Number(step.slice(5)) || 0); continue; }
+    if (step.startsWith("term:")) {
+      let last = (await terminalList()).at(-1);
+      for (let i = 0; i < 50 && !last; i++) { await sleep(100); last = (await terminalList()).at(-1); }
+      if (last) await terminalInput(last.id, `${step.slice(5)}\r`).catch((e) => errors.push(`${step}: ${e}`));
+      else errors.push(`${step}: no terminal is open`);
+      continue;
+    }
     const m = STEP_NAME.exec(step);
     if (!m) {
       await sleep(1200);

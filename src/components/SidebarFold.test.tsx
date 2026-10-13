@@ -18,7 +18,9 @@ vi.mock("react", async (orig) => {
     return [slots[k], (v: unknown) => { slots[k] = typeof v === "function" ? (v as (x: unknown) => unknown)(slots[k]) : v; }];
   }) as unknown as typeof R.useState;
   const useEffect = (() => {}) as typeof R.useEffect;
-  return { ...R, default: { ...R, useState, useEffect }, useState, useEffect };
+  // The Terminal section (GA-136) reads the open terminals from their store: the snapshot, outside React too
+  const useSyncExternalStore = ((_subscribe: unknown, snapshot: () => unknown) => snapshot()) as typeof R.useSyncExternalStore;
+  return { ...R, default: { ...R, useState, useEffect, useSyncExternalStore }, useState, useEffect, useSyncExternalStore };
 });
 
 const state = vi.hoisted(() => ({
@@ -145,18 +147,18 @@ describe("the carets on Agents and Memory (GA-90)", () => {
     expect(page).toContain('<div class="nav-list" id="side-agents" hidden=""></div>');
     expect(page).toContain('<div class="nav-list" id="side-memory" hidden=""></div>');
   });
-  it("are only on Editor (GA-113), Agents and Memory: Work, Projects and Company have none", () => {
+  it("are only on Terminal (GA-136), Editor (GA-113), Agents and Memory: Work, Projects and Company have none", () => {
     const page = html();
-    expect(page.match(/aria-expanded=/g)).toHaveLength(3);
-    expect(page.match(/lucide-chevron-(down|up)/g)).toHaveLength(3);
-    expect([...page.matchAll(/aria-controls="side-(\w+)"/g)].map((m) => m[1])).toEqual(["editor", "agents", "memory"]);
+    expect(page.match(/aria-expanded=/g)).toHaveLength(4);
+    expect(page.match(/lucide-chevron-(down|up)/g)).toHaveLength(4);
+    expect([...page.matchAll(/aria-controls="side-(\w+)"/g)].map((m) => m[1])).toEqual(["terminal", "editor", "agents", "memory"]);
     expect(head(page, "Work")).toBe('<div class="nav-section"><div class="nav-label">Work</div>');
     expect(page).toContain('<div class="nav-label">Company</div>');
   });
   it("are buttons, so Tab reaches them and Enter or Space clicks them", () => {
     const page = html();
     expect(page).not.toMatch(/tabindex="-1"/);
-    expect(tree().filter((el) => el.type === "button" && el.props["aria-controls"]).map((el) => typeof el.props.onClick)).toEqual(["function", "function", "function"]);
+    expect(tree().filter((el) => el.type === "button" && el.props["aria-controls"]).map((el) => typeof el.props.onClick)).toEqual(["function", "function", "function", "function"]);
   });
 });
 

@@ -4,9 +4,11 @@
 // the heading says how many folders are behind. The sidebar runs in a small hook runtime (as in EditorPage.test.tsx):
 // components are called as functions, keep their hooks by their place in the tree, and effects run after each render;
 // its data (useData, the team, the live runs, the drawers) is handed in, and contract C3 is a fake.
+// GA-151 QA: a card's row keeps its identifier whole and its title on one line (the ellipsis class), and its tooltip starts
+// with the full title; a by-hand row's tooltip, a row whose card isn't known and the folder rows stay as they were.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import type { EditorFolder, EditorUpdated, FolderGit, FolderMain } from "../types";
+import type { EditorFolder, EditorUpdated, FolderGit, FolderMain, Task } from "../types";
 
 type Inst = { slots: unknown[]; i: number };
 type EffectSlot = { effect: true; deps?: unknown[]; first: boolean; cleanup?: () => void };
@@ -248,5 +250,126 @@ describe("the sidebar's Editor rows and behind main (GA-114)", () => {
     tellMain(API, main({ behind: 0 }));
     await settle();
     expect(tag()).toBeNull();
+  });
+});
+
+// ---- GA-151 QA: a card's row ----
+const LONG = "Sidebar Editor list: long card titles run over the rows above and below them, wrapped onto two or three lines";
+const cardTask = (more: Partial<Task> = {}) => ({ id: "t1", identifier: "GA-118", title: LONG, byHand: false, ...more }) as Task;
+const SAYS = ["meta", "stand", "pulse"];
+/** The card's row: the name's parts in order (class, inline style, text), what it says on the right and its tooltip. */
+const cardRow = () => {
+  const a = findAll(editorSection().props.children as ReactNode, (f) => f.type === "a" && findAll(f.props.children as ReactNode, (s) => s.props.className === "card-id").length > 0)[0]!;
+  const parts = findAll(a.props.children as ReactNode, (f) => f.type === "span" && !SAYS.includes(String(f.props.className)))
+    .map((s) => ({ cls: s.props.className, style: s.props.style, text: textOf(s.props.children as ReactNode) }));
+  const meta = findAll(a.props.children as ReactNode, (f) => f.props.className === "meta")[0];
+  return { parts, says: meta ? textOf(meta.props.children as ReactNode) : "", tip: a.props.title as string };
+};
+const READ_ONLY = `Frontend Agent is working on GA-118: read-only until its run ends`;
+// Vitest hands a .css file back empty, even with ?raw, so the stylesheets are read from disk (as in
+// FolderPickerTerminal.test.tsx); node:fs comes in through a computed specifier: the build type-checks tests without Node's types.
+const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+const sheet = (name: string): string => fs.readFileSync(new URL(`../styles/${name}`, import.meta.url), "utf8");
+const componentsCss = sheet("components.css"), appCss = sheet("app.css"), terminalCss = sheet("terminal.css");
+/** One CSS rule's declarations, by its exact selector. */
+const rule = (css: string, sel: string) => {
+  const at = css.split("\n").find((l) => l.startsWith(`${sel} {`));
+  return at ? at.slice(at.indexOf("{") + 1, at.lastIndexOf("}")).split(";").map((d) => d.trim()).filter(Boolean) : null;
+};
+
+describe("the sidebar's Editor rows: a card's title on one line (GA-151)", () => {
+  const card = { ...FOLDERS[2]! };
+  afterEach(() => { FOLDERS[2] = { ...card }; });
+
+  it("a card's row is its identifier, then its title with the ellipsis class and no inline style; how it stands comes after", async () => {
+    state.data.tasks = [cardTask()];
+    gits.set(CARD, { branch: "gizai/ga-118", files: {}, uncommitted: 12 });
+    await show();
+    const row = cardRow();
+    expect(row.parts).toEqual([{ cls: "card-id", style: undefined, text: "GA-118" }, { cls: "faint ellipsis", style: undefined, text: LONG }]);
+    expect(row.says).toBe("12 changed");
+  });
+
+  it("a short title shows the same way, whole", async () => {
+    state.data.tasks = [cardTask({ title: "Fix" })];
+    await show();
+    expect(cardRow().parts).toEqual([{ cls: "card-id", style: undefined, text: "GA-118" }, { cls: "faint ellipsis", style: undefined, text: "Fix" }]);
+    expect(cardRow().tip.split("\n")[0]).toBe("Fix");
+  });
+
+  it("the tooltip starts with the full title, then a line break, then what it said before (the path and how it stands)", async () => {
+    // before: the card isn't known yet, so the row says what it always said
+    await show();
+    const before = cardRow().tip;
+    expect(before).not.toContain("\n");
+    expect(before.startsWith(CARD)).toBe(true);
+    state.data.tasks = [cardTask()];
+    await settle();
+    expect(cardRow().tip).toBe(`${LONG}\n${before}`);
+  });
+
+  it("while it is updating, the tooltip still starts with the full title", async () => {
+    state.data.tasks = [cardTask()];
+    await show();
+    tellMain(CARD, main({ branch: "gizai/ga-118", onDefault: false, updating: true, updateSays: "run npm ci" }));
+    await settle();
+    expect(cardRow().says).toBe("updating");
+    expect(cardRow().tip).toBe(`${LONG}\n${CARD} · Updating: run npm ci`);
+  });
+
+  it("read-only while an agent works on it: the title, then the read-only sentence; the pulse and read-only on the right", async () => {
+    FOLDERS[2] = { ...card, readOnly: true, readOnlyWhy: "Frontend Agent is working on GA-118" };
+    state.data.tasks = [cardTask()];
+    await show();
+    expect(cardRow().says).toBe("read-only");
+    expect(cardRow().tip).toBe(`${LONG}\n${READ_ONLY}`);
+  });
+
+  it("a by-hand row's tooltip is exactly as before: it already starts with the identifier and the title", async () => {
+    state.data.tasks = [cardTask({ byHand: true })];
+    await show();
+    expect(cardRow().says).toBe("by hand");
+    expect(cardRow().tip).toBe(`GA-118 ${LONG}. Pinned to you: agents leave it alone`);
+    expect(cardRow().parts[1]).toEqual({ cls: "faint ellipsis", style: undefined, text: LONG });
+  });
+
+  it("read-only and by hand: read-only wins, so the tooltip starts with the title", async () => {
+    FOLDERS[2] = { ...card, readOnly: true, readOnlyWhy: "Frontend Agent is working on GA-118" };
+    state.data.tasks = [cardTask({ byHand: true })];
+    await show();
+    expect(cardRow().says).toBe("read-only");
+    expect(cardRow().tip).toBe(`${LONG}\n${READ_ONLY}`);
+  });
+
+  it("a row whose card isn't known shows its identifier only, and its tooltip as before, with no title", async () => {
+    await show();
+    expect(cardRow().parts).toEqual([{ cls: "card-id", style: undefined, text: "GA-118" }]);
+    expect(cardRow().tip).toBe(`${CARD} · gizai/ga-118-show-a-run-s-changes is 5 commits behind origin/main, fetched 2m ago · gizai/ga-118-show-a-run-s-changes has 2 commits that origin/main doesn't`);
+    FOLDERS[2] = { ...card, readOnly: true, readOnlyWhy: "Frontend Agent is working on GA-118" };
+    await show();
+    expect(cardRow().tip).toBe(READ_ONLY);
+  });
+
+  it("folder rows stay as they were: the name alone, and the tooltip without a title", async () => {
+    state.data.tasks = [cardTask()];
+    await show();
+    const kade = findAll(editorSection().props.children as ReactNode, (f) => f.type === "a" && f.props.title !== cardRow().tip);
+    expect(kade.map((a) => findAll(a.props.children as ReactNode, (f) => f.type === "span" && !SAYS.includes(String(f.props.className))).map((s) => [s.props.className, textOf(s.props.children as ReactNode)])))
+      .toEqual([[[undefined, "kade-portal"]], [[undefined, "invoice-api"]]]);
+    expect(kade.map((a) => a.props.title)).toEqual([
+      "/home/you/Herd/kade-portal · main is 3 commits behind origin/main, fetched 2m ago",
+      "/home/you/Herd/invoice-api · main, up to date with origin/main · 4 files changed, not committed",
+    ]);
+  });
+
+  it("the CSS: a row keeps its one-line height; the identifier and how it stands never wrap or shrink; the title gives way", () => {
+    expect(rule(componentsCss, ".nav-item")).toEqual(expect.arrayContaining(["height: calc(32px + var(--ui-box, 0px))", "align-items: center"]));
+    expect(rule(componentsCss, ".nav-item .card-id")).toEqual(expect.arrayContaining(["flex: none", "white-space: nowrap"]));
+    expect(rule(componentsCss, ".nav-item .card-id ~ .meta")).toEqual(["flex: none"]);
+    expect(rule(componentsCss, ".nav-item .meta")).toContain("margin-left: auto");
+    expect(rule(componentsCss, ".nav-item .stand")).toContain("white-space: nowrap");
+    expect(rule(appCss, ".ellipsis")).toEqual(["overflow: hidden", "text-overflow: ellipsis", "white-space: nowrap", "min-width: 0"]);
+    // the Terminal section's rule is as it was
+    expect(rule(terminalCss, ".nav-item[data-term] .card-id")).toEqual(["flex: none"]);
   });
 });

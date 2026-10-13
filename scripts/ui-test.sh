@@ -108,6 +108,13 @@
 #     title starts at one place, with the glyph and the identifier on its first line; the tooltip starts with the full
 #     title; project and folder rows are one row high with the path on the right; ↑, ↓ and Escape; in the Editor's picker
 #     Enter opens a folder and a click opens a card's worktree.
+# 18. editor rows (GA-151), on the folder picker's data with GFW-2 by hand, KADE-123 titled "Fix" and 12 new files in GFW-1:
+#     with none open, the sidebar's Open a folder row and + open the picker; with the six open, at the default sizes, the
+#     largest, compact and both, every Editor row is as tall as the sidebar's other rows and none runs over another; a
+#     card's identifier shows whole on one line with its title right after it on one line, a long one ending in an ellipsis
+#     and "Fix" whole; "12 changed", "by hand", "updating" and a folder's "3 behind" show whole on the right; a card row's
+#     tooltip starts with its full title, a by-hand row's and the folder rows' are as before; folded, the heading says
+#     "1 behind"; the right-click menu has Copy path, Remove from the list and Open card.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -204,4 +211,20 @@ c.execute("insert into repos(id, created_at, updated_at, project_id, provider, r
 c.commit()
 PY
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:picker GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+# GA-151: the sidebar's Editor rows, on the same data: GFW-2 pinned to you (by hand), KADE-123 titled "Fix", and GFW-1 with
+# a long title and 12 new files in its own repository ("12 changed")
+python3 - <<'PY'
+import sqlite3, subprocess
+c = sqlite3.connect('.devdata/uitest/gizai.db')
+c.execute("update tasks set pinned_actor_id=(select id from actors where kind='person' order by created_at limit 1) where identifier='GFW-2'")
+c.execute("update tasks set title='Fix' where identifier='KADE-123'")
+c.execute("update tasks set title='Newsletter templates for the spring campaign, with a page per channel and every export' where identifier='GFW-1'")
+c.commit()
+key = c.execute("select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='GFW-1'").fetchone()[0]
+wt = f".devdata/uitest/worktrees/{key}/GFW-1"
+subprocess.run(["git", "init", "-q", "-b", "gizai/gfw-1-picker", wt], check=True)
+for i in range(12):
+    open(f"{wt}/new-{i + 1}.txt", "w").write("new\n")
+PY
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:rows GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

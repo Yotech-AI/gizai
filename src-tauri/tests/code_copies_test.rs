@@ -530,7 +530,9 @@ fn fakes() {
             std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         };
         write("composer", "#!/bin/sh\nmkdir -p vendor/composer\necho \"composer $*\" >> vendor/calls.log\n");
-        write("npm", "#!/bin/sh\nmkdir -p node_modules/.bin\necho \"npm $*\" >> node_modules/calls.log\n");
+        // npm fails in a folder with .npm-fails in it
+        write("npm", "#!/bin/sh\nif [ -f .npm-fails ]; then echo 'npm ERR! code EUSAGE' >&2; exit 1; fi\nmkdir -p node_modules/.bin\n\
+                      echo \"npm $*\" >> node_modules/calls.log\n");
         let old = std::env::var("PATH").unwrap_or_default();
         unsafe { std::env::set_var("PATH", format!("{}:{old}", bin.display())) };
     });
@@ -688,4 +690,28 @@ async fn when_git_cant_stash_the_update_from_the_chat_stops_before_the_fast_forw
     assert!(!herd.join("vendor/calls.log").exists() && !herd.join("node_modules/calls.log").exists());
     let line = code::before_turn(&st, &thread).await.line;
     assert!(line.contains("stopped: putting the uncommitted changes in git's stash failed"), "{line}");
+}
+
+#[tokio::test]
+async fn when_a_step_after_the_stash_fails_the_chat_says_the_changes_are_in_gits_stash_and_how_to_get_them_back() {
+    fakes();
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    identity(&herd, "t");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    code::before_turn(&st, "warm-up").await;
+    std::fs::write(herd.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    std::fs::write(herd.join(".npm-fails"), "").unwrap();
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update my folder").unwrap();
+    tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap();
+    let said = update_ended(&st, &thread).await;
+    let h = herd.display();
+    assert!(said.starts_with(&format!("The update of KADE's linked folder {h} stopped: npm ci failed (exit code 1). Before that it put the \
+                                       uncommitted changes in package-lock.json in git's stash (git -C {h} stash pop brings them back).")), "{said}");
+    assert!(said.contains("npm ERR! code EUSAGE"), "the end of the output: {said}");
+    assert_eq!(stashes(&herd), ["On main: Gizai: before the update to main"]);
 }

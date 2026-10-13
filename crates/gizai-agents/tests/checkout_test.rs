@@ -491,3 +491,21 @@ fn gits_hooks_dont_run_when_it_stashes_switches_and_fast_forwards() {
     commit(&r.folder, &[("local.txt", "mine\n")], "local");
     assert!(ran.exists(), "the hooks are live");
 }
+
+#[test]
+fn when_a_later_step_fails_the_stop_says_the_changes_went_to_gits_stash() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = Repos::new(tmp.path());
+    identity(&r.folder, "t");
+    std::fs::write(r.folder.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    write_script(&bin.join("npm"), "#!/bin/sh\necho 'npm ERR! code EUSAGE' >&2\nexit 1\n");
+    let path = std::env::join_paths([bin, "/usr/bin".into(), "/bin".into()]).unwrap();
+    let plan = checkout::plan(&r.folder, &r.folder, "main", MAIN, false, true).unwrap();
+    let stopped = checkout::update(&r.folder, &plan, Some(path.as_os_str())).unwrap_err();
+    assert_eq!(stopped.why, "npm ci failed (exit code 1)", "{stopped:?}");
+    assert_eq!((stopped.stashed.clone(), stopped.done.clone()),
+               (vec!["package-lock.json".to_string()], vec!["put the uncommitted changes in package-lock.json in git's stash".to_string()]));
+    assert_eq!(stashes(&r.folder), ["On main: Gizai: before the update to main"], "the change stays in the stash");
+}

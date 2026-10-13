@@ -9,8 +9,9 @@ import "./styles/app.css";
 import "./styles/changes.css";
 import "./styles/terminal.css";
 import "./styles/appearance.css";
+import "./styles/band.css";
 
-// The font, text sizes, theme and density (Settings → Appearance), before anything is drawn.
+// The font, text sizes, theme, density and mountains (Settings → Appearance), before anything is drawn.
 applyAppearance(document.documentElement, getAppearance());
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

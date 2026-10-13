@@ -35,7 +35,7 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 
 ## Install
 
-GizAi builds from source and installs for you alone, without sudo. Every system needs git, Rust, Node.js 20 or newer, and a coding CLI you're logged in to, like Claude Code.
+GizAi builds from source and installs for you alone, without sudo or administrator rights. Every system needs git, Rust, Node.js 20 or newer, and a coding CLI you're logged in to, like Claude Code.
 
 - **Linux:** also WebKitGTK 4.1. `./install.sh --check` names the packages for your distribution.
 - **macOS** on Apple silicon: also Apple's Command Line Tools, from `xcode-select --install`.

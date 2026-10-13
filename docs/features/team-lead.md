@@ -1,6 +1,6 @@
 # A Team Lead you talk to
 
-The Team Lead is the agent you chat with: it runs your board with GizAi's own tools, and it answers the other agents' questions before they reach you.
+The Team Lead is the agent you chat with: it looks after your board for you, and answers the other agents' questions before they reach you.
 
 ## What it can do
 

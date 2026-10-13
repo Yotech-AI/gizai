@@ -1,5 +1,6 @@
 // GA-42: Settings → Appearance. Five font choices, each shown in its own font (data-font on the choice, which appearance.css
-// turns into that font's stacks); a picker per text size with the card's sizes; Theme and Density; and Reset to defaults.
+// turns into that font's stacks); a picker per text size with the card's sizes; Theme and Density; Background with the
+// mountains along the bottom (GA-143); and Reset to defaults.
 // A click changes the appearance at once (src/lib/appearance.ts, tested on its own); here it is checked that each control
 // changes the right value. Rendered to HTML on the server, and clicked on the element tree with React's hooks replaced.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -99,9 +100,20 @@ describe("Settings → Appearance", () => {
     expect(group(html, "Theme")).toEqual([["Dark", false], ["Light", true]]);
     expect(group(html, "Density")).toEqual([["Comfortable", false], ["Compact", true]]);
   });
+  it("ends with Background: the mountains' checkbox, on by default, with GA-139's hint (GA-143)", () => {
+    const html = render();
+    const sections = [...html.matchAll(/<h3[^>]*>([^<]+)<\/h3>/g)].map((m) => m[1]);
+    expect(sections[sections.length - 1]).toBe("Background");
+    expect(html).toContain('<label class="check"><input type="checkbox" checked=""/>Show mountains along the bottom</label>');
+    const t = text(html);
+    expect(t).toContain("A landscape of wireframe mountains along the bottom of the window. It stays behind text and controls.");
+    expect(t).toContain("Under the sidebar and the page, in the theme's colours. Off gives the plain background back.");
+    setAppearance({ band: false });
+    expect(render()).toContain('<label class="check"><input type="checkbox"/>Show mountains along the bottom</label>');
+  });
   it("Reset to defaults is off at the defaults and on as soon as anything differs", () => {
     expect(render()).toMatch(/<button class="link" disabled="" title="Everything is at its default">Reset to defaults<\/button>/);
-    for (const change of [{ chat: 16 }, { font: "hack" as const }, { theme: "light" as const }, { density: "compact" as const }, { ui: 12.5 }, { docs: 20 }]) {
+    for (const change of [{ chat: 16 }, { font: "hack" as const }, { theme: "light" as const }, { density: "compact" as const }, { ui: 12.5 }, { docs: 20 }, { band: false }]) {
       resetAppearance();
       setAppearance(change);
       expect(render()).toContain('<button class="link">Reset to defaults</button>');
@@ -132,6 +144,22 @@ describe("a click", () => {
     click("Theme", "Dark");
     click("Density", "Comfortable");
     expect(getAppearance()).toEqual(DEFAULTS);
+  });
+  it("on Show mountains along the bottom turns them off and on again, and only them (GA-143)", () => {
+    const box = () => findAll(tree(), (p) => p.type === "checkbox")[0] as unknown as { checked: boolean; onChange: (e: unknown) => void };
+    expect(box().checked).toBe(true);
+    box().onChange({ target: { checked: false } });
+    expect(getAppearance()).toEqual({ ...DEFAULTS, band: false });
+    expect(box().checked).toBe(false);
+    box().onChange({ target: { checked: true } });
+    expect(getAppearance()).toEqual(DEFAULTS);
+  });
+  it("on Reset to defaults turns the mountains back on", () => {
+    setAppearance({ band: false, theme: "light" });
+    const reset = findAll(tree(), (p) => p.className === "link")[0] as { onClick: () => void };
+    reset.onClick();
+    expect(getAppearance().band).toBe(true);
+    expect((findAll(tree(), (p) => p.type === "checkbox")[0] as { checked: boolean }).checked).toBe(true);
   });
   it("on Reset to defaults brings everything back", () => {
     setAppearance({ font: "geist", chat: 20, ui: 16.5, docs: 18, theme: "light", density: "compact" });

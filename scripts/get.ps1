@@ -9,9 +9,11 @@
 # Environment: GIZAI_PREFIX goes to install.ps1 too ($env:GIZAI_PREFIX = 'D:\Apps\Gizai' first). GIZAI_REPO is the git
 # repository, GIZAI_RELEASES_URL what it asks for the latest release (by default GitHub's; also http and file URLs),
 # and GIZAI_REF a tag, branch or commit to get instead of the latest release (for tests and CI).
-# Piped into iex, it runs in your own PowerShell session: it changes none of the session's settings, and it ends
-# without exit, which would close the window (its result is in $LASTEXITCODE). Run as a file, it exits with it.
+# Piped into iex, it runs in your own PowerShell session: its StrictMode and preferences stay its own, only its options
+# ($Check and the others, all off) are left as variables, and it ends without exit, which would close the window (its
+# result is in $LASTEXITCODE). Run as a file, it exits with it. A mistyped option stops it before anything happens.
 # Plain ASCII only: Windows PowerShell 5.1 reads a file without a byte order mark in the ANSI code page.
+[CmdletBinding()]
 param(
   [switch]$Check,
   [switch]$BuildOnly,
@@ -64,6 +66,12 @@ param(
     Finish 0; return
   }
 
+  # install.ps1 -Check -Uninstall would uninstall
+  if ($Check -and $Uninstall) {
+    Say "-Check and -Uninstall don't go together (see -Help)"
+    Finish 2; return
+  }
+
   try {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
       Say "This installs GizAi on Windows. On Linux and macOS, run: curl -fsSL $GetSh | sh"
@@ -94,9 +102,15 @@ param(
         if ($url -like 'file:*') {
           $release = Get-Content -LiteralPath ([Uri]$url).LocalPath -Raw | ConvertFrom-Json
         } else {
-          # GitHub takes TLS 1.2 or newer, which Windows PowerShell 5.1 may not offer by itself. A locked-down PowerShell
-          # may refuse this; the request may still work.
-          try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+          # GitHub takes TLS 1.2 or newer. Windows PowerShell 5.1 may offer only older ones: then TLS 1.2 is added, for
+          # this session. One that leaves the choice to Windows (SystemDefault) is left alone, and a locked-down
+          # PowerShell that refuses the change may still get through.
+          try {
+            $tls = [Net.ServicePointManager]::SecurityProtocol
+            if ([int]$tls -ne 0 -and ([int]$tls -band [int][Net.SecurityProtocolType]::Tls12) -eq 0) {
+              [Net.ServicePointManager]::SecurityProtocol = $tls -bor [Net.SecurityProtocolType]::Tls12
+            }
+          } catch { }
           $release = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 60
         }
         $tag = "$($release.tag_name)"
@@ -124,7 +138,7 @@ param(
     $null = Invoke-Shown 'git' ($git + @('rev-parse', '--git-dir'))
     if ($LASTEXITCODE -ne 0) {
       if (Test-Path -LiteralPath $gitDir) { Remove-Item -LiteralPath $gitDir -Recurse -Force }
-      Invoke-Shown 'git' @('-c', 'init.defaultBranch=main', 'init', '--quiet', $dir)
+      Invoke-Shown 'git' ($git + @('-c', 'init.defaultBranch=main', 'init', '--quiet'))
       if ($LASTEXITCODE -ne 0) { Say "Could not make a git repository in $dir."; Finish 1; return }
     }
     # As Gizai's own update: a shallow fetch of the tag alone, checked out as it is, and everything else in the folder
@@ -150,18 +164,17 @@ param(
     # With Windows PowerShell, as Gizai's own update runs it, and Bypass, as the release's script isn't signed.
     $run = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer)
     # The release's check first, which says what is missing. Not before -Uninstall: install.ps1 -Check -Uninstall
-    # would uninstall.
+    # would uninstall. What it finds missing (1) stops the install, except with -SkipBuild: install.ps1 installs what
+    # is built then too. Any other failure stops it.
     if (-not $Uninstall) {
       Invoke-Shown 'powershell.exe' ($run + @('-Check') + $flags)
       $code = $LASTEXITCODE
-      if ($code -ne 0) {
-        if ($code -eq 1 -and -not $Check) {
-          Say ''
-          Say 'Install what is missing above, then run this again.'
-        }
-        Finish $code; return
+      if ($Check -or ($code -ne 0 -and $code -ne 1)) { Finish $code; return }
+      if ($code -eq 1 -and -not $SkipBuild) {
+        Say ''
+        Say 'Install what is missing above, then run this again.'
+        Finish 1; return
       }
-      if ($Check) { Finish 0; return }
     }
     Invoke-Shown 'powershell.exe' ($run + $flags)
     Finish $LASTEXITCODE

@@ -50,14 +50,20 @@ src_git() { git -C "$dir" --git-dir="$dir/.git" --work-tree="$dir" "$@"; }
 
 main() {
   unset CDPATH GIT_DIR GIT_WORK_TREE
-  check=0 uninstall=0 tag=""
+  check=0 skip_build=0 uninstall=0 tag=""
   for arg in "$@"; do
     case "$arg" in
       --check) check=1 ;;
+      --skip-build) skip_build=1 ;;
       --uninstall) uninstall=1 ;;
       -h|--help) usage; return 0 ;;
     esac
   done
+  # install.sh --check --uninstall would uninstall
+  if [ "$check" = 1 ] && [ "$uninstall" = 1 ]; then
+    say "--check and --uninstall don't go together (see --help)" >&2
+    return 2
+  fi
 
   os="$(uname -s)"
   case "$os" in
@@ -123,7 +129,7 @@ main() {
   # A .git that git can't use (one cut short) is made again.
   if ! src_git rev-parse --git-dir >/dev/null 2>&1; then
     rm -rf "$dir/.git"
-    git -c init.defaultBranch=main init --quiet "$dir" || { say "Could not make a git repository in $dir."; return 1; }
+    src_git -c init.defaultBranch=main init --quiet || { say "Could not make a git repository in $dir."; return 1; }
   fi
   # As Gizai's own update: a shallow fetch of the tag alone, checked out as it is, and everything else in the folder
   # goes, except the build's target/, so the next build is quicker.
@@ -139,18 +145,17 @@ main() {
   fi
 
   # The release's check first, which says what is missing. Not before --uninstall: install.sh --check --uninstall
-  # would uninstall.
+  # would uninstall. What it finds missing (1) stops the install, except with --skip-build: install.sh installs what
+  # is built then too. Any other failure (2, an unknown option) stops it.
   if [ "$uninstall" = 0 ]; then
     bash "$dir/install.sh" --check "$@" </dev/null
     status=$?
-    if [ "$status" != 0 ]; then
-      if [ "$status" = 1 ] && [ "$check" = 0 ]; then
-        say ""
-        say "Install what is missing above, then run this again."
-      fi
-      return "$status"
+    if [ "$check" = 1 ] || { [ "$status" != 0 ] && [ "$status" != 1 ]; }; then return "$status"; fi
+    if [ "$status" = 1 ] && [ "$skip_build" = 0 ]; then
+      say ""
+      say "Install what is missing above, then run this again."
+      return 1
     fi
-    if [ "$check" = 1 ]; then return 0; fi
   fi
   bash "$dir/install.sh" "$@" </dev/null
 }

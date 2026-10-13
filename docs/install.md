@@ -6,6 +6,34 @@ There are no downloads, installers or binaries, on any system. The install scrip
 
 GizAi is early: its version is still 0.x. Every release is on [GitHub Releases](https://github.com/Yotech-AI/gizai/releases).
 
+## In one line
+
+On Linux and macOS, in a terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1 | iex
+```
+
+It gets the source of the latest release into `~/.local/share/gizai-src` (on Windows `%LOCALAPPDATA%\gizai-src`), or updates it there. Then it runs that release's install script: first its check, which names what is missing, then the build and the install. Run it again to update.
+
+- Without git (on Linux and macOS also bash and curl), it says what to install first and does nothing else.
+- The source folder is the install's own: changes in it are replaced. Your data stays in [its own folder](#your-data).
+- `--uninstall --purge` (`-Uninstall -Purge` on Windows) deletes the source folder with your data.
+
+The install script's options go after the line:
+
+| Linux and macOS | Windows | What it does |
+|---|---|---|
+| `curl -fsSL … \| sh -s -- --check` | `& ([scriptblock]::Create((irm …))) -Check` | Gets the source and shows what is missing |
+| `curl -fsSL … \| sh -s -- --uninstall` | `& ([scriptblock]::Create((irm …))) -Uninstall` | Removes GizAi and keeps your data |
+| `curl -fsSL … \| GIZAI_PREFIX=$HOME/opt/gizai sh` | `$env:GIZAI_PREFIX = 'D:\Apps\Gizai'`, then the line | Installs into another folder than `~/.local` (on Windows `%LOCALAPPDATA%\Programs\Gizai`) |
+
 ## What every system needs
 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) or Codex, installed and logged in; for Claude Code, run `claude` once. The Team Lead's chat needs Claude Code. Agents can also run on Gemini or another coding CLI you have installed and logged in (Settings → Coding CLIs).
@@ -15,7 +43,9 @@ GizAi is early: its version is still 0.x. Every release is on [GitHub Releases](
 
 ## Linux
 
-You also need WebKitGTK 4.1: `./install.sh --check` names the packages for your distribution. The tray icon needs libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it GizAi runs without a tray icon.
+You also need WebKitGTK 4.1: the check (`./install.sh --check` in a clone) names the packages for your distribution. The tray icon needs libayatana-appindicator: `libayatana-appindicator` on Arch and Omarchy, `libayatana-appindicator3-1` on Debian and Ubuntu (the .deb depends on it). Without it GizAi runs without a tray icon.
+
+Install [in one line](#in-one-line), or build from a clone:
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -34,6 +64,8 @@ The installer builds GizAi and installs it for your user in `~/.local`, with no 
 ## macOS
 
 For Macs with Apple silicon (M1 and later). You also need Apple's Command Line Tools, which bring git and a C compiler: run `xcode-select --install`. Node.js can come from Homebrew (`brew install node`), mise, nvm or the installer on nodejs.org.
+
+Install [in one line](#in-one-line), or build from a clone:
 
 ```sh
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -65,7 +97,7 @@ winget install --id OpenJS.NodeJS.LTS -e
 winget install --id Git.Git -e
 ```
 
-Then, in a new PowerShell window:
+Then, in a new PowerShell window, install [in one line](#in-one-line), or build from a clone:
 
 ```powershell
 git clone --branch production https://github.com/Yotech-AI/gizai.git
@@ -105,7 +137,7 @@ GizAi asks GitHub for the latest release 20 seconds after it starts, then every 
 
 If a step fails, the version you have keeps working, and Settings → Updates says why. Settings → Updates also has Check now, and switches the check off.
 
-You can still update from a terminal with `git pull`, then `./install.sh` (on Windows `.\install.ps1`). How an update works, step by step: [docs/RELEASING.md](RELEASING.md#how-gizai-updates-itself).
+You can still update from a terminal: run the [one line](#in-one-line) again, or in a clone `git pull`, then `./install.sh` (on Windows `.\install.ps1`). How an update works, step by step: [docs/RELEASING.md](RELEASING.md#how-gizai-updates-itself).
 
 ## Your data
 

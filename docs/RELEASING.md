@@ -9,7 +9,7 @@ In short: a release is a GitHub Release with a version tag, `vX.Y.Z`, on the `pr
 | Branch | What it holds | How it changes |
 |---|---|---|
 | `main` | Development. Cards' branches start here, and their pull requests merge here. | Pull requests, merged on GitHub |
-| `production` | The released version: what `install.sh` (Linux and macOS) and `install.ps1` (Windows) install, and where release tags point. | Only a pull request from `main`. It is protected: no direct pushes, no force pushes, no deleting. |
+| `production` | The released version: what `install.sh` (Linux and macOS) and `install.ps1` (Windows) install, where release tags point, and where the one-line installs read `scripts/get.sh` and `scripts/get.ps1` from. | Only a pull request from `main`. It is protected: no direct pushes, no force pushes, no deleting. |
 
 ## When to release
 
@@ -122,12 +122,14 @@ Every release must keep this working, because the Gizai that updates runs the **
   - Only an install that stopped between its renames (seconds) can leave a mix. Settings → Updates then says to try again or to run `./install.sh`.
 - **Stop** ends the update while it gets the source or builds. Quitting Gizai does that too.
 - **So `install.sh` must keep these working:** `--build-only`, `--skip-build`, `GIZAI_PREFIX` and `XDG_DATA_HOME`, with macOS's own bash 3.2 and BSD tools too. **And `install.ps1`:** `-BuildOnly`, `-SkipBuild` and `GIZAI_PREFIX`, with Windows PowerShell 5.1 (what an update runs) and PowerShell 7. CI checks that both scripts parse and that their checks (`--check`, `-Check`) pass.
+- **The one-line installs run the release's installer too.** `scripts/get.sh` (`curl … | sh`) and `scripts/get.ps1` (`irm … | iex`) are read from `production`. They get the same tag as an update, shallow, into `~/.local/share/gizai-src` (`%LOCALAPPDATA%\gizai-src` on Windows), never into the data folder. Then they run its `install.sh --check` and `install.sh` (`install.ps1 -Check` and `install.ps1`), with the flags they were given. So `--check` and `-Check` must keep working too. CI checks that both scripts parse and runs their checks against the pull request's own commit.
 - **Only an installed Gizai updates itself.** That is a Gizai that runs as `<prefix>/lib/gizai/gizai` (on macOS also `<prefix>/lib/gizai/Gizai.app/Contents/MacOS/gizai`, when it starts from the Dock), or on Windows as a `gizai.exe` with `install.ps1`'s `gizai-installed.txt` next to it. A dev build (`scripts/run.sh`) or a test build says why it doesn't, and never installs anything.
 - **From a terminal** it works as before: `git pull` in a checkout of `production`, then `./install.sh` (on Windows `.\install.ps1`).
 - **Headless test and screenshot runs** (`GIZAI_SELFTEST` or `GIZAI_ROUTE` set) skip the automatic check, unless `GIZAI_RELEASES_URL` is set too.
 - **Settings for tests and forks:**
   - `GIZAI_REPO`: the repository the tag is fetched from. Default `https://github.com/Yotech-AI/gizai.git`.
   - `GIZAI_RELEASES_URL`: what the check reads. Default: GitHub's latest release of `GIZAI_REPO`. It also takes `http://` and `file://` addresses.
+  - The one-line installs read both too, and `GIZAI_REF`: a tag, branch or commit to get instead of the latest release.
 
 ## Testing an update without touching a real Gizai
 

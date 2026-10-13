@@ -7,7 +7,7 @@
 # update. Nothing goes into Gizai's data folder. The source folder is this script's own: changes in it are replaced.
 #
 # Options go to install.sh, after sh -s --:   curl -fsSL <url> | sh -s -- --check   (see usage below)
-# Environment: GIZAI_PREFIX and XDG_DATA_HOME go to install.sh too (curl -fsSL <url> | GIZAI_PREFIX=/opt/gizai sh).
+# Environment: GIZAI_PREFIX and XDG_DATA_HOME go to install.sh too (curl -fsSL <url> | GIZAI_PREFIX=$HOME/opt/gizai sh).
 # GIZAI_REPO is the git repository, GIZAI_RELEASES_URL what it asks for the latest release (by default GitHub's; also
 # http and file URLs), and GIZAI_REF a tag, branch or commit to get instead of the latest release (for tests and CI).
 # A POSIX sh script, for dash and macOS's sh. It does everything in main, called on its last line, so a download cut

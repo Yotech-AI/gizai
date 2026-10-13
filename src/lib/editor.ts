@@ -5,9 +5,12 @@
 import { useEffect, useState } from "react";
 import type { DirEntry, EditorFolder, FolderGit, GitMark, SearchHit, SearchResult } from "../types";
 
-// ---- the folders you opened: the sidebar's Editor section, newest first, at most 8 ----
+// ---- the folders you opened: the sidebar's Editor section, in the order they joined it, at most 8 (GA-157) ----
 
 export const OPENED_KEY = "gizai.editor.opened";
+/** When each folder in the list was last opened (milliseconds since 1970, by folder id), kept next to the list: with a
+ *  ninth folder, the one opened longest ago leaves. */
+export const OPENED_AT_KEY = "gizai.editor.openedAt";
 export const MAX_OPENED = 8;
 /** Sent on the window when the folders you opened change, so the sidebar follows the page at once. */
 const OPENED_EVENT = "gizai-editor-opened";
@@ -20,9 +23,34 @@ export function openedOf(kept: string | null): string[] {
   } catch { return []; }
 }
 
-/** What to keep after opening `id`: it goes to the top (once), the oldest beyond 8 drop off. */
-export function withOpened(kept: string | null, id: string): string {
-  return JSON.stringify([id, ...openedOf(kept).filter((x) => x !== id)].slice(0, MAX_OPENED));
+/** When each folder was last opened, from what localStorage keeps; nothing kept, or something unreadable, is none. */
+export function openedAtOf(kept: string | null): Record<string, number> {
+  try {
+    const all: unknown = JSON.parse(kept ?? "{}");
+    if (!all || typeof all !== "object" || Array.isArray(all)) return {};
+    return Object.fromEntries(Object.entries(all).filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1])));
+  } catch { return {}; }
+}
+
+/** What to keep after opening `id` at `now`: the list and when each of its folders was last opened. A folder already
+ *  listed stays where it is; a new one joins at the bottom, and with a ninth the one opened longest ago leaves, the
+ *  others in their order. Folders without a time come from a list kept before GA-157, newest first: they were opened
+ *  longer ago than those with one, the lower the longer. Each opening gets a later time than those kept, so two in the
+ *  same millisecond, or a clock put back, keep their order. */
+export function withOpened(kept: string | null, keptAt: string | null, id: string, now: number): { list: string; at: string } {
+  let list = openedOf(kept);
+  const was = openedAtOf(keptAt);
+  const at: Record<string, number> = {};
+  for (const x of list) if (was[x] !== undefined) at[x] = was[x];
+  at[id] = Math.max(now, ...Object.values(at).map((t) => t + 1));
+  if (!list.includes(id)) list = [...list, id];
+  while (list.length > MAX_OPENED) {
+    const untimed = list.filter((x) => at[x] === undefined);
+    const oldest = untimed.length ? untimed[untimed.length - 1]! : list.reduce((a, b) => (at[b]! < at[a]! ? b : a));
+    list = list.filter((x) => x !== oldest);
+    delete at[oldest];
+  }
+  return { list: JSON.stringify(list), at: JSON.stringify(at) };
 }
 
 /** What to keep after Remove from the list. */
@@ -37,12 +65,21 @@ function keepOpened(next: string) {
   writeKey(OPENED_KEY, next);
   try { window.dispatchEvent(new Event(OPENED_EVENT)); } catch { /* no window in tests */ }
 }
-/** Puts the folder at the top of the sidebar's Editor section. */
-export const rememberFolder = (id: string) => keepOpened(withOpened(readKey(OPENED_KEY), id));
-/** Takes the folder off the sidebar's Editor section (Remove from the list). */
-export const forgetFolder = (id: string) => keepOpened(withoutOpened(readKey(OPENED_KEY), id));
+/** Notes that the folder opened now: it stays where it is in the sidebar's Editor section, or joins it at the bottom. */
+export function rememberFolder(id: string) {
+  const next = withOpened(readKey(OPENED_KEY), readKey(OPENED_AT_KEY), id, Date.now());
+  writeKey(OPENED_AT_KEY, next.at);
+  keepOpened(next.list);
+}
+/** Takes the folder off the sidebar's Editor section (Remove from the list), and its time. */
+export function forgetFolder(id: string) {
+  const at = openedAtOf(readKey(OPENED_AT_KEY));
+  delete at[id];
+  writeKey(OPENED_AT_KEY, JSON.stringify(at));
+  keepOpened(withoutOpened(readKey(OPENED_KEY), id));
+}
 
-/** The folders you opened, newest first; follows rememberFolder and forgetFolder. */
+/** The folders you opened, in the order they joined the list; follows rememberFolder and forgetFolder. */
 export function useOpenedFolders(): string[] {
   const [list, setList] = useState<string[]>(() => openedOf(readKey(OPENED_KEY)));
   useEffect(() => {

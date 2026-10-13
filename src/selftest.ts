@@ -10,7 +10,7 @@ import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
-import { OPENED_KEY, forgetFolder, openedOf, rememberFolder } from "./lib/editor";
+import { OPENED_AT_KEY, OPENED_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
 import { tellMain } from "./lib/behind";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
@@ -2889,6 +2889,8 @@ export async function terminalProbe(folder: string) {
   if (folder === "picker") return pickerProbe();
   // GA-151: MODE=terminal:rows runs the probe of the sidebar's Editor rows instead
   if (folder === "rows") return editorRowsProbe();
+  // GA-157: MODE=terminal:order-a and terminal:order-b run the probe of the Editor list's order, before and after a restart
+  if (folder === "order-a" || folder === "order-b") return editorOrderProbe(folder === "order-a" ? "a" : "b");
   const errors: string[] = [];
   const out: Record<string, unknown> = {};
   const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
@@ -3861,5 +3863,126 @@ async function editorRowsProbe() {
   check(["Copy path", "Remove from the list", "Open card"].every((x) => items.includes(x)), `a right click on KADE-1's row has Copy path, Remove from the list and Open card (${items.join(", ")})`);
   window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   check(await waitFor(() => (!q('.pop[role="menu"]') ? true : null), 2000), "Escape closes the right-click menu");
+  return done();
+}
+
+// GIZAI_SELFTEST_MODE=terminal:order-a and terminal:order-b on route terminal (GA-157 QA; scripts/ui-test.sh runs them after
+// the rows' run, on the same data with order-g, order-h and order-i in ~/Herd too, and on the same WebKit storage, so b is a
+// restart of a). a: with none open, eight folders picked in turn from the sidebar's + each join the Editor list at the
+// bottom; a click on each row opens its Editor page and marks it, every row staying where it was; a listed folder picked
+// again stays put; a ninth: the one opened longest ago (KADE-1, not the top row, opened again) leaves, the others keep their
+// order and the new one is last. b: after the restart the same list in the same order, with each folder's time; a click
+// on a row leaves every row where it was, and Remove from the list takes only that row off.
+
+/** The folders a picks in turn, and the list it leaves for b. */
+const ORDER_PICKED = ["picker-site", "KADE-1", "kade-portal", "GFW-1", "GFW-2", "KADE-123", "order-g", "order-h"];
+const ORDER_KEPT = ["picker-site", "kade-portal", "GFW-1", "GFW-2", "KADE-123", "order-g", "order-h", "order-i"];
+
+async function editorOrderProbe(part: "a" | "b") {
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const done = () => ({ ok: errors.length === 0, errors, ...out });
+  const folders = await editorFolders();
+  const byName = new Map(folders.map((f) => [f.name, f]));
+  const missing = [...ORDER_KEPT, "KADE-1"].filter((n) => !byName.has(n));
+  if (missing.length) { errors.push(`no folder ${missing.join(", ")} (${folders.map((f) => `${f.kind} ${f.name}`).join(", ")})`); return done(); }
+  const idOf = (name: string) => byName.get(name)!.id;
+
+  window.location.hash = "#/terminal";
+  const section = await waitFor(() => q<HTMLElement>('.side .nav-section[aria-label="Editor"]'));
+  if (!section) { errors.push("the sidebar has no Editor section"); return done(); }
+  const caret = section.querySelector<HTMLButtonElement>(".nav-label button[aria-expanded]");
+  if (caret?.getAttribute("aria-expanded") === "false") { caret.click(); await nextFrame(); }
+  const rowEls = () => [...section.querySelectorAll<HTMLAnchorElement>(".nav-list > a.nav-item")];
+  const nameOfRow = (a: Element) => textOf(a.querySelector(".card-id") ?? a.querySelector("span"));
+  const rowOf = (name: string) => rowEls().find((a) => nameOfRow(a) === name) ?? null;
+  const shown = () => rowEls().map(nameOfRow);
+  const kept = () => openedOf(localStorage.getItem(OPENED_KEY)).map((id) => folders.find((f) => f.id === id)?.name ?? id);
+  const times = () => openedAtOf(localStorage.getItem(OPENED_AT_KEY));
+  const same = (a: string[], b: string[]) => a.join(" | ") === b.join(" | ");
+  /** Waits until the sidebar shows `want` in that order, and localStorage keeps it so. */
+  const rowsAre = async (want: string[], ms = 3000) => !!(await waitFor(() => (same(shown(), want) && same(kept(), want) ? true : null), ms));
+  const now = () => `the rows ${shown().join(", ")}; kept ${kept().join(", ")}`;
+  /** Waits until `name`'s Editor page is open, its row the only one marked, and its time the latest kept. */
+  const opened = async (name: string, before: Record<string, number>) => {
+    const id = idOf(name), last = Math.max(0, ...Object.values(before));
+    return !!(await waitFor(() => window.location.hash === `#/editor/${encodeURIComponent(id)}`
+      && same(rowEls().filter((a) => a.classList.contains("on")).map(nameOfRow), [name]) && (times()[id] ?? 0) > last ? true : null, 5000));
+  };
+  /** Opens `name` from the folder picker of the sidebar's +. */
+  const pick = async (name: string) => {
+    const before = times();
+    section.querySelector<HTMLButtonElement>('.nav-label button[aria-label="Open a folder"]')?.click();
+    const f = byName.get(name)!;
+    const opt = await waitFor(() => [...document.querySelectorAll<HTMLElement>('.ed-picker[aria-label="Open a folder"] .ed-picker-list .opt')]
+      .find((o) => o.title.split("\n").at(-1) === f.path), 8000);
+    if (!opt) { errors.push(`the sidebar's + opens no picker with ${name} (${f.path})`); return false; }
+    opt.click();
+    const ok = await opened(name, before);
+    check(ok && !q(".ed-picker"), `${name} picked from the sidebar's + opens its Editor page, marked in the list, the picker closed (${window.location.hash})`);
+    return ok;
+  };
+  /** Opens `name` with a click on its row in the sidebar's Editor list. */
+  const click = async (name: string) => {
+    const before = times();
+    const r = rowOf(name);
+    if (!r) { errors.push(`no row for ${name} (${now()})`); return false; }
+    r.click();
+    const ok = await opened(name, before);
+    check(ok, `a click on ${name}'s row opens its Editor page and marks only that row (${window.location.hash}, marked: ${rowEls().filter((a) => a.classList.contains("on")).map(nameOfRow).join(", ")})`);
+    return ok;
+  };
+
+  if (part === "a") {
+    // every folder kept open, those of earlier runs on the same WebKit storage too
+    for (const id of openedOf(localStorage.getItem(OPENED_KEY))) forgetFolder(id);
+    check(await waitFor(() => (rowEls().length === 0 ? true : null), 2000), `the list starts empty (${now()})`);
+    // 1. eight picked in turn, each joining at the bottom
+    for (let i = 0; i < ORDER_PICKED.length; i++) {
+      if (!(await pick(ORDER_PICKED[i]!))) return done();
+      check(await rowsAre(ORDER_PICKED.slice(0, i + 1)), `${ORDER_PICKED[i]}, picked for the first time, joins the list at the bottom (${now()})`);
+    }
+    out.picked = shown();
+    // 2. a click on each row in turn, top to bottom: no row moves
+    for (const name of ORDER_PICKED) {
+      await click(name);
+      check(await rowsAre(ORDER_PICKED), `after a click on ${name}'s row every row is where it was (${now()})`);
+    }
+    // 3. the top row again, and GFW-1 from the picker: still no row moves; KADE-1 is now the one opened longest ago
+    await click("picker-site");
+    check(await rowsAre(ORDER_PICKED), `after a second click on picker-site's row every row is where it was (${now()})`);
+    await pick("GFW-1");
+    check(await rowsAre(ORDER_PICKED), `GFW-1, already listed, picked again stays where it is, every row too (${now()})`);
+    // 4. a ninth: KADE-1 leaves, the others keep their order, order-i is last
+    await pick("order-i");
+    check(await rowsAre(ORDER_KEPT), `with 8 listed, order-i joins at the bottom and KADE-1, opened longest ago, leaves; the others keep their order (${now()})`);
+    check(same(Object.keys(times()).sort(), ORDER_KEPT.map(idOf).sort()), `a time is kept for each listed folder and no other (${Object.keys(times()).join(", ")})`);
+    out.kept = shown();
+    // a moment for WebKit to write localStorage down before the app quits
+    await sleep(1500);
+    return done();
+  }
+
+  // b. after the restart: the same list in the same order, each with its time
+  check(await rowsAre(ORDER_KEPT, 8000), `after the restart the list is as it was, in the same order (${now()}, not ${ORDER_KEPT.join(", ")})`);
+  check(same(Object.keys(times()).sort(), ORDER_KEPT.map(idOf).sort()), `after the restart each listed folder still has its time (${Object.keys(times()).join(", ")})`);
+  out.restarted = shown();
+  await click("GFW-2");
+  check(await rowsAre(ORDER_KEPT), `after the restart a click on GFW-2's row leaves every row where it was (${now()})`);
+  // Remove from the list, from KADE-123's right-click menu: only its row leaves
+  const k = rowOf("KADE-123");
+  const kb = k?.getBoundingClientRect() ?? new DOMRect();
+  k?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: kb.left + 40, clientY: kb.top + kb.height / 2 }));
+  const remove = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>('.pop[role="menu"][aria-label="Folder"] button.opt')].find((b) => textOf(b) === "Remove from the list"), 2000);
+  check(remove, "KADE-123's right-click menu has Remove from the list");
+  remove?.click();
+  const left = ORDER_KEPT.filter((n) => n !== "KADE-123");
+  check(await rowsAre(left), `Remove from the list takes KADE-123's row off, the others where they were (${now()})`);
+  check(!(idOf("KADE-123") in times()), "Remove from the list drops KADE-123's time too");
+  out.removed = shown();
+  // leave the list empty for later runs on this WebKit storage
+  for (const id of openedOf(localStorage.getItem(OPENED_KEY))) forgetFolder(id);
+  await sleep(500);
   return done();
 }

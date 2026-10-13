@@ -17,7 +17,7 @@ import { go, href } from "../../router";
 import { pickerGroups, rememberFolder } from "../../lib/editor";
 import { StatusIcon } from "../StatusIcon";
 
-/** Opens a folder in the Editor: to the top of the sidebar's list, then its page. */
+/** Opens a folder in the Editor: at the bottom of the sidebar's list when it isn't in it yet, then its page. */
 export function openFolder(id: string) {
   rememberFolder(id);
   go({ page: "editor", id });

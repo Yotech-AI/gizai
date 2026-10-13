@@ -282,7 +282,7 @@ beforeEach(() => {
 afterEach(() => { root = () => null; render(); vi.useRealTimers(); });
 
 describe("Open in editor on the card's page (GA-115)", () => {
-  it("shows Preparing the worktree… with a spinner while it is made, then opens it in the Editor, at the top of the sidebar's list", async () => {
+  it("shows Preparing the worktree… with a spinner while it is made, then opens it in the Editor, at the bottom of the sidebar's list (GA-157)", async () => {
     store.set(OPENED_KEY, JSON.stringify(["/srv/Herd/other"]));
     const start = later<HandCard>();
     h.answers.startByHand = () => start.p;
@@ -299,7 +299,7 @@ describe("Open in editor on the card's page (GA-115)", () => {
     start.done({ ...hand });
     await settle();
     expect(h.went).toEqual([{ page: "editor", id: FOLDER }]);
-    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual([FOLDER, "/srv/Herd/other"]);
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(["/srv/Herd/other", FOLDER]);
   });
 
   it("a refusal says why on the card, and Open in editor is on again", async () => {
@@ -319,6 +319,17 @@ describe("Open in editor on the card's page (GA-115)", () => {
     await click("Open in editor");
     expect(called("startByHand")).toEqual([]);
     expect(h.went).toEqual([{ page: "editor", id: FOLDER }]);
+  });
+
+  // GA-157 QA: a card's worktree already in the sidebar's Editor list stays where it is when the card opens it again
+  it("Open in editor leaves a card already in the sidebar's list where it is, every other row too", async () => {
+    task = { ...BY_HAND };
+    const list = ["/srv/Herd/other", FOLDER, "/srv/Herd/third"];
+    store.set(OPENED_KEY, JSON.stringify(list));
+    await show(() => <TaskPage id="t1" youId={YOU} />);
+    await click("Open in editor");
+    expect(h.went).toEqual([{ page: "editor", id: FOLDER }]);
+    expect(JSON.parse(store.get(OPENED_KEY)!)).toEqual(list);
   });
 
   it("is off while an agent works on the card", async () => {

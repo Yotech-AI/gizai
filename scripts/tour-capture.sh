@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The product tour's stills (GA-148), for the video (GA-149): Gizai's eight features in the website's order, scene by
 # scene, in dark and in light, each scene in a HEADLESS cage (never on your screen) on a fresh copy of fake data
-# (.devdata/tour), made up from start to end (crates/gizai-core/examples/prep_tour.rs). The screen is a
-# 13-inch MacBook Air's: 2560x1664 pixels at scale 2 (1280x832 CSS pixels), without the window's title bar.
+# (.devdata/tour), made up from start to end (crates/gizai-core/examples/prep_tour.rs). The screen is 1600x1040 CSS
+# pixels at scale 2, so 3200x2080 pixels, without the window's title bar: the 13-inch MacBook Air's shape with room
+# for the whole board (the video draws the stills at 80%, at the MacBook's 2560x1664).
 # Each scene opens a page and clicks one element per step; every step has a still before its click and one after, and
 # video/capture/<theme>/scenes.json lists the scenes in order with their steps, stills and the box of what each step
 # clicked (x, y, width and height in the stills' pixels). Nothing reads your ~/.claude or your Gizai's data: Gizai runs
@@ -26,8 +27,8 @@ ONLY=" $* "
 source scripts/app-ready.sh
 gz_app || { echo "could not build the app"; exit 1; }
 
-# The screen: 1280x832 CSS pixels of page under the window's title bar (37 px), at scale 2.
-SCALE=2; PAGE_W=1280; PAGE_H=832; TITLE=37
+# The screen: 1600x1040 CSS pixels of page under the window's title bar (37 px), at scale 2.
+SCALE=2; PAGE_W=1600; PAGE_H=1040; TITLE=37
 MODE_SIZE="$((PAGE_W * SCALE))x$(((PAGE_H + TITLE) * SCALE))"
 T=$GZ/.devdata/tour; BASE=$T/base; LIVE=$T/live; OUT=$GZ/video/capture
 # The fake home, and Gizai's data folder in it. Claude Code and Codex are the tour's fakes, as `claude` and `codex` in
@@ -83,7 +84,7 @@ RUN
     __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
     timeout -k 5 150 dbus-run-session -- cage -- "$runner" > "$T/logs/$theme-$name.log" 2>&1
   [ -s "$dir/steps.json" ] || { echo "  $theme $name: no steps.json (see .devdata/tour/logs/$theme-$name.log)"; return 1; }
-  # without the window's title bar: the page is the screen's lowest 2560x1664 pixels
+  # without the window's title bar: the page is the screen's lowest 3200x2080 pixels
   local png ok=0
   for png in "$dir"/*.png; do
     ffmpeg -loglevel error -y -i "$png" -vf "crop=$((PAGE_W * SCALE)):$((PAGE_H * SCALE)):0:ih-$((PAGE_H * SCALE))" \
@@ -106,9 +107,10 @@ PY
 
 # --- scenes.json: every scene below captured in that theme, in order ---
 scenes_json() {  # <theme>
-  python3 - "$OUT/$1" "$1" "$T/titles" <<'PY'
+  python3 - "$OUT/$1" "$1" "$T/titles" "$((PAGE_W * SCALE))" "$((PAGE_H * SCALE))" "$SCALE" <<'PY'
 import json, os, sys
 root, theme = sys.argv[1], sys.argv[2]
+width, height, scale = int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
 titles = dict(l.split("\t", 1) for l in open(sys.argv[3]).read().splitlines() if "\t" in l)
 scenes = []
 for name in sorted(os.listdir(root)):
@@ -118,7 +120,7 @@ for name in sorted(os.listdir(root)):
     scenes.append({"scene": int(name.split("-")[0]), "name": name, "title": titles.get(name, name),
         "steps": [{"name": st["name"], "before": f"{name}/{st['before']}", "after": f"{name}/{st['after']}", "box": st["box"], "selector": st["selector"]}
                   for st in s["steps"]]})
-out = {"theme": theme, "screen": {"width": 2560, "height": 1664, "scale": 2}, "box": "x, y, width and height in the stills' pixels", "scenes": scenes}
+out = {"theme": theme, "screen": {"width": width, "height": height, "scale": scale}, "box": "x, y, width and height in the stills' pixels", "scenes": scenes}
 json.dump(out, open(os.path.join(root, "scenes.json"), "w"), indent=2)
 print(f"video/capture/{theme}/scenes.json: {len(scenes)} scenes, {sum(len(s['steps']) for s in scenes)} steps")
 PY
@@ -126,8 +128,8 @@ PY
 
 # --- the scenes, in the website's order (GA-144) ---
 # scene <number> <name> <title> <start route> <steps…>: a step "<name>=<selector>" is a click with a still before and after
-# (see runSteps in src/selftest.ts); "#/route", "wait:<ms>", "term:<command>" and a bare selector set things up without
-# stills. Every scene starts with "theme:<dark|light>".
+# (see runSteps in src/selftest.ts); "#/route", "wait:<ms>", "term:<command>", "scroll:<selector>" and a bare selector
+# set things up without stills. Every scene starts with "theme:<dark|light>".
 mkdir -p "$OUT"; : > "$T/titles"
 fail=0
 scene() {
@@ -147,7 +149,7 @@ scene 2 chat "The Team Lead chat: a request, the cards it made, Approve" "chat/$
 scene 3 clis "Bring your own CLI: Claude Code and Codex in Settings → Coding CLIs, then Usage → Subscription" settings/appearance \
   "wait:1000" 'agents-tab=.tabs[aria-label="Settings"] .tab:text(Agents and runs)' 'usage=.side .nav-item:text(Usage)'
 scene 4 review "Tested before you see it: a card in Review with its pull request and QA's result" board \
-  "wait:2000" 'open-card=[data-card="NWS-2"]' 'runs=.tabs button.tab:text(Runs)'
+  "wait:2000" 'open-card=[data-card="NWS-2"]' 'scroll:.tabs button.tab:text(Runs)' 'runs=.tabs button.tab:text(Runs)'
 scene 5 editor "The Editor and Terminal: a project opens in the Editor, then its Terminal" board \
   "wait:1500" 'open-folder=.side [aria-label="Editor"] button.nav-item:text(Open a folder)' \
   'open-project@2000=.ed-picker .opt[title="~/Projects/northwind-shop"]' 'terminal@2500=.btn.term-btn'
@@ -161,8 +163,8 @@ scene 8 inbox "The Inbox: a question, and Run this for me" board \
 # --- scenes.json for each theme captured, and the stills' size checked ---
 for theme in $THEMES; do
   scenes_json "$theme" || fail=1
-  bad=$(find "$OUT/$theme" -name '*.png' -exec ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {} \; | grep -vc '^2560,1664$')
-  [ "$bad" = 0 ] || { echo "$bad stills in $theme are not 2560x1664"; fail=1; }
+  bad=$(find "$OUT/$theme" -name '*.png' -exec ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {} \; | grep -vc "^$((PAGE_W * SCALE)),$((PAGE_H * SCALE))\$")
+  [ "$bad" = 0 ] || { echo "$bad stills in $theme are not $((PAGE_W * SCALE))x$((PAGE_H * SCALE))"; fail=1; }
 done
 du -sh "$OUT" | cut -f1 | sed 's/^/video\/capture: /'
 exit $fail

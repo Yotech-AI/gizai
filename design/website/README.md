@@ -34,7 +34,7 @@ site's accent; the mountains' wireframe lines through the page; and the mountain
    paragraphs; the three points in a strip of lines.
 4. **Features**: eight numbered rows, guide to guide, split by 1 px lines. Row 01 is open.
 5. **Get GizAi**: one line to install per system, each with Copy, and Or build from source.
-6. **Footer**: the logo, Made by YoTech, GitHub and MIT licence; under it the mountains' empty sky.
+6. **Footer**: the logo, Made by YoTech, GitHub and Apache-2.0 licence; under it the mountains' empty sky.
 7. **The mountain band**, fixed along the bottom of the window, behind everything.
 
 ## The words

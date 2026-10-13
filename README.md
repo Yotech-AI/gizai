@@ -36,13 +36,13 @@ GizAi is an Agentic Development Application (ADA): a team of AI agents builds yo
 On Linux and macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh | sh
+curl -fsSL https://gizai.app/install.sh | sh
 ```
 
 On Windows 11, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1 | iex
+irm https://gizai.app/install.ps1 | iex
 ```
 
 It gets the source of the latest release, checks what your computer is missing, then builds GizAi and installs it for you alone, without sudo or administrator rights. Run it again to update. Every system needs git, Rust, Node.js 20 or newer, and Claude Code or Codex, logged in.

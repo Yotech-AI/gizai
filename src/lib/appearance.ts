@@ -148,6 +148,12 @@ export function toggleDensity() {
   setAppearance({ density: getAppearance().density === "compact" ? "comfortable" : "compact" });
 }
 
+/** Calls `f` after each change, once it is on <html> (the terminals restyle themselves with it); returns the unsubscribe. */
+export function onAppearance(f: (a: Appearance) => void): () => void {
+  listeners.add(f);
+  return () => { listeners.delete(f); };
+}
+
 /** The appearance, kept up to date when it changes (also by the t and d keys). */
 export function useAppearance(): Appearance {
   const [a, setA] = useState(getAppearance);

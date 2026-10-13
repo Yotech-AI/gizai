@@ -30,9 +30,10 @@ function block(css: string, selector: string): Map<string, string> {
   for (const m of body.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) out.set(m[1] ?? "", (m[2] ?? "").trim());
   return out;
 }
-/** A size with every growth variable unset: `calc(13.5px + var(--ui-grow, 0px))` is 13.5px. */
+/** A size with every growth variable unset: `calc(13.5px + var(--ui-grow, 0px))` is 13.5px, and so is one with more
+ *  growths (`calc(120px + var(--ui-box, 0px) + 4 * 1.6 * var(--ui-grow, 0px))` is 120px). */
 function atDefault(value: string): string {
-  const m = /^calc\((\d+(?:\.\d+)?px) \+ (?:\d+ \* )?var\(--[\w-]+, 0px\)\)$/.exec(value);
+  const m = /^calc\((\d+(?:\.\d+)?px)(?: \+ (?:\d+(?:\.\d+)? \* )*var\(--[\w-]+, 0px\))+\)$/.exec(value);
   if (!m) throw new Error(`not a size with a growth: ${value}`);
   return m[1] ?? "";
 }
@@ -46,7 +47,10 @@ describe("the sizes at the defaults", () => {
     const grown = [...root.keys()].filter((k) => tokenSizes.has(k));
     expect(grown.sort()).toEqual(["--fs", "--fs-lg", "--fs-md", "--fs-sm", "--fs-xl", "--fs-xs", "--size-board-col", "--size-row", "--size-side",
       // GA-113: the Editor's tree, its rows, the tabs and the status bar grow like the sidebar and rows
-      "--size-statusbar", "--size-tab", "--size-topbar", "--size-tree", "--size-tree-row"]);
+      "--size-statusbar", "--size-tab",
+      // GA-135: the terminal's tabs like the Editor's, and the Editor's terminal panel keeps its tabs and 4 lines
+      "--size-term-panel-min", "--size-term-tab",
+      "--size-topbar", "--size-tree", "--size-tree-row"]);
     for (const k of grown) expect([k, atDefault(root.get(k) ?? "")]).toEqual([k, tokenSizes.get(k)]);
   });
   it("keep the chat at the interface text (your messages, the composer) and Markdown at --fs-md, as before", () => {

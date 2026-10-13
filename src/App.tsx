@@ -21,9 +21,11 @@ import { ChatPage } from "./pages/ChatPage";
 import { UsagePage } from "./pages/UsagePage";
 import { MemoryPage } from "./pages/MemoryPage";
 import { EditorPage } from "./pages/EditorPage";
+import { TerminalPage } from "./pages/TerminalPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, usageProbe } from "./selftest";
+import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, terminalProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
+import { startTerminals } from "./lib/terminals";
 
 export default function App() {
   const route = useRoute();
@@ -31,6 +33,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState<DrawerReq | null>(null);
+
+  // the open terminals and their views live as long as the window, not a page (GA-135)
+  useEffect(() => { startTerminals(); }, []);
 
   useEffect(() => {
     // The theme and density are on <html> already (main.tsx); t and d switch them, like Settings → Appearance.
@@ -156,7 +161,13 @@ export default function App() {
             memory = await memoryEmptyProbe();
             if (!memory.ok) errors.push(`memory empty probe: ${JSON.stringify(memory)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes });
+          // GA-135: GIZAI_SELFTEST_MODE=terminal:<folder> on route terminal: a terminal in that folder (see terminalProbe)
+          let terminal: Awaited<ReturnType<typeof terminalProbe>> | undefined;
+          if (i.start_route === "terminal" && i.selftest_mode?.startsWith("terminal:")) {
+            terminal = await terminalProbe(i.selftest_mode.slice(9));
+            if (!terminal.ok) errors.push(`terminal probe: ${JSON.stringify(terminal)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes, terminal });
           await exitApp(0);
         }
       })
@@ -184,6 +195,7 @@ export default function App() {
             : route.page === "usage" ? <UsagePage />
             : route.page === "memory" ? <MemoryPage key={route.scope ?? "all"} route={route} youId={info?.you_id ?? ""} />
             : route.page === "editor" ? <EditorPage id={route.id} youId={info?.you_id ?? ""} />
+            : route.page === "terminal" ? <TerminalPage id={route.id} />
             : route.page === "projects" ? <ProjectsPage />
             : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
             : <Placeholder route={route} info={info} />}

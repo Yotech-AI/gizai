@@ -2,11 +2,16 @@
 import { EditorView } from "@codemirror/view";
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { emit } from "@tauri-apps/api/event";
-import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, setAgentStatus } from "./api";
+import { createElement } from "react";
+import { createRoot } from "react-dom/client";
+import type { Terminal } from "@xterm/xterm";
+import { appInfo, archiveTask, chatMessages, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, setAgentStatus, terminalClose, terminalList } from "./api";
 import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
-import { resetAppearance } from "./lib/appearance";
+import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
+import { hardwareWebgl2, probeView, setWebglAllowed } from "./lib/terminals";
 import { graphProbe } from "./components/memory/GraphCanvas";
+import { TerminalView } from "./components/terminal/TerminalView";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -2771,4 +2776,249 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     }
   }
   return { ok: errors.length === 0, errors, ...out };
+}
+
+// ---------- the terminal (GA-135, TF0) ----------
+// GIZAI_SELFTEST_MODE=terminal:<folder> on route terminal (scripts/ui-test.sh, with /bin/sh as the shell and a scratch
+// home folder): New terminal in <folder> (a card's worktree, by its identifier in the picker), then typing, leaving and
+// coming back, 5,000 lines of scrollback, the colours and the font following the theme and Settings → Appearance at once,
+// Gizai's keys reaching the shell, find, copy and paste, a second place taking the view (Show here), WebGL and the DOM
+// renderer drawing the same screen (WebGL forced off, then its context lost), and yes for 10 s with Ctrl+C.
+
+/** Every line of the terminal's buffer (scrollback and screen), or only the lines on screen. */
+function termLines(term: Terminal, onScreen = false): string[] {
+  const b = term.buffer.active;
+  const [from, to] = onScreen ? [b.viewportY, b.viewportY + term.rows] : [0, b.length];
+  const out: string[] = [];
+  for (let i = from; i < to; i++) out.push(b.getLine(i)?.translateToString(true) ?? "");
+  return out;
+}
+
+/** A key as the web view sends it to xterm.js's text field: keydown, then keypress when keydown didn't take it. */
+function termKeyEvent(type: "keydown" | "keypress", init: { key: string; code: string; keyCode: number; charCode?: number; ctrlKey?: boolean; shiftKey?: boolean }) {
+  const e = new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init });
+  const want: Record<string, number> = { keyCode: init.keyCode, which: init.keyCode, charCode: init.charCode ?? 0 };
+  for (const k of Object.keys(want)) if ((e as unknown as Record<string, number>)[k] !== want[k]) Object.defineProperty(e, k, { get: () => want[k] });
+  return e;
+}
+function termType(term: Terminal, text: string) {
+  const ta = term.textarea;
+  if (!ta) return;
+  for (const ch of text) {
+    const enter = ch === "\r";
+    const upper = ch.toUpperCase();
+    const keyCode = enter ? 13 : ch === " " ? 32 : ch === "-" ? 189 : ch === ";" ? 186 : ch === "'" ? 222 : upper.charCodeAt(0);
+    const code = enter ? "Enter" : ch === " " ? "Space" : ch === "-" ? "Minus" : ch === ";" ? "Semicolon" : ch === "'" ? "Quote" : /\d/.test(ch) ? `Digit${ch}` : `Key${upper}`;
+    const down = termKeyEvent("keydown", { key: enter ? "Enter" : ch, code, keyCode });
+    ta.dispatchEvent(down);
+    if (!down.defaultPrevented && !enter) ta.dispatchEvent(termKeyEvent("keypress", { key: ch, code, keyCode: ch.charCodeAt(0), charCode: ch.charCodeAt(0) }));
+  }
+}
+const termCtrl = (term: Terminal, letter: string, more: { shiftKey?: boolean } = {}) => {
+  const e = termKeyEvent("keydown", { key: more.shiftKey ? letter.toUpperCase() : letter, code: `Key${letter.toUpperCase()}`, keyCode: letter.toUpperCase().charCodeAt(0), ctrlKey: true, ...more });
+  term.textarea?.dispatchEvent(e);
+  return e;
+};
+/** The height of one of the terminal's rows in CSS pixels: its screen's height over its rows. */
+const termRowHeight = (term: Terminal) => (term.element?.querySelector(".xterm-screen")?.getBoundingClientRect().height ?? 0) / term.rows;
+/** The rows the DOM renderer drew, as text. */
+const domRows = (host: HTMLElement) => [...host.querySelectorAll(".xterm-rows > div")].map((r) => (r.textContent ?? "").replace(/ /g, " ").trimEnd());
+
+export async function terminalProbe(folder: string) {
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const done = () => ({ ok: errors.length === 0, errors, ...out });
+
+  // 1. #/terminal: New terminal, the picker titled "New terminal in", the folder
+  window.location.hash = "#/terminal";
+  const newBtn = await waitFor(() => q<HTMLButtonElement>(".term-new"));
+  if (!newBtn) { errors.push("no New terminal on #/terminal"); return done(); }
+  newBtn.click();
+  const picker = await waitFor(() => q('.ed-picker[aria-label="New terminal in"]'));
+  check(picker?.querySelector(".ed-picker-title")?.textContent === "New terminal in", "the picker is titled New terminal in");
+  const opt = await waitFor(() => [...(picker?.querySelectorAll<HTMLElement>(".opt") ?? [])].find((o) => o.querySelector(".card-id")?.textContent === folder || o.querySelector(".label")?.textContent === folder), 8000);
+  if (!opt) { errors.push(`${folder} isn't in the picker`); return done(); }
+  opt.click();
+  const id = await waitFor(() => { const m = /^#\/terminal\/(.+)$/.exec(window.location.hash); return m ? decodeURIComponent(m[1] ?? "") : null; }, 10000);
+  if (!id) { errors.push(`no terminal opened: ${q(".ed-bar.failed")?.textContent ?? "no error shown"}`); return done(); }
+  const first = await waitFor(() => { const v = probeView(id); return v && v.renderer !== "none" && v.term.element?.isConnected ? v : null; }, 10000);
+  if (!first) { errors.push("the terminal's view didn't show on its page"); return done(); }
+  const term = first.term;
+  out.size = `${term.cols} × ${term.rows}`;
+  check(term.cols > 80 && term.rows > 24, `the view fits its page, not 80 × 24 (${term.cols} × ${term.rows})`);
+  out.row = Math.round(termRowHeight(term) * 100) / 100;
+  check(Math.abs(termRowHeight(term) - 20) < 0.5, `a row is the code's 20px line (${out.row}px)`);
+  check(term.options.scrollback === 5000 && term.options.cursorBlink === false, "5,000 lines of scrollback and a cursor that doesn't blink");
+  check(document.activeElement === term.textarea, "the terminal has the focus on its page");
+  await waitFor(() => termLines(term).some((l) => l.trim()), 10000); // the prompt
+  await sleep(300);
+
+  // 2. typing echo gizai-probe shows it
+  termType(term, "echo gizai-probe\r");
+  out.echo = !!(await waitFor(() => termLines(term).some((l) => l.trim() === "gizai-probe"), 5000));
+  check(out.echo, `echo gizai-probe didn't print (screen: ${JSON.stringify(termLines(term, true).filter(Boolean).slice(-4))})`);
+
+  // 3. leave the page and come back: the same view, with what it printed meanwhile; off screen it holds no WebGL context
+  termType(term, "sleep 1; echo printed-while-away\r");
+  await sleep(150);
+  window.location.hash = "#/tasks";
+  await waitFor(() => (probeView(id)?.renderer === "none" ? true : null), 3000);
+  check(probeView(id)?.renderer === "none" && !first.host.isConnected, "the view leaves the screen with the page (and its WebGL context with it)");
+  await sleep(1800);
+  window.location.hash = `#/terminal/${encodeURIComponent(id)}`;
+  const back = await waitFor(() => { const v = probeView(id); return v && v.renderer !== "none" && v.term.element?.isConnected ? v : null; }, 5000);
+  check(back?.term === term && q(".term-place .xterm") === term.element, "coming back shows the same terminal");
+  out.away = termLines(term).some((l) => l.trim() === "printed-while-away") && termLines(term).some((l) => l.trim() === "gizai-probe");
+  check(out.away, "what it printed while the page was left, and what it printed before, are there");
+
+  // 4. 5,000 lines of scrollback
+  termType(term, "seq 1 6000\r");
+  await waitFor(() => termLines(term, true).some((l) => l.trim() === "6000"), 8000);
+  out.scrollback = term.buffer.active.length - term.rows;
+  check(out.scrollback === 5000, `5,000 lines of scrollback kept (${out.scrollback})`);
+
+  // 5. the colours are the term-* tokens and follow the theme at once; the font follows Settings → Appearance
+  const css = () => getComputedStyle(document.documentElement);
+  const tok = (n: string) => css().getPropertyValue(`--${n}`).trim();
+  const before = getAppearance();
+  check(term.options.theme?.background === tok("term-bg") && term.options.theme?.red === tok("term-red") && term.options.theme?.cyan === tok("term-cyan"),
+    `the colours are the term-* tokens (${term.options.theme?.background} on ${tok("term-bg")})`);
+  setAppearance({ theme: before.theme === "dark" ? "light" : "dark" }, false);
+  out.themed = term.options.theme?.background === tok("term-bg") && term.options.theme?.foreground === tok("term-fg") && term.options.theme?.blue === tok("term-blue");
+  check(out.themed, `switching the theme recolours the terminal at once (${term.options.theme?.background}, wanted ${tok("term-bg")})`);
+  const cols = term.cols;
+  setAppearance({ font: "jetbrains-mono", ui: 15.5 }, false);
+  out.refont = !!(await waitFor(() => (String(term.options.fontFamily).includes("JetBrains Mono") && term.options.fontSize === 14.5 ? true : null), 3000));
+  await sleep(100);
+  check(out.refont && term.cols < cols, `Settings → Appearance refonts the terminal and it fits again (${term.options.fontFamily} ${term.options.fontSize}px, ${cols} → ${term.cols} columns)`);
+  out.row_grown = Math.round(termRowHeight(term) * 100) / 100;
+  check(Math.abs(termRowHeight(term) - 14.5 * 1.6) <= 1, `the rows grow with the text, 1.6 times its size (${out.row_grown}px at 14.5px)`);
+  setAppearance(before, false);
+  await waitFor(() => (term.options.fontSize === 12.5 ? true : null), 3000);
+
+  // 6. Ctrl+K, Ctrl+W, Ctrl+P, Ctrl+B, n, t and d go to the shell and do nothing in Gizai
+  const typed: string[] = [];
+  const sub = term.onData((d) => typed.push(d));
+  const html = document.documentElement;
+  const look = `${html.dataset.theme}/${html.dataset.density ?? ""}`;
+  term.focus();
+  for (const k of ["k", "w", "p", "b"]) termCtrl(term, k);
+  termType(term, "ntd");
+  await sleep(300);
+  out.keys = JSON.stringify(typed.join(""));
+  check(typed.join("") === "\x0b\x17\x10\x02ntd", `Gizai's keys reach the shell (${out.keys})`);
+  check(!q(".pal") && !q(".drawer") && `${html.dataset.theme}/${html.dataset.density ?? ""}` === look && window.location.hash.startsWith("#/terminal/"),
+    "Ctrl+K, n, t and d do nothing in Gizai while the terminal has the focus");
+  term.input("\x05\x15", true); // the line empty again
+
+  // 7. find (Ctrl+Shift+F; Cmd+F on macOS): a box at the top right, the terminal keeps its size. seq pushed the first
+  // gizai-probe out of the 5,000 lines, so it is printed again
+  termType(term, "echo gizai-probe\r");
+  await waitFor(() => termLines(term, true).some((l) => l.trim() === "gizai-probe"), 3000);
+  const size = `${term.cols} × ${term.rows}`;
+  if (isMac()) term.textarea?.dispatchEvent(termKeyEvent("keydown", { key: "f", code: "KeyF", keyCode: 70 }));
+  else termCtrl(term, "f", { shiftKey: true });
+  const findBox = await waitFor(() => q<HTMLInputElement>(".term-find input"), 2000);
+  check(findBox && document.activeElement === findBox, "Ctrl+Shift+F opens find with the focus in its box");
+  if (findBox) {
+    typeInto(findBox, "gizai-probe");
+    out.find = (await waitFor(() => { const t = q(".term-find .count")?.textContent ?? ""; return /^\d+ of \d+$/.test(t) ? t : null; }, 3000)) ?? q(".term-find .count")?.textContent;
+    check(/^\d+ of \d+$/.test(String(out.find)), `find counts the matches (${out.find})`);
+    check(`${term.cols} × ${term.rows}` === size, "the terminal keeps its size while find shows");
+    findBox.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true }));
+    await sleep(100);
+    check(!q(".term-find") && document.activeElement === term.textarea, "Escape closes find and gives the terminal the focus");
+  }
+
+  // 8. copy and paste with the keys of the system (Ctrl+Shift+C and Ctrl+Shift+V on Linux, through the clipboard plugin)
+  const at = termLines(term).findIndex((l) => l.trim() === "gizai-probe");
+  term.select(0, at, "gizai-probe".length);
+  typed.length = 0;
+  if (!isMac()) {
+    termCtrl(term, "c", { shiftKey: true });
+    await sleep(200);
+    const clip = await readClipboardText().catch((e) => `(${e})`);
+    out.copied = clip;
+    termCtrl(term, "v", { shiftKey: true });
+    await sleep(400);
+    out.pasted = JSON.stringify(typed.join(""));
+    // a headless cage may have no clipboard to read: then only that nothing else was sent
+    if (clip === "gizai-probe") check(typed.join("").includes("gizai-probe"), `Ctrl+Shift+V pastes what Ctrl+Shift+C copied (${out.pasted})`);
+    else check(!typed.join("").includes("\x16") && !typed.join("").includes("\x03"), `Ctrl+Shift+C and V send no ^C or ^V to the shell (${out.pasted})`);
+  }
+  term.clearSelection();
+  term.input("\x05\x15", true);
+  sub.dispose();
+
+  // 9. a second place asks for the view: it moves there, and the page says where it is with Show here
+  const session = (await terminalList()).find((s) => s.id === id);
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;right:0;bottom:0;width:520px;height:240px;display:flex;flex-direction:column;z-index:100";
+  document.body.appendChild(box);
+  const root = createRoot(box);
+  root.render(createElement(TerminalView, { id, place: { kind: "panel", folder: session?.folder ?? "" } }));
+  const moved = await waitFor(() => (box.contains(term.element ?? null) ? true : null), 3000);
+  const pageAway = q(".term-page .term-away");
+  out.awayText = pageAway?.textContent;
+  check(moved && pageAway && buttonByText(pageAway, "Show here") && /is in .+'s Editor\.Show here$/.test(pageAway.textContent ?? ""),
+    `the second place shows it, the page says where it is with Show here (${pageAway?.textContent})`);
+  await sleep(150);
+  out.panelSize = `${term.cols} × ${term.rows}`;
+  check(term.rows >= 11, `it fits the other place in 20px rows: 11 in its 240px, less 8px above and below (${out.panelSize})`);
+  if (pageAway) buttonByText(pageAway, "Show here")?.click();
+  const home = await waitFor(() => (q(".term-page .term-place")?.contains(term.element ?? null) ? true : null), 3000);
+  check(home && /is on its own page\.Show here$/.test(box.querySelector(".term-away")?.textContent ?? ""), "Show here moves it back, and the other place says it is on its own page");
+  root.unmount();
+  box.remove();
+  await sleep(150);
+  check(q(".term-page .term-place")?.contains(term.element ?? null), "the page keeps it when the other place goes");
+
+  // 10. WebGL where a hardware WebGL2 context exists; the DOM renderer draws the same screen when it is off or lost
+  out.webgl2 = hardwareWebgl2();
+  await waitFor(() => (probeView(id)?.renderer === (out.webgl2 ? "webgl" : "dom") ? true : null), 2000);
+  out.renderer = probeView(id)?.renderer;
+  check(out.renderer === (out.webgl2 ? "webgl" : "dom"), `WebGL draws where hardware WebGL2 exists (webgl2 ${out.webgl2}, drawn by ${out.renderer})`);
+  if (out.webgl2) check(first.host.querySelector(".xterm-screen canvas:not(.xterm-link-layer)"), "WebGL draws on a canvas");
+  const screen = termLines(term, true).map((l) => l.trimEnd());
+  setWebglAllowed(false);
+  const dom = await waitFor(() => { const rows = domRows(first.host); return probeView(id)?.renderer === "dom" && rows.length === term.rows ? rows : null; }, 3000);
+  check(dom && JSON.stringify(dom) === JSON.stringify(screen), "with WebGL off the DOM renderer draws the same screen");
+  setWebglAllowed(true);
+  if (out.webgl2) {
+    await waitFor(() => (probeView(id)?.renderer === "webgl" ? true : null), 2000);
+    const canvas = first.host.querySelector<HTMLCanvasElement>(".xterm-screen canvas:not(.xterm-link-layer)"); // not the links' 2D layer
+    canvas?.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext();
+    const lost = await waitFor(() => { const rows = domRows(first.host); return probeView(id)?.renderer === "dom" && rows.length === term.rows ? rows : null; }, 6000);
+    check(lost && JSON.stringify(lost) === JSON.stringify(termLines(term, true).map((l) => l.trimEnd())), "after the WebGL context is lost the DOM renderer draws the same screen");
+    // WebGL again (as the next time the view shows), so yes runs on the renderer people get
+    setWebglAllowed(false);
+    setWebglAllowed(true);
+    await waitFor(() => (probeView(id)?.renderer === "webgl" ? true : null), 2000);
+  }
+
+  // 11. yes for 10 s: the window keeps drawing, and Ctrl+C stops it within a second
+  termType(term, "yes\r");
+  let frames = 0, gap = 0, last = performance.now(), going = true, parsed = performance.now();
+  const tick = () => { const now = performance.now(); gap = Math.max(gap, now - last); last = now; frames += 1; if (going) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+  const ws = term.onWriteParsed(() => { parsed = performance.now(); });
+  await sleep(10000);
+  going = false;
+  out.yes = { frames, longestFrameMs: Math.round(gap), screen: termLines(term, true).filter((l) => l === "y").length, renderer: probeView(id)?.renderer };
+  check(frames >= 100 && gap < 1000, `the window kept drawing while yes ran (${frames} frames in 10 s, the longest ${Math.round(gap)} ms)`);
+  check((out.yes as { screen: number }).screen > term.rows / 2, "yes filled the screen");
+  const stop = performance.now();
+  termCtrl(term, "c");
+  await waitFor(() => (performance.now() - parsed > 400 ? true : null), 5000);
+  out.stoppedMs = Math.round(parsed - stop);
+  check(Number(out.stoppedMs) < 1000, `Ctrl+C stopped yes within a second (${out.stoppedMs} ms)`);
+  ws.dispose();
+  termType(term, "echo after-yes\r");
+  check(await waitFor(() => termLines(term, true).some((l) => l.trim() === "after-yes"), 4000), "the shell answers after yes");
+
+  // the shell ends with the terminal
+  await Promise.race([terminalClose(id).catch(() => {}), sleep(4000)]);
+  check(await waitFor(() => (probeView(id) === null ? true : null), 3000), "closing the terminal disposes of its view");
+  return done();
 }

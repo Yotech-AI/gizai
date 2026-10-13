@@ -2,6 +2,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import type * as T from "./types";
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
@@ -294,6 +295,9 @@ export const terminalClose = (id: string) => invoke<void>("terminal_close", { id
 /** After an open, a rename, a close, a shell's end and a change of `busy`: every open terminal. */
 export const onTerminalsChanged = (cb: (list: T.TerminalSession[]) => void): Promise<UnlistenFn> =>
   listen<T.TerminalSession[]>("terminals-changed", (m) => cb(m.payload));
+/** The clipboard's text, through the clipboard plugin (its one right: clipboard-manager:allow-read-text), so pasting
+ *  into a terminal with Ctrl+Shift+V on Linux doesn't show WebKit's own Paste prompt. */
+export const readClipboardText = () => readText();
 
 // ---- updates: the release check and Update to <version> ----
 /** This version, what the release check found, and the update that runs (or ran). */

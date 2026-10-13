@@ -2,7 +2,8 @@
 // A popover like the @ picker, through a portal (the sidebar clips what overflows it), its top where it was asked for,
 // moved up as far as it must to fit the window. Projects (their linked folders), one group per Editor folder ("In
 // ~/Herd": the folders directly inside it that aren't a project's), and Cards (worktrees, yours by hand first). One box
-// filters them all; ↑ and ↓ choose, Enter opens, Escape closes.
+// filters them all; ↑ and ↓ choose, Enter opens, Escape closes. The Terminal page (GA-135) uses it titled "New terminal
+// in", with its own `onPick`: there a card's worktree an agent works on is off, with why as its tooltip.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FolderCode, Keyboard, Search } from "lucide-react";
@@ -21,7 +22,11 @@ export function openFolder(id: string) {
 /** Who works on a card's worktree now, from the backend's reason ("QA Agent is working on GA-118" → "QA Agent is working"). */
 export const workingWho = (why: string | null) => (why ?? "An agent is working").replace(/ on \S+$/, "");
 
-export function FolderPicker({ at, onClose }: { at: { x: number; y: number }; onClose: () => void }) {
+export function FolderPicker({ at, onClose, title, onPick }: {
+  at: { x: number; y: number }; onClose: () => void;
+  /** Its title over the search box ("New terminal in"); without one it opens the folder in the Editor. */
+  title?: string; onPick?: (f: EditorFolder) => void;
+}) {
   const [folders, setFolders] = useState<EditorFolder[] | null>(null);
   const [roots, setRoots] = useState<string[]>([]);
   const [tasks, setTasks] = useState<Map<string, Task>>(new Map());
@@ -53,13 +58,16 @@ export function FolderPicker({ at, onClose }: { at: { x: number; y: number }; on
   const byHand = (f: EditorFolder) => !!(f.taskId && tasks.get(f.taskId)?.byHand);
   const groups = useMemo(() => pickerGroups(folders ?? [], roots, query, byHand), [folders, roots, query, tasks]); // eslint-disable-line react-hooks/exhaustive-deps
   const flat = groups.flatMap((g) => g.folders);
-  const choose = (f: EditorFolder | undefined) => { if (!f) return; onClose(); openFolder(f.id); };
+  // a terminal can't start in a card's worktree while an agent works on it (the backend refuses it too)
+  const off = (f: EditorFolder) => !!onPick && f.readOnly;
+  const choose = (f: EditorFolder | undefined) => { if (!f || off(f)) return; onClose(); if (onPick) onPick(f); else openFolder(f.id); };
   const rootNames = roots.length ? roots.join(", ") : "your Editor folders";
 
   let i = -1;
   return createPortal(
-    <div ref={ref} className="pop ed-picker" role="dialog" aria-label="Open a folder" style={{ position: "fixed", left: at.x, top }}
+    <div ref={ref} className="pop ed-picker" role="dialog" aria-label={title ?? "Open a folder"} style={{ position: "fixed", left: at.x, top }}
       onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); } }}>
+      {title && <div className="ed-picker-title">{title}</div>}
       <div className="ed-picker-in">
         <Search className="icon sm" />
         <input ref={input} className="input" value={query} placeholder="Find a folder" aria-label="Find a folder"
@@ -84,7 +92,9 @@ export function FolderPicker({ at, onClose }: { at: { x: number; y: number }; on
                 const task = f.taskId ? tasks.get(f.taskId) : undefined;
                 const project = f.projectId ? projects.get(f.projectId) : undefined;
                 return (
-                  <button key={f.id} className={`opt${me === sel ? " active" : ""}`} role="option" aria-selected={me === sel} title={f.path}
+                  <button key={f.id} className={`opt${me === sel ? " active" : ""}`} role="option" aria-selected={me === sel}
+                    title={off(f) ? `${f.readOnlyWhy ?? "An agent is working on it"}: a terminal there waits until its run ends.` : f.path}
+                    aria-disabled={off(f) || undefined}
                     onMouseEnter={() => setSel(me)} onClick={() => choose(f)}>
                     {f.kind === "project" ? <span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", flex: "none", background: project?.color ?? "var(--text-3)" }} />
                       : f.kind === "card" ? <span className="st"><StatusIcon category={task?.stateCategory ?? "in_progress"} hold={task?.hold} /></span>

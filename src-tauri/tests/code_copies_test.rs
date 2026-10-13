@@ -715,3 +715,57 @@ async fn when_a_step_after_the_stash_fails_the_chat_says_the_changes_are_in_gits
     assert!(said.contains("npm ERR! code EUSAGE"), "the end of the output: {said}");
     assert_eq!(stashes(&herd), ["On main: Gizai: before the update to main"]);
 }
+
+// ---- GA-160: GA-156's stash where it meets GA-154's closing note, as 0.11.0 has them together ----
+
+/// Gizai's notes in a chat, oldest first.
+fn notes(st: &AppState, thread: &str) -> Vec<String> {
+    chat::messages(&st.db, thread).unwrap().into_iter().filter(|m| m.role == "system").filter_map(|m| m.body_md).collect()
+}
+
+#[tokio::test]
+async fn approving_a_kept_update_with_stash_stashes_ends_the_answer_with_the_closing_note_and_then_posts_the_updates_result() {
+    fakes();
+    let tmp = real_tempdir();
+    let st = gizai_lib::test_state(tmp.path());
+    let lead = lead(&st);
+    let gh = Github::new(tmp.path(), "github");
+    let herd = gh.herd(tmp.path(), "herd");
+    identity(&herd, "t");
+    set_project(&st, "KADE", Some(&herd), Some(gh.url()), "active");
+    always_fetch(&st);
+    code::before_turn(&st, "warm-up").await;
+    let head = git_out(&herd, &["rev-parse", "HEAD"]);
+    std::fs::write(herd.join("package-lock.json"), LOCAL_LOCK).unwrap();
+    // the answer used a tool from outside Gizai, so update_checkout with stash waits for your OK and changes nothing yet
+    let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Look it up in Otus, then update my folder and stash my changes").unwrap();
+    gizai_lib::chat::mark_outside(&st, &thread, "mcp__otus__search");
+    let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE", "stash": true})).await.unwrap_err();
+    assert!(e.starts_with("update_checkout wasn't run: this answer used mcp__otus__search"), "{e}");
+    let kept = gizai_lib::pending::list(&st, &thread).unwrap();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(stashes(&herd).is_empty() && notes(&st, &thread).is_empty(), "nothing ran before Approve");
+    assert_eq!(std::fs::read_to_string(herd.join("package-lock.json")).unwrap(), LOCAL_LOCK);
+
+    // Approve: the decision's note, then GA-154's closing note (nothing else waits), then the update's own result
+    gizai_lib::pending::approve(&st, &kept[0].action.id).await.unwrap();
+    let h = herd.display().to_string();
+    let result = format!("Updated KADE's linked folder {h}: put the uncommitted changes in package-lock.json in git's stash (git -C {h} \
+                          stash pop brings them back), stayed at {} (already main's commit) and ran npm ci.", &head[..7]);
+    for _ in 0..400 {
+        if notes(&st, &thread).len() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let said = notes(&st, &thread);
+    assert_eq!(said.len(), 3, "{said:?}");
+    assert!(said[0].starts_with("Approved: ") && said[0].ends_with("The update started: its result comes as a message in this chat."), "{said:?}");
+    assert_eq!(said[1], gizai_lib::pending::ANSWER_DONE, "{said:?}");
+    assert_eq!(said[2], result, "{said:?}");
+    assert!(gizai_lib::pending::list(&st, &thread).unwrap().is_empty());
+    assert_eq!(stashes(&herd), ["On main: Gizai: before the update to main"]);
+    assert_eq!(git_out(&herd, &["stash", "show", "--name-only", "stash@{0}"]), "package-lock.json");
+    assert_eq!(std::fs::read_to_string(herd.join("node_modules/calls.log")).unwrap(), "npm ci --no-audit --no-fund\n");
+}

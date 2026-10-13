@@ -11,17 +11,18 @@ GizAi is early: its version is still 0.x. Every release is on [GitHub Releases](
 On Linux and macOS, in a terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.sh | sh
+curl -fsSL https://gizai.app/install.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Yotech-AI/gizai/production/scripts/get.ps1 | iex
+irm https://gizai.app/install.ps1 | iex
 ```
 
 It gets the source of the latest release into `~/.local/share/gizai-src` (on Windows `%LOCALAPPDATA%\gizai-src`), or updates it there. Then it runs that release's install script: first its check, which names what is missing, then the build and the install. Run it again to update.
 
+- gizai.app sends the line on to [`scripts/get.sh`](https://github.com/Yotech-AI/gizai/blob/production/scripts/get.sh) (on Windows [`scripts/get.ps1`](https://github.com/Yotech-AI/gizai/blob/production/scripts/get.ps1)) on the `production` branch, where you can read it first. The source it gets comes from GitHub.
 - Without git (on Linux and macOS also bash and curl), it says what to install first and does nothing else.
 - The source folder is the install's own: changes in it are replaced. Your data stays in [its own folder](#your-data).
 - `--uninstall --purge` (`-Uninstall -Purge` on Windows) deletes the source folder with your data.

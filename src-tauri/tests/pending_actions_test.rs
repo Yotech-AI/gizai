@@ -7,6 +7,8 @@
 //!   way a note of Gizai's in the chat says what happened, and the Team Lead's next answer starts with it, once.
 //! - Only you decide: no Gizai tool lists, approves or discards one, and a board check never makes one.
 //! - They survive a restart; one approved while Gizai closed counts as failed. The Inbox shows a chat with one.
+//! - GA-154: after the last decision in a chat, when the Team Lead isn't answering there, one more note says its answer is
+//!   done. It is for you only: the Team Lead's next answer and a hand-over leave it out.
 //! Tools are called the way the MCP server calls them; chat turns run fake Claude Codes (never the real one).
 #[path = "support/data_lock.rs"]
 mod data_lock;
@@ -71,6 +73,9 @@ fn kept_text(name: &str) -> String {
     format!("{name} wasn't run: this answer used mcp__otus__search, a tool from outside Gizai. Gizai keeps the call for the user to approve \
              with one click. Tell them in a sentence what it does.")
 }
+
+/// GA-154: the last note once nothing waits any more and the Team Lead isn't answering, word for word (the card's text).
+const DONE: &str = "Nothing else waits for your OK. The Team Lead's answer above is done: send a message to go on.";
 
 /// "Save the note X" → "save the note X", as the notes say it after "Approved: ".
 fn lower_first(s: &str) -> String {
@@ -191,15 +196,17 @@ async fn a_memory_write_after_an_outside_tool_waits_with_its_path_and_new_text_a
     let n = t.note("Lessons/Release notes").unwrap();
     assert_eq!((n.current_version, n.body_md.as_str()), (2, body));
     let notes = t.notes(&thread);
-    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!(notes.len(), 2, "{notes:?}");
     assert_eq!(notes[0].0, said);
     assert_eq!((notes[0].1["kind"].as_str(), notes[0].1["action"].as_str(), notes[0].1["tool"].as_str(), notes[0].1["status"].as_str()),
                (Some("pending"), Some(id.as_str()), Some("memory_write"), Some("approved")), "{:?}", notes[0].1);
+    // GA-154: nothing else waits, so a last note says the answer is done
+    assert_eq!(notes[1].0, DONE);
     // once: a second approval is refused and saves nothing
     assert_eq!(pending::approve(&t.st, &id).await.unwrap_err(), "It was approved already, so it doesn't run again.");
     assert_eq!(pending::discard(&t.st, &id).unwrap_err(), "It was approved already, so it doesn't run again.");
     assert_eq!(t.note("Lessons/Release notes").unwrap().current_version, 2);
-    assert_eq!(t.notes(&thread).len(), 1);
+    assert_eq!(t.notes(&thread).len(), 2);
     assert!(t.waiting(&thread).is_empty() && t.inbox_item(&thread).is_none());
     assert_eq!(chat::get_thread(&t.st.db, &thread).unwrap().pending_actions, 0);
 }
@@ -216,7 +223,7 @@ async fn discard_saves_nothing_and_says_what_was_discarded() {
     assert_eq!((d.status.as_str(), d.result_md.as_deref()), ("discarded", Some("Discarded: make the note Lessons/Otus.")));
     assert!(t.note("Lessons/Otus").is_none() && memory::find(&t.st.db, "Lessons/Otus").unwrap().is_none(), "nothing saved");
     let notes = t.notes(&thread);
-    assert_eq!(notes.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(), ["Discarded: make the note Lessons/Otus."]);
+    assert_eq!(notes.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(), ["Discarded: make the note Lessons/Otus.", DONE]);
     assert_eq!(notes[0].1["status"], "discarded");
     assert_eq!(pending::approve(&t.st, &id).await.unwrap_err(), "It was discarded already.");
     assert!(t.note("Lessons/Otus").is_none());
@@ -257,7 +264,9 @@ async fn approving_a_note_write_after_the_note_changed_fails_with_its_usual_mess
     assert_eq!((a.status.as_str(), a.result_md.as_deref()), ("failed", Some(said.as_str())));
     let n = t.note("Standards/Rust style").unwrap();
     assert_eq!((n.current_version, n.body_md.as_str()), (2, "Use thiserror and anyhow."), "nothing saved");
-    let last = t.notes(&thread).pop().unwrap();
+    let mut notes = t.notes(&thread);
+    assert_eq!(notes.pop().unwrap().0, DONE, "nothing else waits (GA-154)");
+    let last = notes.pop().unwrap();
     assert_eq!((last.0, last.1["status"].as_str()), (said, Some("failed")));
 }
 
@@ -394,7 +403,8 @@ async fn every_tool_in_the_list_waits_with_a_readable_preview_and_approve_all_ru
     assert_eq!(said[9], "Approved: move the note Agents/Backend Agent/Cargo to Lessons/Cargo. It is at Lessons/Cargo now.");
     let notes: Vec<String> = t.notes(&thread).into_iter().map(|n| n.0).collect();
     assert_eq!(notes[..3], ["Discarded: start Backend Agent on KADE-1.", "Discarded: continue the run on KADE-1.", "Discarded: merge KADE-1's pull request."]);
-    assert_eq!(notes[3..], said[..]);
+    assert_eq!(notes[3..notes.len() - 1], said[..]);
+    assert_eq!(notes.last().unwrap(), DONE, "once, after the last call Approve all ran (GA-154)");
     // and it happened
     let be = team::agent(&t.st.db, &t.backend).unwrap();
     assert_eq!((be.title.as_deref(), be.model.as_deref(), be.status.as_str()), (Some("Steered"), Some("opus"), "paused"));
@@ -772,4 +782,254 @@ fn the_team_leads_prompt_and_the_docs_say_how_it_works() {
     assert!(mem.contains("approve with one click (GA-102)") && mem.contains("**Discard** saves nothing"), "docs/memory.md");
     let readme = include_str!("../../README.md");
     assert!(readme.contains("Approve with one click") && readme.contains("Approve all"), "README");
+}
+
+// ---- GA-154: after the last decision, a note says the Team Lead's answer is done ----
+
+impl T {
+    /// The texts of Gizai's notes in a chat, oldest first.
+    fn texts(&self, thread: &str) -> Vec<String> {
+        self.notes(thread).into_iter().map(|n| n.0).collect()
+    }
+    /// The chat's closing notes (by text or by kind): their meta.
+    fn done_notes(&self, thread: &str) -> Vec<Value> {
+        self.notes(thread).into_iter().filter(|n| n.0 == DONE || n.1["kind"] == "pending_done").map(|n| n.1).collect()
+    }
+}
+
+#[tokio::test]
+async fn approving_or_discarding_the_last_call_that_waits_ends_with_a_note_that_the_answer_is_done() {
+    let t = setup();
+    assert_eq!(pending::ANSWER_DONE, DONE, "word for word");
+    // Approve: after "Approved: …" comes the closing note, a note of Gizai's that isn't a decision note
+    let thread = t.marked("Read Otus and keep a lesson");
+    let id = t.keep(&thread, "memory_write", json!({"path": "Lessons/Otus", "body_md": "Fridays."})).await;
+    pending::approve(&t.st, &id).await.unwrap();
+    assert_eq!(t.texts(&thread), ["Approved: make the note Lessons/Otus. Saved as version 1.", DONE]);
+    assert_eq!(t.notes(&thread)[1].1, json!({"kind": "pending_done", "run": null}), "kept without an answer, so no run");
+    let last = chat::messages(&t.st.db, &thread).unwrap().pop().unwrap();
+    assert_eq!((last.role.as_str(), last.author_id.as_deref(), last.body_md.as_deref()), ("system", None, Some(DONE)));
+    assert!(!chat::is_decision_note(&last), "not a decision note");
+    assert!(t.waiting(&thread).is_empty() && t.inbox_item(&thread).is_none(), "the chat left the Inbox");
+    assert_eq!(chat::get_thread(&t.st.db, &thread).unwrap().pending_actions, 0);
+
+    // Discard: the same after "Discarded: …"
+    let thread = t.marked("Read Otus and pause the Backend Agent");
+    let id = t.keep(&thread, "set_agent_status", json!({"agent": "Backend Agent", "status": "paused"})).await;
+    pending::discard(&t.st, &id).unwrap();
+    assert_eq!(t.texts(&thread), ["Discarded: pause Backend Agent.", DONE]);
+    assert_eq!(t.notes(&thread)[1].1, json!({"kind": "pending_done", "run": null}));
+    assert!(t.inbox_item(&thread).is_none());
+    // a decision that is refused adds no note
+    assert_eq!(pending::approve(&t.st, &id).await.unwrap_err(), "It was discarded already.");
+    assert_eq!(pending::discard(&t.st, &id).unwrap_err(), "It was discarded already.");
+    assert_eq!(t.texts(&thread).len(), 2);
+    assert_eq!(team::agent(&t.st.db, &t.backend).unwrap().status, "active");
+}
+
+#[tokio::test]
+async fn with_two_calls_waiting_deciding_the_first_gives_no_closing_note_and_the_second_gives_it_once() {
+    let t = setup();
+    // a call that waits in another chat doesn't hold this chat's note back
+    let other = t.marked("Read Otus and add a column");
+    let column = t.keep(&other, "add_column", json!({"name": "Otus", "after": "Review", "kind": "work"})).await;
+
+    let thread = t.marked("Read Otus, keep a lesson and pause the Backend Agent");
+    let write = t.keep(&thread, "memory_write", json!({"path": "Lessons/Otus", "body_md": "Fridays."})).await;
+    let pause = t.keep(&thread, "set_agent_status", json!({"agent": "Backend Agent", "status": "paused"})).await;
+    pending::approve(&t.st, &write).await.unwrap();
+    assert_eq!(t.texts(&thread), ["Approved: make the note Lessons/Otus. Saved as version 1."], "the pause still waits");
+    assert!(t.inbox_item(&thread).is_some(), "still in the Inbox");
+    pending::discard(&t.st, &pause).unwrap();
+    assert_eq!(t.texts(&thread), ["Approved: make the note Lessons/Otus. Saved as version 1.", "Discarded: pause Backend Agent.", DONE]);
+    assert!(t.inbox_item(&thread).is_none());
+
+    // the other way round: Discard first, Approve last
+    let thread = t.marked("Read Otus, keep another lesson and pause the Backend Agent");
+    let write = t.keep(&thread, "memory_write", json!({"path": "Lessons/Other", "body_md": "Thursdays."})).await;
+    let pause = t.keep(&thread, "set_agent_status", json!({"agent": "Backend Agent", "status": "paused"})).await;
+    pending::discard(&t.st, &write).unwrap();
+    assert_eq!(t.texts(&thread), ["Discarded: make the note Lessons/Other."]);
+    pending::approve(&t.st, &pause).await.unwrap();
+    assert_eq!(t.texts(&thread), ["Discarded: make the note Lessons/Other.", "Approved: pause Backend Agent. Backend Agent is paused now.", DONE]);
+    assert_eq!(t.done_notes(&thread).len(), 1);
+
+    // the other chat: no note while its call waits, its own once it is decided
+    assert!(t.notes(&other).is_empty(), "{:?}", t.notes(&other));
+    assert_eq!(t.waiting(&other), [column.clone()]);
+    pending::discard(&t.st, &column).unwrap();
+    assert_eq!(t.texts(&other), ["Discarded: add the column Otus after Review.", DONE]);
+}
+
+#[tokio::test]
+async fn approve_all_on_three_calls_gives_one_closing_note_after_the_last_decision_also_when_one_fails() {
+    let t = setup();
+    t.write_note("Standards/Rust style", "Use thiserror.", None);
+    // a note that exists and a call without a version: approving it fails (its note is red)
+    let failing = json!({"path": "Standards/Rust style", "body_md": "No version given."});
+    for bad in 0..3 {
+        let thread = t.marked(&format!("Read Otus and do three things ({bad})"));
+        let mut ids = vec![];
+        for i in 0..3 {
+            let args = if i == bad { failing.clone() } else { json!({"path": format!("Lessons/{bad}-{i}"), "body_md": "Fridays."}) };
+            ids.push(t.keep(&thread, "memory_write", args).await);
+        }
+        let done = pending::approve_all(&t.st, &ids).await.unwrap();
+        let status: Vec<&str> = done.iter().map(|a| a.status.as_str()).collect();
+        assert_eq!(status, (0..3).map(|i| if i == bad { "failed" } else { "approved" }).collect::<Vec<_>>(), "{done:?}");
+        let notes = t.notes(&thread);
+        assert_eq!(notes.len(), 4, "three decision notes and one closing note: {notes:?}");
+        let said: Vec<String> = done.iter().map(|a| a.result_md.clone().unwrap()).collect();
+        assert_eq!(notes[..3].iter().map(|n| n.0.clone()).collect::<Vec<_>>(), said);
+        assert_eq!(notes[bad].1["status"], "failed", "{:?}", notes[bad]);
+        assert!(notes[bad].0.contains("It failed: "), "{:?}", notes[bad]);
+        assert_eq!(notes[3], (DONE.to_string(), json!({"kind": "pending_done", "run": null})), "after the last decision note");
+        assert!(t.inbox_item(&thread).is_none());
+    }
+
+    // calls Approve all skips (they no longer wait): the note comes once, after the last call it ran
+    let thread = t.marked("Read Otus and keep three lessons");
+    let mut ids = vec![];
+    for i in 0..3 {
+        ids.push(t.keep(&thread, "memory_write", json!({"path": format!("Lessons/Skip-{i}"), "body_md": "Fridays."})).await);
+    }
+    pending::discard(&t.st, &ids[2]).unwrap();
+    assert_eq!(t.texts(&thread), ["Discarded: make the note Lessons/Skip-2."], "two still wait");
+    let done = pending::approve_all(&t.st, &ids).await.unwrap();
+    assert_eq!(done.iter().map(|a| a.id.clone()).collect::<Vec<_>>(), ids[..2]);
+    assert_eq!(t.texts(&thread), ["Discarded: make the note Lessons/Skip-2.", "Approved: make the note Lessons/Skip-0. Saved as version 1.",
+                                  "Approved: make the note Lessons/Skip-1. Saved as version 1.", DONE]);
+}
+
+#[tokio::test]
+async fn calls_of_an_earlier_answer_that_still_wait_hold_the_closing_note_back_until_they_are_decided_too() {
+    let t = setup();
+    let st = t.st.clone();
+    let _server = with_socket(&t);
+    let (thread, s1) = turn(&st, None, r#"OUTSIDE Read Otus. CALL memory_write {"path": "Lessons/Otus", "body_md": "Fridays."}"#).await;
+    assert_eq!(s1.status, "succeeded", "{s1:?}");
+    let (_, s2) = turn(&st, Some(thread.clone()), r#"OUTSIDE CALL set_agent_status {"agent": "Backend Agent", "status": "paused"}"#).await;
+    assert_eq!(s2.status, "succeeded", "{s2:?}");
+    let (_, s3) = turn(&st, Some(thread.clone()), r#"OUTSIDE CALL add_column {"name": "Otus", "after": "Review", "kind": "work"}"#).await;
+    assert_eq!(s3.status, "succeeded", "{s3:?}");
+    let kept = pending::list(&st, &thread).unwrap();
+    assert_eq!(kept.iter().map(|p| p.action.run_id.clone()).collect::<Vec<_>>(), [Some(s1.run_id.clone()), Some(s2.run_id), Some(s3.run_id)],
+               "each under its own answer");
+    // the newer answers' calls: decided, but the first answer's call still waits
+    pending::discard(&st, &kept[2].action.id).unwrap();
+    pending::approve(&st, &kept[1].action.id).await.unwrap();
+    assert!(t.done_notes(&thread).is_empty(), "{:?}", t.notes(&thread));
+    assert_eq!(t.waiting(&thread), [kept[0].action.id.clone()]);
+    assert!(t.inbox_item(&thread).is_some());
+    // that one too: now the note comes, with the decided call's run
+    pending::approve(&st, &kept[0].action.id).await.unwrap();
+    assert_eq!(t.texts(&thread), ["Discarded: add the column Otus after Review.", "Approved: pause Backend Agent. Backend Agent is paused now.",
+                                  "Approved: make the note Lessons/Otus. Saved as version 1.", DONE]);
+    assert_eq!(t.done_notes(&thread), [json!({"kind": "pending_done", "run": s1.run_id})]);
+    assert!(t.inbox_item(&thread).is_none());
+}
+
+#[tokio::test]
+async fn while_the_team_lead_is_answering_in_the_chat_deciding_the_last_call_that_waits_gives_no_closing_note() {
+    let t = setup();
+    let st = t.st.clone();
+    let _server = with_socket(&t);
+    let thread = t.marked("Read Otus, keep a lesson and pause the Backend Agent");
+    let write = t.keep(&thread, "memory_write", json!({"path": "Lessons/Otus", "body_md": "Fridays."})).await;
+    let pause = t.keep(&thread, "set_agent_status", json!({"agent": "Backend Agent", "status": "paused"})).await;
+    // you send a message, and the Team Lead answers it (the fake waits for fake-go)
+    settings::set(&st.db, "claude_bin", &FAKE_CHAT.to_string()).unwrap();
+    let (_, done) = app_chat::send(&st, Some(thread.clone()), "FAKE_CHAT_WAIT How is it going?".into(), None).await.unwrap();
+    let waiting = st.data_dir.join("chat/fake-waiting");
+    until("the Team Lead answers", || waiting.exists()).await;
+    assert!(app_chat::live(&st).iter().any(|l| l.thread_id == thread), "answering");
+    // meanwhile you decide on both: the last one gives no closing note
+    pending::discard(&st, &pause).unwrap();
+    pending::approve(&st, &write).await.unwrap();
+    assert!(t.waiting(&thread).is_empty() && t.inbox_item(&thread).is_none());
+    assert_eq!(t.texts(&thread), ["Discarded: pause Backend Agent.", "Approved: make the note Lessons/Otus. Saved as version 1."]);
+    std::fs::write(st.data_dir.join("chat/fake-go"), "").unwrap();
+    let s = tokio::time::timeout(Duration::from_secs(30), done).await.expect("turn finished").unwrap();
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    until("the answer has ended", || app_chat::live(&st).is_empty()).await;
+    assert!(t.done_notes(&thread).is_empty(), "nor when the answer ends: {:?}", t.notes(&thread));
+}
+
+#[tokio::test]
+async fn the_closing_note_is_for_you_only_the_team_leads_next_answer_and_a_hand_over_leave_it_out() {
+    let t = setup();
+    let st = t.st.clone();
+    let _server = with_socket(&t);
+    t.write_note("Team Lead/Notes", "# Notes\n\n## Working agreements\n\n- Ship on Tuesdays.\n", None);
+    let append = r#"CALL memory_append {"note": "Team Lead/Notes", "heading": "Working agreements", "text": "- Fridays."}"#;
+    let (thread, s) = turn(&st, None, &format!("OUTSIDE Read Otus. {append}")).await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let id = pending::list(&st, &thread).unwrap()[0].action.id.clone();
+    pending::approve(&st, &id).await.unwrap();
+    let said = "Approved: add to the note Team Lead/Notes. Saved as version 2.";
+    let notes = t.notes(&thread);
+    assert_eq!(notes.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(), [said, DONE]);
+    assert_eq!(notes[1].1, json!({"kind": "pending_done", "run": s.run_id}), "the decided call's run");
+
+    // the next answer starts with your decision, as before, and not with the closing note
+    let heard = pending::for_turn(&st, &thread);
+    assert_eq!(heard.ids, [id.clone()]);
+    assert!(!heard.line.contains("answer above is done"), "{}", heard.line);
+    settings::set(&st.db, "claude_bin", &FAKE_CHAT.to_string()).unwrap();
+    let (_, s2) = turn(&st, Some(thread.clone()), "What did I decide?").await;
+    assert_eq!(s2.status, "succeeded", "{s2:?}");
+    let last = prompts(&st).pop().unwrap();
+    assert!(last.contains("decided on calls of yours") && last.contains("- Approved: add to the note Team Lead/Notes. Saved as version 2 (your memory_append call)"),
+            "{last}");
+    assert!(!last.contains("Nothing else waits") && !last.contains("answer above is done"), "{last}");
+
+    // a new session (the old one can't be resumed) gets a hand-over: your decision is in it, the closing note isn't
+    let (_, s3) = turn(&st, Some(thread.clone()), "FAKE_LOST_SESSION Go on").await;
+    assert_eq!(s3.status, "succeeded", "{s3:?}");
+    let retry = prompts(&st).pop().unwrap();
+    assert!(retry.contains("could not be resumed") && retry.contains(&format!("(Gizai: {said})")), "{retry}");
+    assert!(!retry.contains("Nothing else waits") && !retry.contains("answer above is done"), "{retry}");
+    let handover = chat::handover(&chat::messages(&st.db, &thread).unwrap(), chat::HANDOVER_CAP);
+    assert!(handover.contains(&format!("(Gizai: {said})")) && !handover.contains("answer above is done"), "{handover}");
+    assert_eq!(t.done_notes(&thread).len(), 1, "answers give no closing note of their own");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_decisions_in_a_chat_that_end_together_give_one_closing_note_after_both() {
+    let t = setup();
+    let mut chats = vec![];
+    for i in 0..6 {
+        let thread = t.marked(&format!("Read Otus and keep two lessons ({i})"));
+        let a = t.keep(&thread, "memory_write", json!({"path": format!("Lessons/A{i}"), "body_md": "A."})).await;
+        let b = t.keep(&thread, "memory_write", json!({"path": format!("Lessons/B{i}"), "body_md": "B."})).await;
+        chats.push((thread, a, b));
+    }
+    let mut tasks = vec![];
+    for (_, a, b) in &chats {
+        let (st, a) = (t.st.clone(), a.clone());
+        tasks.push(tokio::spawn(async move { pending::approve(&st, &a).await.map(|_| ()) }));
+        let (st, b) = (t.st.clone(), b.clone());
+        tasks.push(tokio::spawn(async move { pending::discard(&st, &b).map(|_| ()) }));
+    }
+    for task in tasks {
+        task.await.unwrap().unwrap();
+    }
+    for (thread, _, _) in &chats {
+        let texts = t.texts(thread);
+        assert_eq!(texts.len(), 3, "{texts:?}");
+        assert_eq!(texts.iter().filter(|x| *x == DONE).count(), 1, "{texts:?}");
+        assert_eq!(texts.last().unwrap(), DONE, "after both decision notes: {texts:?}");
+    }
+}
+
+#[test]
+fn the_approve_paragraph_in_the_docs_says_a_last_note_says_the_answer_is_done() {
+    let docs = include_str!("../../docs/agent-tools.md");
+    let sentence = "When nothing waits any more and the Team Lead isn't answering, a last note says so: \"Nothing else waits for your OK. \
+                    The Team Lead's answer above is done: send a message to go on.\"";
+    let approve = docs.lines().find(|l| l.trim_start().starts_with("**Approve** runs exactly that call")).expect("the Approve paragraph");
+    // right after the sentence about the note that says what happened
+    assert!(approve.contains(&format!("\"Discarded: <what>.\", and the Team Lead's next answer in that chat starts with what you decided, in square \
+                                       brackets. {sentence}")), "{approve}");
+    assert_eq!(docs.matches(sentence).count(), 1);
 }

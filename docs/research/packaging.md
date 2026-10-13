@@ -10,11 +10,11 @@ Limits: this run may not run makepkg, brew, curl or a build, so the PKGBUILD, it
 
 - **Both work without a certificate, a paid account or a prebuilt binary.** An AUR package `gizai` and a formula in our own tap, `Yotech-AI/homebrew-tap`, both build the release tag's source on your computer, as the one-line install does. The names are free: `gizai` and `gizai-git` on the AUR, and `gizai` in Homebrew (formula and cask). [V]
 - **The trap is real for the AUR.** A package that installs `/usr/lib/gizai/gizai` makes Gizai take `/usr` for an install script's install, so Update builds for minutes and then fails. The draft formula avoids the layout. **Recommended:** a build-time setting, `GIZAI_PACKAGE=aur` or `homebrew`. A Gizai built with it never updates itself, and Settings → Updates gives the command (`yay -Syu`, or `brew update && brew upgrade gizai`; exact texts in §5.1).
-- **Homebrew leaves Gizai.app in its own folder** (`$(brew --prefix)/opt/gizai/Gizai.app`), because a formula may not write to Applications. The formula's notes give the one `ln -sfn` line for `~/Applications`. **macOS only:** on Linux, Homebrew would run Gizai on its own GTK and WebKitGTK, and the launcher entry wouldn't show.
+- **Homebrew leaves Gizai.app in its own folder** (`$(brew --prefix)/opt/gizai/Gizai.app`), because a formula may not write to Applications. The formula's notes give the one `ln -sfn` line for `~/Applications`. A Gizai kept in the Dock probably breaks at each `brew upgrade`; a Mac test decides whether the formula keeps a stable copy instead. **macOS only:** on Linux, Homebrew would run Gizai on its own GTK and WebKitGTK, and the launcher entry wouldn't show.
 - **Not worth making:** `gizai-git` (`production` only moves for a release, and the release is tagged minutes later), bottles, a `-bin` package or a cask (all prebuilt).
 - **Per release**, a step 5 for the DevOps Agent: one sha256 of the tag's GitHub tarball goes into both files, with the version.
 - **Scoop:** it could build from source without a certificate, but only after the user installs the C++ Build Tools, and it needs the same package setting. Not now.
-- **Cards (§6):** PK1 (backend) and PK2 (frontend) at the same time, then a release, then PK3 (AUR) and PK4 (tap) at the same time, then PK5 (docs). **Open questions (§7):** 10.
+- **Cards (§6):** PK1 (backend) and PK2 (frontend) at the same time, then a release, then PK3 (AUR) and PK4 (tap) at the same time, then PK5 (docs). **Open questions (§7):** 11.
 
 ---
 
@@ -71,7 +71,7 @@ Gizai is a desktop app where a team of AI agents works through your board. Each 
 - **Free is not reserved** [I]. The AUR has no reservation: a package base exists once someone pushes its first commit (AUR submission guidelines, §8). The name is first come, first served until the AUR account pushes it (Q1 in §7).
 - **`gizai-git` on `production` isn't worth it.** `production` changes only through a release's pull request from `main`, and the release tag on its latest commit follows minutes later (docs/RELEASING.md:12, :61-77). [V] So `gizai-git` would build what `gizai` builds, a few minutes earlier, with no checksum (VCS sources use `SKIP`, VCS package guidelines). A `-git` package of `main` would bring unreleased database upgrades, which the released package can't open afterwards: "an older build refuses it" (docs/RELEASING.md:26). [V] Leave the name free.
 - **The PKGBUILD** is in §5.3. Where it departs from the brief, with the reason:
-  1. **`makedepends=('cargo' 'nodejs' 'npm')`, not `rust`.** Arch's Rust guidelines say `makedepends=(cargo)` [V]. `cargo` is provided by both `rust` (1:1.99.0, provides `cargo`) and `rustup` (provides `cargo` and `rust`) [V archlinux.org], so `rust` works too. Don't add a version (`cargo>=…`): both provide `cargo` without one, which doesn't satisfy a versioned dependency [I: pacman's rule for unversioned provides]. Arch's Rust is 1.99 [V], new enough for Gizai's Rust 2024 code.
+  1. **`makedepends=('cargo' 'nodejs' 'npm')`, not `rust`.** Arch's Rust guidelines say `makedepends=(cargo)` [V]. `cargo` is provided by both `rust` (1:1.99.0, provides `cargo`) and `rustup` (provides `cargo` and `rust`) [V archlinux.org], so `rust` works too. Don't add a version (`cargo>=…`): both provide `cargo` without one, which doesn't satisfy a versioned dependency [I: pacman's rule for unversioned provides]. Arch has Rust 1.99, Node.js 26.11.1 and npm 12.2.0 [V], new enough for Gizai's Rust 2024 code and its Node 20 minimum (install.sh:116-121).
   2. **No `git` in makedepends.** The release package builds GitHub's tarball of the tag. Cargo.lock and package-lock.json have no git dependencies (`rg 'source = "git'`, `rg '"resolved": "git'`: none), and neither the build script nor Vite's config runs git (src-tauri/build.rs:1-3, vite.config.ts). [V] `git` is needed **when Gizai runs** (worktrees, the Editor), so it goes into `depends`, with `curl` for the release check (crates/gizai-agents/src/update.rs:136). [V] A `gizai-git` would need git to build.
   3. **`depends` lists every library Gizai links, not just two.** Arch lists the libraries a binary links itself. Tauri's own AUR guide lists cairo, gdk-pixbuf2, glib2, gtk3, hicolor-icon-theme, libsoup, pango and webkit2gtk-4.1 [V]. Gizai also links libdbus (`dbus`; no package is named `libdbus` [V]) and Rust's runtime: `libgcc` and `glibc`, as Arch has split gcc-libs, which webkit2gtk-4.1's own depends show (`libgcc`, `libstdc++`) [V]. namcap on the built package confirms the list (card PK3).
   4. **`libayatana-appindicator` stays in `depends`**, as the brief has it, so the tray works out of the box (Omarchy's Waybar). Gizai loads it with `dlopen` (src-tauri/src/lib.rs:368-377), so namcap may report it as not needed, and `optdepends` would be the strict choice (Q7 in §7). [V/I]
@@ -83,13 +83,13 @@ Gizai is a desktop app where a team of AI agents works through your board. Each 
 - **It can never move to homebrew-core**: "A formula whose primary output is a native macOS `.app` bundle is not eligible" (Acceptable Formulae). [V] A cask, where Homebrew keeps apps, installs a prebuilt app, which Gizai doesn't publish (decided). So the brief is right: a formula, in our tap.
 - **No bottles.** `brew tap-new` sets up GitHub Actions that build bottles, and `brew pr-pull` publishes them [V]. Those are prebuilt binaries on GitHub, which docs/PLATFORMS.md:10 and docs/RELEASING.md:100 rule out. So the tap's CI only builds and tests (§5.4), and every `brew install` builds from source.
 - **Where Gizai.app goes.** Into the formula's own folder (the keg): `$(brew --prefix)/Cellar/gizai/X.Y.Z/Gizai.app`, always reachable as `$(brew --prefix)/opt/gizai/Gizai.app` (`/opt/homebrew/opt/gizai/Gizai.app` on Apple silicon). The command `gizai` goes in `$(brew --prefix)/bin`. Homebrew never links apps into Applications [V]:
-  - `brew linkapps` was deprecated in Homebrew 1.2.0 (May 2017);
-  - a formula may not write outside its prefix;
+  - `brew linkapps` was deprecated (Homebrew/brew#1808, merged 2017-01-11; listed in Homebrew 1.2.0's notes), because it "cannot behave nicely with e.g. Spotlight using either aliases or symlinks and Homebrew formulae do not build "proper" `.app` bundles that can be relocated";
+  - a formula that writes "to the disk outside of your sandbox area" gets `Operation not permitted`, "enforced on macOS by `sandbox-exec`", and post-install steps run "inside the formula post-install sandbox" too (Formula Cookbook);
   - emacs-plus's tap says it plainly: "Formulas don't install apps there; if that is what you want, the cask is the better fit."
   - MacVim, the one core formula that builds an app, leaves `MacVim.app` in its keg and links only commands into `bin`.
 - **Starting it from the Dock.** After `brew install`, the formula's notes (caveats) give one line: `mkdir -p ~/Applications && ln -sfn $(brew --prefix)/opt/gizai/Gizai.app ~/Applications/Gizai.app`. That is install.sh's own link (install.sh:278-286), pointed at Homebrew's folder. Through `opt` it follows upgrades [V emacs-plus: "the links follow upgrades, but Spotlight may not show them"]. Then you open Gizai from Applications in your home folder (Finder: Go → Home), and keep it in the Dock (its Dock icon → Options → Keep in Dock), as install.sh says today (install.sh:291). Two things only a Mac can show, for card PK4:
-  - **Does the Dock's item still start Gizai after `brew upgrade`?** By default `brew upgrade` removes the old version at once (`HOMEBREW_NO_INSTALL_CLEANUP` turns that off) [V]. If the Dock keeps the version's own path rather than the link's, the item breaks after each upgrade [I].
-  - **Does Spotlight show a linked app?** emacs-plus says it may not. docs/PLATFORMS.md:72 says the same link makes Spotlight start an install.sh install, so the answer holds for both.
+  - **Does the Dock's item still start Gizai after `brew upgrade`?** Probably not. By default `brew upgrade` removes the old version at once (`HOMEBREW_NO_INSTALL_CLEANUP` turns that off) [V]. emacs-plus warns that "an alias points at the versioned keg it was made for and stops working once an upgrade replaces it" [V]. The Dock keeps its items much as an alias does [I], so a kept Gizai would point at `Cellar/gizai/X.Y.Z` and break at each upgrade. Gizai made 13 releases from 7 to 13 October (`git log --tags`) [V], so that would happen often. If PK4's test confirms it, the formula keeps a copy of the app at a path that never changes (§5.4, "a stable copy"), as install.sh keeps `~/.local/lib/gizai/Gizai.app`.
+  - **Does Spotlight show a linked app?** Homebrew (#1808) and emacs-plus both say links and aliases don't work well with Spotlight [V]. docs/PLATFORMS.md:72 says install.sh's same link lets Spotlight start Gizai, so check that on the Mac too.
 - **Homebrew on Linux: possible, not recommended.**
   - Homebrew uses none of the host's libraries except glibc and gcc [V]. It does have Gizai's stack: `webkitgtk` 2.54.1 is Linux-only with bottles for x86_64 and arm64 Linux, built with `USE_GTK4=OFF`, and its test checks `webkit2gtk-4.1`, the API Tauri uses; `libayatana-appindicator` 0.6.1 is there too [V]. So the formula could build with an `on_linux` block of about ten dependencies.
   - But Gizai would run on Homebrew's own GTK, WebKitGTK and Mesa (`webkitgtk` depends on Homebrew's `mesa` [V]), not the desktop's. The launcher's EGL fix points at the system's Mesa files (install.sh:316-318), and themes, input methods and GPU drivers would all need testing [I].
@@ -517,6 +517,21 @@ Notes on the draft:
 - **`bin.write_exec_script`** writes `#!/bin/bash` and `exec "<target>" "$@"` (Homebrew's `pathname.rb`) [V], the same as install.sh's macOS launcher (install.sh:257-263) [V]. That the script gets its execute bit from Homebrew's cleaner is [I].
 - **The test** runs the program for real: `--version` (main.rs:31-34), and `--backup` with an empty data folder, which fails with "no Gizai data" and exit code 1 (src-tauri/src/lib.rs:202-205, main.rs:39-45) [V]. On macOS Gizai first reads the login shell's PATH, for at most 5 seconds (docs/PLATFORMS.md:53) [V].
 - **livecheck** `:github_latest` reads GitHub's "latest" release, as Gizai's own check does [V Brew Livecheck docs].
+- **A stable copy, if the Dock needs it** (PK4 decides on the Mac; Q11 in §7). `post_install` runs after every install and upgrade. It can keep a copy of the app at a path that doesn't change with the version, replaced the way install.sh replaces its app (install.sh:246-271) [V]. The `ln -sfn` line and `bin/gizai` then point at that copy:
+
+  ```ruby
+  def post_install
+    # A copy at a path that doesn't change with the version, so a Gizai kept in the Dock survives upgrades.
+    dir = var/"gizai"
+    dir.mkpath
+    rm_r dir/".Gizai.app.new" if (dir/".Gizai.app.new").exist?
+    system "ditto", opt_prefix/"Gizai.app", dir/".Gizai.app.new"
+    rm_r dir/"Gizai.app" if (dir/"Gizai.app").exist?
+    mv dir/".Gizai.app.new", dir/"Gizai.app"
+  end
+  ```
+
+  The costs: the app is on disk twice; `brew uninstall` leaves the copy (the docs add `rm -rf "$(brew --prefix)/var/gizai"`); and whether the post-install sandbox lets it write `var` is [I], though formulae commonly make folders in `var` there. The setting `GIZAI_PACKAGE` still marks the copy, and `install_prefix` doesn't match its path either (its folder's parent is `var`, not `lib`).
 - **Each `brew upgrade` builds from scratch.** With no bottle, every install and upgrade builds from source [I: Homebrew builds when there is no bottle].
 
 ### 5.5 Homebrew on Linux
@@ -695,7 +710,7 @@ For a package's Gizai, `installTo` is null, and `cannotInstall` is the text of �
 ### PK3. AUR: build, check and publish the gizai package
 
 - **Column:** To do. **Role:** backend (the DevOps Agent can take it). **Builds on:** a release with PK1 in it. Needs the AUR account (Q1) and Jefsev's OK to publish. It can run at the same time as PK4.
-- **Builds:** the PKGBUILD and .SRCINFO of §5.3 for that release, tested as in §5.9, with every fix written down. Then the AUR package itself. The AUR takes pushes to `master` only and has no pull requests [V], so this card's output is not a pull request here. The files and the test results go into its summary, and Jefsev publishes with the exact `git push` the card puts in `run_for_me`.
+- **Builds:** the PKGBUILD and .SRCINFO of §5.3 for that release, tested as in §5.9, with every fix written down. Then the AUR package itself. The AUR takes pushes to `master` only and has no pull requests [V], so a card's branch can't go there. So this card's pull request, here, puts the tested files and the test results into §5.3 of this document. Jefsev publishes with the exact `git push` that the card puts in `run_for_me`.
 - **Acceptance:**
   - [ ] `makepkg` builds the release as a normal user, with nothing installed into `/usr`, and `check()` passes.
   - [ ] namcap's findings are fixed or explained in the summary; `depends` matches what namcap finds linked.
@@ -703,7 +718,7 @@ For a package's Gizai, `installTo` is null, and `cannotInstall` is the text of �
   - [ ] Headless in `cage`, Settings → Updates of the packaged program shows the AUR text of §5.1.
   - [ ] After Jefsev's install, the launcher entry starts Gizai with the tray icon, and `gizai --version` says the release.
   - [ ] Once published, https://aur.archlinux.org/packages/gizai shows the version.
-  - [ ] The PKGBUILD's final text goes back into §5.3 of this document, by a pull request.
+  - [ ] §5.3 of this document holds the published PKGBUILD and .SRCINFO, word for word.
 
 ### PK4. Homebrew: the tap Yotech-AI/homebrew-tap with the gizai formula
 
@@ -715,7 +730,7 @@ For a package's Gizai, `installTo` is null, and `cannotInstall` is the text of �
   - [ ] `gizai --version` says the release. Gizai.app is in `$(brew --prefix)/opt/gizai/`, with nothing under `lib/gizai`.
   - [ ] The caveats show the `ln -sfn` line and `brew update && brew upgrade gizai`.
   - [ ] Nothing is built for download: no bottle block, no bottle publishing.
-  - [ ] The summary has a check list for Jefsev's Mac (§5.9): Dock, Spotlight, and an upgrade to the next release.
+  - [ ] The summary has a check list for Jefsev's Mac (§5.9): Dock, Spotlight, and an upgrade to the next release. If the Dock's item breaks at the upgrade, a follow-up pull request switches the formula to the stable copy of §5.4 (Q11).
 
 ### PK5. Install docs and the release step for the packages
 
@@ -725,7 +740,7 @@ For a package's Gizai, `installTo` is null, and `cannotInstall` is the text of �
   - [ ] The commands in the docs are the ones PK3 and PK4 tested, word for word.
   - [ ] Step 5 names the DevOps Agent, the checksum, `pkgver`, `.SRCINFO`, the tap's pull request and the checks.
   - [ ] The one line stays the first install route in README.md and docs/install.md.
-  - [ ] `npm test` passes (it checks the docs' links, if it does today).
+  - [ ] The README's link to `docs/install.md#with-a-package-manager` opens that part on GitHub.
 
 ---
 
@@ -741,6 +756,7 @@ For a package's Gizai, `installTo` is null, and `cannotInstall` is the text of �
 8. **The launcher and the desktop entry exist twice** (install.sh and the PKGBUILD). Give them one source in the repository (for example `packaging/linux/`) that both use? *Recommendation:* not now; step 5 checks install.sh's diff each release.
 9. **A licence for the packaging files** (the AUR asks for one and suggests 0BSD): 0BSD for the AUR repository and the tap? *Recommendation:* yes, 0BSD for both.
 10. **Homebrew on Linux, and Scoop?** *Recommendation:* neither now (§3.2 Q2 and Q5). The website's install page (another repository) gets the two commands once the packages are live.
+11. **Homebrew and the Dock: a plain link, or a stable copy of the app** (§5.4)? A link is Homebrew's usual way, but a Gizai kept in the Dock probably breaks at every upgrade. A stable copy survives upgrades, but `brew uninstall` leaves it behind. *Recommendation:* PK4 tries the link on your Mac over one upgrade, and switches to the stable copy if the Dock item breaks.
 
 ---
 
@@ -768,10 +784,10 @@ All read on 2026-10-13.
 | Homebrew, "brew livecheck" (`:github_latest`) | https://docs.brew.sh/Brew-Livecheck |
 | Homebrew, the Manpage (`brew upgrade`, `brew tap`, `bump-formula-pr`) | https://docs.brew.sh/Manpage |
 | Homebrew's source: `env_config.rb` (build network, auto-update, cleanup, the Linux sandbox), `sandbox.rb`, `cmd/shellenv.sh`, `requirements/arch_requirement.rb`, `extend/pathname.rb` (`write_exec_script`) | https://github.com/Homebrew/brew/tree/main/Library/Homebrew |
-| Homebrew 1.2.0 (`brew linkapps` deprecated), 2017-05-01 | https://brew.sh/2017/05/01/homebrew-1.2.0/ |
+| Homebrew/brew#1808, "Deprecate brew (un)linkapps." (merged 2017-01-11), and Homebrew 1.2.0's notes that list it (2017-05-01) | https://github.com/Homebrew/brew/pull/1808, https://brew.sh/2017/05/01/homebrew-1.2.0/ |
 | formulae.brew.sh: `webkitgtk` 2.54.1, `libayatana-appindicator` 0.6.1, `gizai` (formula and cask: 404) | https://formulae.brew.sh/api/formula/webkitgtk.json, https://formulae.brew.sh/api/formula/libayatana-appindicator.json, https://formulae.brew.sh/api/formula/gizai.json, https://formulae.brew.sh/api/cask/gizai.json |
 | homebrew-core: `webkitgtk.rb` (`USE_GTK4=OFF`, tests `webkit2gtk-4.1`), `macvim.rb` (an app in its keg) | https://github.com/Homebrew/homebrew-core/blob/main/Formula/w/webkitgtk.rb, https://github.com/Homebrew/homebrew-core/blob/main/Formula/m/macvim.rb |
-| emacs-plus's tap, README (apps of formulae and Applications) | https://github.com/d12frosted/homebrew-emacs-plus |
+| emacs-plus's tap, README, Usage (a formula's apps and Applications: copies, links, Spotlight, aliases and the versioned keg) | https://github.com/d12frosted/homebrew-emacs-plus |
 | GitHub blog, "Update on the future stability of source code archives and hashes" (2023-02-21) | https://github.blog/open-source/git/update-on-the-future-stability-of-source-code-archives-and-hashes/ |
 | GitHub docs, "Downloading source code archives" | https://docs.github.com/en/repositories/working-with-files/using-files/downloading-source-code-archives |
 | Scoop wiki, "App Manifests" and "App Manifest Autoupdate" | https://github.com/ScoopInstaller/Scoop/wiki/App-Manifests, https://github.com/ScoopInstaller/Scoop/wiki/App-Manifest-Autoupdate |

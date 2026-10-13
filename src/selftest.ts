@@ -3453,3 +3453,74 @@ async function terminalPanelProbe(phase: "a" | "b", card: string) {
   await sleep(1500);
   return done();
 }
+
+// GIZAI_SELFTEST_MODE=steps:<step>;<step>… (scripts/shot-cage.sh, scripts/readme-gif.sh, scripts/tour-capture.sh), run after
+// the start route opens. A step is one of:
+//  - "#/route": goes there;
+//  - "theme:dark" or "theme:light": Settings → Appearance's theme, for this start only (not kept);
+//  - "wait:<ms>": waits that long;
+//  - "<name>=<selector>" or "<name>@<ms>=<selector>" (GA-148, the product tour): a named click. It waits for the element,
+//    scrolls it into view when it isn't, notes its box (in the screen's pixels) and clicks it; with GIZAI_TOUR_DIR set
+//    (scripts/tour-capture.sh) it takes a still before the click and one <ms> after it (1500 by default), and at the end
+//    writes the steps with their stills and boxes to steps.json next to them;
+//  - any other step clicks that CSS selector, 1.2 s after the step before.
+// A selector may end in :text(<words>): the first element it matches whose text has those words.
+const STEP_NAME = /^([a-z0-9][a-z0-9-]*)(?:@(\d+))?=(.+)$/;
+
+type TourStep = { name: string; selector: string; before: string; after: string; box: { x: number; y: number; width: number; height: number } };
+
+function findStep(selector: string): HTMLElement | null {
+  const m = /^(.*):text\((.+)\)$/.exec(selector);
+  const css = m ? m[1] || "*" : selector;
+  const words = m?.[2].trim();
+  let all: HTMLElement[];
+  try { all = [...document.querySelectorAll<HTMLElement>(css)]; } catch { return null; }
+  return all.find((el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && (!words || (el.textContent ?? "").includes(words));
+  }) ?? null;
+}
+
+const settled = async (ms: number) => { await sleep(ms); await nextFrame(); await nextFrame(); };
+
+export async function runSteps(steps: string[], api: { still: (name: string) => Promise<void>; report: (json: unknown) => Promise<void> }) {
+  const tour: TourStep[] = [];
+  const errors: string[] = [];
+  const dpr = window.devicePixelRatio || 1;
+  const px = (v: number) => Math.round(v * dpr);
+  let named = false;
+  for (const step of steps) {
+    if (step.startsWith("theme:")) {
+      const theme = step.slice(6);
+      if (theme === "dark" || theme === "light") setAppearance({ theme }, false);
+      continue;
+    }
+    if (step.startsWith("wait:")) { await sleep(Number(step.slice(5)) || 0); continue; }
+    const m = STEP_NAME.exec(step);
+    if (!m) {
+      await sleep(1200);
+      if (step.startsWith("#/")) window.location.hash = step;
+      else { const el = document.querySelector(step) as HTMLElement | null; el?.scrollIntoView({ block: "start" }); el?.click(); }
+      continue;
+    }
+    named = true;
+    const [, name, after = "1500", selector] = m;
+    const el = await waitFor(() => findStep(selector), 10000);
+    if (!el) { errors.push(`${name}: nothing to click at ${selector}`); continue; }
+    const r0 = el.getBoundingClientRect();
+    if (r0.top < 0 || r0.left < 0 || r0.bottom > window.innerHeight || r0.right > window.innerWidth) el.scrollIntoView({ block: "center", inline: "nearest" });
+    await settled(700);
+    const r = el.getBoundingClientRect();
+    const box = { x: px(r.left), y: px(r.top), width: px(r.width), height: px(r.height) };
+    const shot = async (still: string) => { try { await api.still(still); } catch (e) { errors.push(`${still}: ${e}`); } };
+    await shot(`${name}-before`);
+    el.click();
+    await settled(Number(after));
+    await shot(`${name}-after`);
+    tour.push({ name, selector, before: `${name}-before.png`, after: `${name}-after.png`, box });
+  }
+  if (named) {
+    const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+    await api.report({ viewport: { width: px(window.innerWidth), height: px(window.innerHeight), scale: dpr }, theme, steps: tour, errors }).catch(() => {});
+  }
+}

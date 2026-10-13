@@ -4,7 +4,7 @@
 //   tour-<theme>.gif         the README's GIF: 1280 × 832 at 15 fps with ffmpeg's palette, under 10 MB
 //   tour-<theme>-poster.png  the first frame
 // Remotion renders a master per theme into out/ (2560 × 1664, 30 fps, near lossless), and ffmpeg encodes the MP4 and
-// the WebM from it; the GIF is its own cut (TourGif-<theme>: no zoom, cuts for crossfades), as PNGs at half size.
+// the WebM from it; the GIF is its own cut (TourGif-<theme>: cuts for crossfades), as PNGs at half size.
 // Needs ffmpeg on the PATH (for VP9 and the GIF's palette). The first render downloads Chrome Headless Shell.
 // usage: npm run render            both themes
 //        npm run render -- dark    one theme

@@ -1,8 +1,12 @@
 # The product tour (GA-149)
 
 GizAi's product tour for the website's hero and the README, made with [Remotion](https://www.remotion.dev) 4 from the
-stills `scripts/tour-capture.sh` captured (GA-148). A cursor, the board's Review glyph, clicks through every feature
-in dark and in light. Remotion's free licence covers YoTech (a company of two).
+stills `scripts/tour-capture.sh` captured (GA-148). A cursor, the board's Review glyph, clicks through the website's eight
+features in about 50 seconds, in dark and in light. Remotion's free licence covers YoTech (a company of two).
+
+Everything on screen is made up (`crates/gizai-core/examples/prep_tour.rs`): Alex Morgan's projects Northwind Shop,
+Lumen Health and Orbit CRM, their clients and cards, folders in a fake `~/Projects`, and Claude Code and Codex at
+`~/.local/bin`. The capture runs Gizai in a fake home, so every path shows as `~/…`.
 
 This folder is its own npm project, apart from the app: the app's `package.json`, `npm ci`, `npm run build`, `npm test`
 and CI don't see it.
@@ -31,18 +35,18 @@ Into `docs/tour/`, for `dark` and `light`:
 | `tour-<theme>-poster.png` | The first frame: the logo. |
 
 Remotion renders a master per theme into `out/` (git ignores it), and ffmpeg encodes the MP4 and the WebM from it. The
-GIF is its own cut, `TourGif-<theme>`: the same tour without the zoom, and with cuts where the video crossfades. A GIF
-redraws the whole picture for every frame that zooms, and the zoomed tour came to about 90 MB; without it, about 3 MB.
+GIF is its own cut, `TourGif-<theme>`: the same tour with cuts where the video crossfades. A GIF stores every frame of
+a crossfade in full, while a cut and the cursor's glide change only a small part of the picture, so it stays at a few MB.
 
 ## How it is built
 
 - `remotion.config.ts`: the public folder is `capture/`, so the stills stay where the capture wrote them.
-- `src/scenes.ts`: the scenes from `capture/<theme>/scenes.json` in the website's order (its feature rows 01 to 08, so
-  Bring your own CLI comes fourth, after the Team Lead's chat), each with its caption: the feature's name from the
-  homepage's list (`design/website/README.md`) and one short line. Also the colours, from `design/tokens.json` and the
+- `src/scenes.ts`: the eight scenes from `capture/<theme>/scenes.json`, which the capture takes in the website's order
+  (its feature rows 01 to 08), each with its caption: the feature's name from the homepage's list
+  (`design/website/README.md`) and one short line. Also the colours, from `design/tokens.json` and the
   mountains' tokens (`design/branding`, at strength strong, as on the website's hero).
-- `src/timeline.ts`: when each scene and step starts, where the cursor is, which stills show and how far the camera
-  zooms, as plain functions of the frame. The durations are in seconds, so the GIF's 15 fps keeps the same pace.
+- `src/timeline.ts`: when each scene and step starts, where the cursor is and which stills show, as plain functions of
+  the frame. The durations are in seconds, so the GIF's 15 fps keeps the same pace.
 - `src/Tour.tsx`, `Cursor.tsx`, `Caption.tsx` and `Ends.tsx` draw them.
 
 What the tour does:
@@ -52,8 +56,7 @@ What the tour does:
   click to click on a gentle arc, eased, and lands in the clicked element's box (its middle, or on a wide row towards
   the label on the left). At each click it presses in and sends out a ring.
 - **Each click** crossfades in 0.3 s from the still before it to the still after it.
-- **The zoom** goes towards the clicked box while the cursor travels, at most 1.3× (less for a big box), and back out
-  at the end of the step.
+- **The frame never zooms**: every still fills it at its own size, the whole tour.
 - **The captions** sit at the bottom left: the feature's number in the logo's pink and its name in Geist, one line in
   Atkinson Hyperlegible Next, both from `src/assets/fonts/`.
 - **The opening** is the logo (`design/brand/logo-horizontal-on-<theme>.svg`); **the closing** is the logo and "An

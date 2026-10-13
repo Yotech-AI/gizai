@@ -15,7 +15,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/tour/tour-dark.gif">
   <source media="(prefers-color-scheme: light)" srcset="docs/tour/tour-light.gif">
-  <img alt="GizAi's product tour: the board, a live agent run, the Team Lead's chat, your own CLIs, a card tested by QA, the Editor and the terminals, Memory, an agent's tools and the Inbox" src="docs/tour/tour-light.gif">
+  <img alt="GizAi's product tour: the board and a live agent run, the Team Lead's chat, Claude Code and Codex, a card tested by QA, the Editor and its Terminal, Memory, an agent's tools and the Inbox" src="docs/tour/tour-light.gif">
 </picture>
 
 </div>

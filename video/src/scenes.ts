@@ -1,5 +1,5 @@
-// What the tour shows: GA-148's scenes (capture/<theme>/scenes.json) in the website's order, each with its feature's name
-// from the homepage's feature list (design/website/README.md, GA-144) as its caption.
+// What the tour shows: the captured scenes (capture/<theme>/scenes.json) in the website's order, each with its
+// feature's name from the homepage's feature list (design/website/README.md, GA-144) as its caption.
 import darkCapture from "../capture/dark/scenes.json";
 import lightCapture from "../capture/light/scenes.json";
 
@@ -14,31 +14,27 @@ export type Scene = CapturedScene & { caption: Caption };
 export const WIDTH = 2560;
 export const HEIGHT = 1664;
 
-/** The website's order (its feature rows 01 to 08); scenes.json has Bring your own CLI seventh. */
+/** The website's order, its feature rows 01 to 08: scenes.json lists the scenes in it too. */
 export const ORDER = [
   "01-board",
-  "02-live-run",
-  "03-chat",
-  "07-clis",
+  "02-chat",
+  "03-clis",
   "04-review",
   "05-editor",
-  "06-terminals",
-  "08-memory",
-  "09-tools",
-  "10-inbox",
+  "06-memory",
+  "07-tools",
+  "08-inbox",
 ];
 
 const CAPTIONS: Record<string, Caption> = {
-  "01-board": { number: "01", name: "The board decides who works", line: "Agents sit on columns and pick up the cards." },
-  "02-live-run": { number: "01", name: "The board decides who works", line: "An agent at work on its card, live, in its own worktree." },
-  "03-chat": { number: "02", name: "A Team Lead you talk to", line: "Your request becomes cards. You approve in one click." },
-  "07-clis": { number: "03", name: "Bring your own CLI", line: "Claude Code, Codex or Gemini, with your own logins and accounts." },
+  "01-board": { number: "01", name: "The board decides who works", line: "Agents pick up the cards on their columns. Watch one at work, live." },
+  "02-chat": { number: "02", name: "A Team Lead you talk to", line: "Your request becomes cards. You approve in one click." },
+  "03-clis": { number: "03", name: "Bring your own CLI", line: "Claude Code and Codex, with your own logins and their limits." },
   "04-review": { number: "04", name: "Tested before you see it", line: "QA tests each card and opens its pull request." },
-  "05-editor": { number: "05", name: "The Editor and Terminal, built in", line: "A project's files with their git status, and a card's changes." },
-  "06-terminals": { number: "05", name: "The Editor and Terminal, built in", line: "Your own shell, on its own page or under the code." },
-  "08-memory": { number: "06", name: "Memory", line: "Decisions and gotchas as linked notes, with a graph." },
-  "09-tools": { number: "07", name: "Tools per agent", line: "MCP servers, web search and a browser, each off until you switch it on." },
-  "10-inbox": { number: "08", name: "The Inbox", line: "Questions, approvals and Run this for me, in one place." },
+  "05-editor": { number: "05", name: "The Editor and Terminal, built in", line: "Open a project, then its terminal, right under the code." },
+  "06-memory": { number: "06", name: "Memory", line: "Decisions and gotchas as linked notes, with a graph." },
+  "07-tools": { number: "07", name: "Tools per agent", line: "MCP servers, web search and a browser, each off until you switch it on." },
+  "08-inbox": { number: "08", name: "The Inbox", line: "Questions, approvals and Run this for me, in one place." },
 };
 
 const CAPTURES: Record<Theme, { scenes: CapturedScene[] }> = { dark: darkCapture, light: lightCapture };

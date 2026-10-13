@@ -1,5 +1,5 @@
-// The product tour: the opening, the ten scenes (each step's still before its click and after it, the cursor, the zoom
-// and the caption), and the closing.
+// The product tour: the opening, the eight scenes (each step's still before its click and after it, the cursor and the
+// caption), and the closing. Every still fills the frame at its own size: the frame never zooms.
 import type React from "react";
 import { useMemo } from "react";
 import { AbsoluteFill, Img, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
@@ -8,7 +8,7 @@ import { Caption } from "./Caption";
 import { Cursor } from "./Cursor";
 import { Closing, Opening } from "./Ends";
 import { COLORS, HEIGHT, WIDTH, scenesFor, type Theme } from "./scenes";
-import { buildTimeline, cameraAt, captionStateAt, cursorAt, cursorStateAt, sceneAt, shotsAt, toFrame, type Camera } from "./timeline";
+import { buildTimeline, captionStateAt, cursorAt, cursorStateAt, sceneAt, shotsAt } from "./timeline";
 
 export type TourProps = { theme: Theme; smooth: boolean };
 
@@ -16,20 +16,9 @@ export function tourTimeline(theme: Theme, fps: number, smooth: boolean) {
   return buildTimeline(scenesFor(theme), { fps, smooth });
 }
 
-const Still: React.FC<{ src: string; camera: Camera }> = ({ src, camera }) => (
+const Still: React.FC<{ src: string }> = ({ src }) => (
   <AbsoluteFill style={{ overflow: "hidden" }}>
-    <Img
-      src={staticFile(src)}
-      style={{
-        position: "absolute",
-        left: 0,
-        top: 0,
-        width: WIDTH,
-        height: HEIGHT,
-        transformOrigin: "0 0",
-        transform: `translate(${WIDTH / 2}px, ${HEIGHT / 2}px) scale(${camera.s}) translate(${-camera.cx}px, ${-camera.cy}px)`,
-      }}
-    />
+    <Img src={staticFile(src)} style={{ position: "absolute", left: 0, top: 0, width: WIDTH, height: HEIGHT }} />
   </AbsoluteFill>
 );
 
@@ -38,10 +27,9 @@ export const Tour: React.FC<TourProps> = ({ theme, smooth }) => {
   const { fps } = useVideoConfig();
   const tl = useMemo(() => tourTimeline(theme, fps, smooth), [theme, fps, smooth]);
   const c = COLORS[theme];
-  const camera = cameraAt(tl, frame);
   const scene = sceneAt(tl, frame);
   const cursor = cursorStateAt(tl, frame);
-  const at = toFrame(camera, cursorAt(tl, frame));
+  const at = cursorAt(tl, frame);
   const introProgress = smooth ? interpolate(frame, [0, tl.introEnd], [0, 1], { extrapolateRight: "clamp" }) : 0;
   const outroProgress = smooth
     ? interpolate(frame, [tl.outroStart, tl.outroStart + Math.round(0.9 * fps)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
@@ -52,7 +40,7 @@ export const Tour: React.FC<TourProps> = ({ theme, smooth }) => {
       {shotsAt(tl, frame).map(({ shot, index, opacity }) => (
         <AbsoluteFill key={index} style={{ opacity }}>
           {shot.kind === "intro" && <Opening theme={theme} progress={introProgress} />}
-          {shot.kind === "still" && <Still src={shot.src} camera={camera} />}
+          {shot.kind === "still" && <Still src={shot.src} />}
           {shot.kind === "outro" && <Closing theme={theme} progress={outroProgress} />}
         </AbsoluteFill>
       ))}

@@ -1,6 +1,5 @@
 // The compositions: the tour in dark and in light for the website (Tour-<theme>, 30 fps), and the README's GIF cut
-// (TourGif-<theme>, rendered at --scale 0.5): the same tour without the zoom and with cuts for crossfades, so a GIF
-// of it stays under 10 MB.
+// (TourGif-<theme>, rendered at --scale 0.5): the same tour with cuts for crossfades, so a GIF of it stays under 10 MB.
 import type React from "react";
 import { Composition } from "remotion";
 import { HEIGHT, WIDTH, type Theme } from "./scenes";

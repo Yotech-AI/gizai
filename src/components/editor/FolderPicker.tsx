@@ -156,7 +156,7 @@ export function FolderPicker({ at, onClose, title, onPick, current, note, you }:
   );
 }
 
-/** The folder the page shows first, in a group of its own name's (its own group, moved to the top), so Enter picks it. */
+/** The folder the page shows comes first: its group moves to the top, with it first there, so Enter picks it. */
 function currentFirst<G extends { title: string; folders: EditorFolder[] }>(groups: G[], current: string | undefined): G[] {
   const i = current ? groups.findIndex((g) => g.folders.some((f) => f.id === current)) : -1;
   if (i < 0) return groups;

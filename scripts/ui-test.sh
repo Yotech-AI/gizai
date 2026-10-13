@@ -115,6 +115,10 @@
 #     and "Fix" whole; "12 changed", "by hand", "updating" and a folder's "3 behind" show whole on the right; a card row's
 #     tooltip starts with its full title, a by-hand row's and the folder rows' are as before; folded, the heading says
 #     "1 behind"; the right-click menu has Copy path, Remove from the list and Open card.
+# 19. editor order (GA-157), on the same data with order-g, order-h and order-i in ~/Herd: eight folders picked in turn from
+#     the sidebar's + each join the Editor list at the bottom; a click on each row opens its page and marks it, no row
+#     moving; a listed folder picked again stays put; a ninth: the one opened longest ago leaves, the others keep their
+#     order. Then a restart: the same list in the same order, a click moves nothing, and Remove from the list takes one off.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -227,4 +231,8 @@ for i in range(12):
     open(f"{wt}/new-{i + 1}.txt", "w").write("new\n")
 PY
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:rows GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+# GA-157: the order of the sidebar's Editor list, on the same data with three more folders in ~/Herd; b is a restart of a
+mkdir -p .devdata/uitest-home/Herd/order-g .devdata/uitest-home/Herd/order-h .devdata/uitest-home/Herd/order-i
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-a GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-b GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

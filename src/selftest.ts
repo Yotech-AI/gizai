@@ -2783,7 +2783,9 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
 // home folder): New terminal in <folder> (a card's worktree, by its identifier in the picker), then typing, leaving and
 // coming back, 5,000 lines of scrollback, the colours and the font following the theme and Settings → Appearance at once,
 // Gizai's keys reaching the shell, find, copy and paste, a second place taking the view (Show here), WebGL and the DOM
-// renderer drawing the same screen (WebGL forced off, then its context lost), and yes for 10 s with Ctrl+C.
+// renderer drawing the same screen (WebGL forced off, then its context lost), and yes for 10 s with Ctrl+C. GA-136 (TF1):
+// Edit anyway for a card that isn't pinned to you, the sidebar's row, the tab and the top bar, + after the tabs, exit, and
+// the sidebar's New terminal once every terminal is closed.
 
 /** Every line of the terminal's buffer (scrollback and screen), or only the lines on screen. */
 function termLines(term: Terminal, onScreen = false): string[] {
@@ -2843,6 +2845,12 @@ export async function terminalProbe(folder: string) {
   const opt = await waitFor(() => [...(picker?.querySelectorAll<HTMLElement>(".opt") ?? [])].find((o) => o.querySelector(".card-id")?.textContent === folder || o.querySelector(".label")?.textContent === folder), 8000);
   if (!opt) { errors.push(`${folder} isn't in the picker`); return done(); }
   opt.click();
+  // GA-136: a card that isn't pinned to you asks first, under its row, with Edit anyway
+  const notYours = await waitFor(() => picker?.querySelector<HTMLElement>(".ed-confirm") ?? null, 3000);
+  out.asked = notYours?.querySelector(".grow")?.textContent ?? null;
+  check(notYours && new RegExp(`^${folder} (is .+'s card|isn't assigned to anyone): a shell there can change its files, as an edit can\\.$`).test(String(out.asked)),
+    `a card that isn't pinned to you asks first (${out.asked})`);
+  if (notYours) buttonByText(notYours, "Edit anyway")?.click();
   const id = await waitFor(() => { const m = /^#\/terminal\/(.+)$/.exec(window.location.hash); return m ? decodeURIComponent(m[1] ?? "") : null; }, 10000);
   if (!id) { errors.push(`no terminal opened: ${q(".ed-bar.failed")?.textContent ?? "no error shown"}`); return done(); }
   const first = await waitFor(() => { const v = probeView(id); return v && v.renderer !== "none" && v.term.element?.isConnected ? v : null; }, 10000);
@@ -2854,6 +2862,22 @@ export async function terminalProbe(folder: string) {
   check(Math.abs(termRowHeight(term) - 20) < 0.5, `a row is the code's 20px line (${out.row}px)`);
   check(term.options.scrollback === 5000 && term.options.cursorBlink === false, "5,000 lines of scrollback and a cursor that doesn't blink");
   check(document.activeElement === term.textarea, "the terminal has the focus on its page");
+  // GA-136 (TF1): the sidebar's Terminal, between Projects and Editor, has its row (the card's identifier in mono), selected;
+  // the page has the folder's tab and the top bar says the shell and the size
+  const sections = [...document.querySelectorAll<HTMLElement>(".side .nav-section")].map((s) => s.getAttribute("aria-label") ?? s.querySelector(".nav-label")?.firstChild?.textContent?.trim() ?? "");
+  out.sections = sections;
+  const placeOf = (name: string) => sections.indexOf(name);
+  check(placeOf("Projects") >= 0 && placeOf("Terminal") === placeOf("Projects") + 1 && placeOf("Editor") === placeOf("Terminal") + 1, `the sidebar's Terminal sits between Projects and Editor (${sections.join(", ")})`);
+  const sideRow = await waitFor(() => q<HTMLAnchorElement>(`.side [aria-label="Terminal"] a[data-term="${CSS.escape(id)}"]`), 3000);
+  out.row = { id: sideRow?.querySelector(".card-id")?.textContent, title: sideRow?.querySelector(".faint")?.textContent, on: sideRow?.classList.contains("on"), tip: sideRow?.title };
+  check(sideRow && sideRow.querySelector(".card-id")?.textContent === folder && sideRow.classList.contains("on") && !!q(".term-where .path") && getComputedStyle(sideRow.querySelector(".card-id")!).fontFamily === getComputedStyle(q(".term-where .path")!).fontFamily
+      && getComputedStyle(sideRow.querySelector(".card-id")!).fontFamily !== getComputedStyle(sideRow).fontFamily,
+    `the terminal has its row in the sidebar, the card's identifier in mono, selected (${JSON.stringify(out.row)})`);
+  const pageTab = q(`.term-tabs [role=tab][data-term="${CSS.escape(id)}"]`);
+  check(pageTab?.getAttribute("aria-selected") === "true" && Math.round(q(".term-tabs")?.getBoundingClientRect().height ?? 0) === 32, `the page has the folder's tab, selected, in a 32px strip (${q(".term-tabs")?.getBoundingClientRect().height})`);
+  await sleep(200);
+  out.where = q(".term-where")?.textContent;
+  check(out.where === `${q(".term-where .path")?.textContent}·sh·${term.cols} × ${term.rows}`, `the top bar says the folder, the shell and its size (${out.where})`);
   await waitFor(() => termLines(term).some((l) => l.trim()), 10000); // the prompt
   await sleep(300);
 
@@ -3020,9 +3044,35 @@ export async function terminalProbe(folder: string) {
   termType(term, "echo after-yes\r");
   check(await waitFor(() => termLines(term, true).some((l) => l.trim() === "after-yes"), 4000), "the shell answers after yes");
 
+  // 12. GA-136 (TF1): + after the tabs starts another terminal in the folder, without a picker; `exit` (code 0) closes it:
+  // its tab and its sidebar row go, and the page shows the tab next to it again
+  q<HTMLButtonElement>('.term-tabs > .btn[aria-label^="New terminal in"]')?.click();
+  const id2 = await waitFor(() => { const m = /^#\/terminal\/(.+)$/.exec(window.location.hash); const x = m ? decodeURIComponent(m[1] ?? "") : null; return x && x !== id ? x : null; }, 10000);
+  check(id2 && !q(".ed-picker"), `+ on the tabs starts another terminal in the folder, without a picker (${window.location.hash})`);
+  if (id2) {
+    const tabIds = await waitFor(() => { const t = [...document.querySelectorAll<HTMLElement>(".term-tabs [role=tab]")].map((x) => x.dataset.term); return t.length === 2 ? t : null; }, 3000);
+    out.tabs = [...document.querySelectorAll<HTMLElement>(".term-tabs [role=tab] .name")].map((x) => x.textContent);
+    check(tabIds?.join() === [id, id2].join(), `the folder's two terminals are its tabs (${JSON.stringify(out.tabs)})`);
+    const second = await waitFor(() => { const v = probeView(id2); return v && v.term.element?.isConnected ? v : null; }, 10000);
+    check(second, "the new terminal shows on its page");
+    if (second) {
+      await waitFor(() => termLines(second.term).some((l) => l.trim()), 10000); // its prompt
+      await sleep(200);
+      termType(second.term, "exit\r");
+      const back = await waitFor(() => (window.location.hash === `#/terminal/${encodeURIComponent(id)}` ? true : null), 8000);
+      check(back, `exit closes the terminal, and the page shows the tab next to it (${window.location.hash})`);
+      check(await waitFor(() => (!q(`.side a[data-term="${CSS.escape(id2)}"]`) && !q(`.term-tabs [data-term="${CSS.escape(id2)}"]`) ? true : null), 3000),
+        "after exit its sidebar row and its tab are gone");
+    }
+  }
+
   // the shell ends with the terminal
   await Promise.race([terminalClose(id).catch(() => {}), sleep(4000)]);
   check(await waitFor(() => (probeView(id) === null ? true : null), 3000), "closing the terminal disposes of its view");
+  // GA-136: with every terminal closed, the sidebar's Terminal has one row, New terminal, and the page gives way to #/terminal
+  check(await waitFor(() => (!q(".side a[data-term]") && [...document.querySelectorAll('.side [aria-label="Terminal"] .nav-item')].map((r) => r.textContent).join() === "New terminal" ? true : null), 3000),
+    "with every terminal closed, the sidebar's Terminal has one row: New terminal");
+  check(await waitFor(() => (window.location.hash === "#/terminal" ? true : null), 3000), `the closed terminal's page gives way to #/terminal (${window.location.hash})`);
   return done();
 }
 

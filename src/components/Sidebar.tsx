@@ -1,16 +1,16 @@
 // The sidebar (design system: Sidebar): quick actions, work areas, projects, the team's agents and their memory scroll;
 // the company pages stay at the bottom, with the update notice above them when a newer release is out. A Gizai on other
-// data than the usual folder says so there. Editor (GA-113), Agents and Memory fold with the caret at the end of their
-// heading (GA-90).
+// data than the usual folder says so there. Terminal (GA-136), Editor (GA-113), Agents and Memory fold with the caret at
+// the end of their heading (GA-90).
 import {
   Building2, ChartColumn, ChevronDown, ChevronUp, Crown, FlaskConical, FolderCode, FolderKanban, Inbox, Keyboard, Library, ListTodo, LoaderCircle, MessagesSquare,
-  Network, Plus, Search, Settings, SquarePen, Users, type LucideIcon,
+  Network, Plus, Search, Settings, SquarePen, Terminal as TerminalIcon, Users, type LucideIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { editorFolders, editorGit, editorMain, getTeam, listChatThreads, listProjects, listTasks, memoryNotes, onEditorUpdated } from "../api";
 import { go, href, type Route } from "../router";
 import { leadOf, memoryHome, memoryScope, noteCount, sharersOf } from "../lib/memory";
-import type { EditorFolder, FolderGit, FolderMain, Member, MemoryNote, Task } from "../types";
+import type { EditorFolder, FolderGit, FolderMain, Member, MemoryNote, Task, TerminalSession } from "../types";
 import { useData } from "../lib/useData";
 import { useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
@@ -20,11 +20,13 @@ import { modKey } from "../lib/keys";
 import { liveTotal, useFolded, type Fold } from "../lib/sidebar";
 import { forgetFolder, useOpenedFolders } from "../lib/editor";
 import { foldedBehind, onTold, rowTip, rowWord } from "../lib/behind";
+import { asksToClose, closeQuestion, folderNameOf, openTip, openWord, rowTitle, showsCardId, useTerminals } from "../lib/terminals";
 import { roleIcon } from "./Avatar";
 import { FolderPicker, workingWho } from "./editor/FolderPicker";
 import { ContextMenu, openInItems, useEditorApps, type MenuItem } from "./editor/Menus";
 import { useChatLive } from "./chat/useChat";
 import { UpdateNotice } from "./UpdateNotice";
+import { closeTerminal, NameInput, NewTerminalPicker, RowCloseAsk, showInEditor } from "./terminal/TerminalParts";
 
 type Props = { route: Route; youId: string; onSearch: () => void; onNewTask: () => void; dataLabel?: string | null; dataDir?: string };
 
@@ -78,6 +80,8 @@ export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir 
         ))}
       </div>
 
+      <TerminalSection route={route} tasks={allTasks.data ?? []} youId={youId} folded={folded("terminal")} onFold={() => fold("terminal")} />
+
       <EditorSection route={route} tasks={allTasks.data ?? []} folded={folded("editor")} onFold={() => fold("editor")} />
 
       <FoldSection section="agents" name="Agents" folded={folded("agents")} onFold={() => fold("agents")} tag={allLive > 0 ? liveTag(allLive) : null}>
@@ -121,7 +125,7 @@ const liveTag = (n: number) => <span className="live-tag"><span className="pulse
  *  heading, another shows its list again. `tag` shows on the heading while it is folded. */
 function FoldSection({ section, name, label, folded, onFold, tag, add, children }: {
   section: Fold; name: string; label?: string; folded: boolean; onFold: () => void; tag?: React.ReactNode;
-  /** A + on the heading, before the caret (Editor's Open a folder). */
+  /** A + on the heading, before the caret (Terminal's New terminal, Editor's Open a folder). */
   add?: { label: string; onClick: (e: React.MouseEvent<HTMLButtonElement>) => void };
   children: React.ReactNode;
 }) {
@@ -177,7 +181,90 @@ function MemorySection({ route, lead, agents, notes, folded, onFold, setUpLead }
   );
 }
 
-/** Editor (GA-113), between Projects and Agents: the folders you opened, newest first (at most 8), each with how it
+/** Terminal (GA-136, TF1; design/terminal §1), between Projects and Editor: the open terminals, oldest first (a new one
+ *  comes at the bottom, so rows don't move under the pointer), any number. A row: the terminal icon, the name (a card's
+ *  worktree: its identifier in mono and its title faint) and on the right what runs in it, the program in mono or "ended";
+ *  never teal or a pulse, which mean an agent at work. A click opens it on its page. F2 renames it in place; a right click
+ *  (the context menu key, Shift+F10) has Rename, Show in Editor, Copy folder path and Close; a middle click closes it. Close
+ *  asks under the row while a program runs in it. Folded, the heading says how many are open; with none, one row: New
+ *  terminal. + (and that row) opens the folder picker titled "New terminal in". */
+function TerminalSection({ route, tasks, youId, folded, onFold }: { route: Route; tasks: Task[]; youId: string; folded: boolean; onFold: () => void }) {
+  const list = useTerminals();
+  const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [asking, setAsking] = useState<{ id: string; name: string; question: string } | null>(null);
+  const openPicker = (e: React.MouseEvent<HTMLElement>) => {
+    const side = e.currentTarget.closest(".side")?.getBoundingClientRect();
+    const r = e.currentTarget.getBoundingClientRect();
+    setPicker({ x: (side?.right ?? r.right) + 6, y: r.top });
+  };
+  // the folder the page shows: a terminal's, or the Editor's
+  const current = route.page === "terminal" ? list.find((s) => s.id === route.id)?.folder : route.page === "editor" ? route.id : undefined;
+  const rowEl = (id: string) => document.querySelector<HTMLElement>(`.side a[data-term="${CSS.escape(id)}"]`);
+  const close = (s: TerminalSession) => {
+    if (asksToClose(s)) setAsking({ id: s.id, name: s.name, question: closeQuestion(s) });
+    else closeTerminal(s.id);
+  };
+  const items = (s: TerminalSession): MenuItem[] => [
+    { label: "Rename", kbd: "F2", run: () => setRenaming(s.id) },
+    { label: "Show in Editor", run: () => showInEditor(s) },
+    { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(s.folder).catch(() => {}); } },
+    { sep: true },
+    { label: "Close", run: () => close(s) },
+  ];
+  const menuFor = menu ? list.find((s) => s.id === menu.id) : undefined;
+  // the picker and the menu sit outside the list, so + opens the picker while the section is folded too
+  return (
+    <>
+    <FoldSection section="terminal" name="Terminal" label="Terminal" folded={folded} onFold={onFold} add={{ label: "New terminal", onClick: openPicker }}
+      tag={list.length > 0 ? <span className="fold-tag" title={openTip(list.length)}>{openWord(list.length)}</span> : null}>
+      {list.length === 0 && <button className="nav-item" onClick={openPicker}><TerminalIcon className="icon" /><span>New terminal</span></button>}
+      {list.map((s) => {
+        const task = s.taskId ? tasks.find((t) => t.id === s.taskId) : undefined;
+        const card = s.taskId ? task?.identifier ?? folderNameOf(s) : null;
+        const stand = s.ended ? <span className="stand">ended</span> : s.busy ? <span className="stand"><span className="prog">{s.busy}</span></span> : null;
+        const name = card ? (
+          <><span className={showsCardId(s.name, card) ? "card-id" : "ellipsis"}>{s.name}</span>{task && <span className="faint ellipsis">{task.title}</span>}</>
+        ) : <span className="ellipsis">{s.name}</span>;
+        return (
+          <Fragment key={s.id}>
+            {renaming === s.id ? (
+              <div className="nav-item on">
+                <TerminalIcon className="icon" />
+                <NameInput session={s} onDone={() => { setRenaming(null); requestAnimationFrame(() => rowEl(s.id)?.focus()); }} />
+                {stand && <span className="meta">{stand}</span>}
+              </div>
+            ) : (
+              <a className={`nav-item${route.page === "terminal" && route.id === s.id ? " on" : ""}`} href={href({ page: "terminal", id: s.id })} data-term={s.id}
+                title={rowTitle(s, card)} aria-label={`${s.name}${task && card && showsCardId(s.name, card) ? ` ${task.title}` : ""}${s.ended ? ", ended" : s.busy ? `, running ${s.busy}` : ""}`}
+                onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id: s.id }); }}
+                onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); close(s); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "F2") { e.preventDefault(); setRenaming(s.id); }
+                  else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left + 24, y: r.bottom, id: s.id }); }
+                }}>
+                <TerminalIcon className="icon" />
+                {name}
+                {stand && <span className="meta">{stand}</span>}
+              </a>
+            )}
+            {asking?.id === s.id && (
+              <RowCloseAsk name={asking.name} question={asking.question}
+                onCancel={() => { setAsking(null); rowEl(s.id)?.focus(); }} onClose={() => { setAsking(null); closeTerminal(s.id); }} />
+            )}
+          </Fragment>
+        );
+      })}
+    </FoldSection>
+    {picker && <NewTerminalPicker at={picker} current={current} you={youId} onClose={() => setPicker(null)} />}
+    {menu && menuFor && <ContextMenu at={menu} label="Terminal" items={items(menuFor)} onClose={() => setMenu(null)} />}
+    </>
+  );
+}
+
+/** Editor (GA-113), between Terminal and Agents: the folders you opened, newest first (at most 8), each with how it
  *  stands on the right: "read-only" with the pulse while an agent works on a card's worktree, "by hand" on a card pinned
  *  to a person, "updating" while Update runs, else behind main ("3 behind", GA-114), else how many files changed, else
  *  ahead. Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,

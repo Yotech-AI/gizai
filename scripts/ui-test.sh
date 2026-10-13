@@ -91,6 +91,11 @@
 #     its tab, it shows again when the folder opens again and, once hidden, stays hidden; while another place has the view
 #     the panel shows the placeholder with Show here. (b) After a restart the
 #     panel opens at the height kept, in both folders.
+#     Ctrl+C stops it within a second; closing the terminal disposes of its view. GA-136 (TF1): KADE-1 isn't pinned to you, so
+#     the picker asks first and Edit anyway starts it; its row is in the sidebar's Terminal (between Projects and Editor,
+#     KADE-1 in mono, selected), its tab on the page in a 32px strip, and the top bar says the folder, sh and the size; + after
+#     the tabs starts another terminal there without a picker, and exit closes it (its row and tab go, the page shows the
+#     first again); with both closed the sidebar has one row, New terminal, and the page is #/terminal.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail

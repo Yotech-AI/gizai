@@ -48,7 +48,9 @@ vi.mock("react", async (orig) => {
       h.effects.push(() => { s.cleanup?.(); const c = f(); s.cleanup = typeof c === "function" ? c : undefined; });
     }
   }) as typeof R.useEffect;
-  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect };
+  // the Terminal section (GA-136) reads the open terminals from their store: the snapshot
+  const useSyncExternalStore = ((subscribe: never, snapshot: () => unknown) => (h.cur ? snapshot() : R.useSyncExternalStore(subscribe, snapshot))) as typeof R.useSyncExternalStore;
+  const hooks = { useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect: useEffect, useSyncExternalStore };
   return { ...R, default: { ...R, ...hooks }, ...hooks };
 });
 

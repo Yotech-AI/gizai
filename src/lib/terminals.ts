@@ -471,6 +471,12 @@ export function useTerminalsLoaded(): boolean {
 export function useShownIn(id: string): TerminalPlace | null {
   return useSyncExternalStore(subscribe, () => shown.get(id) ?? null, () => shown.get(id) ?? null);
 }
+/** The terminals a place shows now, one id per line ("" for none): a string, so it compares by value. The Editor's panel
+ *  opens on a terminal Show in Editor put there (GA-137). */
+export function useShownHere(place: TerminalPlace): string {
+  const key = placeKey(place);
+  return useSyncExternalStore(subscribe, () => [...shown].filter(([, p]) => placeKey(p) === key).map(([id]) => id).join("\n"));
+}
 /** Whether the terminal's view is made (xterm.js loaded and attached), so a place can put it in. */
 export function useViewMade(id: string): boolean {
   return useSyncExternalStore(subscribe, () => views.has(id), () => views.has(id));

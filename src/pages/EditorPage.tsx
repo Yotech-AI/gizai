@@ -10,6 +10,9 @@
 // is fetched when the folder opens and every 10 minutes while the page shows it, and looked at (locally) every 10 seconds.
 // Under the top bar, the behind bar: Update and what it will do, or why it can't; Update running; how it ended, with
 // Show output; a fetch that failed. A card's worktree has its own bars there (read-only, the card's), and no behind bar.
+// The terminal panel (GA-137, TF2; components/editor/TerminalPanel.tsx): the Terminal button between Fetch and Open in,
+// the panel between the code and the status bar; Ctrl+` shows or hides it, Ctrl+Shift+` starts a terminal in it. While a
+// terminal has the focus, the Editor's own keys leave it alone.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CircleCheck, FileCode, FolderCode, Lock, PanelLeft, PanelLeftClose, Search, TriangleAlert, X } from "lucide-react";
@@ -37,6 +40,8 @@ import { openInItems, OpenInMenu, useEditorApps } from "../components/editor/Men
 import { CardBar } from "../components/editor/CardBar";
 import { BehindBar, FetchButton, Standing } from "../components/editor/BehindBar";
 import { fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../lib/behind";
+import { TerminalButton, TerminalPanel, useTerminalPanel } from "../components/editor/TerminalPanel";
+import { panelKey, terminalOff } from "../lib/terminalPanel";
 
 export function EditorPage({ id, youId }: { id?: string; youId: string }) {
   return id ? <FolderEditor key={id} folderId={id} youId={youId} /> : <NoFolder />;
@@ -511,9 +516,23 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     menuExtra: (p: string, dir: boolean) => openInItems(apps, id, p && !dir ? p : null, null, setBanner),
   };
 
-  // ---- keys: Ctrl+P, Ctrl+Shift+F, Ctrl+F, Ctrl+S, Ctrl+W, Ctrl+Tab, Ctrl+B ----
+  // ---- the terminal panel (GA-137): the Terminal button, the panel, Ctrl+` and Ctrl+Shift+` ----
+  const termOff = folder ? terminalOff(folder, task, youId, editAnyway) : null;
+  const term = useTerminalPanel(id, folder?.path ?? id, termOff, setBanner, () => view.current?.focus());
+
+  // ---- keys: Ctrl+P, Ctrl+Shift+F, Ctrl+F, Ctrl+S, Ctrl+W, Ctrl+Tab, Ctrl+B; Ctrl+` and Ctrl+Shift+` ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const panel = panelKey(e);
+      if (panel) {
+        // also from inside the terminal, which lets these through (research §5.2)
+        if (!folder || e.defaultPrevented) return;
+        e.preventDefault();
+        if (panel === "toggle") { if (!term.buttonOff) term.toggle(); } else term.newTab();
+        return;
+      }
+      // a terminal (and its find) keeps every other key: Ctrl+W, Ctrl+P and Ctrl+B are the shell's there
+      if ((e.target as Element | null)?.closest?.(".term-place")) return;
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const k = e.key.toLowerCase();
       const paths = tabsRef.current.map((t) => t.path);
@@ -561,6 +580,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
         <Standing {...standing(main, git)} />
         <div className="actions" style={{ marginLeft: "auto" }}>
           {hasMain(main) && <FetchButton title={fetchTitle(main)} busy={fetching} off={starting || main.updating} onClick={fetchMain} />}
+          {folder && <TerminalButton p={term} />}
           {folder && <OpenInMenu folder={id} name={name} path={t?.path ?? null} line={t ? cursor.line : null} fail={setBanner} />}
         </div>
       </div>
@@ -625,7 +645,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
           )}
         </aside>
 
-        <div className="ed-main">
+        <div className={`ed-main${term.visible ? " has-term" : ""}`}>
           <div className="ed-tabs" role="tablist" aria-label="Open files">
             {!treeShown && <button className="btn ghost sm icon-only" aria-label={`Show the file tree (${modKey()}+B)`} title={`Show the file tree (${modKey()}+B)`} onClick={() => setTreeShown(true)}><PanelLeft className="icon" /></button>}
             {tabs.map((x) => {
@@ -663,7 +683,8 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
             reload={() => reload(t.path, false)} keepMine={() => keepMine(t.path)} save={() => save(t.path)}
             cancel={() => patch(t.path, { disk: "kept" })} closeTab={() => close(t.path)} openIn={<OpenInMenu folder={id} name={nameOf(t.path)} path={t.path} line={cursor.line} fail={setBanner} />} />}
 
-          <div className="ed-code" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative" }}>
+          {/* with the terminal panel the code keeps its least height (terminal.css) */}
+          <div className="ed-code" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: term.visible ? undefined : 0, position: "relative" }}>
             <div ref={host} className="ed-host" style={{ flex: 1, minHeight: 0, display: activeState ? "flex" : "none", flexDirection: "column" }} />
             {!activeState && (
               <div className="ed-empty">
@@ -677,6 +698,8 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
               </div>
             )}
           </div>
+
+          {term.visible && <TerminalPanel p={term} name={name} />}
 
           <div className="ed-status" role="status" aria-label="Status bar">
             {t && <>

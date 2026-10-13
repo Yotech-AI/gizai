@@ -79,6 +79,18 @@
 #     closes; Ctrl+Shift+C and Ctrl+Shift+V copy and paste (when the cage has a clipboard); a second place takes the view
 #     and the page offers Show here, which takes it back; WebGL draws where hardware WebGL2 exists, and the DOM renderer
 #     draws the same screen with WebGL off and after its context is lost; yes for 10 s keeps the window drawing and
+#     Ctrl+C stops it within a second; closing the terminal disposes of its view.
+# 16. terminal panel (GA-137), in KADE-1's worktree and ~/Herd/panel-site, with /bin/sh in a scratch home folder, in two
+#     starts on the same WebKit storage: (a) the Editor's Terminal button between Fetch and Open in, off on a card that
+#     isn't pinned to you until Edit anyway; it opens the panel at 30% of the code column with a terminal in the folder's
+#     root (pwd prints it); the button and Ctrl+` (also from inside the terminal) hide it and the shell keeps running;
+#     Ctrl+W, Ctrl+P and Ctrl+B reach the shell and Ctrl+Shift+F finds in the terminal, none reaching the Editor; the drag
+#     handle stops at 120px of code and 120px of terminal, a double click gives 30% back, ↑ and ↓ move it 5%; another folder
+#     opens it at the same height with its own terminals, Ctrl+Shift+` adds one and closing the last tab hides it; a
+#     terminal opened elsewhere is a tab; Own page shows the same view on #/terminal/<id>; Show in Editor opens the panel on
+#     its tab, it shows again when the folder opens again and, once hidden, stays hidden; while another place has the view
+#     the panel shows the placeholder with Show here. (b) After a restart the
+#     panel opens at the height kept, in both folders.
 #     Ctrl+C stops it within a second; closing the terminal disposes of its view. GA-136 (TF1): KADE-1 isn't pinned to you, so
 #     the picker asks first and Edit anyway starts it; its row is in the sidebar's Terminal (between Projects and Editor,
 #     KADE-1 in mono, selected), its tab on the page in a 32px strip, and the top bar says the folder, sh and the size; + after
@@ -152,4 +164,11 @@ fresh
 KADE1=$(python3 -c "import sqlite3; c=sqlite3.connect('.devdata/uitest/gizai.db'); c.execute(\"update tasks set branch='gizai/kade-1-terminal' where identifier='KADE-1'\"); c.commit(); print(c.execute(\"select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='KADE-1'\").fetchone()[0])")
 mkdir -p ".devdata/uitest/worktrees/$KADE1/KADE-1" && rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
+fresh
+KADE1=$(python3 -c "import sqlite3; c=sqlite3.connect('.devdata/uitest/gizai.db'); c.execute(\"update tasks set branch='gizai/kade-1-terminal' where identifier='KADE-1'\"); c.commit(); print(c.execute(\"select p.key from tasks t join projects p on p.id = t.project_id where t.identifier='KADE-1'\").fetchone()[0])")
+mkdir -p ".devdata/uitest/worktrees/$KADE1/KADE-1" && printf '# KADE-1\n' > ".devdata/uitest/worktrees/$KADE1/KADE-1/README.md"
+rm -rf .devdata/uitest-home && mkdir -p .devdata/uitest-home/Herd/panel-site
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-a:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=120 scripts/smoke-cage.sh || fail=1
+# the same WebKit storage (.devdata/xdg): a restart
+DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:panel-b:KADE-1 GZ_SHELL=/bin/sh GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

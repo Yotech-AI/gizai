@@ -139,12 +139,13 @@ fn find_in(have: &[Cli], path: &std::ffi::OsStr) -> Vec<Cli> {
 }
 
 /// A new install's first start (`gizai_core::seed::ensure_seed_with_agents`): Codex, ready to add, when Claude Code isn't
-/// installed but Codex is (your login shell's PATH, as `find` looks). None when Claude Code is found, or Codex isn't.
+/// installed but Codex is (your login shell's PATH read now, as `find` looks). None when Claude Code is found, or Codex
+/// isn't.
 pub fn codex_at_first_start() -> Option<Cli> {
     if crate::runs::find_claude().is_some() {
         return None;
     }
-    find_in(&[], &crate::runs::command_path()).into_iter().find(|c| c.kind == "codex")
+    find_in(&[], &crate::runs::fresh_command_path()).into_iter().find(|c| c.kind == "codex")
 }
 
 /// What a run on `cli` starts: its kind, program, environment and arguments. `bin_override` replaces the program (tests).

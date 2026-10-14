@@ -682,6 +682,20 @@ pub async fn approve_pending_actions(st: State<'_, AppState>, ids: Vec<String>) 
 #[tauri::command]
 pub fn discard_pending_action(st: State<AppState>, id: String) -> R<gizai_core::pending::PendingAction> { crate::pending::discard(&st, &id) }
 
+// ---- first start (GA-162) ----
+/// Whether the first start's onboarding waits: true on a new install until it is finished or skipped.
+#[tauri::command]
+pub fn onboarding_pending(st: State<AppState>) -> bool { crate::onboarding::pending(&st) }
+/// Finishes the onboarding: your name, the team's and the agents' coding CLI, then the Team Lead's welcome chat. Returns
+/// that chat's id; None when the Team Lead can't answer.
+#[tauri::command]
+pub async fn finish_onboarding(st: State<'_, AppState>, input: gizai_core::onboarding::OnboardingInput) -> R<Option<String>> {
+    Ok(crate::onboarding::finish(&st, input).await?.map(|(thread_id, _answer)| thread_id))
+}
+/// Skips the onboarding: it no longer waits, and nothing else changes.
+#[tauri::command]
+pub fn skip_onboarding(st: State<AppState>) -> R<()> { crate::onboarding::skip(&st) }
+
 // ---- pull requests on GitHub ----
 /// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.
 #[tauri::command]

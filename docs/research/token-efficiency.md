@@ -1,7 +1,7 @@
 # GizAi: fewer tokens without losing quality, and what caveman.so does (research, 2026-10-14)
 
 Status: research only, no code. Written by the R&D Agent for GA-171 on 2026-10-14, reading `main` at `24535e3` (GizAi 0.11.0).
-Legend: **[V]** = verified today, in the code (file and line) or in the primary source named (link and date in §10). **[I]** = my judgement, or a fact I could not check in a primary source (the reason is given).
+Legend: **[V]** = verified today, in the code (file and line) or in the primary source named (link and date in §9). **[I]** = my judgement, or a fact I could not check in a primary source (the reason is given).
 Limits of this research: the run may not read GizAi's database or run logs (they are real user data), nor start `cargo`, `npm` or any CLI, so no run was measured. The token figures for GizAi's prompt are counted from the code; the dollar figures per agent are the ones Jefsev gave on the card (Claude Code's estimate at API prices, October 1 to 14). Everything that needs a real run is an experiment in §5.
 
 ---
@@ -12,7 +12,7 @@ Limits of this research: the run may not read GizAi's database or run logs (they
 2. **caveman.so** is real and open (Apache-2.0): a prompt that makes replies terse, a local proxy and hooks that shrink tool output with the originals kept, and a closed cloud router (§3). Its numbers are thinner than its site: the 33.2% comes from 6 tasks of large noisy outputs, the 65% isn't measured against a concise prompt, and the routing's 0.46× is an interim run of 85 tasks in which "Most of the saving comes from lower effort" (§3.3). GizAi can do each of the three natively.
 3. **A proxy is out.** With a Claude subscription, a proxy that changes requests breaks them, and Anthropic doesn't permit third-party developers to "intermediate" a plan's session tokens; GizAi's model, the user's own unmodified Claude Code with their own login, is the one its terms allow (§3.5). Codex is looser, but the same design works for both.
 4. **The ideas, ranked, each a setting with a default (§4):** effort and model by card size, raised after a QA fail; a stable Team Lead prompt so its chat stays in the cache; board checks on their own model and effort; a cap on a run's context; shorter test and build output with the full log kept; comments and memory as ranges; short messages; and room left in the subscription's windows.
-5. **Recommended: build them natively in GizAi (option A, §6), measure first.** Card M1 records the token split, turns, effort and largest context per run; then every idea runs as an experiment on half the cards, with QA's pass rate, rounds and failed runs as the guard (§5). Thirteen cards (§8); 13 open questions (§9).
+5. **Recommended: build them natively in GizAi (option A, §6), measure first.** Card M1 records the token split, turns, effort and largest context per run; then every idea runs as an experiment on half the cards, with QA's pass rate, rounds and failed runs as the guard (§5). Thirteen cards (§8); 13 open questions (§10).
 
 ---
 
@@ -194,9 +194,9 @@ My reading [I, not legal advice]: a local proxy that holds and forwards the user
 - OpenAI's Terms of Use forbid to "circumvent any rate limits or restrictions or bypass any protective measures" and to "share your account credentials or make your account available to anyone else" [secondary: openai.com answered 403, the text is from a terms-tracking copy]. OpenAI also invites third-party apps to use a ChatGPT plan, through its own sign-in: "Let users sign in with ChatGPT and, for eligible Plus and Pro users, use their ChatGPT plan for AI requests in your app", "in a limited trial with selected partners" [V, learn.chatgpt.com DevDay 2026].
 - My reading [I]: possible and probably allowed for a user's own Codex, but undocumented with a ChatGPT login, and the proxy holds the user's ChatGPT tokens.
 
-**A gotcha for every subscription user of GizAi** [V for the doc; V that runs don't remove it]: "`ANTHROPIC_API_KEY` … In non-interactive mode (`-p`), the key is always used when present." GizAi's runs start with Gizai's own environment plus their own lines (`crates/gizai-agents/src/claude.rs:49-50`, `:56-62`), and nothing removes that variable (`rg` finds no removal in the run code), so a key in the user's shell makes every agent run bill the API instead of the plan. §9, question 12.
+**A gotcha for every subscription user of GizAi** [V for the doc; V that runs don't remove it]: "`ANTHROPIC_API_KEY` … In non-interactive mode (`-p`), the key is always used when present." GizAi's runs start with Gizai's own environment plus their own lines (`crates/gizai-agents/src/claude.rs:49-50`, `:56-62`), and nothing removes that variable (`rg` finds no removal in the run code), so a key in the user's shell makes every agent run bill the API instead of the plan. §10, question 12.
 
-**What fits one subscription.** Anthropic gives no absolute numbers: "Both Pro and Max plans have a five-hour session limit and a weekly limit", and Max gives "5x or 20x the Pro plan's usage allowance" [V, support.claude.com]. Codex's pricing page gives Plus and Business a number of local messages per five hours per model, says "Pro plans currently have no five-hour limit", and that "Weekly limits may also apply" [V, learn.chatgpt.com pricing]. So what fits is measured, not looked up: GizAi already reads each window's use (§2.7), and M1 adds what each run and card cost. For scale: this team's 14 days came to $2,771 at API prices across 12 agents (§2.7); a freelancer with one plan runs a fraction of that, which is why the effort and size settings (§4.1) and the window cap (§4.8) matter more to them than to a team with several plans. Since 7 October 2026, Max and Team plans also come with monthly API credits ($100 for Max 5x, $200 for Max 20x), but Anthropic's credits page lists "Claude Code" under "Doesn't cover" [V, platform.claude.com api-credits-for-subscribers]; its support article, updated the same day, says they cover "the Claude Agent SDK, `claude -p`, the Claude API, and Claude Managed Agents", and also that "When you're signed in with your Claude plan instead, `claude -p` and Agent SDK usage still draw from your plan's usage limits and don't use your API credits" [support.claude.com, quoted through the fetch tool]. The two disagree, so GizAi shouldn't build on the credits yet (§9, question 13).
+**What fits one subscription.** Anthropic gives no absolute numbers: "Both Pro and Max plans have a five-hour session limit and a weekly limit", and Max gives "5x or 20x the Pro plan's usage allowance" [V, support.claude.com]. Codex's pricing page gives Plus and Business a number of local messages per five hours per model, says "Pro plans currently have no five-hour limit", and that "Weekly limits may also apply" [V, learn.chatgpt.com pricing]. So what fits is measured, not looked up: GizAi already reads each window's use (§2.7), and M1 adds what each run and card cost. For scale: this team's 14 days came to $2,771 at API prices across 12 agents (§2.7); a freelancer with one plan runs a fraction of that, which is why the effort and size settings (§4.1) and the window cap (§4.8) matter more to them than to a team with several plans. Since 7 October 2026, Max and Team plans also come with monthly API credits ($100 for Max 5x, $200 for Max 20x), but Anthropic's credits page lists "Claude Code" under "Doesn't cover" [V, platform.claude.com api-credits-for-subscribers]; its support article, updated the same day, says they cover "the Claude Agent SDK, `claude -p`, the Claude API, and Claude Managed Agents", and also that "When you're signed in with your Claude plan instead, `claude -p` and Agent SDK usage still draw from your plan's usage limits and don't use your API credits" [support.claude.com, quoted through the fetch tool]. The two disagree, so GizAi shouldn't build on the credits yet (§10, question 13).
 
 ### 3.6 What Claude Code and Codex already do
 
@@ -278,7 +278,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **The setting.** Agent form → Chat, beside the Board check minutes (`src/components/AgentForm.tsx:274-279`): **Board check model** (empty = the Team Lead's) and **Board check effort**, proposed default `medium`. Range: the levels the form offers for that model.
 
-**What the user sees.** Usage → Agents splits the Team Lead's line into Chat and Board checks (the `runs.trigger` column already tells them apart: `crates/gizai-core/migrations/0008_board_check.sql:29`), with cost per check. The check's run facts show its model and effort.
+**What the user sees.** Usage → Agents splits the Team Lead's line into Chat and Board checks (the `runs.trigger` column already tells them apart: `crates/gizai-core/migrations/0008_board_check.sql:29`), with cost per check; Usage → Savings shows the cost per check before and after the fields were set. The check's run facts show its model and effort.
 
 **Saving and risk.** The checks' share of the Team Lead's $499 can't be read today (M2 shows it); a check at `medium` instead of `max` should cost 30–60% less [I]. Risk: a check that misses or misreads something new. It is cheap to see: the check's findings are recorded (`runs.findings_json`), and a missed item comes back at the next check.
 
@@ -332,7 +332,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **The setting.** Settings → Tokens: **Short messages**, off by default: the saving is small and the narration is how the user follows a run live. A user who doesn't watch runs can switch it on.
 
-**What the user sees.** The run reads terser; Usage → Savings shows output tokens per turn per agent, before and after.
+**What the user sees.** The run reads terser, and its facts say "Short messages: on (Concise style)"; Usage → Savings shows output tokens per turn per agent, before and after.
 
 **Saving and risk.** Text between tool calls is a small part of an agentic run's output; thinking and tool inputs are most of it. 1–3% [I]. The risk is a shorter hand-over: the Concise style leaves out "recaps", and a hand-over is one. The role instructions ask for a complete summary in the result line, and the experiment checks the hand-overs' length and QA's pass rate.
 
@@ -344,15 +344,17 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **The setting.** Settings → Tokens: **Start no new runs above** 50–100% of a window, default 90% (100% = today).
 
-**What the user sees.** On the board, a waiting card says "Waiting: Claude Code's 5-hour window is at 92%, resets 15:00"; Usage → Subscription marks the line.
+**What the user sees.** On the board, a waiting card says "Waiting: Claude Code's 5-hour window is at 92%, resets 15:00"; Usage → Subscription marks the line and counts the runs the cap held back and for how long.
 
 **Risk.** None to quality; cards wait longer.
+
+**Experiment.** None needed for tokens. For a week after it ships, Usage → Subscription shows how often a window reached the cap and how long cards waited; if they wait more than the user likes, the value goes up.
 
 ### 4.9 Not proposed now
 
 - **Continuing the builder's session after a QA fail** instead of a fresh one with QA's issues (`runs.rs:918`). The session knows what it did, but QA's run usually takes longer than the cache's hour, so the whole old context would be written again at 2×; a fresh run with the issues is often cheaper. An experiment after M1 [I].
 - **MCP servers per card.** Task runs get only the agent's own servers (agent form → Tools), and Claude Code already keeps their tools out of the context until they are used: "MCP tool definitions are deferred by default, so only tool names and server instructions enter context until Claude uses a specific tool" (§3.6). Little left to save [I].
-- **A model for subagents.** Claude Code's subagents (the Task and Agent tools, always on: `crates/gizai-agents/src/tool_catalog.rs:80-81`) can be pointed at a cheaper model with `CLAUDE_CODE_SUBAGENT_MODEL` (§3.6). How much agents use them is not recorded today; M1 records it (Claude Code's `modelUsage` per model), and then it can be a field in the agent form (§9, question 11).
+- **A model for subagents.** Claude Code's subagents (the Task and Agent tools, always on: `crates/gizai-agents/src/tool_catalog.rs:80-81`) can be pointed at a cheaper model with `CLAUDE_CODE_SUBAGENT_MODEL` (§3.6). How much agents use them is not recorded today; M1 records it (Claude Code's `modelUsage` per model), and then it can be a field in the agent form (§10, question 11).
 - **Sharing Claude Code's cache between worktrees.** Claude Code's cache "is effectively scoped to one machine and directory", so each card's worktree builds its own, and every run starts by writing Claude Code's system prompt and tools to the cache. Its `--exclude-dynamic-system-prompt-sections` flag: "Improves prompt-cache reuse across different users and machines"; whether it lets runs in different worktrees share that prefix, and what the agent then no longer sees at the start, needs a check on the CLI. At about 20,000 tokens a run it would save some $0.15 a run on Opus 5.5 [I]. A small card after M1, if the check is good.
 - **Reordering GizAi's prompt for the cache.** For the same reason (one cache per worktree), putting the parts an agent's runs share first saves nothing across runs [V for the scope; I for the conclusion].
 
@@ -576,7 +578,7 @@ No proxy, no automatic router, no rewriting of a model's answers, no Caveman or 
 
 In order. Each is one pull request that fits in one agent run; the contract they share is §7.3, word for word. A card starting in Design gets its screens from the Design Agent first; every card goes to Testing (QA) as usual.
 
-**Default for freelancers and small agencies**, as the "Its setting" column gives it: every switch below is on by default except Short messages, the context cap and an experiment, and every value starts where today's behaviour is, with three exceptions: the window cap at 90%, and on a new install the Small and Large rows and the board check's `medium` (§9, questions 2 and 3). A card's size starts at Normal, which changes nothing. All of these fit one subscription: none needs a second plan, an account elsewhere or a paid service.
+**Default for freelancers and small agencies**, as the "Its setting" column gives it: every switch below is on by default except Short messages, the context cap and an experiment, and every value starts where today's behaviour is, with three exceptions: the window cap at 90%, and on a new install the Small and Large rows and the board check's `medium` (§10, questions 2 and 3). A card's size starts at Normal, which changes nothing. All of these fit one subscription: none needs a second plan, an account elsewhere or a paid service.
 
 | # | Card | Role | Starts in | Its setting: default, range | Builds on |
 |---|---|---|---|---|---|
@@ -593,6 +595,8 @@ In order. Each is one pull request that fits in one agent run; the contract they
 | T9 | Savings and experiments | backend | To do | Try a setting on half the cards: none running | M1, T5, T6 |
 | T10 | Usage → Savings, and what each setting saved | frontend | Design | shows the experiment and the savings | T8, T9 |
 | T11 | Cap a run's context | backend | To do | Compact a run's context at: off (the CLI's own), 100,000–1,000,000 tokens | M1, and M1's first weeks of numbers |
+
+**Ranked by what they save** (the ideas' ranks, §4): after M1 and M2, which measure, come T2 and T3 (ideas 1 and 3), T1 (idea 2), T11 (idea 4, if M1's numbers call for it), T4 and T5 (idea 5), T6 (ideas 6 and 7) and T7 (idea 8); T8, T9 and T10 make all of them visible and testable.
 
 **At the same time:** M1 first (it holds the settings every other card reads). Then T1, T2, T4, T6, T7 and M2 can be built side by side: they touch different files (`src-tauri/src/chat.rs` and `memory.rs`; the run start and `team.rs`; a new crate; `prompt.rs`; the scheduler; `UsagePage.tsx`). T5 follows T4, T3 follows T2, T9 follows T5 and T6, and T8 and T10 come last. T11 waits for M1's numbers: build it only if runs grow large contexts (§4.4); its field then joins Settings → Tokens. No setting ships before its field: T1 to T7 reach users in the release that has T8 (and T3 for the size rows).
 
@@ -707,23 +711,7 @@ Builds: §4.4. Setting: **Compact a run's context at**, off (the CLI's own), 100
 - [ ] Each compaction is a Gizai note in the run's stream and counts in `TokenFacts.compactions`.
 - [ ] Empty: nothing is set, as today. Tests for both CLIs' arguments and the range.
 
-## 9. Open questions
-
-1. **This team's effort, now.** Most agents run at `max` or `xhigh`. Run the first experiment on it (even cards at `high`, odd cards as now, two weeks, after M1's baseline week)? *Recommendation: yes; it is the biggest lever and needs no new feature but M1 and T9, and until T9 the parity can be set by hand on two agents.*
-2. **Board checks' effort on existing installs.** T2 proposes `medium` for a new install. For an existing Team Lead, set `medium` too, or leave it empty (the Team Lead's own) with a hint in the form? *Recommendation: leave it empty and show the hint; Jefsev's rule is that the user decides, and an upgrade shouldn't change how a check thinks.*
-3. **The window cap's default.** 90% for a new install. For existing installs too, or 100% (today) until the user sets it? *Recommendation: 90% for everyone, said in the release notes: it only makes cards wait, the card says why, and it protects a freelancer's own use of the same subscription.*
-4. **Short messages off by default?** *Recommendation: off; the saving is small and the narration is how you follow a run. Revisit after its experiment.*
-5. **The quality guard (§5.2):** a setting becomes a default only if QA's pass rate falls by no more than 10 points, rounds per card rise by no more than 0.3, failed runs and questions don't rise, over at least 30 cards per group. Are these your thresholds? *Recommendation: accept them for the first experiment and tighten them once M1 shows the normal spread.*
-6. **Should Size also set Testing** (Small → Testing off)? *Recommendation: no; keep the two apart. The Team Lead sets both when it writes a card, and you see both on the card.*
-7. **Who sets the size?** *Recommendation: the Team Lead sets it when it writes or splits a card, and you change it like any property; the card's history shows who changed it.*
-8. **Borrow filter rules from RTK or Caveman, or write them?** Both are Apache-2.0 (§3.4). *Recommendation: write `gizai-quiet`'s parsers for the formats GizAi's users run, and borrow a rule only where it is clearly better, with the file's attribution and a NOTICE line.*
-9. **A proxy in the request path (Caveman's runtime or similar):** confirm it stays out. *Recommendation: yes, out (§3.5).*
-10. **Experiments by card parity** run half the cards with a setting off for two weeks. Acceptable on client work? *Recommendation: yes, one setting at a time, with Stop always one click away; or limit an experiment to one project.*
-11. **Subagents' model.** After a month of M1 data, add a "Subagents" model to the agent form if agents use subagents a lot? *Recommendation: decide on M1's numbers (Claude Code's `modelUsage` per run).*
-12. **An `ANTHROPIC_API_KEY` in Gizai's environment** makes every Claude Code run bill the API instead of the plan (§3.5). Warn about it, or keep it out of runs? *Recommendation: a warning in Settings → Coding CLIs and in the run's facts when the variable is set, now (a small card); a switch "Runs use my plan, not an API key from my environment" only if users ask, since some want API billing.*
-13. **Max plans' monthly API credits** (§3.5): Anthropic's two pages disagree on whether they cover `claude -p`. *Recommendation: don't build on them until the credits page says so; then a second Claude Code account on an API key (Settings → Coding CLIs already takes more accounts) could run board checks or DevOps on the credits.*
-
-## 10. Sources
+## 9. Sources
 
 All read on 2026-10-14. Quotes from code.claude.com's and platform.claude.com's `.md` pages are word for word; quotes from other pages came through a fetch tool asked to quote word for word, and are marked where only a copy or a secondary source could be read.
 
@@ -772,3 +760,19 @@ All read on 2026-10-14. Quotes from code.claude.com's and platform.claude.com's 
 - Secondary: OpenAI's Terms of Use as copied by https://tostracker.app/document/openai (openai.com answered 403); Codex's output cut as described in the open issue https://github.com/openai/codex/issues/14206
 
 (developers.openai.com/codex pages now redirect to learn.chatgpt.com.)
+
+## 10. Open questions
+
+1. **This team's effort, now.** Most agents run at `max` or `xhigh`. Run the first experiment on it (even cards at `high`, odd cards as now, two weeks, after M1's baseline week)? *Recommendation: yes; it is the biggest lever and needs no new feature but M1 and T9, and until T9 the parity can be set by hand on two agents.*
+2. **Board checks' effort on existing installs.** T2 proposes `medium` for a new install. For an existing Team Lead, set `medium` too, or leave it empty (the Team Lead's own) with a hint in the form? *Recommendation: leave it empty and show the hint; Jefsev's rule is that the user decides, and an upgrade shouldn't change how a check thinks.*
+3. **The window cap's default.** 90% for a new install. For existing installs too, or 100% (today) until the user sets it? *Recommendation: 90% for everyone, said in the release notes: it only makes cards wait, the card says why, and it protects a freelancer's own use of the same subscription.*
+4. **Short messages off by default?** *Recommendation: off; the saving is small and the narration is how you follow a run. Revisit after its experiment.*
+5. **The quality guard (§5.2):** a setting becomes a default only if QA's pass rate falls by no more than 10 points, rounds per card rise by no more than 0.3, failed runs and questions don't rise, over at least 30 cards per group. Are these your thresholds? *Recommendation: accept them for the first experiment and tighten them once M1 shows the normal spread.*
+6. **Should Size also set Testing** (Small → Testing off)? *Recommendation: no; keep the two apart. The Team Lead sets both when it writes a card, and you see both on the card.*
+7. **Who sets the size?** *Recommendation: the Team Lead sets it when it writes or splits a card, and you change it like any property; the card's history shows who changed it.*
+8. **Borrow filter rules from RTK or Caveman, or write them?** Both are Apache-2.0 (§3.4). *Recommendation: write `gizai-quiet`'s parsers for the formats GizAi's users run, and borrow a rule only where it is clearly better, with the file's attribution and a NOTICE line.*
+9. **A proxy in the request path (Caveman's runtime or similar):** confirm it stays out. *Recommendation: yes, out (§3.5).*
+10. **Experiments by card parity** run half the cards with a setting off for two weeks. Acceptable on client work? *Recommendation: yes, one setting at a time, with Stop always one click away; or limit an experiment to one project.*
+11. **Subagents' model.** After a month of M1 data, add a "Subagents" model to the agent form if agents use subagents a lot? *Recommendation: decide on M1's numbers (Claude Code's `modelUsage` per run).*
+12. **An `ANTHROPIC_API_KEY` in Gizai's environment** makes every Claude Code run bill the API instead of the plan (§3.5). Warn about it, or keep it out of runs? *Recommendation: a warning in Settings → Coding CLIs and in the run's facts when the variable is set, now (a small card); a switch "Runs use my plan, not an API key from my environment" only if users ask, since some want API billing.*
+13. **Max plans' monthly API credits** (§3.5): Anthropic's two pages disagree on whether they cover `claude -p`. *Recommendation: don't build on them until the credits page says so; then a second Claude Code account on an API key (Settings → Coding CLIs already takes more accounts) could run board checks or DevOps on the credits.*

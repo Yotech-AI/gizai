@@ -276,3 +276,69 @@ the read-only line in section 3 gives its memory and CPU.
    decides whether WebKitGTK's DMA-BUF path is worth a look. *Recommendation:* tell me or the P1 card; no change before.
 7. **macOS and Windows.** Measure there too? *Recommendation:* not now: the harness is Linux-only (cage), and the fixes are
    the same on all three; CI's runners are too noisy for frame numbers.
+
+## 10. Sources
+
+All read on 14 Oct 2026. P: primary (official docs, source code, release notes, registry data); S: secondary.
+
+**Tauri and wry**
+- P: Calling Rust from the frontend (async commands, returning data): https://v2.tauri.app/develop/calling-rust/
+- P: Calling the frontend from Rust (events and channels): https://v2.tauri.app/develop/calling-frontend/
+- P: Tauri 2.12.1's `setup` (windows first, then the setup closure): https://raw.githubusercontent.com/tauri-apps/tauri/tauri-v2.12.1/crates/tauri/src/app.rs
+- P: The command macro's execution context: https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-macros/src/command/wrapper.rs
+- P: Linux graphics (NVIDIA, DMA-BUF, compositing switches): https://v2.tauri.app/develop/debug/linux-graphics/
+- P: Debugging (the inspector in release builds): https://v2.tauri.app/develop/debug/
+- P: Window config (background throttling per system): https://docs.rs/tauri-utils/latest/tauri_utils/config/struct.WindowConfig.html
+- P: wry 0.35.0 (`set_memory_usage_level` on Windows): https://v2.tauri.app/release/wry/v0.35.0/
+- S: tauri#3988 "Bad performance on linux": https://github.com/tauri-apps/tauri/issues/3988
+- S: tauri-explorer#1057 (scroll timings on WebKitGTK 2.54.1 with NVIDIA): https://github.com/xnmp/tauri-explorer/issues/1057
+
+**WebKitGTK and WebKit**
+- P: WebKitGTK 2.54 highlights: https://webkitgtk.org/2026/09/16/webkitgtk-2.54-highlights.html
+- P: WebKitGTK 2.54.0 release news: https://webkitgtk.org/releases/webkitgtk-2.54.0.tar.xz.news
+- P: WebKitGTK 2.52 highlights: https://webkitgtk.org/2026/03/18/webkitgtk-2.52-highlights.html
+- P: WebKitGTK 2.50 highlights: https://webkitgtk.org/2025/11/26/webkitgtk-2.50.html
+- P: WebKitGTK 2.48 highlights: https://webkitgtk.org/2025/04/08/webkitgtk-2.48.html
+- P: WebKitGTK 2.46 highlights: https://webkitgtk.org/2024/10/04/webkitgtk-2.46.html
+- P: WebKitGTK 2.44 highlights: https://webkitgtk.org/2024/03/27/webkigit-2.44.html
+- P: WebKitGTK 2.42.0 released (the DMA-BUF renderer): https://webkitgtk.org/2023/09/15/webkitgtk2.42.0-released.html
+- P: `AcceleratedBackingStore.cpp` (`WEBKIT_DISABLE_DMABUF_RENDERER`): https://raw.githubusercontent.com/WebKit/WebKit/main/Source/WebKit/UIProcess/gtk/AcceleratedBackingStore.cpp
+- P: `WebProcessGLib.cpp` (`WEBKIT_SKIA_ENABLE_CPU_RENDERING`): https://raw.githubusercontent.com/WebKit/WebKit/main/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
+- P: Hardware acceleration policy: https://webkitgtk.org/reference/webkit2gtk/stable/property.Settings.hardware-acceleration-policy.html
+- P: Cache model: https://webkitgtk.org/reference/webkit2gtk/stable/enum.CacheModel.html
+- P: Memory pressure settings: https://webkitgtk.org/reference/webkit2gtk/stable/method.MemoryPressureSettings.set_memory_limit.html
+- P: WebKit's environment variables (last edited 2022): https://trac.webkit.org/wiki/EnvironmentVariables
+- P: Web Inspector Timelines (CPU and memory): https://webkit.org/web-inspector/timelines-tab/
+- P: WebKit's process architecture: https://docs.webkit.org/Deep%20Dive/Architecture/WebKit2.html
+- P: WebKit features in Safari 17.0 (the GPU process on macOS Sonoma): https://webkit.org/blog/14445/webkit-features-in-safari-17-0/
+- P: Arch's `webkit2gtk-4.1` package data: https://archlinux.org/packages/search/json/?name=webkit2gtk-4.1
+
+**WebView2**
+- P: Performance best practices: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/performance
+- P: Process model: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/process-model
+- P: `MemoryUsageTargetLevel`: https://learn.microsoft.com/en-us/dotnet/api/microsoft.web.webview2.core.corewebview2.memoryusagetargetlevel
+
+**React, Vite and Rolldown**
+- P: `lazy`: https://react.dev/reference/react/lazy
+- P: `memo`: https://react.dev/reference/react/memo
+- P: `useDeferredValue`: https://react.dev/reference/react/useDeferredValue
+- P: Optimizing performance, windowing (legacy docs): https://legacy.reactjs.org/docs/optimizing-performance.html
+- P: React Compiler 1.0: https://react.dev/blog/2025/10/07/react-compiler-1
+- P: `StrictMode`: https://react.dev/reference/react/StrictMode
+- P: `Profiler`: https://react.dev/reference/react/Profiler
+- P: Vite 8 migration (`manualChunks`): https://vite.dev/guide/migration
+- P: Vite build guide (`codeSplitting`): https://vite.dev/guide/build
+- P: Vite build options (`build.target`): https://vite.dev/config/build-options
+- P: Rolldown `codeSplitting`: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- P: Rolldown automatic code splitting: https://rolldown.rs/in-depth/automatic-code-splitting
+
+**SQLite**
+- P: Write-ahead logging: https://www.sqlite.org/wal.html
+- P: Isolation: https://www.sqlite.org/isolation.html
+- P: `PRAGMA synchronous`: https://www.sqlite.org/pragma.html#pragma_synchronous
+- P: `PRAGMA optimize`: https://www.sqlite.org/pragma.html#pragma_optimize
+- P: `EXPLAIN QUERY PLAN`: https://www.sqlite.org/eqp.html
+
+**npm**
+- P: `@tanstack/react-virtual` (3.14.19, MIT, 13 Oct 2026): https://registry.npmjs.org/@tanstack/react-virtual/latest
+- P: `react-window` (2.3.4, MIT, 10 Oct 2026): https://registry.npmjs.org/react-window/latest

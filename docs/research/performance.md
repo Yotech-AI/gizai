@@ -770,6 +770,10 @@ by side.
    then add a launcher setting for NVIDIA machines.
 7. **macOS and Windows.** Measure there too? *Recommendation:* not now: the harness is Linux-only (cage), and the fixes are
    the same on all three; CI's runners are too noisy for frame numbers.
+8. **History that only grows.** Runs, comments, chat messages and the `changes` log are never deleted (F3). Should Gizai
+   ever thin them out, for example the `changes` rows of cards archived a year ago? *Recommendation:* not now: with
+   P8's indexes their size stops mattering for speed, and `changes` is meant as the log a future sync reads
+   (`crates/gizai-core/src/db.rs:1-2`); look again if `bench_queries --years 3` still shows growth after P8.
 
 ## 10. Sources
 

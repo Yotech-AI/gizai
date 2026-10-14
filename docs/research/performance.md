@@ -49,8 +49,9 @@ Agents run in the background, one process tree per run, and stream what they do 
    left (`:247-255`, a git call per such run through `runs::record_head`), questions and chat queues (`:257-261`), stray
    chat configs (`:262`), housekeeping (`:263`) and the pending actions (`:275`). Housekeeping reads the date of every
    log in `runs/` and `chat/` (`crates/gizai-core/src/housekeeping.rs:29-54`), so it grows with the last 30 days of runs.
-   The page's own files come through Tauri's protocol, which the main thread serves, so the page can't load further
-   until `setup` returns **[I]**: `open_data`'s time is part of every start.
+   The page's own files come through Tauri's protocol, which wry hands to WebKitGTK as a URI scheme and answers on the
+   main thread's GLib loop (`MainContext::default().invoke`, `wry-0.57.0/src/webkitgtk/web_context.rs:144`, `:218-221`)
+   **[V]**, so the page can't load further until `setup` returns: `open_data`'s time is part of every start **[I]**.
 3. Then background work starts (`lib.rs:491-572`): Memory's import from Claude Code (`spawn_blocking`), the
    notifications watcher, the MCP socket, the Team Lead's code copies, the pull request check (at once, then every two
    minutes), the release check (after 20 s), housekeeping (hourly tick), and every 60 s `runs::pull` and `board::tick`.
@@ -916,7 +917,8 @@ All read on 14 Oct 2026. P: primary (official docs, source code, release notes, 
   on docs.rs: the plugin builder's `js_init_script` (https://docs.rs/crate/tauri/2.12.1/source/src/plugin.rs), the page's
   `invoke` (https://docs.rs/crate/tauri/2.12.1/source/scripts/core.js), `ipc` (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc.js)
   and how a call travels (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc-protocol.js); wry 0.57.0's WebKitGTK
-  code sets no sandbox, cache model or memory pressure (`rg` in `wry-0.57.0/src/webkitgtk/`)
+  code sets no sandbox, cache model or memory pressure (`rg` in `wry-0.57.0/src/webkitgtk/`), and answers the custom
+  protocol on the main thread (https://docs.rs/crate/wry/0.57.0/source/src/webkitgtk/web_context.rs)
 - P: wry 0.35.0 (`set_memory_usage_level` on Windows): https://v2.tauri.app/release/wry/v0.35.0/
 - S: tauri#3988 "Bad performance on linux": https://github.com/tauri-apps/tauri/issues/3988
 - S: tauri-explorer#1057 (scroll timings on WebKitGTK 2.54.1 with NVIDIA): https://github.com/xnmp/tauri-explorer/issues/1057

@@ -684,7 +684,7 @@ Builds: §4.8. Setting: **Start no new runs above**, 90% (50–100).
 
 ### T8. Settings → Tokens (frontend, Design)
 
-Builds: the tab of §7.1, every field of `TokenSettings` but `experiment` (T10), saved with Save settings.
+Builds: the tab of §7.1, every field of `TokenSettings` but `experiment` (T10) and `compactAtTokens` (T11), saved with Save settings.
 - [ ] A Tokens tab after Agents and runs, address `#/settings/tokens`.
 - [ ] Each field with its range in the hint; an out-of-range value says so, as the run limits do.
 - [ ] `docs/settings.md` gets the tab.
@@ -710,6 +710,7 @@ Builds: §4.4. Setting: **Compact a run's context at**, off (the CLI's own), 100
 - [ ] With a value set, a Claude Code task run gets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>` in its environment and a Codex run `-c model_auto_compact_token_limit=<n>`; chat and board checks keep the CLI's own.
 - [ ] Each compaction is a Gizai note in the run's stream and counts in `TokenFacts.compactions`.
 - [ ] Empty: nothing is set, as today. Tests for both CLIs' arguments and the range.
+- [ ] Its row joins Settings → Tokens (the Context row of §7.1), one `Field` like the others, in the same pull request.
 
 ## 9. Sources
 

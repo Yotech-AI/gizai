@@ -510,7 +510,8 @@ export type CardSize = "small" | "normal" | "large";
 export type TokenFacts = {
   comments: { given: number; total: number; cut: number };
   memory: { givenChars: number; totalChars: number };
-  shortened: { command: string; fullChars: number; shownChars: number; log: string }[];
+  shortened: { command: string; turn: number; fullChars: number; shownChars: number; keptOutChars: number; log: string }[];
+  //   keptOutChars: what the CLI would have shown minus shownChars (§7.4); turn: the request it came back in, for the price
   unshortened: number;         // test or build commands the agent ran without gizai-quiet
   peakContextTokens: number;   // the largest input of one request in the run (new + cache written + cache read)
   compactions: number;

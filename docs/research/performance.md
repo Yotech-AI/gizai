@@ -196,15 +196,15 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
 `EXPLAIN QUERY PLAN` test confirm each line **[V]** for the code, **[I]** for the cost.
 
 - **Background work holds the one lock too.** The board check reads the whole board inside one `db.read`
-  (`crates/gizai-core/src/board.rs:155-352`): per agent its spend this month (`:143-154`), the busy and finished runs
-  per agent (`:157-158`, `:168`), then per card in Ready, In progress and Testing its active runs, its last change, its
-  last run and, when held for a decision, its newest comment (`:196-347`), then the Review cards the Team Lead may merge
-  (`:348`, `:364-399`). It runs from the minute loop on the async runtime, not `spawn_blocking`
+  (`crates/gizai-core/src/board.rs:155-352`), right after each budgeted agent's spend this month (`:143-154`, a read of
+  its own): the busy and finished runs per agent (`:157-158`, `:168`), then per card in Ready, In progress and Testing
+  its active runs, its last change, its last run and, when held for a decision, its newest comment (`:196-347`), then
+  the Review cards the Team Lead may merge (`:348`, `:364-399`). It runs from the minute loop on the async runtime, not `spawn_blocking`
   (`src-tauri/src/lib.rs:565-572`, `src-tauri/src/board.rs:113-123`), whenever the Team Lead's check interval has
   passed. While it reads, every reload of F1 waits for it, on the main thread. The same minute loop runs `runs::pull`
   first, which reads the waiting cards with a run subquery per card (`crates/gizai-core/src/workflow.rs:174-201`); every
-  card write runs it again (`wake`, `src-tauri/src/commands.rs:26-29`, through `dispatch` to `pull`,
-  `src-tauri/src/runs.rs:1600-1601`).
+  card you create, change, move or label runs it again (`wake`, `src-tauri/src/commands.rs:26-29`, called at `:104`,
+  `:111`, `:118`, `:125`, through `dispatch` to `pull`, `src-tauri/src/runs.rs:1600-1601`).
 - **Four tables only grow.** Runs, changes, comments and chat messages are never deleted (no `DELETE FROM` for them in
   `crates/gizai-core/src/`; housekeeping removes old log files and tokens, and "the runs themselves stay",
   `crates/gizai-core/src/housekeeping.rs:27-29`). Every query below that reads one of them whole gets slower every week:
@@ -216,7 +216,7 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   - **the Usage page**: its period filter is on `runs.created_at`, which no index starts with, so one `usage_summary`
     reads every run four times (totals, per day, per agent, per project: `crates/gizai-core/src/usage.rs:149-184`), and
     again on every write while the page is open (`src/pages/UsagePage.tsx:246`);
-  - **the project list**: per project, two counts over the cards and two sums over the runs joined to cards
+  - **the project list**: per project, two counts over the cards, and a sum and a count over the runs joined to cards
     (`crates/gizai-core/src/projects.rs:13-17`), on every write twice with the board (F1);
   - **a card's last change** (`stamp`, `board.rs:419-431`): `row_id = ? OR row_id IN (its comments) OR row_id IN (its
     runs)`, newest first. Whether SQLite answers it from `changes_row` or walks `changes`, every write ever, from the
@@ -238,8 +238,9 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   list's lookups per card.
 - **Indexes that don't fit.** `tasks_board` starts with `org_id`, which no query names
   (`crates/gizai-core/migrations/0001_init.sql:267`; `tasks.rs:64-71`), and `runs_agent_period` is on `started_at` while
-  the spend and the last check filter on `created_at` (`0001_init.sql:325`; `crates/gizai-core/src/runs.rs:335-339`,
-  `board.rs:447-454`). No `ANALYZE` or `PRAGMA optimize` ever runs, so SQLite plans without statistics.
+  the spend filters on `created_at` and the last check sorts on it (`0001_init.sql:325`;
+  `crates/gizai-core/src/runs.rs:335-339`, `board.rs:449-451`). No `ANALYZE` or `PRAGMA optimize` ever runs, so SQLite
+  plans without statistics.
 - **How big, today** **[I]**: with hundreds of cards and thousands of runs, comments and messages, each scan takes
   milliseconds, not seconds. The cost is that they run on every write (F1), on the main thread (F1), and grow with every
   week of use; and that the board check holds the lock while it walks every open card. `bench_queries` on `prep_perf`
@@ -253,21 +254,22 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
     `src-tauri/src/runs.rs:790`), and a second one, `bash -lc 'command -v claude'`, when no Claude Code path is saved
     (`clis.rs:44-46`, `runs.rs:320`). It runs each time a chat page opens (`src/components/chat/ChatThread.tsx:149-150`:
     "finding their programs asks your login shell"), so every chat you open waits for your shell profile to load.
-  - `check_repo` (`src-tauri/src/commands.rs:172`) runs up to four git processes with no time limit, among them a full
+  - `check_repo` (`src-tauri/src/commands.rs:172-173`) runs up to four git processes with no time limit, among them a full
     `git status --porcelain` (`src-tauri/src/git.rs:33-47`), each time a project's page opens
     (`src/pages/ProjectPage.tsx:18`) and while you type a repository path in the project form, 300 ms after typing
     pauses (`src/components/ProjectForm.tsx:45-48`). On a big repository the window waits for `git status`.
 
-  Everything else that starts git runs off the main thread: every Editor command goes through `spawn_blocking`
+  Apart from the start's `git rev-parse` for each run a previous Gizai left (`src-tauri/src/lib.rs:252`, section 2),
+  everything else that starts git runs off the main thread: every Editor command goes through `spawn_blocking`
   (`src-tauri/src/editor.rs:301-304`), and so do a run's preparation and every `git fetch` **[V]**.
 - **On the async runtime.** A run's start (`start_inner`, `src-tauri/src/runs.rs:803`) makes several git calls inline
-  on a runtime worker, not in `spawn_blocking` (`:864-870`, `:908`, `:929`), and starts a login shell for an agent that
-  isn't on Claude Code (`:838`, `clis.rs:150-152`). Each one holds a worker that async commands and events also need.
+  on a runtime worker, not in `spawn_blocking` (`:865`, `:870`, `:908`, `:929`), and starts a login shell for an agent
+  that isn't on Claude Code (`:838`, `clis.rs:152`). Each one holds a worker that async commands and events also need.
 - **One card's start holds the queue.** The pull that starts waiting cards holds one lock across every start
   (`src-tauri/src/runs.rs:1621`; `start_background` waits for `start_inner`, `:680-682`), and a start includes the fetch,
-  the worktree, copying folders such as `node_modules` and the install (`:864-867`, `:748-758`). So when three cards
-  wait, the second starts only after the first one's install has finished, and the minute loop's board check waits
-  behind them (`src-tauri/src/lib.rs:569-570`). The copy is `cp -a --reflink=auto`
+  the worktree, copying folders such as `node_modules` and the install (`:848-852`, `:864-867`, `:748-758`). So when
+  three cards wait, the second starts only after the first one's install has finished, and the minute loop's board
+  check waits behind them (`src-tauri/src/lib.rs:569-570`). The copy is `cp -a --reflink=auto`
   (`crates/gizai-agents/src/prepare.rs:248-252`): on btrfs or XFS it shares the blocks and is quick, elsewhere it copies
   every byte.
 - **Git while nothing happens.** The Editor's standing against main (`editor_main`) runs a full `git status` and, by my
@@ -781,7 +783,7 @@ by side.
   - `CREATE INDEX runs_created ON runs(created_at)` for the Usage page and the project sums
     (`crates/gizai-core/src/usage.rs:149`, `projects.rs:16-17`), and
     `CREATE INDEX runs_agent_created ON runs(agent_actor_id, created_at)` for the spend and the last check
-    (`crates/gizai-core/src/runs.rs:335-339`, `crates/gizai-core/src/board.rs:447-451`).
+    (`crates/gizai-core/src/runs.rs:335-339`, `crates/gizai-core/src/board.rs:449-451`).
 
   Neither `chat_messages` nor `comments` has an index in any migration today (`0001_init.sql:285-291`, `:350-359`;
   0002 to 0017 add none). Then the queries that read more than they need: a card's labels by its id, and a list's
@@ -844,7 +846,7 @@ by side.
   `starting`), and each claimed card's start (fetch, worktree, copy, install) runs in its own task, so one card's install
   no longer holds the next card or the minute loop's board check (`src-tauri/src/lib.rs:569-570`). The project folder's
   lock covers the copy out of the project's folder, not the install in the worktree (`runs.rs:748-758`). `start_inner`'s
-  git calls and login shell run in `spawn_blocking` (`runs.rs:838`, `:864-870`, `:908`, `:929`).
+  git calls and login shell run in `spawn_blocking` (`runs.rs:838`, `:865`, `:870`, `:908`, `:929`).
 - **Acceptance:**
   - [ ] A test with two waiting cards whose install takes 5 s each (a fake install command): both agents start within a
     second of each other, not 5 s apart.

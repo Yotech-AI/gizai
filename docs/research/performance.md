@@ -162,7 +162,7 @@ numbers; each finding's code is verified **[V]**.
   list each time, `src/lib/runs.ts:4-8`). So watching a live run re-parses up to 500 Markdown blocks every second, plus once
   per event. On the backend, each `run_events` call clones the live run's whole event list, or reads and parses the whole
   log file, on the main thread (`src-tauri/src/runs.rs:394-410`). A finished run's log, opened from the run history, has no
-  500 cap at all: every event of the log is drawn (`src/components/RunHistory.tsx:47`, `:97`).
+  500 cap at all: Show the whole output draws every event of the log (`src/components/RunHistory.tsx:47`, `:95-97`).
 - **Which long lists draw everything.** The chat draws every message of a thread, and a finished run's log every event
   (above); a live run's log its last 500. The others are already bounded: the board draws at most 50 cards a column
   (section 3), Memory's tree draws the notes of open folders only (`src/pages/MemoryPage.tsx:224`, `:352-360`) and its
@@ -225,7 +225,7 @@ numbers; each finding's code is verified **[V]**.
   scrolling see-through content over it makes WebKit repaint it is a risk to measure (P1's `board` scenario with the
   mountains on and off), not a finding.
 - **A login shell per action.** On Linux, `command_path()` starts `bash -lc` to read your login PATH each time it is called
-  (`src-tauri/src/runs.rs:785-797`): at a run's preparation (`runs.rs:756`), a terminal's start
+  (`src-tauri/src/runs.rs:785-801`, the shell at `:790`): at a run's preparation (`runs.rs:756`), a terminal's start
   (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
   coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
   paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
@@ -305,8 +305,8 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
 
 **Its five parts:**
 
-1. **The data, `crates/gizai-core/examples/prep_perf.rs`** (new; usage like the others:
-   `cargo run --release -p gizai-core --example prep_perf -- <data dir> <fake claude>`). On a copy of the demo data:
+1. **The data, `crates/gizai-core/examples/prep_perf.rs`** (new; usage like the others, `prep_graph.rs:8`:
+   `cargo run -p gizai-core --example prep_perf -- <data dir> <fake claude>`). On a copy of the demo data:
    500 cards in project KADE over every column (each with a 1 to 3 KB description, up to three labels and three comments);
    2,000 finished runs over 90 days with tokens and cost (Usage, Inbox, `check_board`); one chat of 1,000 messages (every
    tenth with a tool call) among 60 chats; 300 Memory notes that link each other (`prep_graph`'s pattern); a finished run on
@@ -478,10 +478,17 @@ In order. Each is one pull request for one agent run, starts in **To do** (none 
 how screens work, not how they look), and measures its gain with P1's harness on `main` and on its branch, both tables in
 the pull request. The expected gains are my estimates **[I]** until P1's baseline is in.
 
-**Order and what can run at the same time:** P1a, then P1b. After P1b, frontend and backend cards run side by side.
-Frontend: P2 then P9 (both change `Sidebar.tsx`), P4 then P4b and P7, and P6 on its own. Backend: P3 first; then P5 and P8 side by
-side (P5 changes `runs.rs` after P3, P8 changes `db.rs` after P3); P10 after P5 (both change `runs.rs`). So at most three
-frontend and two backend cards can be open at once.
+**Order and what can run at the same time.** Cards that change the same lines wait for each other; the others run side
+by side.
+
+- P1a, then P1b.
+- Frontend, after P1b: P2, P4 and P6 at once. P4b after P4 and P2 (it changes `ChatThread.tsx` after P4 and
+  `TasksPage.tsx:100-101` next to P2's `:103-106`); P7 after P4b (both change `ChatThread.tsx`); P9 after P2 and P4b
+  (`Sidebar.tsx`, `EditorPage.tsx`, and `RunPanel.tsx:91`, where P4 moves the clock). So at most three frontend cards
+  at once.
+- Backend, after P1b: P3 first (it changes most commands, `run_events` among them); then P5, P8 and P10 side by side.
+  They change different parts of `src-tauri/src/lib.rs` (`:288-295`, `:544-562`, `:227-276`) and of `runs.rs`, so
+  whichever merges last only brings its branch up to date.
 
 ### P1a. Benchmark data and query bench (backend)
 - **Builds:** `crates/gizai-core/examples/prep_perf.rs` (the data in section 7, part 1) and
@@ -514,7 +521,8 @@ frontend and two backend cards can be open at once.
   projects: `Sidebar.tsx:42-45`, `TasksPage.tsx:103-106`). The tables come from the notices the backend sends today:
   `settings`, `tasks`, `docs`, `workflow_states`, `actors`, `teams`, `team`, `labels`, `files`, `contacts`, `clients`,
   `projects`, `comments`, `chat_threads`, `chat_messages`, `runs`, `subscription_limits`, `pending_actions`
-  (`src-tauri/src/commands.rs`, `runs.rs`, `chat.rs`, `tools/`).
+  (sent from `src-tauri/src/commands.rs`, `runs.rs`, `chat.rs`, `tools/mod.rs`, `ask_lead.rs`, `hand.rs`, `memory.rs`,
+  `worktrees.rs`, `pulls.rs`, `limits.rs` and `pending.rs`).
 - **Acceptance:**
   - [ ] A `settings` notice reloads nothing on the board; a `tasks` notice reloads the card list once, not twice.
   - [ ] Ten notices within 50 ms reload once.
@@ -590,7 +598,7 @@ frontend and two backend cards can be open at once.
 - **Expected gain:** messages to the window during a run from one per stream event to at most 20 a second; React renders
   follow (React batches the updates of one message).
 - **Measure:** P1 `runlog` and `lead`: events heard a second, CPU % of the app and its web process.
-- **Builds on:** P1b, and P3 (both change `src-tauri/src/runs.rs`).
+- **Builds on:** P1b, and P3 (both change `run_events`, `src-tauri/src/commands.rs:502`, and `src-tauri/src/lib.rs`).
 
 ### P6. Load a page when it opens; the self-test only in test runs (frontend)
 - **Builds:** `React.lazy` for the pages that aren't the start page (`src/App.tsx:10-25`), each with a light fallback; the
@@ -619,9 +627,11 @@ frontend and two backend cards can be open at once.
   still finds them.
 
 ### P8. Database: indexes and queries (backend)
-- **Builds:** migration `0018`: `CREATE INDEX chat_messages_thread ON chat_messages(thread_id, created_at)` and
-  `CREATE INDEX comments_task ON comments(task_id, created_at)` (neither table has an index today:
-  `crates/gizai-core/migrations/0001_init.sql:285-291`, `:350-359`); `PRAGMA optimize=0x10002` when the database opens and
+- **Builds:** migration `0018`: `CREATE INDEX chat_messages_thread ON chat_messages(thread_id)`, which also gives the
+  messages' order, since a chat is read `ORDER BY m.rowid` and an index keeps its rows' rowids in order
+  (`crates/gizai-core/src/chat.rs:382`), and `CREATE INDEX comments_task ON comments(task_id, created_at)` for
+  `ORDER BY m.created_at, m.id` (`crates/gizai-core/src/comments.rs:10`); neither table has an index in any migration
+  today (`crates/gizai-core/migrations/0001_init.sql:285-291`, `:350-359`; 0002 to 0017 add none); `PRAGMA optimize=0x10002` when the database opens and
   with the daily housekeeping (`crates/gizai-core/src/db.rs:153-168`, `src-tauri/src/lib.rs:544-562`).
 - **Acceptance:**
   - [ ] A test reads `EXPLAIN QUERY PLAN` for a chat's messages and a card's comments and finds the index, not a `SCAN`.
@@ -646,7 +656,7 @@ frontend and two backend cards can be open at once.
 
 ### P10. Small backend costs (backend)
 - **Builds:** the login PATH read once and kept (refreshed when Settings → Coding CLIs looks again), instead of a login
-  shell per call (`src-tauri/src/runs.rs:785-797`); WebKitGTK's cache model set to document viewer on Linux, kept only if
+  shell per call (`src-tauri/src/runs.rs:785-801`); WebKitGTK's cache model set to document viewer on Linux, kept only if
   P1 shows less memory and no slower page; the start's phases (lock, database, seed, recovery, housekeeping) timed and
   written to the log once, so a slow start says where it went (`src-tauri/src/lib.rs:227-276`).
 - **Acceptance:**

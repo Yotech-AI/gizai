@@ -117,15 +117,15 @@ numbers; each finding's code is verified **[V]**.
   saves, a run's status) costs nine full reloads: every card twice, the team twice, the projects twice, the people, every
   Memory note and every chat. The notice names its table (`src-tauri/src/commands.rs:14-15`, `src/api.ts:320-322`), but
   `useData` drops it; each hook listens on its own, and nothing joins notices that come together or reuses a reload
-  already on its way (`src/lib/useData.ts:10-19`), so a burst of ten writes costs ninety reloads. On the Memory graph it is thirteen, among them every note with its text
-  (`src/pages/MemoryPage.tsx:50`, `memoryNotes(true)`), every card, open or closed, only to know their ids (`:51`), and the
+  already on its way (`src/lib/useData.ts:10-19`), so a burst of ten writes costs ninety reloads. On the Memory graph it
+  is thirteen, among them every note with its text (`src/pages/MemoryPage.tsx:50`, `memoryNotes(true)`), every card, open or closed, only to know their ids (`:51`), and the
   graph's own cards, projects, clients, people and team (`src/components/memory/MemoryGraph.tsx:21-25`).
 - **Where they run.** Each of those is a plain `fn` command (`src-tauri/src/commands.rs:82` `list_projects`, `:97`
   `list_tasks`, `:163` `get_team`, `:227` `memory_notes`, `:576` `list_chat_threads`), so Tauri runs it on the main thread,
   the one that also runs the window ("Commands without the async keyword are executed on the main thread unless defined
   with #[tauri::command(async)]", and "Asynchronous commands are preferred in Tauri to perform heavy work in a manner that
-  doesn't result in UI freezes or slowdowns": Tauri's Calling Rust page **[V]**); and each takes the database's only connection (`crates/gizai-core/src/db.rs:13`,
-  `read` at `:204-207` takes the same `Mutex` as `write` at `:209-222`). A reload waits for any write in progress (an agent's
+  doesn't result in UI freezes or slowdowns": Tauri's Calling Rust page **[V]**); and each takes the database's only
+  connection (`crates/gizai-core/src/db.rs:13`, `read` at `:204-207` takes the same `Mutex` as `write` at `:209-222`). A reload waits for any write in progress (an agent's
   run writing from another thread), and while it waits the window waits too.
 - **Then the page.** The answers are parsed and the page renders again: the task list sorts, filters and groups every card
   (`TasksPage.tsx:131-136`), and the board's cards render again although `Card` is memoised (`Board.tsx:26`), because the
@@ -166,8 +166,8 @@ numbers; each finding's code is verified **[V]**.
 - **Which long lists draw everything.** The chat draws every message of a thread, and a finished run's log every event
   (above); a live run's log its last 500. The others are already bounded: the board draws at most 50 cards a column
   (section 3), Memory's tree draws the notes of open folders only (`src/pages/MemoryPage.tsx:224`, `:352-360`) and its
-  search at most 50 hits, searched once typing pauses for 150 ms (`:396`, `:404-406`, `:412`). So the card's "the Memory list renders
-  every item" holds only for a folder you open with hundreds of notes in it **[V]**.
+  search at most 50 hits, searched once typing pauses for 150 ms (`:396`, `:404-406`, `:412`). So the card's "the
+  Memory list renders every item" holds only for a folder you open with hundreds of notes in it **[V]**.
 - **What the terminal shows is possible.** Terminals already stream the right way: raw bytes over a `tauri::ipc::Channel`,
   at most one message every 8 ms (`crates/gizai-agents/src/terminal.rs:38`, `:1022-1026`;
   `src-tauri/src/terminal.rs:73-74`).

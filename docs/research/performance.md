@@ -7,24 +7,16 @@ dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, aga
 
 ## 1. Summary
 
-- **Biggest cost: one write reloads everything, on the main thread (F1).** Any database write makes every open screen
-  reload its whole lists: 9 calls on the board, 13 on the Memory graph. Those commands are 112 plain `fn`s that
-  Tauri runs on the window's main thread, all behind one database lock.
-- **Then streaming (F2).** Each streamed piece of a Team Lead answer re-parses the Markdown of every message in the chat,
-  and a live run's log redraws up to 500 events every second.
-- **Then the database (F3).** The board check holds that one lock while it walks every open card, and a card's comments,
-  a chat's messages and the Usage page read tables that only grow, with no index to help.
-- **Then slow work in the wrong place (F4).** Opening a chat starts your login shell on the main thread, opening a
-  project runs `git status` there, and one card's install holds up the start of every other waiting card.
-- **Then the start (F5), typing (F6) and idle costs (F7).** Every page and the 300 KB self-test load at start; typing
-  redraws whole pages; timers, endless animations and dozens of git processes run while nothing happens. WebKitGTK
-  2.54 already draws on the GPU (FW): no WebKit setting to change.
-- **Measured here:** the last bundle built (7 Oct, one 1.21 MB file), library sizes, call counts, this PC's GPU, and the
-  speed budgets the UI tests already hold. Start-up, memory, CPU and frame rates need a running Gizai, which this run
-  can't start; the harness takes them (section 7, its core as code in 7.1).
-- **Recommendation (option A):** the benchmark harness first (P1a, P1b), then one card per cost, each measured before
-  and after: P2 reload only what changed, P3 no command on the main thread, P4, P4b and P5 cheap streaming and typing,
-  P6 lazy pages, P7 long lists in sight only, P8 indexes and queries, P9 quiet when idle, P10 small backend costs.
+- **Biggest cost (F1):** any write makes every open screen reload its whole lists (9 calls on the board, 13 on the
+  Memory graph), through commands Tauri runs on the window's main thread, behind one database lock.
+- **Then (F2 to F4):** streamed text re-parses every chat message's Markdown; the board check holds that lock while it
+  walks every open card, and queries read tables that only grow, without indexes; opening a chat starts your login
+  shell on the main thread, and one card's install holds up every other waiting card.
+- **Then (F5 to F7):** every page and the 300 KB self-test load at start; typing redraws whole pages; timers, animations
+  and dozens of git processes run while nothing happens. WebKitGTK 2.54 already draws on the GPU (FW).
+- **Measured here:** the 7 Oct bundle (one 1.21 MB file), library sizes, call counts, this PC's GPU and the UI tests'
+  speed budgets. Start-up, memory, CPU and frames need a running Gizai: the harness takes them (section 7, code in 7.1).
+- **Recommendation (option A):** the harness first (P1a, P1b), then one card per cost, each measured before and after.
 
 ## 2. The project now
 

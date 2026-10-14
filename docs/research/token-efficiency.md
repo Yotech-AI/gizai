@@ -116,7 +116,121 @@ About $198 a day at API prices [V, arithmetic]. Builders and QA are 72% of it, s
 
 ## 4. The ideas, ranked, each as a setting
 
-*(to come)*
+Ranked by what they should save for this team and how much they risk quality. Every saving is a setting the user controls (Jefsev's rule): a switch, or a value within a range, with a default proposed for freelancers and small agencies. "Settings → Tokens" is a new Settings tab (§7.1); "agent form" and "card" are the existing forms. Savings are my estimates from §2 [I]; the experiment under each idea is what turns them into numbers.
+
+| # | Idea | Caveman's way | Expected saving | Risk to quality | Setting, default |
+|---|---|---|---|---|---|
+| 1 | Effort and model by card size, raised after a QA fail | picks the model | high: 10–20% of a Normal card's runs moved from `max`/`xhigh` to `high`; 30–50% on Small cards | medium, guarded | card **Size** Small · Normal · Large (Normal); agent form: model and effort per size (Normal = today's); switch **Raise effort after a QA fail** (on) |
+| 2 | A stable Team Lead prompt, so its chat stays in the cache | (the rest) | medium on the Team Lead: 10–30% of its chat cost | none | switch **Keep the Team Lead's prompt stable** (on) |
+| 3 | Board checks on their own model and effort | picks the model | medium on the Team Lead's checks: 30–60% of their cost | low | agent form → Chat: **Board check model** (the Team Lead's) and **effort** (`medium`) |
+| 4 | Shorter test and build output, full log kept | reads less | low to medium: 5–10% of a QA or builder run | low, with its safeguards; may improve quality | switch **Shorten test and build output** (on), **Lines kept around a failure** 10–200 (40) |
+| 5 | Comments and memory as ranges, cuts marked | (the rest) | small: under 2% of a run | low at the defaults | **Comments per run** 0–20 (10), **Characters per comment** 500–8,000 (2,000), **Memory per run** 1,000–12,000 (6,000), switch **List the other notes** (on) |
+| 6 | Short messages between tool calls | says less | small: 1–3% of a run | low | switch **Short messages** (off) |
+| 7 | Leave room in the subscription's windows | (fits one subscription) | none per run; keeps part of the window for the user | none | **Start no new runs above** 50–100% of a window (90%) |
+
+Not proposed now, with the reason, in §4.8: a lower compaction threshold, continuing a builder's session after a QA fail, MCP servers switched per card, a model for subagents, and reordering the prompt for the cache.
+
+### 4.1 Effort and model by card size
+
+**What it does.** A card gets a **Size**: Small, Normal or Large. Each agent's form keeps its model and effort, now as the Normal size, and gets two optional rows: the model and effort for Small cards and for Large cards (empty = the Normal one). The Team Lead sets the size when it writes or splits a card (its instructions get one line); the user changes it on the card like Testing. With **Raise effort after a QA fail** on, a builder's run after `qa_fail` runs one size up (Small → Normal → Large), so a card that failed QA gets more thought, not the same again. Today every run of an agent uses one model and effort, whatever the card (`runs.rs:1031`), and the only per-card cost switch is Testing (§2.6). This is Caveman's "cheapest model and effort that gets it right", decided by the Team Lead, who already reads every card, and by the user, instead of by a classifier in the request path. [V for today's code; I for the design]
+
+**Why it saves the most.** Effort decides all output: thinking, text and tool calls (§2.2), and on Opus 4.5 and later the thinking stays in the context and is read again on every later turn. Anthropic's own advice for Opus 5.5 is to sweep effort on one's own work rather than carry settings over, and it warns that `max` "adds significant cost for relatively small quality gains" (§2.6). This team runs most agents at `max` or `xhigh`. Moving Normal cards to `high` and keeping `xhigh`/`max` for Large ones should save 10–20% of those runs; Small cards at `medium`, or on Sonnet 5.5 at half Opus 5.5's price per token, 30–50% [I: output is a fifth to a third of a long run's cost, and thinking also grows the cache reads; the experiment measures it].
+
+**The setting.**
+- Card → Properties → **Size**: Small · Normal · Large; default Normal, which changes nothing for today's agents.
+- Agent form → Agent: **Model** and **Effort** stay as they are (the Normal size); new rows **Small cards** (model, effort) and **Large cards** (model, effort), each empty by default, meaning "as Normal". The effort list is the one the form already offers for the model (`src/lib/models.ts:1-17`).
+- Settings → Tokens: **Raise effort after a QA fail**, on.
+- Proposed defaults for a new install (seed): Normal at the CLI's default, Small one level lower, Large at `xhigh`. Existing agents keep exactly what they have until the user fills the new rows.
+
+**What the user sees.** In the run's facts (`src/components/RunHistory.tsx:75-93`): "Size Small: Sonnet 5.5, effort medium (Small cards, Backend Agent)", or "raised to Normal after QA's fail". On Usage → Cards: each card's size, cost, rounds and QA result; on Usage → Savings: cost per card by size and by effort.
+
+**Risk.** A card sized too small gets too little thought: more QA fails, more rounds. Guarded by the raise after a fail, by the user's view of the size on every card, and by the experiment's guard (§5.2). A card's runs then use different models, which is fine for the cache: each run is its own session.
+
+**Experiment.** Card parity (§5.2) on Normal cards: even cards at `high`, odd cards at the agent's current effort, two weeks; per card: cost, QA pass rate, rounds, failed runs, questions. A second one for Small cards: Sonnet 5.5 against the agent's Opus. The effort experiment is the one big enough to read with about 35 cards per group (§5.2).
+
+### 4.2 A stable Team Lead prompt
+
+**What it does.** The Team Lead's system prompt holds its own notes in full and a list of every other note with its size, and the date (§2.5). Any change to it, between two turns of a chat, makes the next turn write the whole conversation to the cache again (2× the input price on the 1-hour cache) instead of reading it (0.1×). With the switch on, Gizai freezes the Memory block and the date in the system prompt for the life of a chat thread (as they were at its first turn), and lists the list without sizes, so it changes only when a note is added or removed. What changed since goes, as one short line, into the bracket line Gizai already puts before a message ("A message may start with a line from Gizai in square brackets", `chat.rs:984`): "Notes changed since this chat started: Agents/Backend Agent/Notes, Projects/GA. Read them with memory_read." The Team Lead wrote its own new notes in this chat, so it has them already. [V for the prompt and its bracket line; I for the design]
+
+**Saving.** For a chat whose context is 80,000 tokens, one avoidable miss costs about (2 − 0.1) × 80,000 × $4/M ≈ $0.61 at Opus 5.5 API prices on top of a hit. Each agent's `learned` line, each note the Team Lead writes and midnight cause one today. If a third of the turns miss for these reasons, the chat's input cost falls by roughly 10–30% [I]. M1 measures it exactly: cache writes per chat turn, before and after.
+
+**The setting.** Settings → Tokens: **Keep the Team Lead's prompt stable**, on. Off restores today's behaviour (useful to compare).
+
+**What the user sees.** In a chat turn's facts (the chat run in Usage → Agents): the cache written and read; on Usage → Savings: "Team Lead: cache writes per turn, last 7 days vs before". In chat itself, nothing changes.
+
+**Risk.** None to answers: the same facts reach the Team Lead, a turn later at most, and it can always read Memory with its tools. Board checks are separate sessions and keep their fresh block.
+
+**Experiment.** Not by card: by week, since the Team Lead is one agent. A week off then a week on, comparing cache writes per chat turn and cost per turn; quality is unchanged by design (same information).
+
+### 4.3 Board checks on their own model and effort
+
+**What it does.** A board check runs only when Gizai's code finds something new, in a fresh session, on the Team Lead's own model and effort (§2.5). Most checks are routine: a card waiting, a run that ended, a question to route. With the switch, a check runs on its own model and effort. [V for today's code; I for the design]
+
+**The setting.** Agent form → Chat, beside the Board check minutes (`src/components/AgentForm.tsx:274-279`): **Board check model** (empty = the Team Lead's) and **Board check effort**, proposed default `medium`. Range: the levels the form offers for that model.
+
+**What the user sees.** Usage → Agents splits the Team Lead's line into Chat and Board checks (the `runs.trigger` column already tells them apart: `migrations/0008_board_check.sql:30`), with cost per check. The check's run facts show its model and effort.
+
+**Saving and risk.** The checks' share of the Team Lead's $499 can't be read today (M2 shows it); a check at `medium` instead of `max` should cost 30–60% less [I]. Risk: a check that misses or misreads something new. It is cheap to see: the check's findings are recorded (`runs.findings_json`), and a missed item comes back at the next check.
+
+**Experiment.** Alternate checks (even and odd run numbers) between the Team Lead's effort and `medium` for two weeks; compare cost per check and, from the board, cards left waiting longer than an hour and questions answered late.
+
+### 4.4 Shorter test and build output, with the full log kept
+
+**What it does.** A small command of Gizai's, `gizai-quiet`, runs a test or build command, writes its whole output to a file in the run's temp folder, and prints only what the agent needs: the command, its exit code and time, the counts (passed, failed, ignored), every failure with its message and the lines around it, every error and warning line from compilers and linters, and the path of the full log. The exit code is the command's own, so `&&` chains keep working. Agents are told in "How this run works" to run tests and builds through it, and their allowed commands get one rule per allowed command they already have: `Bash(gizai-quiet cargo:*)` next to `Bash(cargo:*)`, so it never widens what an agent may run. After the run Gizai keeps the full logs with the run's log (`<data>/runs/<run-id>/outputs/`), because the temp folder is emptied. [I: the design; Caveman's and RTK's filters in §3 work the same way]
+
+**Why.** QA runs the whole suite twice (`crates/gizai-core/roles/qa.md:10`), builders run `cargo test --workspace`, `npm test` and `npm run build` before they finish (CLAUDE.md:39-44), and a passing GizAi suite prints some 130,000–150,000 characters (§2.4). Claude Code cuts what it shows at its own limit (§3.6), so what enters the context is that much, read again on every later turn. Through the filter a passing suite is a few hundred characters, and a failing one keeps its failures in full instead of losing them to a cut in the middle.
+
+**The setting.** Settings → Tokens: **Shorten test and build output**, on; **Lines kept around a failure**, 10–200, default 40. Per agent, the agent form's Allowed commands shows the added rules (a switch in the agent form can turn it off for one agent).
+
+**What the user sees.** In the run, each shortened command is a normal step whose output starts with `gizai-quiet: 1,519 passed, 0 failed (exit 0) · full log: .gizai-tmp/outputs/03-cargo-test.log (142,311 characters)`. In the run's facts: "Shortened output: 4 commands, 212,000 → 9,800 characters", with **Open** beside each full log. On Usage → Savings: characters kept out of the context per agent and per card, and what they would have cost, read in the turns after them (§7.4).
+
+**Saving.** About $0.50–$1 of a QA run, 5–10% [I: some 25,000 tokens of output kept out, which would have been read again in the run's later turns; §2.2]. Smaller for builders that run fewer suites.
+
+**Risk.** A filter bug hides an error. Guarded: the exit code and counts are always shown; any line that looks like an error is kept; an output it doesn't recognise is shown as its first and last lines, never as nothing; the full log is one `rg` away; and the filter's own tests run on recorded outputs of each tool, passing and failing. Agents that forget to use it: Gizai sees every command in the stream and counts the test and build commands run without it (in the run's facts).
+
+**Experiment.** Card parity for QA and builders, two weeks: tokens per run and per card, QA pass rate, rounds, and QA's `needs_decision` runs; plus a fidelity check on every failing run in the "on" group: the user (or a script) compares the failures in the full log with what the agent reported.
+
+### 4.5 Comments and memory as ranges, cuts marked
+
+**What it does.** The prompt's comments and memory have fixed caps today: the last 10 comments by anyone, each cut to 2,000 characters with no mark (`runs.rs:912-913`, `prompt.rs:37`, `:81`), and 6,000 characters of notes plus a 4,000-character list (`crates/gizai-core/src/memory.rs:30-35`). This idea makes them values the user sets, marks a cut ("… (cut at 2,000 of 5,400 characters; the full comment is on the card)"), and leaves QA's comment out of a builder's prompt when its issues are already the prompt's "QA found these issues" section (§2.3, row 3). [V for today's caps]
+
+**The setting.** Settings → Tokens: **Comments per run** 0–20 (10); **Characters per comment** 500–8,000 (2,000); **Memory per run** 1,000–12,000 characters (6,000), which also caps the Team Lead's block; **List the other notes** on. Defaults are today's, so nothing changes until the user moves them.
+
+**What the user sees.** The run's facts: "Comments: 10 of 14, 2 cut" and, as today, each note given and whether it was cut (`RunHistory.tsx:88-91`). Usage → Savings: characters left out of prompts per agent.
+
+**Saving and risk.** Small: 5,000 tokens of comments read in 120 turns is about 600,000 cache-read tokens, some $0.25 a run at Opus 5.5 API prices; halving it saves about 1–2% [I]. The risk is a lost clarification from an early comment; the mark tells the agent something was cut.
+
+**Experiment.** No card split needed for the saving: the characters left out are exact. For quality, a two-week period at 5 comments of 1,500 characters, watching questions (`needs_decision`) and QA fails that name a missed instruction.
+
+### 4.6 Short messages between tool calls
+
+**What it does.** One line in "How this run works", only with the switch on: "Between tool calls, write at most one short sentence. Code, commands, file paths, error messages and your final summary and hand-over stay complete and exact." The same line for every CLI; no proxy, no rewriting of answers. This is Caveman's "says less" for the part of an agent's output that nobody hands over. [I]
+
+**The setting.** Settings → Tokens: **Short messages**, off by default: the saving is small and the narration is how the user follows a run live. A user who doesn't watch runs can switch it on.
+
+**What the user sees.** The run reads terser; Usage → Savings shows output tokens per turn per agent, before and after.
+
+**Saving and risk.** Text between tool calls is a small part of an agentic run's output; thinking and tool inputs are most of it. 1–3% [I]. Hand-overs stay complete by the rule's own words; QA's pass rate and the builders' hand-over length are the checks.
+
+**Experiment.** Card parity, two weeks: output tokens per turn, hand-over length, QA pass rate.
+
+### 4.7 Leave room in the subscription's windows
+
+**What it does.** Gizai already reads each CLI's 5-hour and weekly windows (§2.7). With this value set, agents start no new run from an Auto column while a window of their CLI is above it; Run by hand still works, as with Pause all agents (`src/pages/SettingsPage.tsx:113`). It saves no tokens; it keeps a freelancer's own Claude Code or Codex usable during the day. [V for the readings; I for the design]
+
+**The setting.** Settings → Tokens: **Start no new runs above** 50–100% of a window, default 90% (100% = today).
+
+**What the user sees.** On the board, a waiting card says "Waiting: Claude Code's 5-hour window is at 92%, resets 15:00"; Usage → Subscription marks the line.
+
+**Risk.** None to quality; cards wait longer.
+
+### 4.8 Not proposed now
+
+- **A lower compaction threshold.** Compacting earlier shrinks what each turn reads, but a summary loses details an agent may need, and the summary itself costs a call. Claude Code compacts on its own near its limit (§3.6). Worth an experiment after M1, not a setting yet [I].
+- **Continuing the builder's session after a QA fail** instead of a fresh one with QA's issues (`runs.rs:918`). The session knows what it did, but QA's run usually takes longer than the cache's hour, so the whole old context would be written again at 2×; a fresh run with the issues is often cheaper. An experiment after M1 [I].
+- **MCP servers per card.** Task runs get only the agent's own servers (agent form → Tools); Claude Code loads MCP tools on demand where its tool search applies (§3.6). Little left to save [I].
+- **A model for subagents.** Claude Code's subagents (the Task and Agent tools, always on: `crates/gizai-agents/src/tool_catalog.rs:80-81`) can be pointed at a cheaper model (§3.6). How much agents use them is not recorded today; M1 records it (Claude Code's `modelUsage` per model), and then it can be a field in the agent form.
+- **Reordering the prompt for the cache.** Putting the parts an agent's runs share first would turn a few thousand tokens per run from cache writes into reads, some $0.03 a run, while moving "How this run works" away from the end, where it is read last. Not worth it [I].
 
 ## 5. Quality: how we'd know it holds, and the experiments
 

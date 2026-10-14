@@ -327,7 +327,7 @@ how screens work, not how they look), and measures its gain with P1's harness on
 the pull request. The expected gains are my estimates **[I]** until P1's baseline is in.
 
 **Order and what can run at the same time:** P1a, then P1b. After P1b, frontend and backend cards run side by side.
-Frontend: P2 then P9 (both change `Sidebar.tsx`), P4 then P7, and P6 on its own. Backend: P3 first; then P5 and P8 side by
+Frontend: P2 then P9 (both change `Sidebar.tsx`), P4 then P4b and P7, and P6 on its own. Backend: P3 first; then P5 and P8 side by
 side (P5 changes `runs.rs` after P3, P8 changes `db.rs` after P3); P10 after P5 (both change `runs.rs`). So at most three
 frontend and two backend cards can be open at once.
 
@@ -402,6 +402,24 @@ frontend and two backend cards can be open at once.
 - **Measure:** P1 `lead` (the 1,000-message chat) and `runlog`: frames a second and the longest frame.
 - **Builds on:** P1b; can run beside P5.
 
+### P4b. Typing redraws only what it changes (frontend)
+- **Builds:** the text being typed lives in the box that shows it, not in the page: the chat's text box
+  (`src/components/chat/ChatThread.tsx:134`), a card's title and comment (`src/pages/TaskPage.tsx:113-114`) and the
+  Editor's cursor for the status bar (`src/pages/EditorPage.tsx:311`, and the tab ref at `:670` only when the active tab
+  changes); a Memory note's backlinks and unlinked mentions computed from a title index built once per notes list, not
+  per render (`src/components/memory/NotePane.tsx:211-212`, `src/lib/memory.ts:165`, `:360-361`); the task search writes
+  `localStorage` when typing pauses (`src/pages/TasksPage.tsx:100-101`).
+- **Acceptance:**
+  - [ ] Typing in the chat box, a card's comment or the Editor renders neither the messages, the comments nor the file
+    tree (a test counts renders).
+  - [ ] With `prep_perf`'s 300 notes, editing a note does no work that grows with the square of the notes (a unit test on
+    the index).
+  - [ ] `npm test` and `scripts/ui-test.sh` pass.
+- **Expected gain:** a keystroke costs the text box, not the page: no Markdown parsed per key in a long chat or a card with
+  many comments.
+- **Measure:** P1 `chat` and `memory` (50 characters typed: the longest frame), and an `editor` typing step.
+- **Builds on:** P4 (the memoised `MarkdownView`).
+
 ### P5. Batch the run and chat streams (backend)
 - **Builds:** run and chat events go to the window at most once every 50 ms per run or chat, all events since the last
   send in one message, as the terminal does with 8 ms (`crates/gizai-agents/src/terminal.rs:38`); `run_events` returns only
@@ -461,14 +479,16 @@ frontend and two backend cards can be open at once.
 
 ### P9. Quiet when nothing happens (frontend)
 - **Builds:** the sidebar's 30-second check of open Editor folders (`src/components/Sidebar.tsx:294`) and the Editor's
-  10-second and 3-second checks (`src/pages/EditorPage.tsx:194`, `:248`, `:389-394`) run only while the window is in
-  sight and in use, and once when it comes back; first check that `document.hidden` turns true on Hyprland when the window
-  is closed to the tray or on another workspace, and else use Tauri's window focus.
+  10-second and 3-second checks (`src/pages/EditorPage.tsx:194`, `:248`, `:390`) run only while the window is in sight
+  and in use, and once when it comes back; the run panel's clock and the Usage page's tick stop when hidden too
+  (`RunPanel.tsx:91`, `UsagePage.tsx:234`); a terminal out of sight keeps its bytes and writes them when shown, if P1 shows
+  that parsing them costs (`src/lib/terminals.ts:346`). First check that `document.hidden` turns true on Hyprland when the
+  window is closed to the tray or on another workspace; else use Tauri's window focus and visibility.
 - **Acceptance:**
   - [ ] With the window hidden, P1's `idle` scenario counts no Editor or git calls.
   - [ ] Coming back shows fresh git marks within a second.
 - **Expected gain:** no git processes and no reloads while you aren't looking.
-- **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest.
+- **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest, with the window shown and hidden.
 - **Builds on:** P2 (both change `Sidebar.tsx`).
 
 ### P10. Small backend costs (backend)

@@ -14,9 +14,11 @@ dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, aga
   and a live run's log redraws up to 500 events every second.
 - **Then the database (F3).** The board check holds that one lock while it walks every open card, and a card's comments,
   a chat's messages and the Usage page read tables that only grow, with no index to help.
-- **Then the start (F4), typing (F5) and idle costs (F6).** Every page and the 300 KB self-test load at start; typing
-  redraws whole pages; timers and endless animations run while nothing happens. WebKitGTK 2.54 already draws on the GPU
-  (FW): no WebKit setting to change.
+- **Then slow work in the wrong place (F4).** Opening a chat starts your login shell on the main thread, opening a
+  project runs `git status` there, and one card's install holds up the start of every other waiting card.
+- **Then the start (F5), typing (F6) and idle costs (F7).** Every page and the 300 KB self-test load at start; typing
+  redraws whole pages; timers, endless animations and dozens of git processes run while nothing happens. WebKitGTK
+  2.54 already draws on the GPU (FW): no WebKit setting to change.
 - **Measured here:** the last bundle built (7 Oct, one 1.21 MB file), library sizes, call counts, this PC's GPU, and the
   speed budgets the UI tests already hold. Start-up, memory, CPU and frame rates need a running Gizai, which this run
   can't start; the harness takes them (section 7, its core as code in 7.1).
@@ -225,7 +227,42 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   week of use; and that the board check holds the lock while it walks every open card. `bench_queries` on `prep_perf`
   gives the numbers.
 
-### F4. Every page and the self-test load at start
+### F4. Slow work in the wrong place: a login shell and git on the main thread, one card's start holding the queue
+
+- **On the main thread.** Two plain `fn` commands start processes, so the window stands still until they end:
+  - `chat_clis` (`src-tauri/src/commands.rs:652-653`) lists the coding CLIs under the chat's text box. To find their
+    programs it starts your login shell (`src-tauri/src/clis.rs:85-89` calling `command_path()`, the `bash -lc` at
+    `src-tauri/src/runs.rs:790`), and a second one, `bash -lc 'command -v claude'`, when no Claude Code path is saved
+    (`clis.rs:44-46`, `runs.rs:320`). It runs each time a chat page opens (`src/components/chat/ChatThread.tsx:149-150`:
+    "finding their programs asks your login shell"), so every chat you open waits for your shell profile to load.
+  - `check_repo` (`src-tauri/src/commands.rs:172`) runs up to four git processes with no time limit, among them a full
+    `git status --porcelain` (`src-tauri/src/git.rs:33-47`), each time a project's page opens
+    (`src/pages/ProjectPage.tsx:18`) and while you type a repository path in the project form, 300 ms after typing
+    pauses (`src/components/ProjectForm.tsx:45-48`). On a big repository the window waits for `git status`.
+
+  Everything else that starts git runs off the main thread: every Editor command goes through `spawn_blocking`
+  (`src-tauri/src/editor.rs:301-304`), and so do a run's preparation and every `git fetch` **[V]**.
+- **On the async runtime.** A run's start (`start_inner`, `src-tauri/src/runs.rs:803`) makes several git calls inline
+  on a runtime worker, not in `spawn_blocking` (`:864-870`, `:908`, `:929`), and starts a login shell for an agent that
+  isn't on Claude Code (`:838`, `clis.rs:150-152`). Each one holds a worker that async commands and events also need.
+- **One card's start holds the queue.** The pull that starts waiting cards holds one lock across every start
+  (`src-tauri/src/runs.rs:1621`; `start_background` waits for `start_inner`, `:680-682`), and a start includes the fetch,
+  the worktree, copying folders such as `node_modules` and the install (`:864-867`, `:748-758`). So when three cards
+  wait, the second starts only after the first one's install has finished, and the minute loop's board check waits
+  behind them (`src-tauri/src/lib.rs:569-570`). The copy is `cp -a --reflink=auto`
+  (`crates/gizai-agents/src/prepare.rs:248-252`): on btrfs or XFS it shares the blocks and is quick, elsewhere it copies
+  every byte.
+- **Git while nothing happens.** The Editor's standing against main (`editor_main`) runs a full `git status` and, by my
+  count of `behind::stand` and the checks it calls, some 15 to 30 git processes per folder
+  (`src-tauri/src/editor.rs:208-215`, `crates/gizai-agents/src/behind.rs:184-219`) **[I]**: every 10 s on the Editor page
+  and every 30 s for each open folder from the sidebar, on every page (F7). `editor_git` adds a full
+  `git status --untracked-files=all` each time (`crates/gizai-agents/src/editor.rs:896-902`, `:820`). These run off the
+  main thread: they cost CPU and battery, not frames.
+- **The database lock is never held across a process, a file or the network:** every `db.read` and `db.write` closure
+  is SQL only, and files and git run before or after it (for example `crates/gizai-core/src/files.rs:59-68`: the file
+  is stored between a read and a write) **[V]**. So this work doesn't add to F3's waits.
+
+### F5. Every page and the self-test load at start
 
 - `src/App.tsx:5-27` imports every page and `src/selftest.ts` statically; there is no `React.lazy`, and Vite's chunk
   warning is raised to 2,000 KB on purpose ("Desktop app: one local bundle, so a large chunk costs nothing over the
@@ -249,7 +286,7 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   view through `TerminalPage.tsx:21`), so they leave the start files only when both the self-test and those pages load
   on demand (P6 does both).
 
-### F5. Typing redraws the page it is on
+### F6. Typing redraws the page it is on
 
 - **A card's page.** Its title and the comment being written are state of the whole page (`src/pages/TaskPage.tsx:113-114`),
   so each keystroke draws the page again: every comment through `MarkdownView` (`TaskPage.tsx:274`), and the run panel
@@ -262,7 +299,7 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   links each, that is some 450,000 title comparisons per keystroke **[I]**.
 - **The task search** writes two `localStorage` keys per keystroke (`src/pages/TasksPage.tsx:100-101`).
 
-### F6. Costs while nothing happens, and small ones
+### F7. Costs while nothing happens, and small ones
 
 - **Timers.** The sidebar checks every open Editor folder every 30 s (`editor_folders`, then `editor_git` and `editor_main`
   per folder, which run git) and again on every window focus (`src/components/Sidebar.tsx:286-295`). The Editor refreshes
@@ -305,16 +342,16 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   `WEBKIT_DISABLE_DMABUF_RENDERER=1` move drawing to slower paths and belong only on machines where the window stays blank
   **[I]**.
 - **What still costs on the GPU path** **[I]**: anything that changes every frame makes WebKit composite every frame, also
-  at rest (F6's animations). Damage tracking in 2.54 limits the area redrawn, not the wake-ups.
+  at rest (F7's animations). Damage tracking in 2.54 limits the area redrawn, not the wake-ups.
 - **macOS and Windows differ less than Linux does.** All three run the page in its own process and draw on the GPU
   (WKWebView's WebContent and GPU processes; WebView2's renderer and GPU processes; links in section 10) **[V]**. Calls
   travel the same way on all three: Tauri 2.12.1 sends each through its `ipc` custom protocol with `fetch` and falls back
   to `postMessage` only if that fails (`tauri-2.12.1/scripts/ipc-protocol.js:20-37`, `:61-66`) **[V]**. Where they
   differ: a hidden window. Tauri's `backgroundThrottling` setting, which sets whether a hidden web view throttles or
   suspends its timers, works on macOS 14 and later only, and is "Unsupported" on Linux and Windows (`tauri-utils-2.10.1/src/config.rs:2236-2250`)
-  **[V]**; so on Linux only Gizai's own visibility checks quiet a hidden window (F6, P9). WebView2 can be asked to use
+  **[V]**; so on Linux only Gizai's own visibility checks quiet a hidden window (F7, P9). WebView2 can be asked to use
   less memory while hidden (`MemoryUsageTargetLevel`, section 5); WebKitGTK has the cache model and the memory pressure
-  settings instead. The costs in F1 to F5 are Gizai's own work, so they are the same on all three **[I]**.
+  settings instead. The costs in F1 to F7 are Gizai's own work, so they are the same on all three **[I]**.
 
 ## 5. Compared with what Tauri, WebKitGTK, React, Vite and SQLite recommend
 
@@ -345,7 +382,7 @@ rest is Tauri, React and SQLite as they are.
 |---|---|---|---|
 | **What** | The harness first (P1), then one card per finding, biggest first, each proving its gain with the harness | A client-side store fed by row-level change notices (the changed ids with each notice, patched into the store), every command async with a pool of read connections, lists paged by the backend | Memoise the hot components, lazy pages, async commands and a table filter in `useData`, straight away |
 | **Size** | About ten cards of one pull request each; P1 is the biggest | Three to five large cards that touch every page at once | Two or three cards |
-| **Gain** | Each finding's gain, shown in numbers before and after | The largest in the long run, and what a future sync needs (`changes` is meant as its log, `crates/gizai-core/src/db.rs:1-2`) | Most of A's gains for F1, F2 and F4 |
+| **Gain** | Each finding's gain, shown in numbers before and after | The largest in the long run, and what a future sync needs (`changes` is meant as its log, `crates/gizai-core/src/db.rs:1-2`) | Most of A's gains for F1, F2 and F5 |
 | **Risk** | Low: small steps, each checked; the order can change when the numbers come | High: one change across the app, hard to test in steps, in the way of every card in flight | Unproven: no numbers to show the gain or catch a step back, and the roadmap's "faster" can't be shown |
 | **Libraries** | none new | possibly TanStack Query (MIT) for the store, or Gizai's own | none new |
 
@@ -754,7 +791,7 @@ by side.
    the bundle (`source scripts/env.sh && npm run build` in this worktree; `dist/` is ignored by git) and your Gizai's memory
    (the `ps` line in section 3, once at rest and once while an agent works). *Recommendation:* let P1 take all of it, in the
    cage, so every later card compares against the same setup; run the `ps` line once if you want a feel for today's memory.
-2. **What should feel faster first?** Staying smooth while agents and the Team Lead work (F1 to F3), the start (F4), or long
+2. **What should feel faster first?** Staying smooth while agents and the Team Lead work (F1 to F4), the start (F5), or long
    chats and big boards? *Recommendation:* smooth while agents work: it is paid all day, and its fixes are the smallest.
 3. **Budgets.** Should the harness fail a card that makes things slower, with fixed limits (for example a warm start to the
    board under 1.5 s, the longest frame under 50 ms while a run streams, at most two calls per write)? *Recommendation:* yes,

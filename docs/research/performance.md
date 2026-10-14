@@ -7,13 +7,13 @@ dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, aga
 
 ## 1. Summary
 
-- **Biggest cost (F1):** any write makes every open screen reload its whole lists (9 calls on the board, 13 on the
-  Memory graph), through commands Tauri runs on the window's main thread, behind one database lock.
+- **Biggest cost (F1):** any write makes every open screen reload whole lists (9 calls on the board, 13 on the Memory
+  graph), with fields they don't show, through commands Tauri runs on the window's main thread, behind one lock.
 - **Then (F2 to F4):** streamed text re-parses every chat message's Markdown; the board check holds that lock while it
   walks every open card, and queries read tables that only grow, without indexes; opening a chat starts your login
   shell on the main thread, and one card's install holds up every other waiting card.
 - **Then (F5 to F7):** every page and the 300 KB self-test load at start; typing redraws whole pages; timers, animations
-  and dozens of git processes run while nothing happens. WebKitGTK 2.54 already draws on the GPU (FW).
+  and each window focus (it follows the mouse on Omarchy) cost git and redraws at rest. FW: WebKitGTK 2.54 uses the GPU.
 - **Measured here:** the 7 Oct bundle (one 1.21 MB file), library sizes, call counts, this PC's GPU and the UI tests'
   speed budgets. Start-up, memory, CPU and frames need a running Gizai: the harness takes them (section 7, code in 7.1).
 - **Recommendation (option A):** the harness first (P1a, P1b), then one card per cost, each measured before and after.
@@ -614,8 +614,8 @@ by side.
   at once.
 - Backend, after P1b: P3 first (it changes most commands, `run_events` among them); then P5, P8 and P10 side by side.
   They change different parts of `src-tauri/src/lib.rs` (`:288-295`, `:544-562`, `:227-276`) and of `runs.rs`, so
-  whichever merges last only brings its branch up to date. P11 after P10 (`runs.rs`, around `start_inner`). So at most
-  three backend cards at once.
+  whichever merges last only brings its branch up to date. P11 after P10 (`runs.rs`, around `start_inner`). P12 after
+  P3 as well (both change `list_tasks` and `get_team`), beside P5, P8 and P10. So at most four backend cards at once.
 
 ### P1a. Benchmark data and query bench (backend)
 - **Builds:** `crates/gizai-core/examples/prep_perf.rs` (the data in section 7, part 1) and
@@ -651,7 +651,8 @@ by side.
 - **Builds:** `useData` learns which tables a fetch reads (one map in one place, e.g. `src/lib/tables.ts`; a fetch it
   doesn't know reloads on any write, as today) and reloads only for those (`src/lib/useData.ts:15-20`); notices that arrive
   within one frame cause one reload; the sidebar and the page share one fetch of the same list (the cards, the team, the
-  projects: `Sidebar.tsx:42-45`, `TasksPage.tsx:103-106`). The tables come from the notices the backend sends today:
+  projects, and on the Inbox the chats: `Sidebar.tsx:42-45`, `:52`, `TasksPage.tsx:103-107`). The tables come from the
+  notices the backend sends today:
   `settings`, `tasks`, `docs`, `workflow_states`, `actors`, `teams`, `team`, `labels`, `files`, `contacts`, `clients`,
   `projects`, `comments`, `chat_threads`, `chat_messages`, `runs`, `subscription_limits`, `pending_actions`
   (sent from `src-tauri/src/commands.rs`, `runs.rs`, `chat.rs`, `tools/mod.rs`, `ask_lead.rs`, `hand.rs`, `memory.rs`,
@@ -660,7 +661,8 @@ by side.
   - [ ] A `settings` notice reloads nothing on the board; a `tasks` notice reloads the card list once, not twice.
   - [ ] Ten notices within 50 ms reload once.
   - [ ] Unit tests for the table map and the coalescing; `npm test` passes.
-- **Expected gain:** calls per write on the board from 9 to at most 2, on the Memory graph from 13 to at most 3.
+- **Expected gain:** calls per write on the board from 9 to at most 2, on the Inbox from 10 to at most 2, on the Memory
+  graph from 13 to at most 3.
 - **Measure:** P1 `runlog` (a fake run writing): calls per `rows-changed`, and the longest frame; before and after.
 - **Builds on:** P1b.
 
@@ -779,7 +781,9 @@ by side.
   Neither `chat_messages` nor `comments` has an index in any migration today (`0001_init.sql:285-291`, `:350-359`;
   0002 to 0017 add none). Then the queries that read more than they need: a card's labels by its id, and a list's
   labels for the listed cards only (`crates/gizai-core/src/tasks.rs:47-56`); the chat list's card numbers in one query
-  (`chat.rs:165-174`); a card's last change as the newest of three index lookups (`board.rs:419-431`). And
+  (`chat.rs:165-174`); a card's last change as the newest of three index lookups (`board.rs:419-431`); the desktop
+  notifications' look at the Inbox with `WHERE` clauses instead of whole lists filtered in Rust (`tasks.rs:103-109`,
+  `chat.rs:160-162`, `:307-309`). And
   `PRAGMA optimize=0x10002` when the database opens and with the daily housekeeping
   (`crates/gizai-core/src/db.rs:153-168`, `src-tauri/src/lib.rs:544-562`).
 - **Acceptance:**
@@ -800,14 +804,20 @@ by side.
   window is closed to the tray or on another workspace; else use Tauri's window focus and visibility. The sidebar's
   30-second check asks each folder only for its uncommitted marks (`editor_git`); how it stands against main
   (`editor_main`, some 15 to 30 git processes, F4) is asked when a folder opens, on focus and after a fetch
-  (`src/components/Sidebar.tsx:283-297`).
+  (`src/components/Sidebar.tsx:283-297`). A window focus refreshes only when the last refresh is more than 10 s old,
+  and the sidebar and the Editor page share one `editor_main` answer per folder instead of both asking
+  (`Sidebar.tsx:290`, `:295`; `EditorPage.tsx:196`, `:249`); the page's focus refresh of the file tree (`:169-172`,
+  three git processes per open folder) waits for the same 10 s (F7).
 - **Acceptance:**
   - [ ] With the window hidden, P1's `idle` scenario counts no Editor or git calls.
   - [ ] With the window shown and folders open, the sidebar's timer makes no `editor_main` call.
+  - [ ] Ten window focus events within 10 s on the Editor page make one refresh: one `editor_git` and one `editor_main`
+    per folder.
   - [ ] Coming back shows fresh git marks within a second.
 - **Expected gain:** no git processes and no reloads while you aren't looking, and a few git processes a minute instead
-  of dozens per folder while you are.
-- **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest, with the window shown and hidden.
+  of dozens per folder while you are; moving the mouse across the window no longer starts git each time.
+- **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest, with the window shown and hidden; and an `editor`
+  focus step (the probe sends ten `focus` events): calls counted.
 - **Builds on:** P2 (both change `Sidebar.tsx`).
 
 ### P10. Small backend costs (backend)

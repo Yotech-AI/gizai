@@ -269,5 +269,153 @@ Jefsev's rule (14 Oct 2026): every part is a switch or a value within a range, w
 
 The prompt line an agent gets (§5.4) names the sizes, the themes and the limit, so the agent knows its set before it starts; the collect step holds Gizai to the limits whatever the agent did.
 
+---
+
+## 4. Options
+
+All three use the hidden browser Gizai already has: Chrome DevTools MCP 1.10.1, Apache-2.0, 14.3 MB unpacked, fetched by `npx` at an exact version (`npm view chrome-devtools-mcp@1.10.1 license version dist.unpackedSize`; `browser.rs:36-49`), and still its newest release. None needs a new library. [V]
+
+### Option A (recommended): the agents shoot, Gizai serves and collects
+
+The builder (and QA, for its additions) takes the pictures with `take_screenshot` and `filePath` into `.gizai-tmp/screenshots/`; Gizai starts the project's preview command on a free port before the agent and ends it after; at the run's end Gizai collects the folder onto the card (§3.4 B); the card shows a Screenshots tab.
+
+- **Takes:** a collect step and evidence rows (SB1), the preview command (SB2), the tab (SF1), the settings (SF2), a design first (SD), and for Gizai itself a browser mode with a fake backend (SG). Each other project needs a preview script in its own repository (a card on its own board).
+- **Libraries:** none new. Reading an image's width and height needs only its header: PNG's, JPEG's and WebP's are a few dozen lines by hand; or `image` 0.25.10, already in `Cargo.lock` through the clipboard plugin's `arboard` with only its PNG and TIFF features (`cargo tree -i image@0.25.10`), with its `jpeg` and `webp` features switched on.
+- **Risks:** the agents' sets vary with their care (the prompt line and the limits keep them in bounds); each project's preview recipe needs looking after when its stack changes; a set costs 20–30 of a run's tool calls.
+- **Size:** about six cards of S to M, plus a small card per project.
+
+### Option B: Gizai shoots a list of pages itself
+
+The agent writes the pages to shoot (`shots.json`: addresses and captions); at the run's end Gizai drives the hidden browser itself with its own MCP client (`crates/gizai-agents/src/mcp_client.rs`, which today says hello and reads `tools/list` only: `:1-2`, `:399-420`) and calls `new_page`, `resize_page`, `emulate` and `take_screenshot` for every page at every size and theme.
+
+- **For it:** the same complete set every time; no model tokens or tool calls for the pictures; every size and theme for free.
+- **Against it:** only what an address reaches: no open drawer, no form with its errors, no page behind a login without a login script; a second browser start after the agent's; Gizai becomes a browser driver (a `tools/call` path, timeouts, pages that never settle). The agent still needs the browser to check its own work.
+- **Size:** L. Worth adding later on top of A, for "every page at every size", if the agents' sets turn out uneven. [I]
+
+### Option C: a Gizai tool for runs
+
+`attach_screenshot(path, caption)` in a run-side Gizai MCP server (§3.4 C): pictures arrive at once and the agent hears at once when one is refused, but runs have no Gizai server today, it needs a socket and a token per run, and Codex and Gemini agents can't use it (`mcp_not_on`). **Size:** L. [I]
+
+**Why A:** it is the smallest change that gives a useful set on every card with a screen, it can't cost a card its verdict, the pictures show states only an agent can reach, and the preview it needs is worth having anyway (later: a Preview button on the card for you). [I]
+
+---
+
+## 5. The design (option A)
+
+### 5.1 The screens
+
+The Design Agent designs them (SD); in words in §3.7. A sketch of the tab:
+
+```
+┌ Tasks / Gizai / GA-180 ───────────────────────────────────────────────────────────────┐
+│ ▣ Card   ⎘ Changes +120 −8   ▦ Screenshots 6                                          │
+├───────────────────────────────────────────────────────────────────────────────────────┤
+│ ✓ QA Agent · QA passed · 2 h ago · 2 screenshots                     View the run ›   │
+│ ┌───────────┐ ┌───────────┐                                                           │
+│ │           │ │           │   AC 2: the empty board says what to do                   │
+│ └───────────┘ └───────────┘                                                           │
+│ ▢ Frontend Agent · Ready for testing · 3 h ago · 4 screenshots · 1 changed, 3 new     │
+│ ┌───────────┐ ┌───────────┐ ┌──────┐ ┌───────────┐                                    │
+│ │           │ │           │ │      │ │           │                                    │
+│ └───────────┘ └───────────┘ └──────┘ └───────────┘                                    │
+│ Board, three cards  Board, empty   Board, mobile  Board, light                        │
+│ 1440 × 900          1440 × 900     390 × 844      1440 × 900                          │
+│ ▸ 2 older sets                                                                        │
+└───────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+The larger view: the picture fitted to the window over a dark backdrop, its caption and size under it, ‹ › for the set's others, **Compare** (side by side, or a slider over the previous run's picture with the same name), **100%**, **Open**, and Esc. The board card in Review gets `▦ 6` next to its pull request sign. Settings: the project form's **Preview** section (Screenshots, Preview command, Start time, Sizes, Both themes, Whole page), one switch under the agent form's browser, four rows in Settings → Runs, one switch in the card's Properties (§3.8).
+
+They use what the design system has: the top tabs (`.tabs.task-tabs`), badges, `FormSection` and `Field` with hints, Lucide icons (`images` is new in the icon map), the tokens, dark first and light. No teal or magenta: nothing here is an agent at work or "needs you" (`design/README.md:35-38`). [V for the parts]
+
+### 5.2 The data
+
+Migration `0018_screenshots.sql` (SB1; the preview's columns come with SB2):
+
+```sql
+-- Screenshots (GA-173): a run's pictures on its card keep a caption and their size; the run says what it left out.
+ALTER TABLE files ADD COLUMN caption TEXT;
+ALTER TABLE files ADD COLUMN width INTEGER;
+ALTER TABLE files ADD COLUMN height INTEGER;
+CREATE INDEX files_run ON files(run_id) WHERE run_id IS NOT NULL;
+ALTER TABLE runs ADD COLUMN screenshots_note TEXT;   -- JSON {"leftOut": ["13-x.png: over the limit of 12 a run"], "preview": null}
+ALTER TABLE tasks ADD COLUMN screenshots INTEGER;    -- NULL: the project's switch; 0 or 1: the card's own
+ALTER TABLE projects ADD COLUMN screenshots_json TEXT; -- {"on":true,"sizes":[{"name":"Desktop","width":1280,"height":800}],"bothThemes":false,"fullPage":false}
+```
+
+SB2 adds `projects.preview_command TEXT` and `projects.preview_start_secs INTEGER` (`0019_preview.sql`). The agent's switch is a field of `CliTools` in its `mcp_extra_json` (`screenshots`, next to `insecure_certs`: `mcp_servers.rs:104-118`), so no column. The app-wide values are keys of the Settings struct (`src-tauri/src/runs.rs:168-214`), checked in `save_settings` (`:234-252`). [I]
+
+### 5.3 The run, step by step
+
+1. **Start** (SB2): after the worktree is prepared, when the agent takes screenshots and the card's or project's switch is on: pick the ports, start the preview command, wait for its port (at most the start time).
+2. **Prompt** (SB1, SB2): the Screenshots section (§5.4), with the address, the sizes, the themes and the limit.
+3. **The agent works**, then shoots its set into `.gizai-tmp/screenshots/` and ends with its result line.
+4. **End** (`src-tauri/src/runs.rs:1139-1147`): the CLI's group has ended → end the preview's tree → **collect** (`gizai_agents::screenshots::collect`, the checks of §3.4, no database) → store the blobs and insert the rows with the run's id (`gizai_core::files::insert_evidence`) → note what was left out on the run → `empty_temp` as today → `finish_run`. A run Gizai's quitting stopped collects nothing (its folder is emptied at the next start).
+5. **Housekeeping** (daily, `housekeeping.rs`): older sets than the newest N per card go, a finished card's go after the days set, then blobs no row uses.
+
+### 5.4 What the agent is told
+
+A section after the task, only when the agent's switch, the card's (or project's) switch and the browser are on (`prompt.rs`, SB1). For a builder, with the project's values filled in:
+
+```
+## Screenshots
+
+When your change shows on a screen, take screenshots of it after your last commit and before your result line: the card
+shows them in Review, before the pull request.
+- The card's branch is served at http://127.0.0.1:47130/ (Gizai started the project's preview; its output is in
+  /…/GA-180/.gizai-tmp/preview/preview.log). Use only this address: never a .test site, a live site or a real account.
+- Shoot with the browser's take_screenshot, always with filePath, as /…/GA-180/.gizai-tmp/screenshots/<nn>-<what>.png,
+  numbered in the order to look at them: the screens you changed, in the states the card names, and their empty and error
+  states when you touched them; each at Desktop 1280 x 800 and Mobile 390 x 844 (resize_page or emulate's viewport).
+- At most 12. Write a caption for each in /…/GA-180/.gizai-tmp/screenshots/captions.json, like
+  {"01-board-desktop.png": "The board with three cards"}.
+- Don't open your pictures unless you must: each one in your conversation costs tokens on every later turn. Check what a
+  page says with take_snapshot.
+- Never commit them or attach them to the pull request: Gizai keeps them on the card.
+```
+
+QA's version replaces the third line with: "Add only what the builder's screenshots don't show: each failure you found, and at most four acceptance criteria you checked, each captioned with the criterion." Without a preview the first line says "There is no preview for this project: take no screenshots." (or, when the preview didn't start, why). [I]
+
+### 5.5 What changes in which files
+
+| File | Change | Card |
+|---|---|---|
+| `crates/gizai-core/migrations/0018_screenshots.sql` | new (§5.2) | SB1 |
+| `crates/gizai-core/src/files.rs` | `insert_evidence`; `screenshots(task)` grouped by run; `list` (Attachments) only rows without a run; `prune_screenshots` and the blob sweep | SB1 |
+| `crates/gizai-core/src/housekeeping.rs` | call the prune and sweep daily | SB1 |
+| `crates/gizai-core/src/mcp_servers.rs`, `model.rs`, `projects.rs`, `tasks.rs` | the agent's `screenshots` switch, the project's `screenshots_json`, the card's `screenshots` | SB1 |
+| `crates/gizai-agents/src/screenshots.rs` | new: `collect(worktree, limits)`, the checks, image headers | SB1 |
+| `crates/gizai-agents/src/prompt.rs` | `screenshots_section` | SB1 (the address line SB2) |
+| `crates/gizai-agents/src/preview.rs` | new: start in its own tree, wait for the port, end | SB2 |
+| `src-tauri/src/runs.rs` | collect before `empty_temp` (`:1146`); the preview's start and end; the ports; the Settings fields and checks | SB1, SB2 |
+| `src-tauri/src/commands.rs`, `lib.rs` | `list_screenshots`, `screenshot_bytes` | SB1 |
+| `src/api.ts`, `src/types.ts` | contract CS (§6) | SB1 |
+| `src/router.ts`, `src/pages/TaskPage.tsx` | `view: "screenshots"`; the third tab | SF1 |
+| `src/components/screenshots/` | new: `ScreenshotsView.tsx`, `ShotViewer.tsx` | SF1 |
+| `src/components/Board.tsx`, `src/pages/TasksPage.tsx` | the sign; the Inbox's line | SF1 |
+| `src/components/ProjectForm.tsx`, `AgentCliTools.tsx`, `Properties.tsx`, `src/pages/SettingsPage.tsx` | the settings of §3.8 | SF2 |
+| `browser.html`, `src/browser/` (fake backend), `crates/gizai-core/examples/fixtures.rs`, `vite.config.ts` | Gizai's screens in a plain browser | SG |
+| `design/README.md`, `docs/features/screenshots.md`, `docs/settings.md` | the icon; the feature; the settings | SD, SF2 |
+
+### 5.6 Security and privacy
+
+- The checks on each file (§3.4) and the privacy rules (§3.6). `screenshot_bytes` serves only rows that are a run's images, by id, never a path.
+- The preview command is what you typed in the project form, as the setup command is: the agents' and the Team Lead's tools can't change it (no Team Lead tool touches the project's worktree fields today, and none gets the preview ones). It runs with your rights, like the setup command (`prepare.rs:143-144`).
+- The preview listens on `127.0.0.1` where its stack allows (OO's API listens on all addresses: §3.5); its data is demo data.
+- Nothing new leaves the computer. [I]
+
+### 5.7 How it is tested
+
+- **Rust, `gizai-agents`:** `collect` keeps PNG, JPEG and WebP by their signature and refuses the rest (an SVG, a text file named `.png`); skips links and, on Unix, files with more than one hard link (`#[cfg(unix)]`); ignores subfolders; keeps the first N by name; refuses too many bytes or pixels; reads `captions.json`, and a broken one only loses captions. Image headers from tiny fixture files.
+- **Rust, `gizai-core`:** `insert_evidence` sets the run, caption and size; Attachments leave run files out; `screenshots(task)` gives sets newest first; the prune keeps N sets and the days; the sweep deletes only blobs no row uses.
+- **A run end to end:** a fake Claude Code script (`crates/gizai-agents/tests/fake-claude*.sh`) that writes two PNGs and a `captions.json` into the folder: the card has two screenshots with the run's id; a run stopped at its time limit keeps its pictures; the prompt has the section only with the switches on.
+- **Preview (SB2):** a fake preview (`node -e` serving on `GIZAI_PREVIEW_PORT`): the agent starts after the port answers and its prompt has the address; three runs at once get different ports; after the run the server's PID is gone; one that never listens lets the run start after the start time, with the note; on Windows its Job Object ends it.
+- **UI:** vitest for the sets, counts and Compare's pairing by name and hash, and a contract test like `src/changesContract.test.ts`; a `scripts/ui-test.sh` scenario with a demo screenshot set: the tab, the larger view, Esc.
+- **By hand, once each:** a GW card and an MN card with the browser on, then the tab in Review. [I]
+
+### 5.8 What is left out
+
+Gizai re-shooting every page at every size (option B); **Add to pull request** with `gh pr comment --attach`; a Preview button for you on the card; QA's failure pictures handed to the builder's next run; videos (as Devin and Cursor make); a pixel diff (Compare is side by side); screenshots by Codex and Gemini agents (no browser for them: `mcp_not_on`); Bitbucket's pull requests.
+
 
 

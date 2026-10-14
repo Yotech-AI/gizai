@@ -383,18 +383,25 @@ pub fn decisions_path(project_name: Option<&str>) -> String {
 
 /// Saves an answer to the question `asked_run_id` in memory as the Team Lead, linked to the card (its identifier is in
 /// the text): `text` in the note at `path` when the Team Lead named one (a shared folder, like `Decisions/Exports` or
-/// `Standards/CSV`), else, or when that can't be saved, a dated line in the project's decisions note
-/// (`decisions_path`): `- 2026-10-10 (KADE-12, answered by <by>): <the question> → <the answer>`. `run_id`: the run kept
-/// on the note's version. `day`: today, like 2026-10-10.
+/// `Standards/CSV`), as `- <day>: <text>`, without the labels it may start with (`memory::unlabelled`); a note that isn't
+/// there yet is made with `type:` after its folder and the card's `project:`, so the runs on that project's cards get it
+/// (GA-172). Else, or when that can't be saved, a dated line in the project's decisions note (`decisions_path`):
+/// `- 2026-10-10 (KADE-12, answered by <by>): <the question> → <the answer>`. `run_id`: the run kept on the note's
+/// version. `day`: today, like 2026-10-10.
 #[allow(clippy::too_many_arguments)]
 pub fn remember(db: &Db, lead_id: &str, asked_run_id: &str, run_id: Option<&str>, by: &str, answer: &str, path: Option<&str>, text: Option<&str>,
                 day: &str) -> Result<Saved> {
     let q = question(db, asked_run_id)?;
     let who = Who::Lead(lead_id.to_string());
-    if let (Some(path), Some(text)) = (path.map(str::trim).filter(|p| !p.is_empty()), text.map(str::trim).filter(|t| !t.is_empty())) {
-        let shared = memory::SHARED_FOLDERS.iter().any(|f| path.split('/').next().is_some_and(|top| top.eq_ignore_ascii_case(f)));
+    if let (Some(path), Some(text)) = (path.map(str::trim).filter(|p| !p.is_empty()), text.map(|t| memory::unlabelled(t.trim())).filter(|t| !t.is_empty()))
+        && let Some(kind) = path.split('/').next().and_then(memory::folder_type)
+    {
         let line = if text.contains(&q.identifier) { text.to_string() } else { format!("{text} ({})", q.identifier) };
-        if shared && let Ok(saved) = memory::append(db, &who, path, None, &format!("- {day}: {line}"), run_id) {
+        let mut props = vec![("type", kind)];
+        if let Some(key) = &q.project_key {
+            props.push(("project", key));
+        }
+        if let Ok(saved) = memory::append_or_make(db, &who, path, &format!("- {day}: {line}"), &props, run_id) {
             return Ok(saved);
         }
     }

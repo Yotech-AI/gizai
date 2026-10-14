@@ -614,7 +614,7 @@ by side.
 
 - P1a, then P1b.
 - Frontend, after P1b: P2, P4 and P6 at once. P4b after P4 and P2 (it changes `ChatThread.tsx` after P4 and
-  `TasksPage.tsx:100-101` next to P2's `:103-106`); P7 after P4b (both change `ChatThread.tsx`); P9 after P2 and P4b
+  `TasksPage.tsx:100-101` next to P2's `:103-107`); P7 after P4b (both change `ChatThread.tsx`); P9 after P2 and P4b
   (`Sidebar.tsx`, `EditorPage.tsx`, and `RunPanel.tsx:91`, where P4 moves the clock). So at most three frontend cards
   at once.
 - Backend, after P1b: P3 first (it changes most commands, `run_events` among them); then P5, P8 and P10 side by side.
@@ -646,7 +646,8 @@ by side.
   - [ ] `scripts/perf.sh` runs every scenario five times headless, prints the medians and writes `.devdata/perf/<commit>.json`.
   - [ ] `scripts/perf.sh --compare a.json b.json` prints both with the change in %.
   - [ ] `node scripts/bundle-size.mjs` lists each file with bytes and gzip bytes, start files apart.
-  - [ ] In the `start` scenario the counter sees `app_info`, the first call the page makes.
+  - [ ] In the `start` scenario the counter sees every call from the first one: the sidebar's lists, whose effects React
+    runs before `App`'s `app_info` (`src/components/Sidebar.tsx:42-52`, `src/App.tsx:56-57`), and `app_info` itself.
   - [ ] Outside a `perf:` mode nothing in the app changes (`invoke` and `listen` are Tauri's own, a unit test checks it);
     `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
   - [ ] The baseline table is committed.
@@ -750,7 +751,10 @@ by side.
 - **Builds:** `React.lazy` for the pages that aren't the start page (`src/App.tsx:10-25`), each with a light fallback; the
   drawers loaded when first asked for (`src/lib/drawers.tsx:3-8`), which takes the Markdown editor and CodeMirror out of
   the start files (F5); the self-test loaded with `import()` only when `app_info` says it is a test run
-  (`src/App.tsx:27`, used at `:77-167`).
+  (`src/App.tsx:27`, used at `:77-167`). A test run is `selftest` or any `selftest_mode` (`src/types.ts:160`): the tour,
+  the update test and the screenshots start Gizai with a mode only (`scripts/tour-capture.sh:94`,
+  `scripts/update-test.sh:74`, `scripts/shot-cage.sh:31`), and their steps run in the self-test's code
+  (`src/App.tsx:76-77`).
 - **Acceptance:**
   - [ ] `scripts/bundle-size.mjs`: the start files hold no self-test code and no CodeMirror, and are smaller than the
     baseline's by the agreed amount.
@@ -780,12 +784,12 @@ by side.
     is read `ORDER BY m.rowid` and an index keeps its rows' rowids in order (`crates/gizai-core/src/chat.rs:382`);
   - `CREATE INDEX comments_task ON comments(task_id, created_at)` for `ORDER BY m.created_at, m.id`
     (`crates/gizai-core/src/comments.rs:10`);
-  - `CREATE INDEX runs_created ON runs(created_at)` for the Usage page and the project sums
+  - `CREATE INDEX runs_created ON runs(created_at)` for the Usage page and the project's runs
     (`crates/gizai-core/src/usage.rs:149`, `projects.rs:16-17`), and
     `CREATE INDEX runs_agent_created ON runs(agent_actor_id, created_at)` for the spend and the last check
     (`crates/gizai-core/src/runs.rs:335-339`, `crates/gizai-core/src/board.rs:449-451`).
 
-  Neither `chat_messages` nor `comments` has an index in any migration today (`0001_init.sql:285-291`, `:350-359`;
+  Neither `comments` nor `chat_messages` has an index in any migration today (`0001_init.sql:285-291`, `:350-359`;
   0002 to 0017 add none). Then the queries that read more than they need: a card's labels by its id, and a list's
   labels for the listed cards only (`crates/gizai-core/src/tasks.rs:47-56`); the chat list's card numbers in one query
   (`chat.rs:165-174`); a card's last change as the newest of three index lookups (`board.rs:419-431`); the desktop
@@ -892,8 +896,9 @@ by side.
    but set the limits from P1's baseline, not before.
 4. **Long chats.** Load only a chat's last 200 messages, with "Show older"? *Recommendation:* not yet: draw only what is in
    sight first (P7), and page only if P1 shows that loading 1,000 messages is itself slow.
-5. **The self-test out of the app's start.** It would load only in test runs (`GIZAI_SELFTEST` set), as a separate file
-   inside the app. *Recommendation:* yes; the UI tests keep working, and only test runs load it.
+5. **The self-test out of the app's start.** It would load only in test runs (`GIZAI_SELFTEST` or `GIZAI_SELFTEST_MODE`
+   set), as a separate file inside the app. *Recommendation:* yes; the UI tests, the tour and the screenshots keep
+   working, and only test runs load it.
 6. **NVIDIA.** This PC draws on an AMD Radeon RX 7800 XT through Mesa (section 3), so the NVIDIA problems in section 5
    don't touch it, and P1's numbers won't show them. Should Gizai do anything for users with NVIDIA GPUs before 1.0?
    *Recommendation:* no setting by default (Tauri's guide warns against unconditional overrides); if a user reports a slow

@@ -118,22 +118,48 @@ About $198 a day at API prices [V, arithmetic]. Builders and QA are 72% of it, s
 
 *(to come)*
 
-## 5. Experiments
+## 5. Quality: how we'd know it holds, and the experiments
+
+### 5.1 What GizAi can already measure
+
+Quality signals GizAi records today, per card and per run, with no change [V]:
+
+| Signal | Where it is | What it says |
+|---|---|---|
+| QA pass rate | `runs.outcome` = `qa_pass` or `qa_fail` (`crates/gizai-core/migrations/0008_board_check.sql:31`) | how often a builder's work passes QA the first time |
+| Rounds per card | `tasks.bounce_count`, "QA fails; 3 = hold" (`migrations/0001_init.sql:252`; `crates/gizai-core/src/workflow.rs:482-483`) | how many times a card went back to To do |
+| Failed runs | `runs.status` `failed`, `timed_out`; `runs.outcome` `error`, `no_result`; `tasks.fail_count` (`0001_init.sql:253`; `workflow.rs:509-510`) | runs that broke or ended without a result line |
+| Questions | `runs.outcome` = `needs_decision` | runs that stopped to ask; more of them after a cut can mean missing context |
+| Review | cards sent back from Review, and pull requests that needed changes after QA passed | what the user and CI catch that QA didn't |
+
+What it can't measure yet, and card M1 adds (§8): the split of input into fresh, cache writes and cache reads, the turns, the effort and the efficiency settings each run had, and the share of the 5-hour and weekly windows each run used.
+
+### 5.2 How every experiment runs
+
+- **Measure before cutting.** M1 ships first and records a baseline week with today's settings. [I]
+- **Alternate by card, not by week.** A setting is on for cards with an even number and off for odd ones (GA-170 on, GA-171 off), so both groups see the same weeks, projects and agents. GizAi records which group each run was in. The user can stop an experiment at any time; it is a switch too. [I]
+- **Compare per card, not per run.** The cost of a card is all its runs (builder, QA, fixes after `qa_fail`); a setting that makes runs cheaper but adds a QA round can cost more per card. [I]
+- **A guard on quality, decided up front.** A setting becomes a default only when, over at least 30 cards per group, the cost per card falls by the expected amount and: the QA pass rate falls by no more than 10 points, rounds per card rise by no more than 0.3, and failed runs and questions don't rise. Otherwise it stays available but off. [I: the thresholds are a proposal for the user to set; 30 cards per group shows a 25–30% cost difference, not a 5% one]
+- **Small, by design.** With about five cards a day, a two-week experiment gives some 35 cards per group. That is enough to see the big levers (effort, model), not the small ones (comments, memory): for those, the saving is measured exactly from the characters cut, and only the quality guard needs the cards. [I]
+
+*(The experiment for each idea follows in §4, with the idea.)*
+
+## 6. Options
 
 *(to come)*
 
-## 6. The design of the recommended option
+## 7. The design of the recommended option
 
 *(to come)*
 
-## 7. Proposed cards
+## 8. Proposed cards
 
 *(to come)*
 
-## 8. Open questions
+## 9. Open questions
 
 *(to come)*
 
-## 9. Sources
+## 10. Sources
 
 *(to come)*

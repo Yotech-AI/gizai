@@ -466,6 +466,64 @@ fn an_answer_goes_to_the_shared_note_the_team_lead_names_else_to_decisions() {
     assert_eq!(saved.path, "Decisions/Kade");
 }
 
+// ---- GA-172 QA: an answer in a shared note that isn't there yet reaches the agents ----
+
+#[test]
+fn a_shared_note_the_team_lead_names_that_isnt_there_yet_is_made_with_its_folders_type_and_the_cards_project_and_the_next_run_gets_it() {
+    let q = setup();
+    let (r, _) = q.ask();
+    let lr = q.lead_run(&r, 10_000);
+    let saved = questions::remember(&q.db, &q.lead, &r, Some(&lr), "Team Lead", "CSV", Some("Decisions/Exports"), Some("Exports are CSV with semicolons"),
+                                    "2026-10-14").unwrap();
+    assert_eq!((saved.path.as_str(), saved.created, saved.version), ("Decisions/Exports", true, 1));
+    let note = q.note("Decisions/Exports").unwrap();
+    assert_eq!(note.body_md, "---\ntype: decision\nproject: KADE\n---\n# Exports\n\n- 2026-10-14: Exports are CSV with semicolons (KADE-1)\n");
+    assert_eq!((note.scope.as_str(), note.updated_by.as_deref()), ("shared", Some("Team Lead")));
+    assert!(memory::links_from(&q.db, &note.id).unwrap().iter().any(|l| l.target_type == "task" && l.target_id == q.task), "linked to the card");
+    // the next run on a KADE card gets it; a run on another project's card doesn't
+    let kade = memory::Context { role: "backend".into(), project: Some(("KADE".into(), "Kade".into())), client: None };
+    let b = memory::prompt_block(&q.db, &Who::Agent(q.be.clone()), &kade).unwrap();
+    assert!(b.given.iter().any(|g| g.path == "Decisions/Exports") && b.text.contains("Exports are CSV with semicolons"), "{}", b.text);
+    let other = memory::Context { role: "backend".into(), project: Some(("GX".into(), "Globex".into())), client: None };
+    let b = memory::prompt_block(&q.db, &Who::Agent(q.be.clone()), &other).unwrap();
+    assert!(!b.text.contains("Decisions/Exports") && !b.text.contains("CSV with semicolons"), "{}", b.text);
+    // the next answer there is added below, its properties as they were
+    questions::remember(&q.db, &q.lead, &r, None, "Team Lead", "ISO", Some("Decisions/Exports"), Some("Dates as ISO"), "2026-10-15").unwrap();
+    let body = q.note("Decisions/Exports").unwrap().body_md;
+    assert!(body.starts_with("---\ntype: decision\nproject: KADE\n---\n# Exports\n\n- 2026-10-14: Exports are CSV with semicolons (KADE-1)\n")
+            && body.ends_with("- 2026-10-15: Dates as ISO (KADE-1)\n") && body.matches("type:").count() == 1, "{body}");
+    // a note that is there already keeps its own properties
+    memory::write(&q.db, &Who::Lead(q.lead.clone()), "Standards/CSV", "# CSV\n\nSemicolons.\n", None, None).unwrap();
+    questions::remember(&q.db, &q.lead, &r, None, "Team Lead", "CSV", Some("Standards/CSV"), Some("Quote every field"), "2026-10-14").unwrap();
+    assert_eq!(q.note("Standards/CSV").unwrap().body_md, "# CSV\n\nSemicolons.\n\n- 2026-10-14: Quote every field (KADE-1)\n");
+    // every shared folder: its own type
+    for (folder, kind) in [("Decisions", "decision"), ("Standards", "standard"), ("Lessons", "lesson"), ("Workflows", "workflow"), ("Projects", "project"),
+                           ("Clients", "client"), ("Deployments", "deployment"), ("Dependencies", "dependency")] {
+        let path = format!("{folder}/Answer for {kind}");
+        let saved = questions::remember(&q.db, &q.lead, &r, None, "Team Lead", "x", Some(&path), Some("x"), "2026-10-14").unwrap();
+        assert_eq!(saved.path, path);
+        assert_eq!(q.note(&path).unwrap().body_md, format!("---\ntype: {kind}\nproject: KADE\n---\n# Answer for {kind}\n\n- 2026-10-14: x (KADE-1)\n"));
+    }
+}
+
+#[test]
+fn an_answer_text_that_starts_with_a_copied_label_is_saved_without_it() {
+    let q = setup();
+    let (r, _) = q.ask();
+    let save = |text: &str| {
+        questions::remember(&q.db, &q.lead, &r, None, "Team Lead", "CSV", Some("Standards/Exports"), Some(text), "2026-10-14").unwrap();
+        q.note("Standards/Exports").unwrap().body_md.lines().last().unwrap().to_string()
+    };
+    // the card's own identifier after the date goes, and comes back at the end
+    assert_eq!(save("2026-10-11 KADE-1: x"), "- 2026-10-14: x (KADE-1)");
+    assert_eq!(save("2026-10-11: 2026-10-11 (KADE-1, Team Lead): Dates as ISO"), "- 2026-10-14: Dates as ISO (KADE-1)");
+    assert_eq!(save("2026-10-11 GA-99: y"), "- 2026-10-14: y (KADE-1)");
+    // a date followed by other words stays; a text naming the card keeps it once
+    assert_eq!(save("2026-10-24 the token expires"), "- 2026-10-14: 2026-10-24 the token expires (KADE-1)");
+    assert_eq!(save("2026-10-11 (KADE-1): KADE-1 exports CSV"), "- 2026-10-14: KADE-1 exports CSV");
+    assert!(!q.note("Standards/Exports").unwrap().body_md.contains("- 2026-10-14: 2026-10-11"));
+}
+
 #[test]
 fn your_answer_to_an_escalated_question_is_kept_in_memory_once_when_the_agent_starts_again() {
     let q = setup();

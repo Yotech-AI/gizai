@@ -345,6 +345,11 @@ impl R {
         memory::list(&self.st.db, &self.you).unwrap().into_iter().find(|n| n.owner_id.as_deref() == Some(agent) && n.title() == "Notes")
             .map(|n| memory::get(&self.st.db, &self.you, &n.id).unwrap()).expect("its own notes")
     }
+    /// The Backend Agent's note for KADE's cards, where its runs on them save what they learned (GA-172); None before the
+    /// first.
+    fn kade_notes(&self) -> Option<memory::Note> {
+        memory::find(&self.st.db, "Agents/Backend Agent/KADE").unwrap()
+    }
     /// The run and author on version `v` of note `id`.
     fn version_of(&self, id: &str, v: i64) -> (String, Option<String>) {
         self.st.db.read(|c| Ok(c.query_row(&format!("SELECT author_actor_id, run_id FROM doc_versions WHERE doc_id = ?1 AND version = {v}"),
@@ -397,20 +402,27 @@ async fn a_claude_code_run_gets_the_memory_section_records_the_notes_it_was_give
     assert!(run.memory.iter().all(|g| g.chars > 0 && g.shown == g.chars), "{:?}", run.memory);
     assert_eq!(gizai_lib::runs::events_for(&r.st, &run.id).len() > 0, true);
 
-    // learned: dated bullets in its own notes, with the card, by the agent, the run on the version
-    let n = r.own_notes(&agent);
-    assert_eq!(n.current_version, 2);
+    // learned: dated bullets in its note for the card's project (GA-172), with the card, by the agent, the run on the
+    // version; its Notes as they were
+    assert_eq!(r.own_notes(&agent).current_version, 1);
+    let n = r.kade_notes().expect("made by the run");
+    assert_eq!(n.current_version, 1);
+    assert!(n.body_md.starts_with("---\ntype: note\ntags: [agent]\nproject: KADE\n---\n# KADE\n"), "{}", n.body_md);
     let day = today();
     assert!(n.body_md.ends_with(&format!("## Learned\n\n- {day} (KADE-1): Excel NL needs semicolons in a CSV.\n- {day} (KADE-1): The exporter tests need --filter=InvoiceExport.\n")), "{}", n.body_md);
-    assert_eq!(r.version_of(&n.id, 2), (agent.clone(), Some(run.id.clone())));
+    assert_eq!(r.version_of(&n.id, 1), (agent.clone(), Some(run.id.clone())));
     assert_eq!(n.updated_by.as_deref(), Some("Backend Agent"));
 
     // the agent's next run has what it learned; a result without learned adds nothing
     let (next, _) = r.card("backend", "Import invoices.");
     let run2 = r.run(&next).await;
-    let section = check_memory_section(&prompt_of(&run2), "### Agents/Backend Agent/Notes (version 2)");
+    let section = check_memory_section(&prompt_of(&run2), "### Agents/Backend Agent/Notes (version 1)");
+    let kade = section.find("### Agents/Backend Agent/KADE (version 1)").unwrap_or_else(|| panic!("its KADE note: {section}"));
+    assert!(kade < section.find("### Projects/Kade").unwrap(), "with its own notes, first: {section}");
     assert!(section.contains("Excel NL needs semicolons in a CSV."), "{section}");
-    assert_eq!(r.own_notes(&agent).current_version, 2, "nothing learned, nothing saved");
+    assert_eq!(run2.memory.iter().map(|g| g.path.as_str()).collect::<Vec<_>>(),
+               ["Agents/Backend Agent/Notes", "Agents/Backend Agent/KADE", "Projects/Kade", "Clients/Acme", "Standards/Rust style"]);
+    assert_eq!((r.own_notes(&agent).current_version, r.kade_notes().unwrap().current_version), (1, 1), "nothing learned, nothing saved");
     // a continued run has its notes in its session already
     assert!(core_runs::list_for_task(&r.st.db, &next).unwrap().len() == 1);
 }
@@ -426,9 +438,10 @@ async fn codex_gemini_and_other_runs_get_the_same_memory_section_and_their_learn
         assert_eq!(run.adapter.as_deref(), Some(cli.as_str()));
         check_memory_section(&prompt_of(&run), "### Agents/Backend Agent/Notes (version 1)");
         assert_eq!(run.memory.len(), 4, "{kind}: {:?}", run.memory);
-        let n = r.own_notes(&agent);
+        let n = r.kade_notes().unwrap_or_else(|| panic!("{kind}: no KADE note"));
         assert!(n.body_md.ends_with(&format!("## Learned\n\n- {} (KADE-1): Learned on {kind}.\n", today())), "{kind}: {}", n.body_md);
-        assert_eq!(r.version_of(&n.id, 2), (agent.clone(), Some(run.id.clone())), "{kind}");
+        assert_eq!(r.version_of(&n.id, 1), (agent.clone(), Some(run.id.clone())), "{kind}");
+        assert_eq!(r.own_notes(&agent).current_version, 1, "{kind}");
     }
 }
 
@@ -448,6 +461,7 @@ async fn the_use_memory_switches_leave_the_memory_section_and_learned_out() {
     assert!(!prompt_of(&run).contains("Kade deploys on Fridays."));
     assert!(run.memory.is_empty());
     assert_eq!(r.own_notes(&agent).current_version, 1, "its learned lines were not kept");
+    assert!(r.kade_notes().is_none(), "nor its KADE note made");
     // on again, but off in Settings → Runs for every agent
     memory::set_agent_uses(&r.st.db, &r.st.you_id, &agent, true).unwrap();
     memory::set_enabled(&r.st.db, false).unwrap();
@@ -455,12 +469,14 @@ async fn the_use_memory_switches_leave_the_memory_section_and_learned_out() {
     let run = r.run(&task).await;
     assert!(!prompt_of(&run).contains(SECTION) && run.memory.is_empty());
     assert_eq!(r.own_notes(&agent).current_version, 1);
-    // both on: back
+    assert!(r.kade_notes().is_none());
+    // both on: back, in its KADE note (GA-172)
     memory::set_enabled(&r.st.db, true).unwrap();
     let (task, _) = r.card("backend", "Three. FAKE_LEARNED");
     let run = r.run(&task).await;
     assert!(prompt_of(&run).contains(SECTION) && !run.memory.is_empty());
-    assert_eq!(r.own_notes(&agent).current_version, 2);
+    assert_eq!(r.kade_notes().map(|n| n.current_version), Some(1));
+    assert_eq!(r.own_notes(&agent).current_version, 1);
 }
 
 #[tokio::test]
@@ -485,8 +501,8 @@ async fn with_web_search_on_the_memory_section_stays_its_own_section_before_the_
     let rules = &prompt[rules_at..untrusted_at];
     assert!(!rules.contains("Kade deploys on Fridays.") && !prompt[untrusted_at..].contains("Kade deploys"), "no notes in the rules: {rules}");
     assert!(rules.lines().filter(|l| l.starts_with("- ")).count() <= 12, "at most 12 bullets: {rules}");
-    // and what it learned is kept as without web search
-    assert_eq!(r.own_notes(&agent).current_version, 2);
+    // and what it learned is kept as without web search (in its KADE note, GA-172)
+    assert_eq!(r.kade_notes().map(|n| n.current_version), Some(1));
 }
 
 #[tokio::test]

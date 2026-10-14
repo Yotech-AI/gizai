@@ -588,11 +588,14 @@ by side.
 ### P3. No command on the main thread; reads beside writes (backend)
 - **Builds:** the 112 plain `fn` commands (`src-tauri/src/commands.rs`, `terminal.rs`, `lib.rs`, `unsaved.rs`, `tour.rs`)
   run off the main thread: `async fn` that runs its body in `tauri::async_runtime::spawn_blocking`, or
-  `#[tauri::command(async)]` for the ones that only read memory. `Db` (`crates/gizai-core/src/db.rs:12-18`) gets two
-  read-only connections for `read`, so reads go on while the one writer writes (WAL allows it between connections).
+  `#[tauri::command(async)]` for the ones that only read memory. `Db` (`crates/gizai-core/src/db.rs:12-18`) gets a
+  small pool of read-only connections (four) for `read`, so reads go on while the one writer writes (WAL allows it
+  between connections) and while the board check reads (F5). The minute loop's `runs::pull` and `board::tick` run their
+  database work in `spawn_blocking` (`src-tauri/src/lib.rs:565-572`).
 - **Acceptance:**
   - [ ] No `#[tauri::command]` plain `fn` does database or file work (a test or a lint lists them).
-  - [ ] A test: a read finishes while another thread holds a write transaction open.
+  - [ ] A test: a read finishes while another thread holds a write transaction open, and while another holds a long
+    read.
   - [ ] `cargo test --workspace` and `scripts/ui-test.sh` pass.
 - **Expected gain:** the window never waits for SQL, a file or the database lock; reads stop queueing behind an agent's
   writes.
@@ -681,18 +684,30 @@ by side.
   still finds them.
 
 ### P8. Database: indexes and queries (backend)
-- **Builds:** migration `0018`: `CREATE INDEX chat_messages_thread ON chat_messages(thread_id)`, which also gives the
-  messages' order, since a chat is read `ORDER BY m.rowid` and an index keeps its rows' rowids in order
-  (`crates/gizai-core/src/chat.rs:382`), and `CREATE INDEX comments_task ON comments(task_id, created_at)` for
-  `ORDER BY m.created_at, m.id` (`crates/gizai-core/src/comments.rs:10`); neither table has an index in any migration
-  today (`crates/gizai-core/migrations/0001_init.sql:285-291`, `:350-359`; 0002 to 0017 add none); `PRAGMA optimize=0x10002` when the database opens and
-  with the daily housekeeping (`crates/gizai-core/src/db.rs:153-168`, `src-tauri/src/lib.rs:544-562`).
+- **Builds:** migration `0018` with the indexes F5 misses:
+  - `CREATE INDEX chat_messages_thread ON chat_messages(thread_id)`, which also gives the messages' order, since a chat
+    is read `ORDER BY m.rowid` and an index keeps its rows' rowids in order (`crates/gizai-core/src/chat.rs:382`);
+  - `CREATE INDEX comments_task ON comments(task_id, created_at)` for `ORDER BY m.created_at, m.id`
+    (`crates/gizai-core/src/comments.rs:10`);
+  - `CREATE INDEX runs_created ON runs(created_at)` for the Usage page and the project sums
+    (`crates/gizai-core/src/usage.rs:149`, `projects.rs:16-17`), and
+    `CREATE INDEX runs_agent_created ON runs(agent_actor_id, created_at)` for the spend and the last check
+    (`crates/gizai-core/src/runs.rs:335-339`, `crates/gizai-core/src/board.rs:447-451`).
+
+  Neither `chat_messages` nor `comments` has an index in any migration today (`0001_init.sql:285-291`, `:350-359`;
+  0002 to 0017 add none). Then the queries that read more than they need: a card's labels by its id, and a list's
+  labels for the listed cards only (`crates/gizai-core/src/tasks.rs:47-56`); the chat list's card numbers in one query
+  (`chat.rs:165-174`); a card's last change as the newest of three index lookups (`board.rs:419-431`). And
+  `PRAGMA optimize=0x10002` when the database opens and with the daily housekeeping
+  (`crates/gizai-core/src/db.rs:153-168`, `src-tauri/src/lib.rs:544-562`).
 - **Acceptance:**
-  - [ ] A test reads `EXPLAIN QUERY PLAN` for a chat's messages and a card's comments and finds the index, not a `SCAN`.
-  - [ ] `bench_queries` shows the gain; `cargo test --workspace` passes.
-- **Expected gain:** opening a chat or a card no longer scans every message or comment ever written.
-- **Measure:** `bench_queries` before and after.
-- **Builds on:** P1a and P3.
+  - [ ] A test reads `EXPLAIN QUERY PLAN` for a chat's messages, a card's comments and activity, the usage summary and a
+    card's last change, and finds an index for each: no `SCAN` of `comments`, `chat_messages`, `runs` or `changes`.
+  - [ ] `bench_queries` shows the gain on `prep_perf`; `cargo test --workspace` passes.
+- **Expected gain:** opening a card or a chat, the Usage page and the board check stop reading every comment, message
+  or run ever written, so they no longer slow down as the data grows; the board check holds the lock for less time.
+- **Measure:** `bench_queries` before and after (each query's median and p95, and one line for the whole board check).
+- **Builds on:** P1a and P3. If one run can't hold it all, the indexes and their test go first, the queries second.
 
 ### P9. Quiet when nothing happens (frontend)
 - **Builds:** the sidebar's 30-second check of open Editor folders (`src/components/Sidebar.tsx:294`) and the Editor's

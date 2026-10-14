@@ -24,11 +24,20 @@ GizAi is a local desktop app (Tauri 2, Rust and React) for one developer or a sm
 
 A run is a loop of turns: each turn sends the whole conversation so far to the model, and the model answers with thinking, a little text and one or more tool calls; the tool results go into the conversation, and the next turn starts. Three things follow, and they decide where savings are: [V for the cache rules, Anthropic's prompt caching and effort pages; I for the arithmetic]
 
-1. **Everything in the context is read again on every later turn.** Claude Code caches the conversation, so a repeated read is a *cache read*, at 0.1× the input price; what is new in a turn is a *cache write*, at 1.25× (5-minute cache) or 2× (1-hour cache) the input price. "Cache prefixes are created in the following order: `tools`, `system`, then `messages`." So 10,000 tokens of test output read at turn 30 of a 150-turn run cost one cache write and 120 cache reads: about 14× their size in input-price terms. A token is cheapest when it never enters the context.
+1. **Everything in the context is read again on every later turn.** Claude Code caches the conversation, so a repeated read is a *cache read*, at 0.1× the input price, and 0.05× on Opus 5.5 and Sonnet 5.5; what is new in a turn is a *cache write*, at 1.25× (5-minute cache) or 2× (1-hour cache) the input price. On a Claude subscription, Claude Code's main conversation, `-p` runs included, uses the 1-hour cache. "Cache prefixes are created in the following order: `tools`, `system`, then `messages`." So 10,000 tokens of test output read at turn 30 of a 150-turn run cost one cache write and 120 cache reads: 2 + 120 × 0.05 = 8× their size in input-price terms on Opus 5.5, 14× on Haiku 4.5. A token is cheapest when it never enters the context.
 2. **A change early in the prefix makes everything after it new again.** A system prompt that differs from the last turn's turns the whole conversation after it into cache writes. This matters for the Team Lead's chat (§2.5).
 3. **Output costs 5× input, and effort decides how much output there is.** Anthropic's effort page: "The effort parameter affects **all tokens** in the response", thinking, text and tool calls, and "Lower effort also means fewer and terser tool calls." On Opus 4.5 and later "thinking blocks are preserved by default", so thinking also stays in the context and is read again on later turns.
 
-Prices, from Claude Code's own model list as GizAi's tests hold it (`src/lib/models.test.ts:7-10`): Opus 5.5 $4 in / $20 out per million tokens, Sonnet 5.5 $2 / $10, Haiku 4.5 $1 / $5. *(The pricing page check follows in §3.)* [V for the test fixture]
+Prices per million tokens, from Anthropic's pricing page (Claude Code's own model list, as GizAi's tests hold it, says the same for input and output: `src/lib/models.test.ts:7-10`): [V]
+
+| Model | Input | Cache write, 5 min | Cache write, 1 hour | Cache read | Output |
+|---|---|---|---|---|---|
+| Opus 5.5 | $4 | $5 | $8 | $0.20 | $20 |
+| Sonnet 5.5 | $2 | $2.50 | $4 | $0.10 | $10 |
+| Haiku 4.5 | $1 | $1.25 | $2 | $0.10 | $5 |
+| Haiku 5.5 (prompts up to 100,000 tokens) | $0.10 | $0.125 | $0.20 | $0.01 | $0.50 |
+
+"Cache hits and refreshes on Claude Opus 5.5 and Claude Sonnet 5.5 are priced at 0.05x the base input price." Claude Code's `haiku` alias now resolves to Haiku 5.5 on the Anthropic API, so GizAi's fixture is a little behind.
 
 ### 2.3 A run's prompt, part by part
 
@@ -50,7 +59,7 @@ So a new run starts with roughly 15,000–30,000 characters of GizAi's own promp
 
 A continued run (Continue, an answered question, GizAi's nudge) resumes the same session and sends only a short message: its prompt and memory are already in the session (`runs.rs:1017`, `:1021-1026`; `prompt.rs:136-180`). A builder's run after QA's `qa_fail` is a new session with QA's issues in part 3 (`runs.rs:918`). [V]
 
-What this means [I]: the prompt itself is not where most tokens go. Even at 8,000 tokens, a 150-turn run reads it back about 150 times, 1.2 million cache-read tokens, which is the price of about 120,000 fresh input tokens: some $0.50 at Opus 5.5's input price. It counts, but the context that grows during the run (tool results, file reads, thinking) is read back the same way and is usually far bigger.
+What this means [I]: the prompt itself is not where most tokens go. Even at 8,000 tokens, a 150-turn run reads it back about 150 times, 1.2 million cache-read tokens, which is the price of about 60,000 fresh input tokens: some $0.24 at Opus 5.5's prices. It counts, but the context that grows during the run (tool results, file reads, thinking) is read back the same way and is usually far bigger.
 
 **One real run, measured.** GizAi's tests keep the event stream of a real Claude Code 2.1.289 run (Haiku 4.5, the GA-48 shell-rules check) as a fixture. Its last line says (`crates/gizai-agents/tests/fixtures/run-refused.jsonl:21`): [V]
 
@@ -65,8 +74,8 @@ The shares add up to Claude Code's own `total_cost_usd` of $0.09439 to the cent 
 
 ### 2.4 What agents read and write during a run
 
-- **Test and build output.** The project tells every builder to run, before it says it is done, `cargo test --workspace`, `npm test`, `npm run build` and `scripts/ui-test.sh` when the UI changed (CLAUDE.md:39-44), and QA runs the whole suite twice, "once to see where things stand and once more after your new tests" (`crates/gizai-core/roles/qa.md:10`). GizAi's own suites are big: 1,519 Rust tests whose names alone are 105,631 characters (`rg` over `#[test]` functions, test names average 66 characters), and 1,915 `it`/`test` calls in 131 test files. A passing `cargo test --workspace` prints one line per test, so roughly 130,000–150,000 characters (35,000–40,000 tokens), and a fresh worktree first prints a `Compiling` line for each of the 588 crates in `Cargo.lock` [I, estimated from the counts; not run]. Claude Code cuts long command output itself *(its limit and how it cuts: §3.6)*, so what the model reads is less, but whatever it reads stays in the context for the rest of the run.
-- **Files, diffs and searches.** Read, Grep and `git diff` results enter the context the same way. GizAi doesn't shape them today; the CLIs' own limits apply *(§3.6)*.
+- **Test and build output.** The project tells every builder to run, before it says it is done, `cargo test --workspace`, `npm test`, `npm run build` and `scripts/ui-test.sh` when the UI changed (CLAUDE.md:39-44), and QA runs the whole suite twice, "once to see where things stand and once more after your new tests" (`crates/gizai-core/roles/qa.md:10`). GizAi's own suites are big: 1,519 Rust test functions whose names alone are about 99,600 characters (66 on average; `rg` over the functions after `#[test]` and `#[tokio::test]`), and 1,915 `it`/`test` calls in 131 test files (`rg` over `*.test.ts`, `*.test.tsx` and `*.test.mjs`). A passing `cargo test --workspace` prints one line per test, so roughly 130,000–150,000 characters (35,000–40,000 tokens), and a fresh worktree first prints a `Compiling` line for each of the 588 crates in `Cargo.lock` [I, estimated from the counts; not run]. Claude Code doesn't put all of that in the context (§3.6): a command that succeeds is shown in full up to about 30,000 characters, and past that the model gets the path of a file with the whole output and a preview of its first 2,000 characters; a command that fails is shown up to about 10,000 characters, and past that as "a head-and-tail excerpt of that size", with no file path. So a long passing suite costs little, but its preview is the start of the output (for cargo, the `Compiling` lines) and the agent reads or searches the file for the result; a long failing one loses its middle, where failures can be. Codex cuts long output to its head and tail too (§3.6). Whatever is read stays in the context for the rest of the run. [V for Claude Code's and Codex's docs]
+- **Files, diffs and searches.** Read, Grep and `git diff` results enter the context the same way. GizAi doesn't shape them today; Claude Code's Read returns at most 25,000 tokens a call and pages a larger file (§3.6).
 - **Thinking and text.** On Opus 4.5 and later, thinking stays in the context (§2.2), so effort `max` grows the context too, not only the output.
 
 ### 2.5 The Team Lead: chat answers and board checks
@@ -80,13 +89,13 @@ The shares add up to Claude Code's own `total_cost_usd` of $0.09439 to the cent 
 
 - Each agent has a model and an effort in its form, and every run and chat turn uses them: `--model` and `--effort` for Claude Code (`crates/gizai-agents/src/claude.rs:47`, `:99-104`), `-m` and `-c model_reasoning_effort=…` for Codex (`crates/gizai-agents/src/cli.rs:214-219`), from `agent.model` and `agent.effort` (`src-tauri/src/runs.rs:1031`). No card sets its own. The form offers the levels Claude Code reports for the model (`src/lib/models.ts:1-17`). [V]
 - A card already has one cost switch: **Testing**. "On: a finished run sends the card to Testing for the QA Agent. Off: straight to Review (a small fix)" (`crates/gizai-core/src/model.rs:183-184`). [V]
-- Most of this team runs Opus 5.5 at `max` or `xhigh` (the card). Anthropic's effort page says Opus 5.5 **defaults to `medium`**; `xhigh` is for "Long-running agentic and coding tasks (over 30 minutes) with token budgets in the millions"; and for Opus 5.5: "Run an effort sweep on your own evals rather than carrying settings over from an earlier model". Of `max` it says, for Opus 4.7: "On most workloads `max` adds significant cost for relatively small quality gains, and on some structured-output or less intelligence-sensitive tasks it can lead to overthinking." For Sonnet 5.5: "For agentic coding and multistep tool use, start with `medium` for well-specified tasks and move to `high` for harder or longer ones." [V, platform.claude.com effort page]
+- Most of this team runs Opus 5.5 at `max` or `xhigh` (the card). Claude Code's own default is "`high` on every model that supports effort, except that Opus 5.5, Sonnet 5.5, and Haiku 5.5 default to `medium`", so a seeded agent without an effort runs Opus 5.5 at `medium` (`crates/gizai-core/src/seed.rs:61`: "its CLI's own model and effort"). Anthropic's effort page also says Opus 5.5 **defaults to `medium`**; `xhigh` is for "Long-running agentic and coding tasks (over 30 minutes) with token budgets in the millions"; and for Opus 5.5: "Run an effort sweep on your own evals rather than carrying settings over from an earlier model". Of `max` it says, for Opus 4.7: "On most workloads `max` adds significant cost for relatively small quality gains, and on some structured-output or less intelligence-sensitive tasks it can lead to overthinking." For Sonnet 5.5: "For agentic coding and multistep tool use, start with `medium` for well-specified tasks and move to `high` for harder or longer ones." [V, platform.claude.com effort page]
 - Anthropic's own data point for effort, from the Opus 4.5 launch: "Set to a medium effort level, Opus 4.5 matches Sonnet 4.5's best score on SWE-bench Verified, but uses 76% fewer output tokens." [V, anthropic.com]
 
 ### 2.7 What GizAi records, and the real numbers
 
 **Per run** (`runs` table, `crates/gizai-core/migrations/0008_board_check.sql:23-50`): the agent, card, trigger (`assigned`, `routed`, `chat`, `manual`, `approval`, `nudge`, `board_check`), role, model, outcome, start and end, input tokens, output tokens and cost. [V]
-- Input tokens are fresh input + cache writes + cache reads added together (`crates/gizai-agents/src/stream.rs:116-127`); the `cache_read_tokens` and `cache_write_tokens` columns exist but "stay empty" (`crates/gizai-core/src/usage.rs:7-8`). So GizAi can't tell a cache miss from a cache hit, though the two differ 20× in price. [V]
+- Input tokens are fresh input + cache writes + cache reads added together (`crates/gizai-agents/src/stream.rs:116-127`); the `cache_read_tokens` and `cache_write_tokens` columns exist but "stay empty" (`crates/gizai-core/src/usage.rs:7-8`). So GizAi can't tell a cache miss from a cache hit, though on Opus 5.5 the two differ 40× in price (a 1-hour write at 2× the input price, a read at 0.05×). [V]
 - The cost is Claude Code's `total_cost_usd`; Codex and Gemini report none, so their runs show tokens with an unknown cost (`usage.rs:5-10`). [V]
 - Not saved: the number of turns (parsed, `stream.rs:127`, then dropped), the effort, the thinking tokens, and Claude Code's `modelUsage` per model (`run-refused.jsonl:21` shows it has one entry per model a run used, subagents included). [V]
 - Subscription limits: the newest reading per CLI and window (5-hour, 7-day, and per model), not per run (`crates/gizai-core/src/limits.rs:1-16`). [V]
@@ -123,18 +132,19 @@ Ranked by what they should save for this team and how much they risk quality. Ev
 | 1 | Effort and model by card size, raised after a QA fail | picks the model | high: 10–20% of a Normal card's runs moved from `max`/`xhigh` to `high`; 30–50% on Small cards | medium, guarded | card **Size** Small · Normal · Large (Normal); agent form: model and effort per size (Normal = today's); switch **Raise effort after a QA fail** (on) |
 | 2 | A stable Team Lead prompt, so its chat stays in the cache | (the rest) | medium on the Team Lead: 10–30% of its chat cost | none | switch **Keep the Team Lead's prompt stable** (on) |
 | 3 | Board checks on their own model and effort | picks the model | medium on the Team Lead's checks: 30–60% of their cost | low | agent form → Chat: **Board check model** (the Team Lead's) and **effort** (`medium`) |
-| 4 | Shorter test and build output, full log kept | reads less | low to medium: 5–10% of a QA or builder run | low, with its safeguards; may improve quality | switch **Shorten test and build output** (on), **Lines kept around a failure** 10–200 (40) |
-| 5 | Comments and memory as ranges, cuts marked | (the rest) | small: under 2% of a run | low at the defaults | **Comments per run** 0–20 (10), **Characters per comment** 500–8,000 (2,000), **Memory per run** 1,000–12,000 (6,000), switch **List the other notes** (on) |
-| 6 | Short messages between tool calls | says less | small: 1–3% of a run | low | switch **Short messages** (off) |
-| 7 | Leave room in the subscription's windows | (fits one subscription) | none per run; keeps part of the window for the user | none | **Start no new runs above** 50–100% of a window (90%) |
+| 4 | Cap a run's context: compact earlier than the CLI would | (the rest) | unknown until M1 records each run's largest context; high on runs that grow past a few hundred thousand tokens | medium | **Compact a run's context at** 100,000–1,000,000 tokens (the CLI's own: off) |
+| 5 | Shorter test and build output, full log kept | reads less | low: 1–3% of a QA or builder run, plus fewer follow-up reads | low, with its safeguards; improves what a failing run shows | switch **Shorten test and build output** (on), **Lines kept around a failure** 10–200 (40) |
+| 6 | Comments and memory as ranges, cuts marked | (the rest) | small: about 1% of a run | low at the defaults | **Comments per run** 0–20 (10), **Characters per comment** 500–8,000 (2,000), **Memory per run** 1,000–12,000 (6,000), switch **List the other notes** (on) |
+| 7 | Short messages between tool calls | says less | small: 1–3% of a run | low | switch **Short messages** (off) |
+| 8 | Leave room in the subscription's windows | (fits one subscription) | none per run; keeps part of the window for the user | none | **Start no new runs above** 50–100% of a window (90%) |
 
-Not proposed now, with the reason, in §4.8: a lower compaction threshold, continuing a builder's session after a QA fail, MCP servers switched per card, a model for subagents, and reordering the prompt for the cache.
+Not proposed now, with the reason, in §4.9: continuing a builder's session after a QA fail, MCP servers switched per card, a model for subagents, sharing Claude Code's cache between worktrees, and reordering the prompt for the cache.
 
 ### 4.1 Effort and model by card size
 
 **What it does.** A card gets a **Size**: Small, Normal or Large. Each agent's form keeps its model and effort, now as the Normal size, and gets two optional rows: the model and effort for Small cards and for Large cards (empty = the Normal one). The Team Lead sets the size when it writes or splits a card (its instructions get one line); the user changes it on the card like Testing. With **Raise effort after a QA fail** on, a builder's run after `qa_fail` runs one size up (Small → Normal → Large), so a card that failed QA gets more thought, not the same again. Today every run of an agent uses one model and effort, whatever the card (`runs.rs:1031`), and the only per-card cost switch is Testing (§2.6). This is Caveman's "cheapest model and effort that gets it right", decided by the Team Lead, who already reads every card, and by the user, instead of by a classifier in the request path. [V for today's code; I for the design]
 
-**Why it saves the most.** Effort decides all output: thinking, text and tool calls (§2.2), and on Opus 4.5 and later the thinking stays in the context and is read again on every later turn. Anthropic's own advice for Opus 5.5 is to sweep effort on one's own work rather than carry settings over, and it warns that `max` "adds significant cost for relatively small quality gains" (§2.6). This team runs most agents at `max` or `xhigh`. Moving Normal cards to `high` and keeping `xhigh`/`max` for Large ones should save 10–20% of those runs; Small cards at `medium`, or on Sonnet 5.5 at half Opus 5.5's price per token, 30–50% [I: output is a fifth to a third of a long run's cost, and thinking also grows the cache reads; the experiment measures it].
+**Why it saves the most.** Effort decides all output: thinking, text and tool calls (§2.2), and on Opus 4.5 and later the thinking stays in the context and is read again on every later turn. Anthropic's own advice for Opus 5.5 is to sweep effort on one's own work rather than carry settings over, and of Opus 4.7 it says that `max` "adds significant cost for relatively small quality gains" (§2.6); Claude Code itself runs Opus 5.5 at `medium` unless told otherwise. This team runs most agents at `max` or `xhigh`. Moving Normal cards to `high` and keeping `xhigh`/`max` for Large ones should save 10–20% of those runs; Small cards at `medium`, or on Sonnet 5.5 at half Opus 5.5's price per token, 30–50% [I: output is a fifth to a third of a long run's cost, and thinking also grows the cache reads; the experiment measures it].
 
 **The setting.**
 - Card → Properties → **Size**: Small · Normal · Large; default Normal, which changes nothing for today's agents.
@@ -150,9 +160,9 @@ Not proposed now, with the reason, in §4.8: a lower compaction threshold, conti
 
 ### 4.2 A stable Team Lead prompt
 
-**What it does.** The Team Lead's system prompt holds its own notes in full and a list of every other note with its size, and the date (§2.5). Any change to it, between two turns of a chat, makes the next turn write the whole conversation to the cache again (2× the input price on the 1-hour cache) instead of reading it (0.1×). With the switch on, Gizai freezes the Memory block and the date in the system prompt for the life of a chat thread (as they were at its first turn), and lists the list without sizes, so it changes only when a note is added or removed. What changed since goes, as one short line, into the bracket line Gizai already puts before a message ("A message may start with a line from Gizai in square brackets", `chat.rs:984`): "Notes changed since this chat started: Agents/Backend Agent/Notes, Projects/GA. Read them with memory_read." The Team Lead wrote its own new notes in this chat, so it has them already. [V for the prompt and its bracket line; I for the design]
+**What it does.** The Team Lead's system prompt holds its own notes in full and a list of every other note with its size, and the date (§2.5). Any change to it, between two turns of a chat, makes the next turn write the whole conversation to the cache again (2× the input price on the 1-hour cache) instead of reading it (0.05× on Opus 5.5). With the switch on, Gizai freezes the Memory block and the date in the system prompt for the life of a chat thread (as they were at its first turn), and lists the list without sizes, so it changes only when a note is added or removed. What changed since goes, as one short line, into the bracket line Gizai already puts before a message ("A message may start with a line from Gizai in square brackets", `chat.rs:984`): "Notes changed since this chat started: Agents/Backend Agent/Notes, Projects/GA. Read them with memory_read." The Team Lead wrote its own new notes in this chat, so it has them already. [V for the prompt and its bracket line; I for the design]
 
-**Saving.** For a chat whose context is 80,000 tokens, one avoidable miss costs about (2 − 0.1) × 80,000 × $4/M ≈ $0.61 at Opus 5.5 API prices on top of a hit. Each agent's `learned` line, each note the Team Lead writes and midnight cause one today. If a third of the turns miss for these reasons, the chat's input cost falls by roughly 10–30% [I]. M1 measures it exactly: cache writes per chat turn, before and after.
+**Saving.** For a chat whose context is 80,000 tokens, one avoidable miss costs about (2 − 0.05) × 80,000 × $4/M ≈ $0.62 at Opus 5.5 API prices on top of a hit. Each agent's `learned` line, each note the Team Lead writes and midnight cause one today. If a third of the turns miss for these reasons, the chat's input cost falls by roughly 10–30% [I]. M1 measures it exactly: cache writes per chat turn, before and after.
 
 **The setting.** Settings → Tokens: **Keep the Team Lead's prompt stable**, on. Off restores today's behaviour (useful to compare).
 
@@ -174,23 +184,37 @@ Not proposed now, with the reason, in §4.8: a lower compaction threshold, conti
 
 **Experiment.** Alternate checks (even and odd run numbers) between the Team Lead's effort and `medium` for two weeks; compare cost per check and, from the board, cards left waiting longer than an hour and questions answered late.
 
-### 4.4 Shorter test and build output, with the full log kept
+### 4.4 Cap a run's context
 
-**What it does.** A small command of Gizai's, `gizai-quiet`, runs a test or build command, writes its whole output to a file in the run's temp folder, and prints only what the agent needs: the command, its exit code and time, the counts (passed, failed, ignored), every failure with its message and the lines around it, every error and warning line from compilers and linters, and the path of the full log. The exit code is the command's own, so `&&` chains keep working. Agents are told in "How this run works" to run tests and builds through it, and their allowed commands get one rule per allowed command they already have: `Bash(gizai-quiet cargo:*)` next to `Bash(cargo:*)`, so it never widens what an agent may run. After the run Gizai keeps the full logs with the run's log (`<data>/runs/<run-id>/outputs/`), because the temp folder is emptied. [I: the design; Caveman's and RTK's filters in §3 work the same way]
+**What it does.** Claude Code compacts a conversation by itself only when it nears the model's window: "Models running with a native 1M window compact before the window fills, at about 967K tokens by default", Opus 4.7 and later and Sonnet 5 and later among them. Until then every request reads the whole context again. With this value set, Gizai starts a Claude Code run with `CLAUDE_CODE_AUTO_COMPACT_WINDOW` ("Set the auto-compact window in tokens, from `100000` to `1000000`") and a Codex run with `-c model_auto_compact_token_limit=<n>` ("Token threshold that triggers automatic history compaction"), so a long run compacts earlier; Claude Code "clears older tool outputs first, then summarizes the conversation if needed". [V for the CLIs' docs (§3.6); I for the design]
 
-**Why.** QA runs the whole suite twice (`crates/gizai-core/roles/qa.md:10`), builders run `cargo test --workspace`, `npm test` and `npm run build` before they finish (CLAUDE.md:39-44), and a passing GizAi suite prints some 130,000–150,000 characters (§2.4). Claude Code cuts what it shows at its own limit (§3.6), so what enters the context is that much, read again on every later turn. Through the filter a passing suite is a few hundred characters, and a failing one keeps its failures in full instead of losing them to a cut in the middle.
+**Why.** On Opus 5.5 a context of 400,000 tokens costs about $0.08 to read once (400,000 × $0.20/M), and it is read on every request of the run; a run whose context grows that far spends more on reading it than on anything else [I]. GizAi doesn't know today how large its runs' contexts get (it saves totals only: §2.7). M1 records each run's largest context, and that decides whether this is the biggest lever after effort or almost nothing.
+
+**The setting.** Settings → Tokens: **Compact a run's context at**, 100,000–1,000,000 tokens; default off (the CLI's own), until M1's numbers and the experiment say where it pays. Task runs only; chat keeps the CLI's own.
+
+**What the user sees.** In the run, a compaction as a step of its own (Claude Code marks it in its stream [I: to check on the current version]); in the run's facts, the largest context and the number of compactions; on Usage → Savings, the cost per turn of runs with and without it.
+
+**Risk.** Medium: a summary can drop a detail the agent needs later, and a compaction costs a summarizing request and a fresh cache write. Old tool results go first, and those the agent can read again.
+
+**Experiment.** After M1: if a fifth or more of the runs pass 300,000 tokens, card parity at 300,000 for two weeks: cost per card, QA pass rate, rounds, and files read again after a compaction.
+
+### 4.5 Shorter test and build output, with the full log kept
+
+**What it does.** A small command of Gizai's, `gizai-quiet`, runs a test or build command, writes its whole output to a file in the run's temp folder, and prints only what the agent needs: the command, its exit code and time, the counts (passed, failed, ignored), every failure with its message and the lines around it, every error and warning line from compilers and linters, and the path of the full log. The exit code is the command's own, so `&&` chains keep working. Agents are told in "How this run works" to run tests and builds through it, and their allowed commands get one rule per allowed command they already have: `Bash(gizai-quiet cargo:*)` next to `Bash(cargo:*)`, so it never widens what an agent may run. After the run Gizai keeps the full logs with the run's log (`<data>/runs/<run-id>/outputs/`), because the temp folder is emptied. A hook could do the same without the agent's help (Claude Code's `PostToolUse` can replace a tool's result), but GizAi turns all hooks off on purpose, so that the user's own hooks stay out of headless runs, and Claude Code has "no way to disable an individual hook while keeping it in the configuration" (§3.6). [I: the design; Caveman's and RTK's filters in §3 work the same way]
+
+**Why.** QA runs the whole suite twice (`crates/gizai-core/roles/qa.md:10`), builders run `cargo test --workspace`, `npm test` and `npm run build` before they finish (CLAUDE.md:39-44), and a passing GizAi suite prints some 130,000–150,000 characters (§2.4). Claude Code already keeps most of a long *passing* output out of the context: the model gets a file path and the first 2,000 characters (§2.4). What is left is where a filter helps. The preview is the start of the output, not its result, so the agent reads or searches the file in more calls. A long *failing* output becomes a head-and-tail excerpt of about 10,000 characters with no file, so the failures in its middle are lost. Outputs under 30,000 characters come in whole. And Codex cuts output to its head and tail and keeps no file (§3.6). Through the filter every command prints its result first, a failing one keeps its failures in full, and the whole output is on disk for every CLI. Anthropic's own cost advice says the same of a hook that filters test output: it can return "only matching lines, reducing context from tens of thousands of tokens to hundreds".
 
 **The setting.** Settings → Tokens: **Shorten test and build output**, on; **Lines kept around a failure**, 10–200, default 40. Per agent, the agent form's Allowed commands shows the added rules (a switch in the agent form can turn it off for one agent).
 
 **What the user sees.** In the run, each shortened command is a normal step whose output starts with `gizai-quiet: 1,519 passed, 0 failed (exit 0) · full log: .gizai-tmp/outputs/03-cargo-test.log (142,311 characters)`. In the run's facts: "Shortened output: 4 commands, 212,000 → 9,800 characters", with **Open** beside each full log. On Usage → Savings: characters kept out of the context per agent and per card, and what they would have cost, read in the turns after them (§7.4).
 
-**Saving.** About $0.50–$1 of a QA run, 5–10% [I: some 25,000 tokens of output kept out, which would have been read again in the run's later turns; §2.2]. Smaller for builders that run fewer suites.
+**Saving.** Low in tokens: up to about 10,000 characters per failing command and 2,000 per long passing one, plus the reads that follow them, which are read again in every later turn: 1–3% of a QA run [I]. Possibly more on Codex, which keeps a head-and-tail cut of each long output in the context and no file [I]. The stronger reason is quality: a failing suite shows its failures instead of its two ends.
 
 **Risk.** A filter bug hides an error. Guarded: the exit code and counts are always shown; any line that looks like an error is kept; an output it doesn't recognise is shown as its first and last lines, never as nothing; the full log is one `rg` away; and the filter's own tests run on recorded outputs of each tool, passing and failing. Agents that forget to use it: Gizai sees every command in the stream and counts the test and build commands run without it (in the run's facts).
 
 **Experiment.** Card parity for QA and builders, two weeks: tokens per run and per card, QA pass rate, rounds, and QA's `needs_decision` runs; plus a fidelity check on every failing run in the "on" group: the user (or a script) compares the failures in the full log with what the agent reported.
 
-### 4.5 Comments and memory as ranges, cuts marked
+### 4.6 Comments and memory as ranges, cuts marked
 
 **What it does.** The prompt's comments and memory have fixed caps today: the last 10 comments by anyone, each cut to 2,000 characters with no mark (`runs.rs:912-913`, `prompt.rs:37`, `:81`), and 6,000 characters of notes plus a 4,000-character list (`crates/gizai-core/src/memory.rs:30-35`). This idea makes them values the user sets, marks a cut ("… (cut at 2,000 of 5,400 characters; the full comment is on the card)"), and leaves QA's comment out of a builder's prompt when its issues are already the prompt's "QA found these issues" section (§2.3, row 3). [V for today's caps]
 
@@ -198,23 +222,23 @@ Not proposed now, with the reason, in §4.8: a lower compaction threshold, conti
 
 **What the user sees.** The run's facts: "Comments: 10 of 14, 2 cut" and, as today, each note given and whether it was cut (`RunHistory.tsx:88-91`). Usage → Savings: characters left out of prompts per agent.
 
-**Saving and risk.** Small: 5,000 tokens of comments read in 120 turns is about 600,000 cache-read tokens, some $0.25 a run at Opus 5.5 API prices; halving it saves about 1–2% [I]. The risk is a lost clarification from an early comment; the mark tells the agent something was cut.
+**Saving and risk.** Small: 5,000 tokens of comments read in 120 turns is about 600,000 cache-read tokens, some $0.12 a run at Opus 5.5 API prices; halving it saves about 1% [I]. The risk is a lost clarification from an early comment; the mark tells the agent something was cut.
 
 **Experiment.** No card split needed for the saving: the characters left out are exact. For quality, a two-week period at 5 comments of 1,500 characters, watching questions (`needs_decision`) and QA fails that name a missed instruction.
 
-### 4.6 Short messages between tool calls
+### 4.7 Short messages between tool calls
 
-**What it does.** One line in "How this run works", only with the switch on: "Between tool calls, write at most one short sentence. Code, commands, file paths, error messages and your final summary and hand-over stay complete and exact." The same line for every CLI; no proxy, no rewriting of answers. This is Caveman's "says less" for the part of an agent's output that nobody hands over. [I]
+**What it does.** With the switch on, each CLI is asked for terser text in its own way, and nothing rewrites an answer afterwards. Claude Code gets its built-in **Concise** output style: "Responses lead with the result and leave out preamble, narration, and recaps"; GizAi already gives every run a `--settings` JSON, and `outputStyle` would go in it [V for the style and the setting; I that the two combine, to check]. Codex gets `model_verbosity = "low"` ("Optional GPT-5 Responses API verbosity override"). Any other CLI gets one line in "How this run works": "Between tool calls, write at most one short sentence. Code, commands, file paths, error messages and your final summary and hand-over stay complete and exact." This is Caveman's "says less" for the part of an agent's output that nobody hands over. [I]
 
 **The setting.** Settings → Tokens: **Short messages**, off by default: the saving is small and the narration is how the user follows a run live. A user who doesn't watch runs can switch it on.
 
 **What the user sees.** The run reads terser; Usage → Savings shows output tokens per turn per agent, before and after.
 
-**Saving and risk.** Text between tool calls is a small part of an agentic run's output; thinking and tool inputs are most of it. 1–3% [I]. Hand-overs stay complete by the rule's own words; QA's pass rate and the builders' hand-over length are the checks.
+**Saving and risk.** Text between tool calls is a small part of an agentic run's output; thinking and tool inputs are most of it. 1–3% [I]. The risk is a shorter hand-over: the Concise style leaves out "recaps", and a hand-over is one. The role instructions ask for a complete summary in the result line, and the experiment checks the hand-overs' length and QA's pass rate.
 
 **Experiment.** Card parity, two weeks: output tokens per turn, hand-over length, QA pass rate.
 
-### 4.7 Leave room in the subscription's windows
+### 4.8 Leave room in the subscription's windows
 
 **What it does.** Gizai already reads each CLI's 5-hour and weekly windows (§2.7). With this value set, agents start no new run from an Auto column while a window of their CLI is above it; Run by hand still works, as with Pause all agents (`src/pages/SettingsPage.tsx:113`). It saves no tokens; it keeps a freelancer's own Claude Code or Codex usable during the day. [V for the readings; I for the design]
 
@@ -224,13 +248,13 @@ Not proposed now, with the reason, in §4.8: a lower compaction threshold, conti
 
 **Risk.** None to quality; cards wait longer.
 
-### 4.8 Not proposed now
+### 4.9 Not proposed now
 
-- **A lower compaction threshold.** Compacting earlier shrinks what each turn reads, but a summary loses details an agent may need, and the summary itself costs a call. Claude Code compacts on its own near its limit (§3.6). Worth an experiment after M1, not a setting yet [I].
 - **Continuing the builder's session after a QA fail** instead of a fresh one with QA's issues (`runs.rs:918`). The session knows what it did, but QA's run usually takes longer than the cache's hour, so the whole old context would be written again at 2×; a fresh run with the issues is often cheaper. An experiment after M1 [I].
-- **MCP servers per card.** Task runs get only the agent's own servers (agent form → Tools); Claude Code loads MCP tools on demand where its tool search applies (§3.6). Little left to save [I].
-- **A model for subagents.** Claude Code's subagents (the Task and Agent tools, always on: `crates/gizai-agents/src/tool_catalog.rs:80-81`) can be pointed at a cheaper model (§3.6). How much agents use them is not recorded today; M1 records it (Claude Code's `modelUsage` per model), and then it can be a field in the agent form.
-- **Reordering the prompt for the cache.** Putting the parts an agent's runs share first would turn a few thousand tokens per run from cache writes into reads, some $0.03 a run, while moving "How this run works" away from the end, where it is read last. Not worth it [I].
+- **MCP servers per card.** Task runs get only the agent's own servers (agent form → Tools), and Claude Code already keeps their tools out of the context until they are used: "MCP tool definitions are deferred by default, so only tool names and server instructions enter context until Claude uses a specific tool" (§3.6). Little left to save [I].
+- **A model for subagents.** Claude Code's subagents (the Task and Agent tools, always on: `crates/gizai-agents/src/tool_catalog.rs:80-81`) can be pointed at a cheaper model with `CLAUDE_CODE_SUBAGENT_MODEL` (§3.6). How much agents use them is not recorded today; M1 records it (Claude Code's `modelUsage` per model), and then it can be a field in the agent form (§9, question 11).
+- **Sharing Claude Code's cache between worktrees.** Claude Code's cache "is effectively scoped to one machine and directory", so each card's worktree builds its own, and every run starts by writing Claude Code's system prompt and tools to the cache. Its `--exclude-dynamic-system-prompt-sections` flag "improves prompt-cache reuse across different users and machines"; whether it lets runs in different worktrees share that prefix, and what the agent then no longer sees at the start, needs a check on the CLI. At about 20,000 tokens a run it would save some $0.15 a run on Opus 5.5 [I]. A small card after M1, if the check is good.
+- **Reordering GizAi's prompt for the cache.** For the same reason (one cache per worktree), putting the parts an agent's runs share first saves nothing across runs [V for the scope; I for the conclusion].
 
 ## 5. Quality: how we'd know it holds, and the experiments
 
@@ -509,7 +533,7 @@ Builds: §7.1's Size row and agent form rows.
 
 ### T4. `gizai-quiet`: shorten test and build output, keep the full log (backend, To do)
 
-Builds: the command of §4.4, its own crate next to `crates/gizai-mcp`, shipped next to Gizai like `gizai-mcp` (`install.sh:3`; `src-tauri/src/mcp.rs:65`).
+Builds: the command of §4.5, its own crate next to `crates/gizai-mcp`, shipped next to Gizai like `gizai-mcp` (`install.sh:3`; `src-tauri/src/mcp.rs:65`).
 - [ ] `gizai-quiet <command> [args…]` starts the command without a shell, writes the whole output to `$TMPDIR/outputs/<nn>-<command>.log`, and passes on its exit code.
 - [ ] It prints the command, exit code, time, counts, every failure with its message and up to `GIZAI_QUIET_LINES` lines around it (default 40), every error and warning line, and the full log's path and size.
 - [ ] Recognises cargo test and build, Vitest and Jest, `tsc`, ESLint, `npm run build`, PHPUnit and Pest, Composer; anything else as its first and last lines, never as nothing.
@@ -518,7 +542,7 @@ Builds: the command of §4.4, its own crate next to `crates/gizai-mcp`, shipped 
 
 ### T5. Runs use `gizai-quiet`, and keep the full logs (backend, To do)
 
-Builds: §4.4 in the runs. Settings: **Shorten test and build output** (on), **Lines kept around a failure** (40, 10–200).
+Builds: §4.5 in the runs. Settings: **Shorten test and build output** (on), **Lines kept around a failure** (40, 10–200).
 - [ ] With it on, each `Bash(X:*)` in a Claude Code agent's allowed commands gets `Bash(gizai-quiet X:*)` beside it, never more; the run finds `gizai-quiet` (on its PATH or by full path, both tested on Claude Code and Codex).
 - [ ] "How this run works" gets one line: run tests and builds through `gizai-quiet`, and read the full log with `rg` or `tail` when needed.
 - [ ] The run's `outputs/` is copied to `<data>/runs/<run-id>/outputs/` before the temp folder is emptied; `run_outputs` and `open_run_output` (§7.3).
@@ -527,16 +551,16 @@ Builds: §4.4 in the runs. Settings: **Shorten test and build output** (on), **L
 
 ### T6. Comments, memory and Short messages as settings (backend, To do)
 
-Builds: §4.5 and §4.6. Settings: **Comments per run** (10, 0–20), **Characters per comment** (2,000, 500–8,000), **Memory per run** (6,000, 1,000–12,000), **List the other notes** (on), **Short messages** (off).
+Builds: §4.6 and §4.7. Settings: **Comments per run** (10, 0–20), **Characters per comment** (2,000, 500–8,000), **Memory per run** (6,000, 1,000–12,000), **List the other notes** (on), **Short messages** (off).
 - [ ] The prompt takes the last N comments, each cut at the setting with the mark "… (cut at 2,000 of 5,400 characters; the full comment is on the card)" (`crates/gizai-agents/src/prompt.rs:37`, `:78-84`; `src-tauri/src/runs.rs:912-913`).
 - [ ] QA's latest comment is left out of a builder's prompt when its issues are in "QA found these issues last time" (`prompt.rs:71-77`).
 - [ ] Memory's caps come from the setting (own notes half of it, as `OWN_CAP` is now, `crates/gizai-core/src/memory.rs:30-35`); the list only with List the other notes on.
-- [ ] Short messages on adds §4.6's line to "How this run works" for every CLI (`prompt.rs:297-353`).
+- [ ] Short messages on gives a Claude Code run the Concise output style (`"outputStyle":"Concise"` in the `--settings` JSON it already gets, `crates/gizai-agents/src/claude.rs:93-95`), a Codex run `-c model_verbosity="low"`, and any other CLI §4.7's line in "How this run works" (`prompt.rs:297-353`); each checked on the CLI's current version first.
 - [ ] `TokenFacts.comments` and `memory` saved; tests at each range's edges.
 
 ### T7. Leave room in the subscription's windows (backend, To do)
 
-Builds: §4.7. Setting: **Start no new runs above**, 90% (50–100).
+Builds: §4.8. Setting: **Start no new runs above**, 90% (50–100).
 - [ ] No automatic start for an agent while the newest reading of its CLI account's 5-hour or weekly window (`crates/gizai-core/src/limits.rs`) is above the setting and not yet reset; Run by hand still starts.
 - [ ] The waiting card says which window, its percentage and when it resets.
 - [ ] 100 = today's behaviour. Tests with readings above, below and after a reset.

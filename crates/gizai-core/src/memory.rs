@@ -1826,7 +1826,7 @@ fn move_learned_in(w: &Writer, actor: &str, id: &str) -> Result<usize> {
     let Some(n) = by_id_in(c, id)? else { return Ok(0) };
     let Some(owner) = n.owner_id.clone() else { return Ok(0) };
     // Only an agent that has its folder as its own gets notes in it (one that shares a folder or was removed has none).
-    let name = name_of(c, &owner)?;
+    let Ok(name) = name_of(c, &owner) else { return Ok(0) };
     if !agent_by_folder(c, &folder_name(&name))?.is_some_and(|(a, _)| a == owner) || shares_of(c, &owner)?.is_some() {
         return Ok(0);
     }

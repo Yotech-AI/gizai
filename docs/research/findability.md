@@ -8,7 +8,7 @@ R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come 
   Central's changelog, giz.ai, the GitHub API, npm, GitHub's topic rules, and the source of `gh repo edit` and
   `gh release create`.
 - **[I]** is my judgement.
-- Every web page was read on 2026-10-13.
+- Every web page was read on 2026-10-13, except the checks of 2026-10-14 after the Run this for me, which say so.
 
 ## 1. Summary
 
@@ -30,9 +30,10 @@ R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come 
   - **GA:** the README's first screen, "GizAi" in the docs, three issue forms, CONTRIBUTING.md, SECURITY.md, and release
     notes with a short "What's new".
   - **GW:** llms.txt, search-shaped titles and descriptions, WebSite data, and one Remotion still that makes both share
-    images. It lands after GW-7.
+    images. It builds on GW-7, which was merged on 13 October, so it can start now.
   - **The app** keeps "Gizai" in its UI and identifiers until a rebrand card of its own (§3.4).
-- **Run this for me (now):** one `gh repo edit` that sets the About, the website and 20 topics (§3.1).
+- **Done by Run this for me:** the About, the website and 20 topics are set. The GitHub API showed all three on
+  14 October (§3.1).
 
 ## 2. The project now
 
@@ -47,12 +48,15 @@ R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come 
   - the GitHub About;
   - the release notes, which also show in the app: Settings → Updates → "What's new in X.Y.Z" renders the release body
     as Markdown (`src/components/UpdateSettings.tsx:33-34`), cut at 20,000 characters (`crates/gizai-agents/src/update.rs:79`). [V]
-- **gizai.app** is GW (`Yotech-AI/gizai-website`, private, Astro, Cloudflare Pages). Its main has GW-1 to GW-4 (PRs #1
-  to #4, merged).
-  - GW-7 (PR #5, **open**) adds `/roadmap` and `/docs`. `/docs` holds copies of this repository's
-    `docs/install.md`, `settings.md`, `features/*.md`, `agent-tools.md` and `memory.md`, made by `npm run docs:sync`
-    (`src/data/docs.ts` in PR #5). [V] (`gh pr diff`)
-  - So the /roadmap and /docs work is one open pull request (GW-7), and the docs' spelling will show on the website.
+- **gizai.app** is GW (`Yotech-AI/gizai-website`, private, Astro, Cloudflare Pages). Its main has GW-1 to GW-4 and
+  GW-7 (PRs #1 to #5, all merged).
+  - GW-7 (PR #5) added `/roadmap` and `/docs`. `/docs` holds copies of this repository's `docs/install.md`,
+    `settings.md`, `features/*.md`, `agent-tools.md` and `memory.md`, made by `npm run docs:sync` (`src/data/docs.ts`
+    in PR #5). [V] (`gh pr diff`)
+  - It was open when this research read it. It was merged on 13 October at 21:51 UTC (merge `a09f441`), with the same
+    diff of 5,787 lines [V] (`gh pr view 5`, `gh pr diff 5`, 14 October).
+  - So the docs' spelling shows on the website now: gizai.app/docs/memory says "A note is a Markdown text in Gizai's
+    database" [V] (read 14 October).
 - **What this card touches:** README, `docs/`, new files in `.github/` and the root, `docs/RELEASING.md`; in GW
   `src/data/site.ts`, `src/content.config.ts` and `src/content/features/*.md`, `src/layouts/Feature.astro`,
   `src/pages/index.astro`, a new `llms.txt` route and a share-card render in `video/`. No app code.
@@ -70,12 +74,12 @@ R&D for Jefsev, 13 October 2026. Research and drafts only: the build cards come 
 | A page titled "Claude Code kanban" | Anthropic: "you can't use the Claude Code or Anthropic names or logos as part of your own product, feature, or company name". A title may say that GizAi runs Claude Code. | code.claude.com/docs/en/legal-and-compliance.md [V] |
 | Add SoftwareApplication data and a sitemap | Both exist: `src/pages/index.astro` (GW #1), and gizai.app/sitemap.xml with 9 addresses. Missing: WebSite data, llms.txt and search words in the titles. | GW PR #1 diff; live site [V] |
 | Social preview "based on og.png" | og.png is 1200 × 630, and GitHub wants 1280 × 640 (2 : 1), so it needs a render of its own, not a copy. | GW `src/layouts/Base.astro`; GitHub docs [V] |
-| GW-7 builds /roadmap, GW-8 builds /docs | GW PR #5 ("GW-7") builds both. It is open. | `gh pr list --repo Yotech-AI/gizai-website` [V] |
+| GW-7 builds /roadmap, GW-8 builds /docs | GW PR #5 ("GW-7") built both. It was merged on 13 October. | `gh pr list --repo Yotech-AI/gizai-website` [V] |
 
 ### 3.1 The repository's About, website and topics
 
-**Now:** description "Giz AI", homepage `null`, topics `[]`. Discussions are off; Issues, Projects and the Wiki are on;
-1 star. [V] (api.github.com/repos/Yotech-AI/gizai)
+**Before this card:** description "Giz AI", homepage `null`, topics `[]`. Discussions are off; Issues, Projects and the
+Wiki are on; 1 star. [V] (api.github.com/repos/Yotech-AI/gizai, 13 October)
 
 **The About line (286 characters):**
 
@@ -139,8 +143,16 @@ and `newTopics.AddValues(opts.topicsCache)` then `AddValues(opts.AddTopics)`; th
 gh repo edit Yotech-AI/gizai --description 'Desktop app where AI coding agents work your kanban board in parallel on Claude Code, Codex CLI or Gemini CLI: a Team Lead you chat with, builders, QA, DevOps and roles you add, like Design or R&D. Each card gets its own git worktree. Built-in editor and terminal. Free and open source.' --homepage 'https://gizai.app' --add-topic 'claude-code,codex,gemini-cli,ai-agents,coding-agents,multi-agent,agentic-coding,agent-orchestration,kanban,git-worktree,mcp,code-review,developer-tools,desktop-app,tauri,rust,linux,macos,windows,omarchy'
 ```
 
-It changes only these three things. After it, the GitHub API should show the new description,
-`"homepage": "https://gizai.app"` and the 20 topics. I check that once you've run it, and note it here.
+It changes only these three things.
+
+**Checked on 14 October 2026, after you ran it** [V] (api.github.com/repos/Yotech-AI/gizai, `updated_at`
+2026-10-14T09:32:20Z):
+
+- `description` is the About line above, word for word;
+- `homepage` is `https://gizai.app`;
+- `topics` holds the 20 topics, which GitHub keeps in alphabetical order: agent-orchestration, agentic-coding,
+  ai-agents, claude-code, code-review, codex, coding-agents, desktop-app, developer-tools, gemini-cli, git-worktree,
+  kanban, linux, macos, mcp, multi-agent, omarchy, rust, tauri, windows.
 
 ### 3.2 Social preview
 
@@ -284,9 +296,9 @@ Two things are left out on purpose:
 |---|---|---|
 | `README.md` | :104, :106 | prose "Gizai": change |
 | `docs/PLATFORMS.md` (75 times) | :1, :3, :7, :8, :16, :17, :18, :20, :21, :22, :24, :25, :29, :30, :35, :38, :40, :41, :42, :45, :46, :53, :55, :57, :59, :61, :63, :70, :72, :73, :74, :76, :77, :83, :84, :86, :89, :90, :92, :97, :98 | prose: change; keep the paths and labels in the list under the table |
-| `docs/agent-tools.md` (55) | :7, :16, :18, :46, :50, :52, :55, :56, :61, :63, :75, :96, :98, :99, :102, :106, :114, :126, :128, :136, :140, :145, :146, :154, :156, :157, :161, :167, :169, :182, :191 | change. GW-7 puts this doc on gizai.app/docs/agent-tools |
+| `docs/agent-tools.md` (55) | :7, :16, :18, :46, :50, :52, :55, :56, :61, :63, :75, :96, :98, :99, :102, :106, :114, :126, :128, :136, :140, :145, :146, :154, :156, :157, :161, :167, :169, :182, :191 | change. Since GW-7, this doc is on gizai.app/docs/agent-tools |
 | `docs/RELEASING.md` (39) | :1, :3, :5, :16, :17, :18, :23, :29, :57, :59, :77, :84, :87, :97, :100, :102, :104, :107, :110, :114, :116, :117, :118, :119, :123, :126, :134, :136, :159, :167, :169, :173 | prose: change; keep the paths |
-| `docs/memory.md` (16) | :16, :21, :39, :72, :98, :129, :130, :159, :169, :188, :237, :251, :255, :258, :269, :273 | change, except :169, which quotes the line the app writes into prompts ("they stay in Gizai's Memory …"). GW-7 puts this doc on gizai.app/docs/memory |
+| `docs/memory.md` (16) | :16, :21, :39, :72, :98, :129, :130, :159, :169, :188, :237, :251, :255, :258, :269, :273 | change, except :169, which quotes the line the app writes into prompts ("they stay in Gizai's Memory …"). Since GW-7, this doc is on gizai.app/docs/memory |
 | `docs/PAID-FEATURES.md` (16) | :1, :8, :22, :39, :59, :67, :72, :87, :103, :119, :148, :151, :167, :178, :202 | change |
 | `docs/install.md` | :36, :79, :109, :117, :125, :145 | only paths (`Gizai.app`, `%APPDATA%\Gizai`, `%LOCALAPPDATA%\Programs\Gizai`, `~/Library/Application Support/Gizai`): keep |
 | `CLAUDE.md` | :1, :3, :8, :20, :24, :47, :51 | prose: change (agents read it in every run) |
@@ -297,7 +309,7 @@ Two things are left out on purpose:
 | The Figma file | `design/brand/README.md:4` | named "Giz-AI": rename it to "GizAi" by hand if you like. Links to it keep working, as Figma finds a file by its key |
 | gizai.app, the pages | | "GizAi" everywhere visible [V] (GW #1 to #5 diffs) |
 | gizai.app, the HTML source | `src/assets/mountains-hero.svg`, line 1: `<!-- Gizai's mountains … -->`, inlined on every page by `Base.astro` | change in the GW card |
-| gizai.app, after GW-7 | `/docs/agent-tools`, `/docs/memory` | follow this repository's docs at the next `npm run docs:sync` |
+| gizai.app/docs, live since GW-7 | `/docs/agent-tools`, `/docs/memory` | say "Gizai" now ("A note is a Markdown text in Gizai's database", gizai.app/docs/memory, read 14 October [V]). They follow this repository's docs at the next `npm run docs:sync` |
 
 **What must stay as it is**, because code and installs find GizAi by it [V]:
 
@@ -429,7 +441,7 @@ forms"; helper).
 - `config.yml`: `blank_issues_enabled: false`, and `contact_links` to:
   - Q&A in Discussions ("Questions go here");
   - the security policy ("Report a security problem privately");
-  - the docs (gizai.app/docs once GW-7 is live).
+  - the docs (gizai.app/docs).
   [V] (docs.github.com, "Configuring issue templates"; helper)
 - Optionally `.github/pull_request_template.md`: what changed for the person using GizAi, how it was tested, the
   systems tried. It is a box on GitHub's Community Standards list [V] (github.com/cli/cli/community; helper).
@@ -506,8 +518,9 @@ forms"; helper).
 
 **What exists** [V] (GW PRs #1 and #2; the live site):
 
-- `sitemap.xml`: written after the build with every page but the 404 (GW `astro.config.mjs`, PR #1). It lists 9
-  addresses, without `lastmod`, and picks up `/roadmap` and `/docs/*` by itself once GW-7 is in.
+- `sitemap.xml`: written after the build with every page but the 404 (GW `astro.config.mjs`, PR #1), without
+  `lastmod`. It listed 9 addresses on 13 October, and 23 on 14 October, when GW-7 had added `/roadmap`, `/docs` and the
+  12 doc pages by itself [V] (gizai.app/sitemap.xml). llms.txt was still a 404 then.
 - `robots.txt`: `User-agent: *`, `Allow: /` and the sitemap (`src/pages/robots.txt.ts`).
 - On the homepage, SoftwareApplication data: name, description, url, image, `DeveloperApplication`, "Linux, macOS,
   Windows", price 0 EUR, `isAccessibleForFree`, the Apache-2.0 licence, `downloadUrl`, `softwareHelp`, `sameAs` GitHub
@@ -696,13 +709,13 @@ How to deliver the work. The content is the same in each.
 
 | | A. Two pull requests and a hand list (recommended) | B. One card per item (seven cards) | C. Repository first, website later |
 |---|---|---|---|
-| What | GA: the README, the name in the docs, `.github/` and the community files, RELEASING. GW: llms.txt, titles, data, share images. You: settings. | Each item of the brief its own card and pull request | Only the GA card now; the GW card after GW-7 and a few weeks of data from Search Console |
+| What | GA: the README, the name in the docs, `.github/` and the community files, RELEASING. GW: llms.txt, titles, data, share images. You: settings. | Each item of the brief its own card and pull request | Only the GA card now; the GW card after a few weeks of data from Search Console |
 | Size | GA about 15 files, mostly text; GW about 10 files, plus a Remotion composition | The same in total, seven reviews | GA as in A |
-| Risks | The GA card is long but plain text. The GW card must wait for GW-7 (same files: `Base.astro`, `Feature.astro`, `index.astro`, `site.ts`) | Seven reviews; the README and docs overlap; the name pass splits up | The site keeps titles without search words for weeks |
+| Risks | The GA card is long but plain text. The GW card touches the files GW-7 changed (`Base.astro`, `Feature.astro`, `index.astro`, `site.ts`), but GW-7 is merged, so it starts from them | Seven reviews; the README and docs overlap; the name pass splits up | The site keeps titles without search words for weeks |
 | Libraries | None new: GW already has Remotion (`video/`) and sharp (`scripts/icons.mjs`) | The same | The same |
 
 **A** is what the brief asks for: one pull request for the repository, one for gizai.app and a list for you. It keeps
-the name pass in one place, and the GW card waits for GW-7 instead of fighting it.
+the name pass in one place, and the GW card builds on GW-7, which is merged.
 
 ## 5. The design of option A
 
@@ -732,7 +745,7 @@ Also:
 - every link in the new files resolves to a file in the repository;
 - `rg -n "Gizai"` on the changed docs finds only the paths and quotes in §3.4's keep lists.
 
-**GW pull request**, after GW-7:
+**GW pull request**, from GW's main with GW-7 in it:
 
 - `src/data/llms.ts` and `src/pages/llms.txt.ts`;
 - `src/content.config.ts` (`seoTitle`, `description`) and the eight `src/content/features/*.md`;
@@ -743,7 +756,7 @@ Also:
 - in the Remotion project, a `ShareCard.tsx` composition registered in its `Root.tsx` and a `render-share.mjs`
   script, with `public/og.png` rendered again and `design/github-social-preview.png`.
 
-**Tests** in GW's `tests/site.test.mjs` (GW-7 adds the file), after `npm run build`:
+**Tests** in GW's `tests/site.test.mjs` (GW-7 added the file), after `npm run build`:
 
 - `dist/llms.txt` starts with `# GizAi`, and every gizai.app link in it is a built page;
 - every feature page's `<title>` and meta description match its file, and each title is at most 70 characters;
@@ -764,7 +777,7 @@ SECURITY.md sends reports to a private channel. llms.txt repeats only public fac
 
 ## 6. Settings you change by hand
 
-1. **Now, by Run this for me:** the About, the website and the 20 topics (§3.1).
+1. **Done on 14 October, by Run this for me:** the About, the website and the 20 topics. The API shows them (§3.1).
 2. **Social preview:** Settings → Social preview → Edit → Upload an image: `design/github-social-preview.png` from the
    GW pull request.
 3. **Discussions:** Settings → Features → Discussions (or `gh repo edit Yotech-AI/gizai --enable-discussions`). Then
@@ -824,8 +837,9 @@ Builds §5's GW list from §3.2 and §3.8.
   (1280 × 640), each under 1 MB, in §3.2's layout.
 - [ ] The tests in §5 pass, and `npm run build` passes.
 
-Builds on: GW-7 (PR #5) merged, as it changes `Base.astro`, `Feature.astro`, `index.astro` and `site.ts`. It runs at
-the same time as card 1. Its Docs links in llms.txt name the docs card 1 changes, but they don't depend on it.
+Builds on: GW-7 (PR #5), which changed `Base.astro`, `Feature.astro`, `index.astro` and `site.ts` and was merged on
+13 October. So it can start now, at the same time as card 1. Its Docs links in llms.txt name the docs card 1 changes,
+but they don't depend on it.
 
 **Card 3 (optional, Design): "Share card in Figma"**. Design column; design. Only if you want the share image designed
 before card 2 builds it (§3.2). Card 2 then builds on it.
@@ -871,6 +885,13 @@ reads card 1's spelling once a release carries it.
 
 All read on 2026-10-13. "(helper)" marks a page one of this run's research helpers read and quoted, and I didn't open
 again.
+
+Read again on 2026-10-14, after the Run this for me:
+
+- https://api.github.com/repos/Yotech-AI/gizai: the new description, homepage and topics;
+- gizai.app: /sitemap.xml (23 addresses), /llms.txt (still 404) and /docs/memory;
+- the website repository: `gh pr list`, `gh pr view 5` and `gh pr diff 5` (GW-7, merged);
+- this repository: `git fetch`, with main still at `24535e3`, so every citation above stands.
 
 - This repository at `24535e3` (main), and Yotech-AI/gizai-website PRs #1 to #5 (`gh pr diff`)
 - GitHub API: https://api.github.com/repos/Yotech-AI/gizai, `/releases`, `/labels`, `/issues`, `/community/profile`; topic counts from https://api.github.com/search/repositories?q=topic:…

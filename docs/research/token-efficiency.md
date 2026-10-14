@@ -76,7 +76,7 @@ The shares add up to Claude Code's own `total_cost_usd` of $0.09439 to the cent 
 
 ### 2.4 What agents read and write during a run
 
-- **Test and build output.** The project tells every builder to run, before it says it is done, `cargo test --workspace`, `npm test`, `npm run build` and `scripts/ui-test.sh` when the UI changed (CLAUDE.md:39-44), and QA runs the whole suite twice, "once to see where things stand and once more after your new tests" (`crates/gizai-core/roles/qa.md:10`). GizAi's own suites are big: 1,519 Rust test functions whose names alone are about 99,600 characters (66 on average; `rg` over the functions after `#[test]` and `#[tokio::test]`), and 1,915 `it`/`test` calls in 131 test files (`rg` over `*.test.ts`, `*.test.tsx` and `*.test.mjs`). A passing `cargo test --workspace` prints one line per test, so roughly 130,000–150,000 characters (35,000–40,000 tokens), and a fresh worktree first prints a `Compiling` line for each of the 588 crates in `Cargo.lock` [I, estimated from the counts; not run]. Claude Code doesn't put all of that in the context (§3.6): a command that succeeds is shown in full up to about 30,000 characters, and past that the model gets the path of a file with the whole output and a preview of its first 2,000 characters; a command that fails is shown up to about 10,000 characters, and past that as "a head-and-tail excerpt of that size", with no file path. So a long passing suite costs little, but its preview is the start of the output (for cargo, the `Compiling` lines) and the agent reads or searches the file for the result; a long failing one loses its middle, where failures can be. Codex cuts long output to its head and tail too (§3.6). Whatever is read stays in the context for the rest of the run. [V for Claude Code's and Codex's docs]
+- **Test and build output.** The project tells every builder to run, before it says it is done, `cargo test --workspace`, `npm test`, `npm run build` and `scripts/ui-test.sh` when the UI changed (CLAUDE.md:39-43), and QA runs the whole suite twice, "once to see where things stand and once more after your new tests" (`crates/gizai-core/roles/qa.md:10`). GizAi's own suites are big: 1,519 Rust test functions whose names alone are about 99,600 characters (66 on average; `rg` over the functions after `#[test]` and `#[tokio::test]`), and 1,915 `it`/`test` calls in 131 test files (`rg` over `*.test.ts`, `*.test.tsx` and `*.test.mjs`). A passing `cargo test --workspace` prints one line per test, so roughly 130,000–150,000 characters (35,000–40,000 tokens), and a fresh worktree first prints a `Compiling` line for each of the 588 crates in `Cargo.lock` [I, estimated from the counts; not run]. Claude Code doesn't put all of that in the context (§3.6): a command that succeeds is shown in full up to about 30,000 characters, and past that the model gets the path of a file with the whole output and a preview of its first 2,000 characters; a command that fails is shown up to about 10,000 characters, and past that as "a head-and-tail excerpt of that size", with no file path. So a long passing suite costs little, but its preview is the start of the output (for cargo, the `Compiling` lines) and the agent reads or searches the file for the result; a long failing one loses its middle, where failures can be. Codex cuts long output to its head and tail too (§3.6). Whatever is read stays in the context for the rest of the run. [V for Claude Code's and Codex's docs]
 - **Files, diffs and searches.** Read, Grep and `git diff` results enter the context the same way. GizAi doesn't shape them today; Claude Code's Read returns at most 25,000 tokens a call and pages a larger file (§3.6).
 - **Thinking and text.** On Opus 4.5 and later, thinking stays in the context (§2.2), so effort `max` grows the context too, not only the output.
 
@@ -302,11 +302,11 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **What it does.** A small command of Gizai's, `gizai-quiet`, runs a test or build command, writes its whole output to a file in the run's temp folder, and prints only what the agent needs: the command, its exit code and time, the counts (passed, failed, ignored), every failure with its message and the lines around it, every error and warning line from compilers and linters, and the path of the full log. The exit code is the command's own, so `&&` chains keep working. Agents are told in "How this run works" to run tests and builds through it, and their allowed commands get one rule per allowed command they already have: `Bash(gizai-quiet cargo:*)` next to `Bash(cargo:*)`, so it never widens what an agent may run. After the run Gizai keeps the full logs with the run's log (`<data>/runs/<run-id>/outputs/`), because the temp folder is emptied. A hook could do the same without the agent's help (Claude Code's `PostToolUse` can replace a tool's result), but GizAi turns all hooks off on purpose, so that the user's own hooks stay out of headless runs, and Claude Code has "no way to disable an individual hook while keeping it in the configuration" (§3.6). [I: the design; Caveman's and RTK's filters do the same job by other routes: a proxy or a `PostToolUse` hook (§3.2), a rewriting `PreToolUse` hook (§6)]
 
-**Why.** QA runs the whole suite twice (`crates/gizai-core/roles/qa.md:10`), builders run `cargo test --workspace`, `npm test` and `npm run build` before they finish (CLAUDE.md:39-44), and a passing GizAi suite prints some 130,000–150,000 characters (§2.4). Claude Code already keeps most of a long *passing* output out of the context: the model gets a file path and the first 2,000 characters (§2.4). What is left is where a filter helps. The preview is the start of the output, not its result, so the agent reads or searches the file in more calls. A long *failing* output becomes a head-and-tail excerpt of about 10,000 characters with no file, so the failures in its middle are lost. Outputs under 30,000 characters come in whole. And Codex cuts output to its head and tail and keeps no file (§3.6). Through the filter every command prints its result first, a failing one keeps its failures in full, and the whole output is on disk for every CLI. Anthropic's own cost advice says the same of a hook that filters test output: it can return "only matching lines, reducing context from tens of thousands of tokens to hundreds".
+**Why.** QA runs the whole suite twice (`crates/gizai-core/roles/qa.md:10`), builders run `cargo test --workspace`, `npm test` and `npm run build` before they finish (CLAUDE.md:39-43), and a passing GizAi suite prints some 130,000–150,000 characters (§2.4). Claude Code already keeps most of a long *passing* output out of the context: the model gets a file path and the first 2,000 characters (§2.4). What is left is where a filter helps. The preview is the start of the output, not its result, so the agent reads or searches the file in more calls. A long *failing* output becomes a head-and-tail excerpt of about 10,000 characters with no file, so the failures in its middle are lost. Outputs under 30,000 characters come in whole. And Codex cuts output to its head and tail and keeps no file (§3.6). Through the filter every command prints its result first, a failing one keeps its failures in full, and the whole output is on disk for every CLI. Anthropic's own cost advice says the same of a hook that filters test output: it can return "only matching lines, reducing context from tens of thousands of tokens to hundreds".
 
 **The setting.** Settings → Tokens: **Shorten test and build output**, on; **Lines kept around a failure**, 10–200, default 40. The added rules are made at the start of each run from the agent's own list, never saved in it, and the run's facts name them.
 
-**What the user sees.** In the run, each shortened command is a normal step whose output starts with `gizai-quiet: 1,519 passed, 0 failed (exit 0) · full log: .gizai-tmp/outputs/03-cargo-test.log (142,311 characters)`. In the run's facts: "Shortened output: 4 commands, 212,000 → 9,800 characters", with **Open** beside each full log. On Usage → Savings: characters kept out of the context per agent and per card, and what they would have cost, read in the turns after them (§7.4).
+**What the user sees.** In the run, each shortened command is a normal step whose output starts with `gizai-quiet: 1,519 passed, 0 failed (exit 0) · full log: .gizai-tmp/outputs/03-cargo-test.log (142,311 characters)`. In the run's facts: "4 commands: 9,800 characters shown of 212,000; 24,000 kept out of the context" (against what the CLI itself would have shown, §7.4), with **Open** beside each full log. On Usage → Savings: characters kept out of the context per agent and per card, and what they would have cost, read in the turns after them (§7.4).
 
 **Saving.** Low in tokens: per long command, up to about 10,000 characters if it fails and 2,000 if it passes, plus the agent's follow-up reads of the file, all of it read again in every later turn: 1–3% of a QA run [I]. Possibly more on Codex, which keeps a head-and-tail cut of each long output in the context and no file [I]. The stronger reason is quality: a failing suite shows its failures instead of its two ends.
 
@@ -402,7 +402,7 @@ Three ways to build "fewer tokens without losing quality" into GizAi. All three 
 - Auto sends each ask, up to 128 KiB of it, to Caveman Cloud, which may keep it on the Free plan, and the CLI's telemetry is on by default (§3.7): client code leaves the computer;
 - routing replaces the model the user chose in each agent's form, and GizAi could show savings only through Caveman's own numbers. [V for the facts; I for the judgement]
 
-**Recommendation: A.** It is the only option that works the same for Claude Code and Codex on a subscription login without touching the request path, keeps each saving a GizAi setting with GizAi's own "what it did" in the run and on Usage, and starts with the measurement that tells whether quality holds. B's filter rules are worth reading (and borrowing with attribution) when building `gizai-quiet`. C's terms risk alone rules it out for a product that runs on the user's own subscription (§3.5), and its biggest saving, routing, is by Caveman's own benchmark "Most of the saving comes from lower effort" (§3.3), which A gets without a router. [I]
+**Recommendation: A.** It is the only option that works the same for Claude Code and Codex on a subscription login without touching the request path, keeps each saving a GizAi setting with GizAi's own "what it did" in the run and on Usage, and starts with the measurement that tells whether quality holds. B's filter rules are worth reading (and borrowing with attribution) when building `gizai-quiet`. C's terms risk alone rules it out for a product that runs on the user's own subscription (§3.5), and Caveman's own benchmark says of its biggest saving, routing, that "Most of the saving comes from lower effort" (§3.3), which A gets without a router. [I]
 
 ## 7. The design of the recommended option
 
@@ -417,7 +417,7 @@ Settings   [General] [Appearance] [Notifications] [Agents and runs] [Tokens] [MC
 
 Tokens     Every saving is yours to switch. Usage → Savings shows what each one did.
   Read less
-    Shorten test and build output     [x]        Last 30 days: 4.1 M characters kept out (about $38 at API prices)
+    Shorten test and build output     [x]        Last 30 days: 1.3 M characters kept out (about $11 at API prices)
     Lines kept around a failure       [ 40 ]     10 to 200
   Context
     Compact a run's context at        [      ]   tokens, 100,000 to 1,000,000; empty: the CLI's own
@@ -462,18 +462,20 @@ Cards     Card    Title                      Size    Runs  Rounds  QA     In / o
           GA-170  Hover on the sidebar ...   Normal  3     1       pass   4.1 M / 92 k    $14.20
 
 Savings   Setting                          Runs  Kept out of the context      About, at API prices
-          Shorten test and build output    41    5.2 M characters             $46
+          Shorten test and build output    41    1.3 M characters             $11
           Comments and memory              120   0.9 M characters             $7
-          Experiment: Shorten output       on: 18 cards, $9.10 a card, QA pass 81%, 1.2 rounds
-          (since 3 Nov)                    off: 17 cards, $10.40 a card, QA pass 79%, 1.3 rounds
+          Experiment: Normal cards at high on: 18 cards, $7.90 a card, QA pass 80%, 1.2 rounds
+          (since 3 Nov)                    off: 17 cards, $9.60 a card, QA pass 82%, 1.2 rounds
 ```
+
+(The numbers in these sketches are made up, to show the layout.)
 
 **A run's facts** (`src/components/RunHistory.tsx:75-93`): the Tokens row gets the split and the turns, and two rows say what the settings did.
 
 ```
 Tokens      2.1 M in (1.9 M cache read, 160 k cache written, 12 k new), 48 k out · 87 turns
 Settings    Size Normal · Opus 5.5, effort high · comments 10 of 14 (2 cut) · memory 6,000 of 8,400 characters
-Shortened   4 commands: 212,000 → 9,800 characters   [Open the full logs]
+Shortened   4 commands: 9,800 characters shown of 212,000; 24,000 kept out of the context   [Open the full logs]
 ```
 
 While a run is live, a shortened command and a cut comment are also Gizai's notes in its stream (`gizai_note` lines, `crates/gizai-agents/src/cli.rs:348-350`, shown by `src/components/RunPanel.tsx:34`), like today's notes about folders and tools.
@@ -564,7 +566,7 @@ Commands (`src/api.ts`, next to `usageSummary` at `:158`): `usage_cards(period: 
 - Size: the model and effort a run gets for each size, the raise after `qa_fail`, the Team Lead's line; the board check's own model and effort.
 - The Team Lead's prompt: the same system prompt across a note's change, and the bracket line naming the changed notes.
 - Usage: the split from Claude Code's result line (`crates/gizai-agents/tests/fixtures/run-refused.jsonl:21` has every field) and from a Codex `turn.completed`; usage per card and per trigger; savings from recorded runs.
-- Flow tests with the fake Claude Code scripts (CLAUDE.md:44), UI tests for the new tab, rows and Usage tabs.
+- Flow tests with the fake Claude Code scripts (CLAUDE.md:45), UI tests for the new tab, rows and Usage tabs.
 
 ### 7.7 Left out
 

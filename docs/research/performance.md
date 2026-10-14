@@ -42,13 +42,15 @@ Agents run in the background, one process tree per run, and stream what they do 
    windows from `tauri.conf.json` and then calls Gizai's `setup` closure, on the main thread (Tauri 2.12.1,
    `crates/tauri/src/app.rs`, `fn setup`: the `for window_config in app.config().app.windows` loop comes before
    `(setup)(app)`).
-2. The window starts loading the page (WebKit's own web process) while `setup` runs `open_state` (`lib.rs:477`) on the
-   main thread: the data folder's lock (`lib.rs:229`), opening and upgrading the database (`lib.rs:230`; a snapshot first
-   when the schema is older, `db.rs:155-160`), the seed (`lib.rs:231-235`), Memory's groups and folders (`:237-243`), runs
-   a previous Gizai left (`:247-255`, a git call per such run through `runs::record_head`), questions and chat queues
-   (`:257-261`), stray chat configs (`:262`) and housekeeping (`:263`), then the pending actions (`:275`). The page's own
-   files come through Tauri's protocol, which the main thread serves, so the page can't load further until `setup`
-   returns **[I]**: `open_state`'s time is part of every start.
+2. The window starts loading the page (WebKit's own web process) while `setup` runs `open_state` (`lib.rs:477`), which
+   is `open_data` with the default agents (`lib.rs:222-227`), on the main thread: the data folder's lock (`lib.rs:229`),
+   opening and upgrading the database (`lib.rs:230`; a snapshot first when the schema is older, `db.rs:155-160`, then the
+   migrations, `db.rs:184`), the seed (`lib.rs:231-235`), Memory's groups and folders (`:237-243`), runs a previous Gizai
+   left (`:247-255`, a git call per such run through `runs::record_head`), questions and chat queues (`:257-261`), stray
+   chat configs (`:262`), housekeeping (`:263`) and the pending actions (`:275`). Housekeeping reads the date of every
+   log in `runs/` and `chat/` (`crates/gizai-core/src/housekeeping.rs:29-54`), so it grows with the last 30 days of runs.
+   The page's own files come through Tauri's protocol, which the main thread serves, so the page can't load further
+   until `setup` returns **[I]**: `open_data`'s time is part of every start.
 3. Then background work starts (`lib.rs:491-572`): Memory's import from Claude Code (`spawn_blocking`), the
    notifications watcher, the MCP socket, the Team Lead's code copies, the pull request check (at once, then every two
    minutes), the release check (after 20 s), housekeeping (hourly tick), and every 60 s `runs::pull` and `board::tick`.
@@ -132,7 +134,18 @@ numbers; each finding's code is verified **[V]**.
   (`TasksPage.tsx:131-136`), and the board's cards render again although `Card` is memoised (`Board.tsx:26`), because the
   page passes a new `onOpen` function each time (`TasksPage.tsx:221`) and `Board` builds a new `byId` map on every render
   (`Board.tsx:119`).
-- **Other pages.** A card's page reloads 14 lists per write (the sidebar's 5, the page's 6 at
+- **What comes back.** Whole lists, with fields the board doesn't show. Every card comes with its acceptance criteria,
+  which only the card's own page shows, after asking for the card on its own (`crates/gizai-core/src/tasks.rs:9`,
+  `:64`; `src/pages/TaskPage.tsx:104`, `:251`). The team comes with every agent's instructions, which only the agent's
+  page and form show, after asking for the agent on its own (`crates/gizai-core/src/team.rs:112`, `:177`;
+  `src/pages/AgentPage.tsx:54`, `:167`; `src/components/AgentForm.tsx:164`); the five default agents' instructions are
+  about 30 KB (`crates/gizai-core/roles/*.md`, 28,048 bytes, and the Team Lead's in `crates/gizai-core/src/seed.rs:198-215`,
+  stored per agent at `:160`). A card is about 1 KB of JSON before its acceptance criteria (a sample card with a label,
+  a branch and a pull request, written out with its 33 fields: 958 bytes). So on a board of 500 cards a write brings
+  back well over a megabyte (the cards twice, the team twice), made into JSON on the main thread and parsed again in
+  the page **[I]**. P1's counter gives the real bytes.
+- **Other pages.** The Inbox reloads 10 lists per write (the board's 9, and every chat again,
+  `src/pages/TasksPage.tsx:107`); a card's page 14 (the sidebar's 5, the page's 6 at
   `src/pages/TaskPage.tsx:104-109`, the run panel's, the pull request panel's and the files', `RunPanel.tsx:78`,
   `PullPanel.tsx:22`, `FileDrop.tsx:25`); a recent chat 7 (the sidebar's 5 and `src/pages/ChatPage.tsx:37-38`). In all,
   55 `useData` calls in `src/` reload this way.
@@ -212,6 +225,15 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   (`crates/gizai-core/src/team.rs:190-192`); every card list and every single card reads every card's labels, archived
   cards' too, and drops the others in Rust (`crates/gizai-core/src/tasks.rs:47-56`, `:129`). Each is a key lookup or a
   small scan, cheap alone **[I]**; they run on every write.
+- **The Inbox** is the task list filtered in the page: every card loaded, then filtered there
+  (`src/pages/TasksPage.tsx:106`, `:133`), and every chat (`:107`); the sidebar counts the Inbox the same way, from its
+  own copies of both lists (`src/components/Sidebar.tsx:43`, `:52-53`). So on the Inbox a write reloads every card and
+  every chat twice. The desktop notifications look at the Inbox on their own, off the main thread and at most once
+  every 3 s while notices about cards or chats come in (`src-tauri/src/lib.rs:281-286`,
+  `src-tauri/src/notifications.rs:33`, `:281-290`), but they too read whole lists: every open card, filtered in Rust
+  (`crates/gizai-core/src/tasks.rs:103-109`), and every chat twice, once for the Team Lead's questions and once for the
+  calls that wait for your approval (`crates/gizai-core/src/chat.rs:160-162`, `:307-309`), each time with the chat
+  list's lookups per card.
 - **Indexes that don't fit.** `tasks_board` starts with `org_id`, which no query names
   (`crates/gizai-core/migrations/0001_init.sql:267`; `tasks.rs:64-71`), and `runs_agent_period` is on `started_at` while
   the spend and the last check filter on `created_at` (`0001_init.sql:325`; `crates/gizai-core/src/runs.rs:335-339`,
@@ -302,6 +324,17 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   nothing else in the app listens for visibility; whether WebKitGTK sets it when Gizai is closed to the tray or sits on
   another Hyprland workspace is not known (P9 checks it). The run panel's 1 s clock (`RunPanel.tsx:91`) and the Usage page's
   60 s tick (`src/pages/UsagePage.tsx:234`) don't check at all.
+- **A window focus is a refresh.** The sidebar, the Editor page and the terminal page also load again on every window
+  `focus` event (`src/components/Sidebar.tsx:295`, `src/pages/EditorPage.tsx:196`, `:249`,
+  `src/pages/TerminalPage.tsx:102`). On the Editor page, with its folder also open in the sidebar, one focus asks for
+  the folder's git marks twice (`editor_git`: two git processes, `crates/gizai-agents/src/editor.rs:777-782`, `:817-824`,
+  `:896-902`), its standing against main twice (`editor_main`, F4's 15 to 30 git processes, or a fetch when one is due)
+  and every open level of the file tree again (`editor_list`: three git processes each, for what git ignores and what
+  changed, `:383-420`, `:786`): by my count 35 to 65 git processes, plus three per open folder **[I]**. Omarchy turns
+  on Hyprland's focus follows mouse (`follow_mouse = 1` in its `default/hypr/input.lua`, unless your own
+  `~/.config/hypr/input.lua` sets it otherwise) **[V]**, so the window gets focus whenever the pointer moves onto it:
+  moving the mouse between a terminal and Gizai's Editor starts that many git processes each time **[I]** (P9 counts
+  the focus events first).
 - **Animations that never stop** while agents work: the `gz-ping` pulse runs forever (`src/styles/components.css:133`) on
   every live marker: a working card (`Board.tsx:47`), the sidebar's live tags (`Sidebar.tsx:122`), a read-only Editor
   folder (`Sidebar.tsx:335`) and the run panel (`RunPanel.tsx:121`). Each keeps WebKit compositing every frame while it is
@@ -612,7 +645,7 @@ by side.
   - [ ] Outside a `perf:` mode nothing in the app changes (`invoke` and `listen` are Tauri's own, a unit test checks it);
     `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
   - [ ] The baseline table is committed.
-- **Builds on:** P1a.
+- **Builds on:** P1a. **Gain:** none by itself; its baseline is what every later card's gain is measured against.
 
 ### P2. Reload only what a write changed (frontend)
 - **Builds:** `useData` learns which tables a fetch reads (one map in one place, e.g. `src/lib/tables.ts`; a fetch it
@@ -808,6 +841,27 @@ by side.
   run's first event.
 - **Builds on:** P3, and P10 (it changes `command_path`, right above `start_inner` in `runs.rs`).
 
+### P12. Lists without what the board doesn't show (backend)
+- **Builds:** the window's `list_tasks` answers without each card's acceptance criteria, as it already does without the
+  description (`crates/gizai-core/src/tasks.rs:9`, `:24-25`, `:64`; `src-tauri/src/commands.rs:97`), and its
+  `get_team` without each agent's instructions (`crates/gizai-core/src/team.rs:112`, `:177`; `commands.rs:163-168`),
+  which the agent's page and form read through `get_agent` (`src/pages/AgentPage.tsx:54`,
+  `src/components/AgentForm.tsx:164`; `team.rs:156`). The agents' own tools keep the full rows: they read the same
+  functions (`src-tauri/src/tools/read.rs:41`, `:119`, `:139`; `src-tauri/src/tools/resolve.rs:80`, `:124`), so the lean
+  answer is a separate function or a flag, not a change to `tasks::list` or `team::get`.
+- **Contract (word for word):** in `list_tasks`' answer every `Task.acceptanceMd` is `null`, and `get_task` still fills
+  it; in `get_team`'s answer every `Member.instructionsMd` is `null`, and `get_agent` still fills it. `src/types.ts`
+  doesn't change: both are optional there already (`src/types.ts:39`, `:77`).
+- **Acceptance:**
+  - [ ] A test: `list_tasks` answers without acceptance criteria and `get_team` without instructions; `get_task`,
+    `get_agent` and the agents' `list_tasks` tool still give them.
+  - [ ] The card page, the agent page and the agent form still show them; `cargo test --workspace`, `npm test` and
+    `scripts/ui-test.sh` pass.
+- **Expected gain:** each write on the board brings back the team without its instructions (about 60 KB less with the
+  five default agents: 30 KB, asked twice) and every card without its criteria **[I]**.
+- **Measure:** P1 `board` and `runlog`: the counter's bytes per `rows-changed`, before and after.
+- **Builds on:** P1b, and P3 (both change `list_tasks` and `get_team` in `src-tauri/src/commands.rs`).
+
 ## 9. Open questions
 
 1. **A baseline on your machine now, or with P1?** Two things you can run in seconds give today's numbers before any card:
@@ -902,6 +956,10 @@ All read on 14 Oct 2026. P: primary (official docs, source code, release notes, 
 - P: `PRAGMA synchronous`: https://www.sqlite.org/pragma.html#pragma_synchronous
 - P: `PRAGMA optimize`: https://www.sqlite.org/pragma.html#pragma_optimize
 - P: `EXPLAIN QUERY PLAN`: https://www.sqlite.org/eqp.html
+
+**Hyprland and Omarchy**
+- P: Omarchy's default input settings (`follow_mouse = 1`): https://raw.githubusercontent.com/basecamp/omarchy/master/default/hypr/input.lua
+- P: Hyprland's input variables (`follow_mouse`: 1, the window under the pointer gets focus): https://wiki.hypr.land/Configuring/Basics/Variables/#input
 
 **npm**
 - P: `@tanstack/react-virtual` (3.14.19, MIT, 13 Oct 2026): https://registry.npmjs.org/@tanstack/react-virtual/latest

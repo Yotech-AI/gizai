@@ -278,7 +278,164 @@ Three ways to build "fewer tokens without losing quality" into GizAi. All three 
 
 ## 7. The design of the recommended option
 
-*(to come)*
+Everything below is local and free: it lives in the desktop app, which stays free (`docs/PAID-FEATURES.md:30-37`), and nothing new sits between the CLIs and Anthropic or OpenAI. [V for the plan; I for the design]
+
+### 7.1 The screens
+
+**Settings → Tokens**, a new tab after "Agents and runs" (`src/router.ts:15`; `src/pages/SettingsPage.tsx:30-33`), built like the Runs section: `FormSection` and `Field`, number inputs with `min`/`max` and the range in the hint (`SettingsPage.tsx:105-118`). Each field's hint says what it did in the last 30 days, linking to Usage → Savings.
+
+```
+Settings   [General] [Appearance] [Notifications] [Agents and runs] [Tokens] [MCP servers] [GitHub and Bitbucket]
+
+Tokens     Every saving is yours to switch. Usage → Savings shows what each one did.
+  Read less
+    Shorten test and build output     [x]        Last 30 days: 4.1 M characters kept out (about $38 at API prices)
+    Lines kept around a failure       [ 40 ]     10 to 200
+  Prompts
+    Comments per run                  [ 10 ]     0 to 20
+    Characters per comment            [ 2000 ]   500 to 8,000
+    Memory per run (characters)       [ 6000 ]   1,000 to 12,000
+    List the other notes              [x]
+  Effort
+    Raise effort after a QA fail      [x]        A builder's next run goes one card size up
+  Team Lead
+    Keep the Team Lead's prompt stable [x]       Fewer cache writes in chat
+  Messages
+    Short messages                    [ ]        One short sentence between tool calls; hand-overs stay complete
+  Subscription
+    Start no new runs above           [ 90 ] %   50 to 100 of a 5-hour or weekly window
+  Compare
+    Try a setting on half the cards   [ Shorten test and build output v ] [Start]
+                                      Even cards on, odd cards off, until you stop it. Results: Usage → Savings
+```
+
+**The card's Size**, a Properties row above Testing (`src/components/Properties.tsx:56-57`), with what it means for the card's agent:
+
+```
+Size      [ Small v ]   Backend Agent: Sonnet 5.5, effort medium
+Testing   [x] Test before Review
+```
+
+**The agent form**: under Model and Effort (`src/components/AgentForm.tsx:243-266`), the two size rows; in the Team Lead's Chat section, beside the board check minutes (`:274-282`), its model and effort.
+
+```
+Model         [ Opus 5.5 v ]      Effort [ high v ]       Normal cards
+Small cards   [ Sonnet 5.5 v ]    Effort [ medium v ]     empty: as Normal
+Large cards   [            v ]    Effort [ xhigh v ]
+Board check   [x] every [ 30 ] minutes    Model [ the Team Lead's v ]   Effort [ medium v ]
+```
+
+**Usage → Cards and Usage → Savings**, two new tabs (`src/pages/UsagePage.tsx:24-26`), with the same tables as Agents and Projects (`UsageTable`, `:103-149`). Total gets the split of input into new, cache written and cache read; Agents splits the Team Lead into Chat and Board checks.
+
+```
+Cards     Card    Title                      Size    Runs  Rounds  QA     In / out        Cost
+          GA-170  Hover on the sidebar ...   Normal  3     1       pass   4.1 M / 92 k    $14.20
+
+Savings   Setting                          Runs  Kept out of the context      About, at API prices
+          Shorten test and build output    41    5.2 M characters             $46
+          Comments and memory              120   0.9 M characters             $7
+          Experiment: Shorten output       on: 18 cards, $9.10 a card, QA pass 81%, 1.2 rounds
+          (since 3 Nov)                    off: 17 cards, $10.40 a card, QA pass 79%, 1.3 rounds
+```
+
+**A run's facts** (`src/components/RunHistory.tsx:75-93`): the Tokens row gets the split and the turns, and two rows say what the settings did.
+
+```
+Tokens      2.1 M in (1.9 M cache read, 160 k cache written, 12 k new), 48 k out · 87 turns
+Settings    Size Normal · Opus 5.5, effort high · comments 10 of 14 (2 cut) · memory 6,000 of 8,400 characters
+Shortened   4 commands: 212,000 → 9,800 characters   [Open the full logs]
+```
+
+While a run is live, a shortened command and a cut comment are also Gizai's notes in its stream (`gizai_note` lines, `crates/gizai-agents/src/cli.rs:348-350`, shown by `src/components/RunPanel.tsx:34`), like today's notes about folders and tools.
+
+### 7.2 The data
+
+- `runs` (migration `0018_tokens.sql`): fill the existing `cache_read_tokens` and `cache_write_tokens` (§2.7) from Claude Code's `usage` (`cache_read_input_tokens`, `cache_creation_input_tokens`) and Codex's `cached_input_tokens`; `input_tokens` stays the sum, so today's Usage sums don't change. New: `turns INTEGER`, `effort TEXT`, `size TEXT`, `token_json TEXT` (the settings the run had and what they did, §7.3), `experiment TEXT` (`"<setting>:on"` or `"<setting>:off"`).
+- `tasks`: `size TEXT NOT NULL DEFAULT 'normal' CHECK (size IN ('small','normal','large'))`.
+- `agent_configs` (where model and effort live: `crates/gizai-core/migrations/0004_effort.sql:2`; `crates/gizai-core/src/team.rs:112-116`): `small_model`, `small_effort`, `large_model`, `large_effort`, `check_model`, `check_effort`, all `TEXT`, null = as Normal (or as the Team Lead's).
+- The settings, in the key-value `settings` table (`crates/gizai-core/src/settings.rs:8-30`) under one key, `tokens`, read with defaults like the run limits (`src-tauri/src/runs.rs:216-232`) and checked like them (`:234-272`).
+- Full outputs of shortened commands: `<data>/runs/<run-id>/outputs/`, copied from the worktree's `.gizai-tmp/outputs/` before Gizai empties it at the end of the run (`src-tauri/src/runs.rs:1147`; `crates/gizai-agents/src/worktree.rs:256-259`), and removed with the run's log.
+
+### 7.3 The contract between backend and frontend
+
+Word for word, for the cards in §8 (TypeScript in `src/types.ts`, Rust structs with `#[serde(rename_all = "camelCase")]`):
+
+```ts
+/** Settings → Tokens. Ranges are checked by save_settings; out of range is an error, as for the run limits. */
+export type TokenSettings = {
+  shortenOutput: boolean;      // default true
+  failureLines: number;        // 10–200, default 40
+  commentsPerRun: number;      // 0–20, default 10
+  commentChars: number;        // 500–8000, default 2000
+  memoryChars: number;         // 1000–12000, default 6000
+  listNotes: boolean;          // default true
+  stableLeadPrompt: boolean;   // default true
+  raiseAfterQaFail: boolean;   // default true
+  shortMessages: boolean;      // default false
+  windowCap: number;           // 50–100 (percent), default 90; 100 = no cap
+  experiment: TokenExperiment | null; // default null
+};
+export type TokenSetting = "shortenOutput" | "shortMessages" | "comments" | "effortHigh";
+export type TokenExperiment = { setting: TokenSetting; startedAt: number };
+export type CardSize = "small" | "normal" | "large";
+
+/** Settings gets one more field: */          // export type Settings = { …; tokens: TokenSettings }
+/** TaskPatch gets: */                        // size: CardSize
+/** Task gets: */                             // size: CardSize
+/** AgentInput and Member get (null = as Normal; check*: null = the Team Lead's own): */
+//   smallModel?: string | null; smallEffort?: string | null; largeModel?: string | null; largeEffort?: string | null;
+//   checkModel?: string | null; checkEffort?: string | null;
+
+/** Run gets: */
+//   cacheReadTokens: number; cacheWriteTokens: number; turns?: number | null; effort?: string | null;
+//   size?: CardSize | null; tokenFacts?: TokenFacts | null; experiment?: string | null;
+export type TokenFacts = {
+  comments: { given: number; total: number; cut: number };
+  memory: { givenChars: number; totalChars: number };
+  shortened: { command: string; fullChars: number; shownChars: number; log: string }[];
+  unshortened: number;         // test or build commands the agent ran without gizai-quiet
+  sizeReason?: "card" | "raisedAfterQaFail" | null;
+  models: { model: string; inputTokens: number; outputTokens: number; costUsdMicros: number }[]; // Claude Code's modelUsage
+};
+
+/** Usage: UsageTotals gets cacheReadTokens and cacheWriteTokens; Usage gets checks (the board checks, apart from chat). */
+export type CardUsage = { taskId: string; identifier: string; title: string; size: CardSize; runs: number; rounds: number;
+  qa: "pass" | "fail" | null; totals: UsageTotals };
+export type SavingsLine = { setting: TokenSetting | "commentsMemory"; runs: number; keptOutChars: number; aboutUsdMicros: number };
+export type ExperimentGroup = { cards: number; costPerCardUsdMicros: number; qaPassRate: number | null; roundsPerCard: number;
+  failedRuns: number; questions: number };
+export type Savings = { lines: SavingsLine[]; experiment: { setting: TokenSetting; startedAt: number; on: ExperimentGroup;
+  off: ExperimentGroup } | null };
+```
+
+Commands (`src/api.ts`, next to `usageSummary` at `:158`): `usage_cards(period: UsagePeriod) -> CardUsage[]`, `usage_savings(period: UsagePeriod) -> Savings`, `run_outputs(runId: string) -> { name: string; path: string; chars: number }[]` and `open_run_output(runId: string, name: string)`. Settings, tasks and agents go through today's `save_settings`, `update_task` and the agent save.
+
+### 7.4 How a saving is counted
+
+- **Exact:** characters kept out of a prompt (comments, memory) and out of the context by `gizai-quiet` (the full output, or Claude Code's own cut of it when smaller (§3.6), minus what was printed).
+- **About, in tokens:** characters ÷ 4, labelled "about".
+- **About, at API prices:** what those tokens would have cost in this run: one cache write at the run's model's price, plus one cache read for every turn after the command (Gizai has the turn of each tool call from the stream). Labelled "at API prices, not a bill"; on a subscription, it is part of a window the run didn't use.
+- **Effort, model and size:** no per-run counterfactual. Usage → Savings shows cost per card per size and effort, and, during an experiment, the two groups side by side with QA's pass rate, rounds, failed runs and questions (§5.2).
+
+### 7.5 Security and privacy
+
+- No proxy and no change to the CLIs' login, base URL or requests; nothing new leaves the computer.
+- `gizai-quiet` never widens what an agent may run: its allowed rules are made from the agent's own (`Bash(gizai-quiet cargo:*)` only when `Bash(cargo:*)` is allowed), it starts the command directly (no shell, so no injection through its arguments), and it writes only in the run's temp folder. The full logs are kept like the run logs, readable only by the user, and may hold whatever the tests print, as run logs do today.
+- The Team Lead's stable prompt carries the same information as today; nothing is hidden from it.
+- An experiment is visible on every run it touches (its group in the run's facts) and stops with one click.
+
+### 7.6 How it is tested
+
+- `gizai-quiet`: recorded outputs of each tool it knows, passing and failing (cargo test and build, Vitest, `tsc`, ESLint, `npm run build`, PHPUnit and Pest, Composer), checked line by line: every failure and error line kept, counts right, exit code passed through, an unknown output shown as its first and last lines and never as nothing.
+- The prompt: comments and memory at the edges of their ranges, the cut mark, QA's issues once; "How this run works" with and without Short messages and `gizai-quiet` (`crates/gizai-agents/src/prompt.rs`'s tests).
+- Size: the model and effort a run gets for each size, the raise after `qa_fail`, the Team Lead's line; the board check's own model and effort.
+- The Team Lead's prompt: the same system prompt across a note's change, and the bracket line naming the changed notes.
+- Usage: the split from Claude Code's result line (`crates/gizai-agents/tests/fixtures/run-refused.jsonl:21` has every field) and from a Codex `turn.completed`; usage per card and per trigger; savings from recorded runs.
+- Flow tests with the fake Claude Code scripts (CLAUDE.md:44), UI tests for the new tab, rows and Usage tabs.
+
+### 7.7 Left out
+
+No proxy, no automatic router, no rewriting of a model's answers, no Caveman or RTK install, no change to Claude Code's cache or compaction, and no cloud analytics.
 
 ## 8. Proposed cards
 

@@ -689,7 +689,7 @@ Builds: Usage → Savings (§7.1), Start and Stop under Settings → Tokens → 
 ### T11. Cap a run's context (backend, To do; after M1's numbers)
 
 Builds: §4.3. Setting: **Compact a run's context at**, off (the CLI's own), 100,000–1,000,000 tokens.
-- [ ] With a value set, a Claude Code task run gets `--autocompact <n>` (Claude Code 2.1.221 or later) and a Codex run `-c model_auto_compact_token_limit=<n>`; chat and board checks keep the CLI's own.
+- [ ] With a value set, a Claude Code task run gets `--autocompact <n>` (Claude Code 2.1.221 or later) and a Codex run `-c model_auto_compact_token_limit=<n>`; chat and board checks keep the CLI's own. A `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the user's environment "Takes precedence over … the `--autocompact` flag": the run's facts say so when it is set.
 - [ ] Each compaction is a Gizai note in the run's stream and counts in `TokenFacts.compactions`.
 - [ ] Empty: nothing is set, as today. Tests for both CLIs' arguments and the range.
 - [ ] Its row joins Settings → Tokens (the Context row of §7.1), one `Field` like the others, in the same pull request.

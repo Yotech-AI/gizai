@@ -115,7 +115,9 @@ numbers; each finding's code is verified **[V]**.
   `listChatThreads` (`src/components/Sidebar.tsx:42-52`) and the task page's `getTeam`, `listProjects`, `listUsers` and
   `listTasks` (`src/pages/TasksPage.tsx:103-106`). So one write anywhere (a comment, a setting, a Memory note an agent
   saves, a run's status) costs nine full reloads: every card twice, the team twice, the projects twice, the people, every
-  Memory note and every chat. On the Memory graph it is thirteen, among them every note with its text
+  Memory note and every chat. The notice names its table (`src-tauri/src/commands.rs:14-15`, `src/api.ts:320-322`), but
+  `useData` drops it; each hook listens on its own, and nothing joins notices that come together or reuses a reload
+  already on its way (`src/lib/useData.ts:10-19`), so a burst of ten writes costs ninety reloads. On the Memory graph it is thirteen, among them every note with its text
   (`src/pages/MemoryPage.tsx:50`, `memoryNotes(true)`), every card, open or closed, only to know their ids (`:51`), and the
   graph's own cards, projects, clients, people and team (`src/components/memory/MemoryGraph.tsx:21-25`).
 - **Where they run.** Each of those is a plain `fn` command (`src-tauri/src/commands.rs:82` `list_projects`, `:97`
@@ -161,6 +163,11 @@ numbers; each finding's code is verified **[V]**.
   per event. On the backend, each `run_events` call clones the live run's whole event list, or reads and parses the whole
   log file, on the main thread (`src-tauri/src/runs.rs:394-410`). A finished run's log, opened from the run history, has no
   500 cap at all: every event of the log is drawn (`src/components/RunHistory.tsx:47`, `:97`).
+- **Which long lists draw everything.** The chat draws every message of a thread, and a finished run's log every event
+  (above); a live run's log its last 500. The others are already bounded: the board draws at most 50 cards a column
+  (section 3), Memory's tree draws the notes of open folders only (`src/pages/MemoryPage.tsx:224`, `:352-360`) and its
+  search at most 50 hits, searched once typing pauses for 150 ms (`:396`, `:404-406`, `:412`). So the card's "the Memory list renders
+  every item" holds only for a folder you open with hundreds of notes in it **[V]**.
 - **What the terminal shows is possible.** Terminals already stream the right way: raw bytes over a `tauri::ipc::Channel`,
   at most one message every 8 ms (`crates/gizai-agents/src/terminal.rs:38`, `:1022-1026`;
   `src-tauri/src/terminal.rs:73-74`).
@@ -240,6 +247,15 @@ numbers; each finding's code is verified **[V]**.
   **[I]**.
 - **What still costs on the GPU path** **[I]**: anything that changes every frame makes WebKit composite every frame, also
   at rest (F6's animations). Damage tracking in 2.54 limits the area redrawn, not the wake-ups.
+- **macOS and Windows differ less than Linux does.** All three run the page in its own process and draw on the GPU
+  (WKWebView's WebContent and GPU processes; WebView2's renderer and GPU processes; links in section 10) **[V]**. Calls
+  travel the same way on all three: Tauri 2.12.1 sends each through its `ipc` custom protocol with `fetch` and falls back
+  to `postMessage` only if that fails (`tauri-2.12.1/scripts/ipc-protocol.js:20-37`, `:61-66`) **[V]**. Where they
+  differ: a hidden window. Tauri's `backgroundThrottling` setting, which sets whether a hidden web view throttles or
+  suspends its timers, works on macOS 14 and later only, and is "Unsupported" on Linux and Windows (`tauri-utils-2.10.1/src/config.rs:2236-2250`)
+  **[V]**; so on Linux only Gizai's own visibility checks quiet a hidden window (F6, P9). WebView2 can be asked to use
+  less memory while hidden (`MemoryUsageTargetLevel`, section 5); WebKitGTK has the cache model and the memory pressure
+  settings instead. The costs in F1 to F4 are the page's own work, so they are the same on all three **[I]**.
 
 ## 5. Compared with what Tauri, WebKitGTK, React, Vite and SQLite recommend
 
@@ -590,8 +606,9 @@ frontend and two backend cards can be open at once.
 - **Builds on:** P1b.
 
 ### P7. Draw only what is in sight in long lists (frontend)
-- **Builds:** the chat thread, a run's log and the Memory note list drawn with `@tanstack/react-virtual` (as
-  `src/components/DataTable.tsx` already is), with measured heights, keeping the chat at the bottom while you are there.
+- **Builds:** the chat thread and a run's log, live and finished (`src/components/RunHistory.tsx:97`), drawn with
+  `@tanstack/react-virtual` (as `src/components/DataTable.tsx` already is), with measured heights, keeping the chat at
+  the bottom while you are there. Memory's tree and search are bounded already (F2), so they stay as they are.
 - **Acceptance:**
   - [ ] The 1,000-message chat has at most about 60 messages in the page at once.
   - [ ] Opening it takes about as long as a 50-message chat.
@@ -674,7 +691,13 @@ All read on 14 Oct 2026. P: primary (official docs, source code, release notes, 
 - P: The command macro's execution context: https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-macros/src/command/wrapper.rs
 - P: Linux graphics (NVIDIA, DMA-BUF, compositing switches): https://v2.tauri.app/develop/debug/linux-graphics/
 - P: Debugging (the inspector in release builds): https://v2.tauri.app/develop/debug/
-- P: Window config (background throttling per system): https://docs.rs/tauri-utils/latest/tauri_utils/config/struct.WindowConfig.html
+- P: Window config (background throttling per system): https://docs.rs/tauri-utils/latest/tauri_utils/config/struct.WindowConfig.html,
+  and the same text in tauri-utils 2.10.1's `src/config.rs:2236-2250`: https://docs.rs/crate/tauri-utils/2.10.1/source/src/config.rs
+- P: Tauri 2.12.1's crate source, read in the copy Cargo keeps in the main checkout (`.cargo/registry`), the same files as
+  on docs.rs: the plugin builder's `js_init_script` (https://docs.rs/crate/tauri/2.12.1/source/src/plugin.rs), the page's
+  `invoke` (https://docs.rs/crate/tauri/2.12.1/source/scripts/core.js), `ipc` (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc.js)
+  and how a call travels (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc-protocol.js); wry 0.57.0's WebKitGTK
+  code sets no sandbox, cache model or memory pressure (`rg` in `wry-0.57.0/src/webkitgtk/`)
 - P: wry 0.35.0 (`set_memory_usage_level` on Windows): https://v2.tauri.app/release/wry/v0.35.0/
 - S: tauri#3988 "Bad performance on linux": https://github.com/tauri-apps/tauri/issues/3988
 - S: tauri-explorer#1057 (scroll timings on WebKitGTK 2.54.1 with NVIDIA): https://github.com/xnmp/tauri-explorer/issues/1057

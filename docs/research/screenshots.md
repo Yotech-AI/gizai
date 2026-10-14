@@ -8,7 +8,13 @@ Limits: this run may not start node, cargo, php, a server or a browser, so nothi
 
 ## 1. Summary
 
-(Written last; see the end of this document's first version for the state of the work.)
+- **Yes, Gizai can.** Its agents already have a hidden browser (Chrome DevTools MCP 1.10.1, the newest) whose `take_screenshot` saves to a file instead of the model's context. Missing: a page to shoot, a way onto the card, and a tab.
+- **Claude Desktop:** its Browser pane starts your dev server from `.claude/launch.json` (port in `PORT`) and checks its work with screenshots. Those go only into the conversation, never to disk, and the tools exist only in the desktop app, so Gizai's runs can't use them. Worth copying: one launch command per project.
+- **Who:** the builder, on every card that changes a screen (so cards with testing off have them too); QA adds only its failures and a few criteria.
+- **How:** the agent saves PNGs in `.gizai-tmp/screenshots/` with a `captions.json`. At every run's end Gizai checks them (images by content, no links, limits) and keeps them with the run's id (`files.run_id`, made for this), before it empties the folder.
+- **The page:** Gizai runs a per-project **Preview command** on a port it picks, with demo data in a throwaway database (never your `.env` one), and ends it with the run. Agents can't serve it well: Astro detaches under Claude Code, and the Laravel projects forbid agents to serve. Gizai's own screens: a browser mode with a fake backend.
+- **Cost:** about 150 tokens a picture with `filePath`, against 1,716 a picture in the context on every later turn (about $0.22 a run for 8). Also 20–30 tool calls and 1–4 MB a set; keep 3 sets, delete 30 days after Done.
+- **Recommended:** option A (§4). **Cards (§6):** SD, SB1, SB2 and SG at once, then SF1, SB3 and SF2, then a preview script per project (MN, QC, YO, OO). **Open questions (§7):** 12, each with a recommendation.
 
 ---
 
@@ -43,7 +49,7 @@ What the agents may run (the default lists, `crates/gizai-core/src/seed.rs:245-2
 
 One worktree per card, `<data>/worktrees/<project key>/<card>`, shared by all of the card's runs (the builder's and QA's), and a finished card's worktree can be taken over so its build stays warm (`open_worktree_now`, `src-tauri/src/runs.rs:715-739`). So `vendor/`, `node_modules/` and `target/` are usually there already when a run wants to serve a page. [V]
 
-### 2.5 Settings, the project form, the board and the pull request today
+### 2.4 Settings, the project form, the board and the pull request today
 
 - **Settings** is a plain key/value store (`crates/gizai-core/src/settings.rs:1-31`); each feature has its default in code and checks its range when saving, refusing a value outside it. The model to copy is Settings → Agents and runs → Runs: minutes per run 90 (5–480), tool calls per run 200 (20–2000), runs at once 3 (1–20) (`src-tauri/src/runs.rs:22-29`, checks `:234-252`, the fields `src/pages/SettingsPage.tsx:106-112`). The agent form's "Cards at once" is 1 (1–10) (`crates/gizai-core/src/team.rs:332-333`). Housekeeping keeps run logs 30 days, a constant, not a setting (`crates/gizai-core/src/housekeeping.rs:11`), and runs at start and once a day; **nothing ever deletes a file's blob** (`files.rs:162`). [V]
 - **The project form's "New worktrees"** section (`src/components/ProjectForm.tsx:104-117`): paths to copy from the main checkout (the placeholder suggests `.env`, `node_modules/`, `vendor/`, `target/`), Install missing dependencies, and a **Setup command** run once in each new worktree with `bash -c` (Git Bash on Windows) before the agent starts, at most 20 minutes, after which **everything it left running is killed** (`crates/gizai-agents/src/prepare.rs:14`, `:143-159`, `:309-310`). So a setup command can't leave a server running for the run, and there is **no preview or dev-server command anywhere**. The Testing switch is the card's, not the project's (§2.1). [V]
@@ -54,19 +60,19 @@ One worktree per card, `<data>/worktrees/<project key>/<card>`, shared by all of
 - **The pull request:** Gizai writes its title and body (the description and the acceptance criteria, ending "From Gizai card X.", `src-tauri/src/pulls.rs:284-302`) and sends them with `gh pr create --body-file -` (`crates/gizai-agents/src/github.rs:208-217`) or Bitbucket's API. **Gizai uploads nothing to GitHub but git pushes, the pull request and its merge.** [V]
 - **A run's leftovers:** when the CLI exits, Gizai sends its whole process group SIGTERM and SIGKILL after 3 s: "Background processes the agent started (a dev server, a watcher) would outlive the run" (`crates/gizai-agents/src/process.rs:264-276`); on Windows the run's Job Object ends everything in it. Only a process that leaves the group on purpose (`setsid`, a daemon) survives on Linux and macOS. So a server an agent starts for screenshots stops with its run. [V]
 
-### 2.4 What the feature touches
+### 2.5 What the feature touches
 
 | Area | Today | For screenshots |
 |---|---|---|
 | A run's end (`src-tauri/src/runs.rs:1139-1158`) | process group ends → MCP config removed → `empty_temp` → `finish_run` | a **collect** step just before `empty_temp`: images from `.gizai-tmp/screenshots/` onto the card (§3.4) |
-| A run's prompt (`crates/gizai-agents/src/prompt.rs`) | "How this run works": commands, temp folder, waiting, push, Run this for me | one more line when the agent takes screenshots: where to save them, the sizes, the captions, and the preview address (§5.4) |
+| A run's prompt (`crates/gizai-agents/src/prompt.rs`) | "How this run works": commands, temp folder, waiting, push, Run this for me | a Screenshots section when the agent takes screenshots: where to save them, the sizes, the captions, and the preview's address (§5.4) |
 | A run's start (`src-tauri/src/runs.rs`, after the worktree is prepared) | worktree, prepare command, temp folder, MCP config | optionally Gizai starts the project's **preview command** on a free port, and ends it with the run (§3.5) |
 | Files (`crates/gizai-core/src/files.rs`, `files` table) | `run_id` never set; no caption | evidence rows with `run_id`, a caption, width and height (migration `0018`) |
 | Card page (`src/pages/TaskPage.tsx:221-227`) | Card \| Changes | Card \| Changes \| **Screenshots** with a count (§3.7) |
 | Attachments (`TaskPage.tsx:254-257`, `FileDrop.tsx`) | every file of the card | only the files people added (no `run_id`) |
-| Board card, Inbox | (§2.5) | a sign on a card in Review with screenshots (§3.7) |
-| Settings, project form, agent form | (§3.8) | the switches and values of §3.8 |
-| Housekeeping | (§3.6) | old screenshots go (§3.6) |
+| Board card, Inbox | no count of files (§2.4) | a sign on a card in Review with screenshots (§3.7) |
+| Settings, project form, agent form, the card's Properties | no preview command; the browser switch (§2.4) | the switches and values of §3.8 |
+| Housekeeping (`crates/gizai-core/src/housekeeping.rs`) | run logs after 30 days; never a blob (§2.4) | old screenshots go, then unused blobs (§3.6) |
 
 ---
 
@@ -143,8 +149,8 @@ In all three ways the agent makes the pictures the same way: Chrome DevTools MCP
 
 **Recommended: Gizai starts it, from a per-project Preview command, on a port it picked, and ends it with the run.** [I] Why not leave it to the agent:
 
-1. **A server an agent starts can outlive the run.** Gizai ends the run's process group (§2.5), but a server that leaves the group survives. Astro does exactly that under an agent: Astro 7.3.8 (GW's) notices Claude Code by its `CLAUDECODE` variable (`node_modules/am-i-vibing/dist/detector-1yx2Hoe0.mjs:26-29`) and then starts `astro dev` and `astro preview` as a **detached** background process (`node_modules/astro/dist/cli/server.js:116-130`, `cli/preview/index.js:37-45`; not on Windows, where the Job Object would catch it: `cli/agent.js:10-14`), so it keeps its port after the run, unless `--ignore-lock` is given. Gizai starts the preview without `CLAUDECODE`, in a tree of its own that it ends itself. [V]
-2. **The projects' own rules forbid it:** MN's, QC's and YO's agent files say "Never run commands to serve the site. It is always available." (Laravel Boost's Herd section: `spoorwegmuseum/CLAUDE.md:92`, `quiz-cms/CLAUDE.md:91`, `stapsgewijz/AGENTS.md:159`). That `.test` site is your main checkout (§2.5). Gizai serving the card's branch needs no agent to break its project's rule. [V]
+1. **A server an agent starts can outlive the run.** Gizai ends the run's process group (§2.4), but a server that leaves the group survives. Astro does exactly that under an agent: Astro 7.3.8 (GW's) notices Claude Code by its `CLAUDECODE` variable (`node_modules/am-i-vibing/dist/detector-1yx2Hoe0.mjs:26-29`) and then starts `astro dev` and `astro preview` as a **detached** background process (`node_modules/astro/dist/cli/server.js:116-130`, `cli/preview/index.js:37-45`; not on Windows, where the Job Object would catch it: `cli/agent.js:10-14`), so it keeps its port after the run, unless `--ignore-lock` is given. Gizai starts the preview without `CLAUDECODE`, in a tree of its own that it ends itself. [V]
+2. **The projects' own rules forbid it:** MN's, QC's and YO's agent files say "Never run commands to serve the site. It is always available." (Laravel Boost's Herd section: `spoorwegmuseum/CLAUDE.md:92`, `quiz-cms/CLAUDE.md:91`, `stapsgewijz/AGENTS.md:159`). That `.test` site is your main checkout (§2.4). Gizai serving the card's branch needs no agent to break its project's rule. [V]
 3. **A run can't do the plumbing:** it can't type a variable, find a free port or end a process (§2.3); Gizai can. And the recipe lives once, in the project, not in every agent's Memory. [V for the run's rules; I for the rest]
 
 **How it works** (card SB2):
@@ -416,6 +422,223 @@ QA's version replaces the third line with: "Add only what the builder's screensh
 ### 5.8 What is left out
 
 Gizai re-shooting every page at every size (option B); **Add to pull request** with `gh pr comment --attach`; a Preview button for you on the card; QA's failure pictures handed to the builder's next run; videos (as Devin and Cursor make); a pixel diff (Compare is side by side); screenshots by Codex and Gemini agents (no browser for them: `mcp_not_on`); Bitbucket's pull requests.
+
+**Free,** like everything in the desktop app (`docs/PAID-FEATURES.md:30-37`).
+
+---
+
+## 6. Proposed cards
+
+In order. Each is one pull request that fits in one agent run. **At the same time:** SD, SB1, SB2 and SG (SB2 merges after SB1: it adds the address line to SB1's prompt section). **Then:** SF1 (after SD and SB1), SB3 (after SB1) and SF2 (after SD, SB1 and SB2) at the same time. **Then** each project's preview script, on its own board (after SB2), and you set its Preview command.
+
+### SD. Design: the Screenshots tab, its larger view, the board's sign and the settings
+
+- **Column:** Design. **Role:** design. **Builds on:** nothing.
+- **Builds:** the screens of §3.7, §3.8 and §5.1, as mockups in `design/screenshots/`.
+- **Acceptance criteria:**
+  - [ ] The tab: empty, one set, three sets (the older folded), a set with files left out, a run whose preview didn't start.
+  - [ ] The larger view: fitted and at 100%, ‹ ›, Compare side by side and with a slider, Unchanged and New.
+  - [ ] The board card in Review with its sign; the Inbox's line.
+  - [ ] The project form's Preview section, the agent form's switch, the Runs rows and the card's switch.
+  - [ ] Dark and light, with the design system's tokens and components; `images` added to the icon map in `design/README.md`.
+
+### SB1. Backend: a run's screenshots onto its card
+
+- **Column:** To do. **Role:** backend. **Builds on:** nothing.
+- **Builds:** §3.4 B (the collect step and its checks), migration `0018` (§5.2), `files::insert_evidence` and the Attachments filter, contract **CS**, the prompt's Screenshots section (§5.4) and the switches and limits of §3.8 that aren't the preview's or the keeping's: the project's Screenshots, Sizes, Both themes and Whole page; the agent's switch; the card's switch; Screenshots per run; Largest screenshot.
+- **Acceptance criteria:**
+  - [ ] At a run's end (any end but Gizai quitting), the images in its `.gizai-tmp/screenshots/` are on the card with the run's id, their caption, width and height, before the folder is emptied as today.
+  - [ ] The checks of §3.4: that folder only, no links, images by their content, the limits; what is left out is said in the run's output and in `leftOut`.
+  - [ ] Attachments no longer list a run's files.
+  - [ ] `list_screenshots` and `screenshot_bytes` as in contract CS; `screenshot_bytes` refuses any other file.
+  - [ ] The settings above, with the defaults and ranges of §3.8, refused outside them (contract CP).
+  - [ ] The Screenshots section is in the prompt only when the agent's switch, the card's (or project's) switch and the browser are on; QA gets its own version.
+  - [ ] The tests of §5.7 (Rust, the fake run); `cargo test --workspace`, `npm test` and `npm run build` pass.
+
+### SB2. Backend: the project's preview, started and ended by Gizai
+
+- **Column:** To do. **Role:** backend. **Builds on:** SB1 (its prompt section); can be built at the same time and merged after it.
+- **Builds:** §3.5's How it works: the project's Preview command and Start time (`0019_preview.sql`), Settings → Runs' Preview ports, the ports per run, the start, the wait and the end, the address in the prompt.
+- **Acceptance criteria:**
+  - [ ] For a run whose agent takes screenshots, with a preview command: a free block of ten ports from the range, no other live run's; the command runs with `bash -c` (Git Bash on Windows) in the worktree, in its own tree, with `GIZAI_PREVIEW_PORT`, `GIZAI_PREVIEW_URL`, `GIZAI_PREVIEW_DIR` and `PORT`, its output in `.gizai-tmp/preview/preview.log`.
+  - [ ] The agent starts once the port answers, at most the start time later; its prompt names the address, or why there is none. The card is never held for a preview.
+  - [ ] When the run ends, the preview's whole tree is ended before the screenshots are collected (SIGTERM, SIGKILL after 3 s; Windows' Job Object).
+  - [ ] The agent's own commands get `GIZAI_PREVIEW_URL` and `GIZAI_PREVIEW_DIR` too.
+  - [ ] Start time 10–600 s (120) and the ports (47100–47999; at least ten for each run at once) are refused outside their ranges.
+  - [ ] Tests of §5.7: the order, three runs at once, a preview that never answers, the server gone after the run.
+
+### SG. Frontend: Gizai's screens in a plain browser, with a fake backend
+
+- **Column:** To do. **Role:** frontend. **Builds on:** nothing.
+- **Builds:** §3.5's GA way: `browser.html` and `src/browser/` (Tauri's `mockIPC` with `shouldMockEvents`, `mockWindows`), fixtures written from the demo data by a Rust example (`crates/gizai-core/examples/fixtures.rs`), and `vite --mode browser`. Then the GA project's Preview command is `npx vite --mode browser --host 127.0.0.1 --port "$GIZAI_PREVIEW_PORT" --strictPort`.
+- **Acceptance criteria:**
+  - [ ] It serves the board, a card with its Changes, the team, Settings and Memory with the demo data in Chrome, on Linux, macOS and Windows.
+  - [ ] A command without a fixture answers empty and says which in the console; events work.
+  - [ ] The app's own build contains none of it (a test checks `dist/`).
+  - [ ] `t` switches to light; `npm test` checks the fixtures still match `src/types.ts`'s shapes.
+
+### SF1. Frontend: the Screenshots tab
+
+- **Column:** To do. **Role:** frontend. **Builds on:** SD, SB1 (contract CS).
+- **Builds:** §3.7 as SD designed it.
+- **Acceptance criteria:**
+  - [ ] Card | Changes | Screenshots with the newest set's count, at `#/task/<id>/screenshots` and `…/screenshots/<run>`.
+  - [ ] The sets newest first, with the agent, its answer, when, the count and what was left out; older sets folded.
+  - [ ] The larger view with ‹ ›, 100%, Open and Esc; Compare with the previous run by file name, Unchanged by hash.
+  - [ ] A Review card on the board shows the sign and count; the Inbox's line opens the tab.
+  - [ ] Pictures come through `screenshot_bytes` as `blob:` URLs, released when they leave the screen.
+  - [ ] Dark and light as designed; vitest, a contract test and a `scripts/ui-test.sh` scenario.
+
+### SB3. Backend: old screenshots go
+
+- **Column:** To do. **Role:** backend. **Builds on:** SB1.
+- **Builds:** §3.6's When they go: Keep and Delete after (contract CP), and the blob sweep.
+- **Acceptance criteria:**
+  - [ ] Housekeeping (at start and daily) removes the sets past the newest N per card and a finished card's screenshots after the days set (0 keeps them).
+  - [ ] Then it deletes the blobs no row uses (any kind of file), never one a row still uses.
+  - [ ] Keep 3 (1–20) and Delete after 30 days (0–365), refused outside them; tests.
+
+### SF2. Frontend: the screenshot and preview settings
+
+- **Column:** To do. **Role:** frontend. **Builds on:** SD, SB1, SB2 (contract CP).
+- **Builds:** the settings of §3.8 in the project form, the agent form, Settings → Runs and the card's Properties; the docs.
+- **Acceptance criteria:**
+  - [ ] The project form's Preview section: Screenshots, Preview command, Start time, Sizes (one to four), Both themes, Whole page, each with its hint.
+  - [ ] The agent form, under the browser: "Take screenshots of what it built", only with the browser on, its default by role.
+  - [ ] Settings → Runs: per run, largest, keep, delete after, preview ports; the card's "Screenshots before Review".
+  - [ ] `docs/settings.md`, a new `docs/features/screenshots.md`, and screenshots in the free list of `docs/PAID-FEATURES.md`.
+
+### On the other projects' boards (after SB2)
+
+| Card | Role | Builds |
+|---|---|---|
+| MN: `composer preview` for Gizai | backend | §3.5's script with `DatabaseSeeder`, `CollectionDemoSeeder` and `TouchscreenDemoSeeder`; its CLAUDE.md says Gizai's preview is the exception to "never serve" |
+| QC: `composer preview` for Gizai | backend | the script, with the demo seeders, both builds and a throwaway Twill superadmin |
+| YO: demo data, then `composer preview` | backend | a demo seeder for rosters and visits, then the script with 2FA off for the preview |
+| OO: `npm run preview:gizai` | backend | the API serving the dashboard's build on one port, a throwaway owner, `DB_PATH` in the preview folder |
+| GW | none | its Preview command needs no change in the repository: `npx astro dev --host 127.0.0.1 --port "$GIZAI_PREVIEW_PORT" --ignore-lock` |
+
+### Contract CS: SB1 → SF1 (screenshots)
+
+`src/api.ts`:
+
+```ts
+/** The card's screenshot sets, newest run first: each run that saved pictures, left some out, or whose preview didn't
+ *  start. They arrive when a run ends, before "runs-changed": reload on onRunsChanged. */
+export const listScreenshots = (taskId: string) => invoke<T.ScreenshotSet[]>("list_screenshots", { taskId });
+/** One screenshot's bytes (PNG, JPEG or WebP), for a blob: URL. Any id that isn't a run's screenshot is refused. */
+export const screenshotBytes = (fileId: string) => invoke<ArrayBuffer>("screenshot_bytes", { fileId });
+```
+
+`src/types.ts`:
+
+```ts
+export type ScreenshotSet = {
+  runId: string;
+  agentId: string;
+  agentName: string;
+  role: string | null;           // "frontend", "design", "qa", …
+  outcome: string | null;        // "ready_for_testing", "qa_pass", "qa_fail", "needs_decision"; null without a result line
+  status: "succeeded" | "failed" | "cancelled" | "timed_out";
+  endedAt: number;               // ms since 1970
+  shots: Screenshot[];           // by file name
+  leftOut: string[];             // "13-board.png: over the limit of 12 a run", "notes.txt: not an image"
+  preview: string | null;        // why there was no preview, when there wasn't: "It didn't answer on port 47130 in 120 s"
+};
+export type Screenshot = {
+  fileId: string;
+  name: string;                  // "01-board-with-cards-desktop-dark.png"
+  caption: string;               // from captions.json, else made from the name
+  width: number;
+  height: number;
+  sizeBytes: number;
+  sha256: string;                // the same picture in two runs has the same hash: Compare says "Unchanged"
+};
+```
+
+In Rust: `list_screenshots(task_id: String) -> Vec<ScreenshotSet>` and `screenshot_bytes(file_id: String) -> tauri::ipc::Response` (the raw bytes, which arrive as an `ArrayBuffer`). Errors are plain sentences, like the rest of the app.
+
+### Contract CP: SB1, SB2, SB3 → SF2 (settings)
+
+```ts
+// T.Settings, new fields (Settings → Agents and runs → Runs); save_settings refuses values outside the ranges.
+screenshotsPerRun: number;          // 12, 1–30                        (SB1)
+screenshotMaxMb: number;            // 10, 1–50                        (SB1)
+screenshotsKeepSets: number;        // 3, 1–20                         (SB3)
+screenshotsKeepDays: number;        // 30, 0–365; 0 keeps them         (SB3)
+previewPortFrom: number;            // 47100                           (SB2)
+previewPortTo: number;              // 47999; 1024–65535, at least 10 × maxConcurrentRuns ports (SB2)
+
+// T.Project and T.ProjectInput
+screenshots: ProjectScreenshots;    // (SB1)
+previewCommand: string | null;      // null or "": no preview          (SB2)
+previewStartSecs: number;           // 120, 10–600                     (SB2)
+export type ProjectScreenshots = {
+  on: boolean;                                                // true
+  sizes: { name: string; width: number; height: number }[];   // 1–4 sizes; width 320–3840, height 320–2400;
+                                                              // default Desktop 1280×800 and Mobile 390×844
+  bothThemes: boolean;                                        // false
+  fullPage: boolean;                                          // false
+};
+
+// T.CliTools (agent form → Tools)
+screenshots: boolean;               // only with the browser on; a new agent's default: true for frontend, design and qa (SB1)
+
+// T.Task, and updateTask's patch
+screenshots: boolean | null;        // null: the project's switch       (SB1)
+```
+
+---
+
+## 7. Open questions for Jefsev
+
+1. **Who takes them.** Recommended: the builder on every card that changes a screen, and QA only its additions (failures; at most four criteria the builder's set doesn't show). Or QA only (then cards with testing off get none), or both full sets (twice the cost and disk for the same pictures)?
+2. **How they reach the card.** Recommended: the fixed folder `.gizai-tmp/screenshots/` with `captions.json`, collected at every run's end. Or a `screenshots` list in the result line, which a stray quote can spoil?
+3. **Who serves the page.** Recommended: Gizai, from the project's Preview command, on a port it picks, ended with the run; the Laravel projects' "Never run commands to serve the site" stays as it is for agents. Or should agents serve it themselves (each project's rules changed, servers that may detach)?
+4. **Demo data only.** Recommended: previews always use a throwaway database with the seeders, never the `.env` one, so no client data is ever in a screenshot. Is there a project where the seeders can't show what matters, where you'd rather have a copy of real data (and accept it in screenshots)?
+5. **Sizes and themes.** Recommended: websites at Desktop 1280 × 800 and Mobile 390 × 844; Gizai at 1440 × 900 and 900 × 600 in both themes; each changed screen at each size, the main screen in the other theme. Different sizes, or every screen in both themes?
+6. **Limits.** Recommended: at most 12 a run, 10 MB each. More or fewer?
+7. **Keeping.** Recommended: the newest 3 sets per card, and all of a card's screenshots 30 days after Done. Longer?
+8. **Gizai's own screens.** Recommended: a browser mode with a fake backend (SG), drawn by Chrome, on all three systems; `scripts/shot-cage.sh` stays for the README, the tour and QA's real-app check on Linux. Is Chrome's drawing close enough for your review?
+9. **The pull request.** Recommended: screenshots never go to GitHub by themselves; later an **Add to pull request** button per set (gh 2.99 `--attach`, as a PR comment; private repositories show them only to people with access). Wanted, and for which projects?
+10. **Signs.** Recommended: the count on the tab, a sign on the board only in Review, and a line in the Inbox. Also on the other columns?
+11. **YO's data.** Its seeders make users and shift types only. Recommended: a YO card for demo rosters and visits before its screenshots are switched on.
+12. **`.claude/launch.json`.** OO (and its worktrees) have one from your Claude Desktop sessions. Recommended: the project form offers its configurations as the Preview command when one is there (a small addition to SF2 and SB2). Wanted?
+
+---
+
+## 8. Sources
+
+**The repository**, read on 2026-10-14 in this card's worktree at `24535e3` (`origin/main`, Gizai 0.11.0): every `path:line` above. Commands: `git log`, `git rev-parse`, `rg`, `cargo tree -i image@0.25.10`, `npm view chrome-devtools-mcp@1.10.1 license version dist.unpackedSize`. `node_modules/@tauri-apps/api` 2.12.1 (`mocks.d.ts`) in the worktree.
+
+**The other projects**, read-only on 2026-10-14 in their main checkouts: `~/Herd/gizai-website` (GW), `~/Herd/spoorwegmuseum` (MN), `~/Herd/quiz-cms` (QC), `~/Herd/stapsgewijz` (YO) and `~/Herd/otus-os` (OO), found by their Gizai worktrees' names in `.git/worktrees/`. Their `.env` files were not opened. A helper agent swept them; the facts this document leans on were checked again by hand: the Herd rule (`CLAUDE.md:92`, `CLAUDE.md:91`, `AGENTS.md:159`), the `.env.example` databases, `ServeCommand.php:183-186` and `:451`, Astro's `cli/server.js:116-130`, `cli/agent.js:10-14`, `cli/preview/index.js:24-45` and `am-i-vibing`'s detector, YO's `EnsureTwoFactorIsConfirmed.php:33-36`, MN's `AdminUserSeeder.php:19`, OO's `.claude/launch.json`, `vite.config.ts:12-17`, `src/api.ts:66` and `main.ts:113`, and QC's `design/kennisquiz/README.md:145-197`.
+
+**Outside sources**, all read on 2026-10-14. "By hand" = re-read word for word in this run; the rest a helper agent read, quoting word for word.
+
+| What | Link | Read |
+|---|---|---|
+| Claude Code desktop docs: Browser pane, `.claude/launch.json`, auto-verify, Dev servers | https://code.claude.com/docs/en/desktop.md | by hand |
+| Claude Code on desktop, app preview (20 Feb 2026) | https://claude.com/blog/preview-review-and-merge-with-claude-code | helper |
+| What's new, week 28 of 2026: the built-in browser | https://code.claude.com/docs/en/whats-new/2026-w28.md | helper |
+| Claude Code desktop on Linux (beta) | https://code.claude.com/docs/en/desktop-linux.md | helper |
+| Claude in Chrome (`--chrome`; off with an API key or setup-token) | https://code.claude.com/docs/en/chrome.md | helper |
+| Built-in browser in Claude Cowork (same capabilities as Claude in Chrome) | https://support.claude.com/en/articles/16607400-use-the-built-in-browser-in-claude-cowork | helper |
+| Issue #94503: the Browser pane's screenshot has no `filePath` | https://github.com/anthropics/claude-code/issues/94503 | by hand |
+| Issue #96717: `zoom` "region crop not yet supported in the Browser pane" (Windows, Desktop 2.7032.0), cropping since 8 Oct | https://github.com/anthropics/claude-code/issues/96717 | by hand |
+| Issues #92046, #62653, #30122, #98288: the pane's tool names, SSH sessions | https://github.com/anthropics/claude-code/issues/92046, https://github.com/anthropics/claude-code/issues/62653, https://github.com/anthropics/claude-code/issues/30122, https://github.com/anthropics/claude-code/issues/98288 | helper |
+| Vision: visual tokens, resolution tiers, examples, Opus 5.5's price, 20-image rule, no training | https://platform.claude.com/docs/en/build-with-claude/vision.md | by hand |
+| Pricing: Opus 5.5 $4 / MTok, Sonnet 5.5 $2 / MTok input | https://platform.claude.com/docs/en/about-claude/pricing.md | helper (Opus 5.5's price also by hand, on the vision page) |
+| chrome-devtools-mcp 1.10.1, `take_screenshot` with `filePath` | https://raw.githubusercontent.com/ChromeDevTools/chrome-devtools-mcp/chrome-devtools-mcp-v1.10.1/src/tools/screenshot.ts | by hand |
+| chrome-devtools-mcp 1.10.1, tool reference and flags (`resize_page`, `emulate`, `--viewport`) | https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.10.1/docs/tool-reference.md, https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/chrome-devtools-mcp-v1.10.1/docs/configuration.md | helper |
+| GitHub: attaching files (who can see them, 10 MB images) | https://docs.github.com/api/article/body?pathname=/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files | by hand |
+| GitHub CLI: attaching files (`--attach`, push access) | https://docs.github.com/api/article/body?pathname=/en/github-cli/github-cli/attaching-files-with-github-cli | by hand |
+| GitHub changelog: gh v2.99.0, media in issues and pull requests (1 Sep 2026) | https://github.blog/changelog/2026-09-01-github-cli-media-in-issues-pull-requests-and-comments/ | by hand |
+| GitHub changelog: Copilot coding agent's own web browser (2 Jul 2025) | https://github.blog/changelog/2025-07-02-copilot-coding-agent-now-has-its-own-web-browser/ | by hand |
+| GitHub docs: Copilot coding agent and MCP (Playwright, localhost only) | https://docs.github.com/en/copilot/concepts/agents/coding-agent/mcp-and-coding-agent | helper |
+| Devin: testing and recordings | https://docs.devin.ai/work-with-devin/testing-and-recordings | helper |
+| Cursor changelog (24 Feb 2026) and cloud agent capabilities | https://cursor.com/changelog/02-24-26, https://cursor.com/docs/cloud-agent/capabilities | helper |
+
+Not checked, so marked [I] where used: how long each preview takes to start and a set to shoot (nothing was run), PNG sizes per project, whether Laravel's `.env` loader leaves an already-set variable alone in these projects, whether a run's rules allow `SHOT_SIZE=… scripts/shot-cage.sh`, Claude Code's cache prices (from GA-171's notes, not re-read), and Anthropic's own list of the Browser pane's tools (none is published; the names come from users' issues).
 
 
 

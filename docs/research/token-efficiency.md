@@ -38,12 +38,12 @@ GizAi's prompt goes to the CLI on stdin as the first user message (`crates/gizai
 |---|---|---|---|---|
 | 1 | Role instructions | the agent's own text (agent form), else the role template (`runs.rs:921`; `crates/gizai-core/src/seed.rs:190-235`) | none | templates: Backend 4,532, Frontend 4,640, QA 6,338, DevOps 12,538 (`wc -c crates/gizai-core/roles/*.md`); this team's R&D Agent about 5,500 [I, counted roughly from this run's prompt] |
 | 2 | Task: id, title, project goal, description, acceptance criteria | the card and its project (`prompt.rs:63-70`) | none | this card: about 6,500 description + 1,000 criteria [I, counted roughly] |
-| 3 | QA's issues from the last failed QA run | builders only (`runs.rs:918`; `prompt.rs:71-77`) | none | usually under 2,000 |
-| 4 | Recent comments, oldest first | the last 10 (`runs.rs:912-913`), each cut to 2,000 characters (`prompt.rs:37`, `:81`) | 10 × 2,000 | up to 20,000 |
+| 3 | QA's issues from the last failed QA run | builders only (`runs.rs:918`; `prompt.rs:71-77`) | none | usually under 2,000; the same list is also in QA's comment twice (below) |
+| 4 | Recent comments, oldest first | the last 10 by anyone, agents' summaries included (`runs.rs:912-913`), each cut to 2,000 characters with no mark where it was cut (`prompt.rs:37`, `:81`) | 10 × 2,000 | up to 20,000 |
 | 5 | Your branch | the fetched main branch (`prompt.rs:85-92`) | | about 100–250 |
 | 6 | Limits of this run | Settings → Runs (`runs.rs:914`; `prompt.rs:109-113`) | | about 330 |
 | 7 | Memory | the agent's notes, then the card's shared notes, then a list of the rest (`crates/gizai-core/src/memory.rs:1857-1956`) | 6,000 in full (own notes 3,000 when there are shared notes), list 4,000 (`memory.rs:30-35`) | up to about 10,600 with its 560-character intro |
-| 8 | How this run works | per CLI and permission mode (`prompt.rs:297-353`) | | about 2,000–2,900 on Claude Code with the default list (29 commands, `seed.rs:245-250`) |
+| 8 | How this run works | per CLI and permission mode (`prompt.rs:297-353`) | | on Claude Code about 2,900 with the 29 default commands (`seed.rs:245-250`), 3,100 with a builder's list, 3,600 with DevOps' 59 commands; on Codex about 1,800 |
 | 9 | The untrusted-content line | when the run has MCP servers or web tools (`runs.rs:1013`, `:1029`; `crates/gizai-agents/src/mcp_run.rs:10-12`) | | 250 |
 
 So a new run starts with roughly 15,000–30,000 characters of GizAi's own prompt, about 4,000–8,000 tokens, and up to about 15,000 tokens with a long card, ten long comments and full memory [I, from the caps]. Before it, Claude Code sends its own system prompt and its tools' definitions with every request; GizAi doesn't write those, but it chooses which tools a run gets (`--tools`, `--allowedTools`, `--mcp-config`, `--strict-mcp-config`; `claude.rs:68-125`). [V]

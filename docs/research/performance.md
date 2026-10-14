@@ -71,10 +71,10 @@ that need a running Gizai are in the second table, with how the harness (section
 |---|---|---|
 | The last bundle built in the main checkout (7 Oct, 14:05: before the Memory graph, the terminals and the Editor's diff view) | **one JS file of 1,214,807 bytes** and one CSS file of 52,815 bytes; the fonts load on use (`font-display: swap`, `src/styles/fonts.css`) | `ls -la /home/jefsev/Herd/gizai/dist/assets`; `grep -o` shows CodeMirror (`cm-scroller`) and micromark in it, and no xterm.js (`xterm-screen`) and no d3-force (`forceManyBody`) yet |
 | The release binary of that build | `gizai` 14,938,488 bytes, `gizai-mcp` 459,712 bytes | `ls -la /home/jefsev/Herd/gizai/target/release` (7 Oct, 14:07) |
-| Today's libraries, as built files | xterm.js 344,970 bytes (minified) and its addons 202,924 (WebGL 126,558, search 39,031, unicode11 31,220, web links 3,148, fit 1,967): **547 KB that load only when a terminal opens**. React DOM's client 625,168 (not minified). CodeMirror and Lezer, 31 packages: 1,857,335 (not minified), of which `@codemirror/view` 493,290. d3-force with quadtree, dispatch and timer 17,427 (minified) | `wc -c node_modules/<package>/<file>` in this worktree (`npm ls`: xterm 6.0.0, React 19.3.0, CodeMirror view 6.43.13, d3-force 3.0.0) |
+| Today's libraries, as built files | xterm.js 344,970 bytes (minified) and its addons 201,924 (WebGL 126,558, search 39,031, unicode11 31,220, web links 3,148, fit 1,967): **547 KB that load only when a terminal opens**. React DOM's client 625,168 (not minified). CodeMirror and Lezer, 31 packages: 1,857,335 (not minified), of which `@codemirror/view` 493,290. d3-force with quadtree, dispatch and timer 17,427 (minified) | `wc -c node_modules/<package>/<file>` in this worktree (`npm ls`: xterm 6.0.0, React 19.3.0, CodeMirror view 6.43.13, d3-force 3.0.0) |
 | The self-test inside the app's bundle | `src/selftest.ts`: **301,604 bytes** of TypeScript, 19% of the app's own 1,576,897 bytes (tests left out), imported by `src/App.tsx:27` and so loaded at every start | `wc -c` over `src/` |
 | Commands and threads | 187 commands: **112 plain `fn`, which Tauri runs on the main thread**, 75 `async fn` on the async runtime, none `#[tauri::command(async)]` | `rg '#\[tauri::command' -A1 src-tauri/src` |
-| Data hooks that reload after any write, mounted with the board | **9** (the sidebar 5, the task page 4), 2 of which load every card | `src/lib/useData.ts:15-20`, `src/components/Sidebar.tsx:42-52`, `src/pages/TasksPage.tsx:103-107` |
+| Data hooks that reload after any write, mounted with the board | **10** (the sidebar 5, the task page 5); **9** of them call the backend, 2 of which load every card (the task page's fifth asks for the chats only on the Inbox) | `src/lib/useData.ts:15-20`, `src/components/Sidebar.tsx:42-52`, `src/pages/TasksPage.tsx:103-107` |
 | Cards drawn on the board | at most 50 per column (Show more for the rest); Backlog, Done and Cancelled start as narrow rails without cards | `src/components/Board.tsx:3`, `:21`, `:67-73`, `:91-93` |
 | A live run's log | the last 500 events, each text event drawn as Markdown | `src/lib/runs.ts:4-8`, `src/components/RunPanel.tsx:22-30` |
 | This PC's GPU, as the headless cage saw it | **AMD Radeon RX 7800 XT** (Mesa's radeonsi, navi32), EGL from Mesa, kernel 7.2.5-3-omarchy: no NVIDIA in the render node the tests use | wlroots' start lines in the last headless runs, `/home/jefsev/Herd/gizai/.devdata/smoke.log:9-14` and `shot.log:9-14` (7 Oct) |
@@ -111,9 +111,10 @@ numbers; each finding's code is verified **[V]**.
 
 - **What happens.** `useData` reloads its fetch on **every** `rows-changed` event, whatever the table
   (`src/lib/useData.ts:15-20`; `src/api.ts:320-322`: "Fires after any write; screens refetch what they show"). On the
-  board, nine of these hooks are mounted: the sidebar's `listProjects`, `listTasks`, `getTeam`, `memoryNotes` and
+  board, nine of these hooks call the backend: the sidebar's `listProjects`, `listTasks`, `getTeam`, `memoryNotes` and
   `listChatThreads` (`src/components/Sidebar.tsx:42-52`) and the task page's `getTeam`, `listProjects`, `listUsers` and
-  `listTasks` (`src/pages/TasksPage.tsx:103-106`). So one write anywhere (a comment, a setting, a Memory note an agent
+  `listTasks` (`src/pages/TasksPage.tsx:103-106`); a tenth, the Inbox's chats (`:107`), calls nothing on the board but
+  still redraws the page. So one write anywhere (a comment, a setting, a Memory note an agent
   saves, a run's status) costs nine full reloads: every card twice, the team twice, the projects twice, the people, every
   Memory note and every chat. The notice names its table (`src-tauri/src/commands.rs:14-15`, `src/api.ts:320-322`), but
   `useData` drops it; each hook listens on its own, and nothing joins notices that come together or reuses a reload
@@ -133,13 +134,15 @@ numbers; each finding's code is verified **[V]**.
   (`Board.tsx:119`).
 - **Other pages.** A card's page reloads 14 lists per write (the sidebar's 5, the page's 6 at
   `src/pages/TaskPage.tsx:104-109`, the run panel's, the pull request panel's and the files', `RunPanel.tsx:78`,
-  `PullPanel.tsx:22`, `FileDrop.tsx:25`); the chat page 8. In all, 55 `useData` calls in `src/` reload this way.
+  `PullPanel.tsx:22`, `FileDrop.tsx:25`); a recent chat 7 (the sidebar's 5 and `src/pages/ChatPage.tsx:37-38`). In all,
+  55 `useData` calls in `src/` reload this way.
 - **Who writes.** Every saved chat message and every tool result in a Team Lead answer sends a notice
   (`src-tauri/src/chat.rs:348`, `:1274`), and so do an agent's own writes through Gizai's tools during a run (comments,
   Memory notes, limits). So each step of a Team Lead answer, in any chat, costs the board its 9 reloads.
 - **At start** the default route makes 16 backend calls and 18 listener registrations (each one an IPC call too): `app_info`,
   `terminal_list`, the sidebar's 5 lists, `live_runs` twice, `chat_live`, `editor_apps`, `update_status` and the task page's
-  4 lists.
+  4 lists. That is with no Editor folder in the sidebar; with some, `editor_folders` adds one call and each folder two
+  more, `editor_git` and `editor_main` (`src/components/Sidebar.tsx:283-293`).
 - **When it bites.** With an agent run going and while the Team Lead works, writes come every few seconds; each one costs
   the reload storm above. This is the most likely cause of "Gizai gets sluggish while agents work" **[I]**.
 
@@ -154,7 +157,7 @@ numbers; each finding's code is verified **[V]**.
   text that streams in. Then a layout effect scrolls to the bottom on each piece (`ChatThread.tsx:153-156`), which makes
   WebKit lay out the whole thread at once. The cost grows with the chat's length: in a chat of 1,000 messages every
   streamed word re-parses up to 1,000 Markdown bodies **[I]**. Typing in the chat's text box does the same per keystroke:
-  its text is state of the whole thread (`ChatThread.tsx:134`, passed down at `:47`). And each tool card parses its JSON
+  its text is state of the whole thread (`ChatThread.tsx:134`, passed down to the composer at `:280`). And each tool card parses its JSON
   result again on every render (`src/lib/chat.ts:30`, `:51`).
 - **A live run's log.** `Stream` renders up to 500 events, text events through `MarkdownView`
   (`src/components/RunPanel.tsx:22-30`); it isn't memoised, and `RunPanel` re-renders every second while the run is live
@@ -181,8 +184,9 @@ numbers; each finding's code is verified **[V]**.
 - What is already split: xterm.js and its addons load when a terminal opens (`src/lib/terminals.ts:224-233`), and the
   Editor's language packs when a file of that language opens (`src/lib/codeLanguages.ts:48-112`). So the card's guess that
   xterm.js loads at start is wrong.
-- CodeMirror does load at start, through the shell itself: the drawers are always mounted (`src/App.tsx:175`) and imported
-  statically (`src/lib/drawers.tsx:3-8`), and five of them import the Markdown editor (`NewTaskDrawer.tsx:11`,
+- CodeMirror does load at start, through the shell itself: the drawer host is always mounted (`src/App.tsx:175`), and
+  although each drawer mounts only when asked for (`src/lib/drawers.tsx:29-34`), their code is imported statically
+  (`:3-8`), and five of them import the Markdown editor (`NewTaskDrawer.tsx:11`,
   `ProjectForm.tsx:10`, `ClientForm.tsx:9`, `AgentForm.tsx:20`, `DocDrawer.tsx:7`), which imports
   `@codemirror/lang-markdown` (`src/components/MarkdownEditor.tsx:29`). That package imports `@codemirror/lang-html`, which
   imports the CSS and JavaScript languages (`node_modules/@codemirror/lang-markdown/dist/index.js:6`,
@@ -190,7 +194,10 @@ numbers; each finding's code is verified **[V]**.
   `codeLanguages.ts` asks for them with `import()`.
 - The self-test, 301,604 bytes of source that every start parses and never uses outside tests, brings more along:
   `@codemirror/view` and `@codemirror/merge` (`src/selftest.ts:2-3`), the Memory graph's canvas and with it d3-force
-  (`:15`), and the terminal view (`:16`).
+  (`:15`), and the terminal view (`:16`). The pages import these too (the diff view through `TaskPage.tsx:32` and
+  `ChangesView.tsx:12`, d3-force through `MemoryPage.tsx:22`, `MemoryGraph.tsx:15` and `GraphCanvas.tsx:8`, the terminal
+  view through `TerminalPage.tsx:21`), so they leave the start files only when both the self-test and those pages load
+  on demand (P6 does both).
 
 ### F4. Typing redraws the page it is on
 
@@ -228,7 +235,9 @@ numbers; each finding's code is verified **[V]**.
   (`src-tauri/src/runs.rs:785-801`, the shell at `:790`): at a run's preparation (`runs.rs:756`), a terminal's start
   (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
   coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
-  paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
+  paid again each time. Every start pays it twice: in the launcher (`install.sh:320`), and when the sidebar asks for the
+  editor apps (`editor_apps`, off the main thread, `src-tauri/src/editor.rs:117-119`, `:365-366`; called through
+  `src/components/editor/Menus.tsx:61`, `Sidebar.tsx:281`). Small, but free to cache **[I]**.
 
 ### FW. The webview: WebKitGTK already draws on the GPU; keep it that way
 

@@ -278,7 +278,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **The setting.** Agent form → Chat, beside the Board check minutes (`src/components/AgentForm.tsx:274-279`): **Board check model** (empty = the Team Lead's) and **Board check effort**, proposed default `medium`. Range: the levels the form offers for that model.
 
-**What the user sees.** Usage → Agents splits the Team Lead's line into Chat and Board checks (the `runs.trigger` column already tells them apart: `migrations/0008_board_check.sql:30`), with cost per check. The check's run facts show its model and effort.
+**What the user sees.** Usage → Agents splits the Team Lead's line into Chat and Board checks (the `runs.trigger` column already tells them apart: `crates/gizai-core/migrations/0008_board_check.sql:29`), with cost per check. The check's run facts show its model and effort.
 
 **Saving and risk.** The checks' share of the Team Lead's $499 can't be read today (M2 shows it); a check at `medium` instead of `max` should cost 30–60% less [I]. Risk: a check that misses or misreads something new. It is cheap to see: the check's findings are recorded (`runs.findings_json`), and a missed item comes back at the next check.
 
@@ -574,14 +574,14 @@ No proxy, no automatic router, no rewriting of a model's answers, no Caveman or 
 
 In order. Each is one pull request that fits in one agent run; the contract they share is §7.3, word for word. A card starting in Design gets its screens from the Design Agent first; every card goes to Testing (QA) as usual.
 
-**Default for freelancers and small agencies**, the column the card asks for: every setting below is on by default except Short messages, the context cap and an experiment, and every value starts where today's behaviour is, except the effort of board checks and new cards' sizes (Normal changes nothing) and the window cap (§9, questions 2 and 3).
+**Default for freelancers and small agencies**, as the "Its setting" column gives it: every switch below is on by default except Short messages, the context cap and an experiment, and every value starts where today's behaviour is, with three exceptions: the window cap at 90%, and on a new install the Small and Large rows and the board check's `medium` (§9, questions 2 and 3). A card's size starts at Normal, which changes nothing. All of these fit one subscription: none needs a second plan, an account elsewhere or a paid service.
 
 | # | Card | Role | Starts in | Its setting: default, range | Builds on |
 |---|---|---|---|---|---|
 | M1 | Record where each run's tokens go, and the token settings | backend | To do | none (records only, always on); adds `Settings.tokens` with every default and range of §7.3 | — |
 | M2 | Usage per card, the input split, and Chat apart from Board checks | frontend | To do | none | M1 |
 | T1 | Keep the Team Lead's prompt stable | backend | To do | Keep the Team Lead's prompt stable: on | M1 |
-| T2 | Card size, with model and effort per size, and the board check's own | backend | To do | card Size: Normal; Small and Large rows: empty (as Normal); Raise effort after a QA fail: on; board check effort: `medium` on a new install | M1 |
+| T2 | Card size, with model and effort per size, and the board check's own | backend | To do | card Size: Normal; Small and Large rows: empty (as Normal), on a new install Small on Sonnet 5.5 and Large at `xhigh`; Raise effort after a QA fail: on; board check effort: `medium` on a new install | M1 |
 | T3 | The card's Size and the agent form's size and board check rows | frontend | Design | as T2 | T2 |
 | T4 | `gizai-quiet`: shorten test and build output, keep the full log | backend | To do | (used by T5) | — |
 | T5 | Runs use `gizai-quiet`, and keep the full logs | backend | To do | Shorten test and build output: on; Lines kept around a failure: 40, 10–200 | M1, T4 |

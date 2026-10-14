@@ -88,10 +88,14 @@ numbers; each finding's code is verified **[V]**.
   `listChatThreads` (`src/components/Sidebar.tsx:42-52`) and the task page's `getTeam`, `listProjects`, `listUsers` and
   `listTasks` (`src/pages/TasksPage.tsx:103-106`). So one write anywhere (a comment, a setting, a Memory note an agent
   saves, a run's status) costs about eight full reloads: every card twice, the team twice, the projects twice, every Memory
-  note and every chat.
+  note and every chat. On the Memory graph it is about fourteen, among them every note with its text
+  (`src/pages/MemoryPage.tsx:50`, `memoryNotes(true)`), every card, open or closed, only to know their ids (`:51`), and the
+  graph's own cards, projects, clients, people and team (`src/components/memory/MemoryGraph.tsx:21-25`).
 - **Where they run.** Each of those is a plain `fn` command (`src-tauri/src/commands.rs:82` `list_projects`, `:97`
   `list_tasks`, `:163` `get_team`, `:227` `memory_notes`, `:576` `list_chat_threads`), so Tauri runs it on the main thread,
-  the one that also runs the window; and each takes the database's only connection (`crates/gizai-core/src/db.rs:13`,
+  the one that also runs the window ("Commands without the async keyword are executed on the main thread unless defined
+  with #[tauri::command(async)]", and "Asynchronous commands are preferred in Tauri to perform heavy work in a manner that
+  doesn't result in UI freezes or slowdowns": Tauri's Calling Rust page **[V]**); and each takes the database's only connection (`crates/gizai-core/src/db.rs:13`,
   `read` at `:204-207` takes the same `Mutex` as `write` at `:209-222`). A reload waits for any write in progress (an agent's
   run writing from another thread), and while it waits the window waits too.
 - **Then the page.** The answers are parsed and the page renders again: the task list sorts, filters and groups every card
@@ -158,6 +162,26 @@ numbers; each finding's code is verified **[V]**.
   (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
   coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
   paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
+
+## 6. Options
+
+Three ways to go about "a faster app". None needs a new library: `@tanstack/react-virtual` (MIT, 3.14.13 here, 3.14.19
+on npm, 63,728 bytes unpacked; `npm view`, 14 Oct 2026) is already a dependency (`src/components/DataTable.tsx`), and the
+rest is Tauri, React and SQLite as they are.
+
+| | A. Measure, then fix by cost (recommended) | B. Rework the data flow in one go | C. Quick fixes, no harness |
+|---|---|---|---|
+| **What** | The harness first (P1), then one card per finding, biggest first, each proving its gain with the harness | A client-side store fed by row-level change notices (the changed ids with each notice, patched into the store), every command async with a pool of read connections, lists paged by the backend | Memoise the hot components, lazy pages, async commands and a table filter in `useData`, straight away |
+| **Size** | About ten cards of one pull request each; P1 is the biggest | Three to five large cards that touch every page at once | Two or three cards |
+| **Gain** | Each finding's gain, shown in numbers before and after | The largest in the long run, and what a future sync needs (`changes` is meant as its log, `crates/gizai-core/src/db.rs:1-2`) | Most of A's gains for F1 to F3 |
+| **Risk** | Low: small steps, each checked; the order can change when the numbers come | High: one change across the app, hard to test in steps, in the way of every card in flight | Unproven: no numbers to show the gain or catch a step back, and the roadmap's "faster" can't be shown |
+| **Libraries** | none new | possibly TanStack Query (MIT) for the store, or Gizai's own | none new |
+
+**Recommendation: A.** The biggest costs (F1, F2) have small, local fixes; the harness turns "feels faster" into numbers
+the roadmap can show, and it guards the gains afterwards. B's direction (say what changed, reload only that) is kept in the
+small: P2 filters by table first, and row ids can follow if P1's numbers ask for it.
+
+## 7. The benchmark harness
 
 One entry point, `scripts/perf.sh`, built by the first proposed card (P1) and used by every later one: each card runs it on
 `main` and on its branch, on the same machine with nothing else running, and puts both tables in its pull request. It reuses

@@ -143,8 +143,8 @@ numbers; each finding's code is verified **[V]**.
   about 30 KB (`crates/gizai-core/roles/*.md`, 28,048 bytes, and the Team Lead's in `crates/gizai-core/src/seed.rs:198-215`,
   stored per agent at `:160`). A card is about 1 KB of JSON before its acceptance criteria (a sample card with a label,
   a branch and a pull request, written out with its 33 fields: 958 bytes). So on a board of 500 cards a write brings
-  back well over a megabyte (the cards twice, the team twice), made into JSON on the main thread and parsed again in
-  the page **[I]**. P1's counter gives the real bytes.
+  back a megabyte or more (the cards twice, about 0.5 MB each before their criteria, and the team twice), made into
+  JSON on the main thread and parsed again in the page **[I]**. P1's counter gives the real bytes.
 - **Other pages.** The Inbox reloads 10 lists per write (the board's 9, and every chat again,
   `src/pages/TasksPage.tsx:107`); a card's page 14 (the sidebar's 5, the page's 6 at
   `src/pages/TaskPage.tsx:104-109`, the run panel's, the pull request panel's and the files', `RunPanel.tsx:78`,
@@ -272,9 +272,10 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
 - **Git while nothing happens.** The Editor's standing against main (`editor_main`) runs a full `git status` and, by my
   count of `behind::stand` and the checks it calls, some 15 to 30 git processes per folder
   (`src-tauri/src/editor.rs:208-215`, `crates/gizai-agents/src/behind.rs:184-219`) **[I]**: every 10 s on the Editor page
-  and every 30 s for each open folder from the sidebar, on every page (F7). `editor_git` adds a full
-  `git status --untracked-files=all` each time (`crates/gizai-agents/src/editor.rs:896-902`, `:820`). These run off the
-  main thread: they cost CPU and battery, not frames.
+  and every 30 s for each open folder from the sidebar, on every page, and again on each window focus (F7). `editor_git`
+  adds a full `git status --untracked-files=all` each time (`crates/gizai-agents/src/editor.rs:896-902`, `:820`), which
+  on a big repository looks at every file in it (the harness's `editor` scenario, 20,000 files, times it). These run off
+  the main thread: they cost CPU and battery, not frames.
 - **The database lock is never held across a process, a file or the network:** every `db.read` and `db.write` closure
   is SQL only, and files and git run before or after it (for example `crates/gizai-core/src/files.rs:59-68`: the file
   is stored between a read and a write) **[V]**. So this work doesn't add to F3's waits.

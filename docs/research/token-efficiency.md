@@ -106,7 +106,7 @@ The shares add up to Claude Code's own `total_cost_usd` of $0.09439 to the cent 
 | DevOps Agents ($35 + $21) | $56 | 2.0% |
 | **All** | **$2,771** | 100% |
 
-About $198 a day at API prices [V, arithmetic]. Builders and QA are 72% of it, so savings in task runs matter most; the Team Lead is next. How these dollars split into cache reads, cache writes and output can't be read from GizAi today (above); if this team's runs look like the measured one and like typical long agent runs, cache reads are the largest part, then output, then cache writes [I]. Card M1 (§7) records the split, so the first week after it gives the real one.
+About $198 a day at API prices [V, arithmetic]. Builders and QA are 72% of it, so savings in task runs matter most; the Team Lead is next. How these dollars split into cache reads, cache writes and output can't be read from GizAi today (above); if this team's runs look like the measured one and like typical long agent runs, cache reads are the largest part, then output, then cache writes [I]. Card M1 (§8) records the split, so the first week after it gives the real one.
 
 ---
 
@@ -256,7 +256,7 @@ What it can't measure yet, and card M1 adds (§8): the split of input into fresh
 - **A guard on quality, decided up front.** A setting becomes a default only when, over at least 30 cards per group, the cost per card falls by the expected amount and: the QA pass rate falls by no more than 10 points, rounds per card rise by no more than 0.3, and failed runs and questions don't rise. Otherwise it stays available but off. [I: the thresholds are a proposal for the user to set; 30 cards per group shows a 25–30% cost difference, not a 5% one]
 - **Small, by design.** With about five cards a day, a two-week experiment gives some 35 cards per group. That is enough to see the big levers (effort, model), not the small ones (comments, memory): for those, the saving is measured exactly from the characters cut, and only the quality guard needs the cards. [I]
 
-*(The experiment for each idea follows in §4, with the idea.)*
+The experiment for each idea is under the idea in §4; card T9 builds the parity split and Usage → Savings shows it (§7.1).
 
 ## 6. Options
 
@@ -565,7 +565,17 @@ Builds: Usage → Savings (§7.1), Start and Stop under Settings → Tokens → 
 
 ## 9. Open questions
 
-*(to come)*
+1. **This team's effort, now.** Most agents run at `max` or `xhigh`. Run the first experiment on it (even cards at `high`, odd cards as now, two weeks, after M1's baseline week)? *Recommendation: yes; it is the biggest lever and needs no new feature but M1 and T9, and until T9 the parity can be set by hand on two agents.*
+2. **Board checks' effort on existing installs.** T2 proposes `medium` for a new install. For an existing Team Lead, set `medium` too, or leave it empty (the Team Lead's own) with a hint in the form? *Recommendation: leave it empty and show the hint; Jefsev's rule is that the user decides, and an upgrade shouldn't change how a check thinks.*
+3. **The window cap's default.** 90% for a new install. For existing installs too, or 100% (today) until the user sets it? *Recommendation: 90% for everyone, said in the release notes: it only makes cards wait, the card says why, and it protects a freelancer's own use of the same subscription.*
+4. **Short messages off by default?** *Recommendation: off; the saving is small and the narration is how you follow a run. Revisit after its experiment.*
+5. **The quality guard (§5.2):** a setting becomes a default only if QA's pass rate falls by no more than 10 points, rounds per card rise by no more than 0.3, failed runs and questions don't rise, over at least 30 cards per group. Are these your thresholds? *Recommendation: accept them for the first experiment and tighten them once M1 shows the normal spread.*
+6. **Should Size also set Testing** (Small → Testing off)? *Recommendation: no; keep the two apart. The Team Lead sets both when it writes a card, and you see both on the card.*
+7. **Who sets the size?** *Recommendation: the Team Lead sets it when it writes or splits a card, and you change it like any property; the card's history shows who changed it.*
+8. **Borrow filter rules from RTK or Caveman, or write them?** Both are Apache-2.0 (§3.5). *Recommendation: write `gizai-quiet`'s parsers for the formats GizAi's users run, and borrow a rule only where it is clearly better, with the file's attribution and a NOTICE line.*
+9. **A proxy in the request path (Caveman's runtime or similar):** confirm it stays out. *Recommendation: yes, out (§3.4).*
+10. **Experiments by card parity** run half the cards with a setting off for two weeks. Acceptable on client work? *Recommendation: yes, one setting at a time, with Stop always one click away; or limit an experiment to one project.*
+11. **Subagents' model.** After a month of M1 data, add a "Subagents" model to the agent form if agents use subagents a lot? *Recommendation: decide on M1's numbers (Claude Code's `modelUsage` per run).*
 
 ## 10. Sources
 

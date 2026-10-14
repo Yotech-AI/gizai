@@ -41,3 +41,73 @@ Gizai is a local desktop app for one developer and a team of coding agents: clie
 
 What the agents may run (the default lists, `crates/gizai-core/src/seed.rs:245-290`): every agent starts from `DEFAULT_TOOLS`, which already has `npm`, `npx`, `composer`, `php`, `./vendor/bin/*`, `cargo` and `sleep` (`:245-250`); builders add `node`, `echo`, `printf` and git's push, pull and fetch (`BUILDER_TOOLS`, `:254-257`); QA adds `gh pr create`, `list`, `view` and `edit` (`:260`). A run's prompt names the list and its rules: no `$(…)`, no variables, no loops, nothing outside the worktree and the agent's folders, and a command left running in the background is stopped when the agent ends its message; Gizai then ends the run's whole process group (`crates/gizai-agents/src/prompt.rs:279-281`, `:297-353`, `:372-395`). [V]
 
+One worktree per card, `<data>/worktrees/<project key>/<card>`, shared by all of the card's runs (the builder's and QA's), and a finished card's worktree can be taken over so its build stays warm (`open_worktree_now`, `src-tauri/src/runs.rs:715-739`). So `vendor/`, `node_modules/` and `target/` are usually there already when a run wants to serve a page. [V]
+
+### 2.4 What the feature touches
+
+| Area | Today | For screenshots |
+|---|---|---|
+| A run's end (`src-tauri/src/runs.rs:1139-1158`) | process group ends → MCP config removed → `empty_temp` → `finish_run` | a **collect** step just before `empty_temp`: images from `.gizai-tmp/screenshots/` onto the card (§3.4) |
+| A run's prompt (`crates/gizai-agents/src/prompt.rs`) | "How this run works": commands, temp folder, waiting, push, Run this for me | one more line when the agent takes screenshots: where to save them, the sizes, the captions, and the preview address (§5.4) |
+| A run's start (`src-tauri/src/runs.rs`, after the worktree is prepared) | worktree, prepare command, temp folder, MCP config | optionally Gizai starts the project's **preview command** on a free port, and ends it with the run (§3.5) |
+| Files (`crates/gizai-core/src/files.rs`, `files` table) | `run_id` never set; no caption | evidence rows with `run_id`, a caption, width and height (migration `0018`) |
+| Card page (`src/pages/TaskPage.tsx:221-227`) | Card \| Changes | Card \| Changes \| **Screenshots** with a count (§3.7) |
+| Attachments (`TaskPage.tsx:254-257`, `FileDrop.tsx`) | every file of the card | only the files people added (no `run_id`) |
+| Board card, Inbox | (§2.5) | a sign on a card in Review with screenshots (§3.7) |
+| Settings, project form, agent form | (§3.8) | the switches and values of §3.8 |
+| Housekeeping | (§3.6) | old screenshots go (§3.6) |
+
+---
+
+## 3. The feature
+
+### 3.1 What it should do
+
+When an agent builds something with a screen, the card has screenshots of it by the time it reaches Review, on a **Screenshots** tab, so you look at what was built before you read the pull request (the card's Why; Jefsev, 14 Oct 2026). Every part is a switch or a value within a range, with a default (§3.8). Research only: nothing is built before you approve.
+
+### 3.2 Claude Desktop, checked
+
+(Being written: the web part.)
+
+### 3.3 Who takes them, and when
+
+**Recommended: the builder, on every card that changes a screen; QA adds a few of its own, never the builder's set again.** [I]
+
+- **The builder (Frontend, or Design when it builds)** takes the set at the end of its run: after its last change, build and commit, before its result line, so the pictures are of the commit Gizai pushes. It is the one agent that knows which screens changed, it has the page up anyway to check its work, and on a card with testing off it is the only agent before Review. A builder whose card changes no screen (most Backend cards) takes none: the prompt says "when your change shows on a screen".
+- **QA** adds screenshots only where they say something the builder's don't: on `qa_fail`, a picture of each failure (it goes back to the builder with the issues, and you see it on the tab); on `qa_pass`, at most a few of the acceptance criteria it checked that the builder's set doesn't show, captioned with the criterion. Repeating the builder's set would double the cost and the disk space for the same picture. [I]
+- **Testing on** (Test before Review, the default: `0007_card_flow.sql:6`): builder's set (`ready_for_testing`) → QA's additions (`qa_pass` or `qa_fail`) → in Review the tab shows QA's run on top and the builder's under it. After a `qa_fail` the builder's next run takes a new set, and Compare (§3.7) shows what changed.
+- **Testing off:** the builder's set, straight into Review.
+- **Which screens and states:** each screen the card changed (a page, a drawer, a dialog), in the state it was built for, with realistic demo data; plus its empty state and its error state when the card touches them or its acceptance criteria name them. Not the screens it didn't touch. [I]
+- **Sizes:** the project's sizes (§3.8): a **desktop** size for every project (1280 × 800 for a website; 1440 × 900 for Gizai, its window's default) and a **mobile** size (390 × 844) for websites. Gizai has no mobile size: its smallest window is 900 × 600 (`src-tauri/tauri.conf.json:15`), its "small" size. Every changed screen at each size. [I]
+- **Light and dark:** only where the project has both (Gizai, dark first). Every changed screen in the project's first theme, and the card's main screen in the other one too: a theme bug usually shows on any screen, and every screen twice doubles the set. [I]
+- **How many:** typically 4 to 8 for a builder (two screens × two sizes, plus a theme or a state), 0 to 4 for QA; at most 12 a run by default (§3.8). [I]
+- **File names say what is in them,** numbered in the order to look at them: `01-board-with-cards-desktop-dark.png`. The tab sorts by name, and a name that comes back in the next run is how Compare pairs two pictures (§3.7).
+
+### 3.4 How they get onto the card
+
+In all three ways the agent makes the pictures the same way: Chrome DevTools MCP's `take_screenshot` with `filePath`, so the image goes to a file and not into the model's context (§3.6). They differ in how Gizai learns about them.
+
+| | A. A field in the result line | B. A fixed folder Gizai collects (recommended) | C. A small Gizai tool for runs |
+|---|---|---|---|
+| What the agent does | saves the images in `.gizai-tmp/screenshots/`, then lists them in its last line: `"screenshots":[{"file":"01-board.png","caption":"The board with three cards"}]` | saves the images in `.gizai-tmp/screenshots/`, and may write a caption per file in `.gizai-tmp/screenshots/captions.json`: `{"01-board.png":"The board with three cards"}` (Write tool) | calls `attach_screenshot` with a path and a caption, for each |
+| When Gizai takes them | at the run's end, only when the result line parses | at the run's end, however it ended (also after Stop, a limit or a failure: they show how far it got) | at once, during the run |
+| What changes in Gizai | a tolerant reader beside `learned` (`outcome.rs:44-56`), and the collect step | only the collect step | a run-side MCP server: runs have no Gizai tools today (`mcp_servers.rs:19-20`); a socket and a token per run; the tool in the agent's list; Claude Code only (`mcp_not_on`, `mcp_servers.rs:343-351`) |
+| Captions | in the line: one stray double quote in a caption spoils the whole result line, so the card loses its verdict and Gizai nudges the run (`runs.rs:1363-1366`) | in their own file: a bad one loses only the captions | per call |
+| Weak spots | a longer last line on top of `summary`, `issues` and `learned`; an agent that forgets the field shows nothing; a run stopped at a limit shows nothing | an image the agent saved there by mistake shows too | the most code, and a new way into Gizai's data folder for every run; Codex and Gemini agents can't use it |
+| Size | S | S | L |
+
+**Recommended: B, the fixed folder.** It asks the least of the agent (one `filePath` per picture), it can't cost the card its verdict, it keeps the pictures of a run that stopped part-way, and it is the smallest change: `prepare_temp` already empties the folder at a run's start, so everything in it at the end is that run's. [I]
+
+**What Gizai checks on each file** (the same rules would hold for A and C):
+
+1. **Only `.gizai-tmp/screenshots/` itself:** its files, not its subfolders, not the rest of `.gizai-tmp/`. The folder is found from the worktree Gizai made, never from a path the agent wrote.
+2. **Real files only:** read with `symlink_metadata`; a link (to anything) is left out and never followed, as `empty_temp` does (`worktree.rs:256-258`); on Unix a file with more than one hard link is left out too, so nothing outside the worktree is copied through a link. Then the file is opened and read once, no second look by path.
+3. **Images only, by their content, not their name:** the first bytes must be PNG's, JPEG's or WebP's signature, and the header must give a width and a height. SVG, GIF, HTML and anything else are left out (an SVG can hold script).
+4. **Limits** (§3.8): at most 12 files a run (the first 12 by name), at most 10 MB each, at least 16 and at most 16,384 pixels a side and at most 50 megapixels (no "image bombs"). [I] 16,384 pixels is the usual largest texture of a GPU, and full-page screenshots of very long pages are known to break around there; a card checks it with a real long page.
+5. **Captions:** `captions.json` at most 64 KB, a JSON object of file name → text; each caption plain text, control characters removed, at most 200 characters. A file without one gets its name as the caption ("01-board-with-cards-desktop-dark" → "Board with cards, desktop, dark"). Anything wrong in the file costs only the captions.
+6. **What was left out is said** in the run's output, like Gizai's other notes (`note_run`): "Gizai kept 12 of 15 screenshots (Settings → Runs allows 12 a run). Left out: 13-…png, …; notes.txt isn't an image."
+
+**How they are saved:** each file goes into the blob store as attachments do (`files::store`, `files.rs:72-105`: copied and hashed, read-only), then a `files` row: `owner_type` `task` and the card's id, **`run_id` the run** (the column made for this, `0001_init.sql:203`), `created_by` the agent, and three new columns from migration `0018`: `caption`, `width` and `height`. The Attachments block then lists the files without a run (what people added), and the Screenshots tab the images with one. After the collect step, `empty_temp` empties the folder as today. [V for the parts that exist; I for the design]
+
+
+

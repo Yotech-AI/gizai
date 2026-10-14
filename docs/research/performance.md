@@ -184,6 +184,31 @@ numbers; each finding's code is verified **[V]**.
   links each, that is some 450,000 title comparisons per keystroke **[I]**.
 - **The task search** writes two `localStorage` keys per keystroke (`src/pages/TasksPage.tsx:100-101`).
 
+### F6. Costs while nothing happens, and small ones
+
+- **Timers.** The sidebar checks every open Editor folder every 30 s (`editor_folders`, then `editor_git` and `editor_main`
+  per folder, which run git) and again on every window focus (`src/components/Sidebar.tsx:286-295`). The Editor refreshes
+  git and its folder every 10 s (`src/pages/EditorPage.tsx:194`), its standing against main every 10 s (`:248`, a `git
+  fetch` when one is due) and its open files' versions every 3 s (`:390`). These skip while `document.hidden` is true, and
+  nothing else in the app listens for visibility; whether WebKitGTK sets it when Gizai is closed to the tray or sits on
+  another Hyprland workspace is not known (P9 checks it). The run panel's 1 s clock (`RunPanel.tsx:91`) and the Usage page's
+  60 s tick (`src/pages/UsagePage.tsx:234`) don't check at all.
+- **Animations that never stop** while agents work: the `gz-ping` pulse runs forever (`src/styles/components.css:133`) on
+  every live marker: a working card (`Board.tsx:47`), the sidebar's live tags (`Sidebar.tsx:122`), a read-only Editor
+  folder (`Sidebar.tsx:335`) and the run panel (`RunPanel.tsx:121`). Each keeps WebKit compositing every frame while it is
+  in sight **[I]**.
+- **Terminals out of sight** still parse all their output (`src/lib/terminals.ts:346`), each with a 5,000-line scrollback
+  (`:116`), at up to one message every 8 ms each.
+- **The mountains** (on by default, `src/lib/appearance.ts:26`) are a fixed layer along the bottom with an SVG mask
+  (`src/styles/band.css:15`, `src/assets/mountains.svg:4`) under see-through columns (`band.css:31-35`). Static, but whether
+  scrolling see-through content over it makes WebKit repaint it is a risk to measure (P1's `board` scenario with the
+  mountains on and off), not a finding.
+- **A login shell per action.** On Linux, `command_path()` starts `bash -lc` to read your login PATH each time it is called
+  (`src-tauri/src/runs.rs:785-797`): at a run's preparation (`runs.rs:756`), a terminal's start
+  (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
+  coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
+  paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
+
 ### FW. The webview: WebKitGTK already draws on the GPU; keep it that way
 
 - **What Gizai sets.** The launcher only points EGL at Mesa when the machine has no NVIDIA GPU (`install.sh:316-317`) and
@@ -199,14 +224,7 @@ numbers; each finding's code is verified **[V]**.
   `WEBKIT_DISABLE_DMABUF_RENDERER=1` move drawing to slower paths and belong only on machines where the window stays blank
   **[I]**.
 - **What still costs on the GPU path** **[I]**: anything that changes every frame makes WebKit composite every frame, also
-  at rest: animations that never stop (the pulsing "is working" dot on a card, `Board.tsx:47`; the chat's caret and
-  "Thinking" pulse, `ChatThread.tsx:239-240`), and full-window layers. Damage tracking in 2.54 limits the area redrawn, not
-  the wake-ups. P1's `idle` scenario, with and without a live run, shows what they cost.
-- **A login shell per action.** On Linux, `command_path()` starts `bash -lc` to read your login PATH each time it is called
-  (`src-tauri/src/runs.rs:785-797`): at a run's preparation (`runs.rs:756`), a terminal's start
-  (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
-  coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
-  paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
+  at rest (F6's animations). Damage tracking in 2.54 limits the area redrawn, not the wake-ups.
 
 ## 5. Compared with what Tauri, WebKitGTK, React, Vite and SQLite recommend
 

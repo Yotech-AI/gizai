@@ -254,23 +254,28 @@ async fn a_backend_agent_2_run_gets_the_backend_agents_notes_saves_what_it_learn
     assert!(section.contains("The Backend Agent's own lesson."), "{section}");
     assert!(!prompt.contains("Globex"), "never another client's note, also not from the group's folder: {prompt}");
     assert_eq!(r2.memory.first().map(|g| g.path.as_str()), Some("Agents/Backend Agent/Notes"), "{:?}", r2.memory);
-    // what it learned is in the Backend Agent's Notes, with its name, written by it on that run
-    let n = notes();
+    // what it learned is in the Backend Agent's note for KADE (GA-172), with its name, written by it on that run; the
+    // Backend Agent's Notes as they were
+    assert_eq!(notes().current_version, before.current_version);
+    let n = memory::find(&st.db, "Agents/Backend Agent/KADE").unwrap().expect("in the owner's folder");
     let day = today();
     assert!(n.body_md.ends_with(&format!("- {day} ({id}, Backend Agent 2): Excel NL needs semicolons in a CSV.\n\
         - {day} ({id}, Backend Agent 2): The exporter tests need --filter=InvoiceExport.\n")), "{}", n.body_md);
-    assert_eq!(n.current_version, before.current_version + 1);
+    assert!(n.body_md.contains("What Backend Agent learned on KADE's cards"), "{}", n.body_md);
+    assert_eq!((n.current_version, n.owner_id.as_deref()), (1, Some(be.as_str())));
     let (author, run_on): (String, Option<String>) = st.db.read(|c| Ok(c.query_row(
         &format!("SELECT author_actor_id, run_id FROM doc_versions WHERE doc_id = ?1 AND version = {}", n.current_version), [&n.id],
         |r| Ok((r.get(0)?, r.get(1)?)))?)).unwrap();
     assert_eq!((author, run_on), (be2.clone(), Some(r2.id.clone())));
     assert!(memory::find(&st.db, "Agents/Backend Agent 2/Notes").unwrap().is_none(), "no folder of its own");
+    assert!(memory::find(&st.db, "Agents/Backend Agent 2/KADE").unwrap().is_none());
 
     // the Backend Agent's next run gets those lines
     let r1 = run(card("Import invoices", "Import invoices.", &be)).await;
     assert_eq!(r1.agent_id, be);
     let section = section_of(&prompt_of(&r1));
-    assert!(section.contains(&format!("### Agents/Backend Agent/Notes (version {})", n.current_version)), "{section}");
+    assert!(section.contains(&format!("### Agents/Backend Agent/Notes (version {})", before.current_version)), "{section}");
+    assert!(section.contains(&format!("### Agents/Backend Agent/KADE (version {})", n.current_version)), "{section}");
     assert!(section.contains(&format!("({id}, Backend Agent 2): Excel NL needs semicolons in a CSV.")), "{section}");
     assert!(!section.contains("Globex"), "{section}");
 }

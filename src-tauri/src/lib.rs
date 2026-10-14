@@ -237,6 +237,12 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     if let Err(e) = gizai_core::memory::ensure_groups(&db, &seed.you_id) {
         eprintln!("gizai: handing shared memory folders on failed: {e}");
     }
+    // Memory (GA-172): once, the learned lines in the agents' Notes move to their notes per project, Agents/<name>/<KEY>.
+    match gizai_core::memory::learned_to_projects(&db, &seed.you_id) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("gizai: moved {n} learned lines from the agents' Notes to their notes per project"),
+        Err(e) => eprintln!("gizai: moving the agents' learned lines to their notes per project failed: {e}"),
+    }
     // Memory (GA-19): agents made before it get their own folder, Agents/<name>/, with a Notes note.
     if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
         eprintln!("gizai: making the agents' memory folders failed: {e}");

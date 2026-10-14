@@ -84,17 +84,19 @@ fn recent_lists_each_note_once_by_its_last_saved_version_newest_first_with_who_w
     let kade1 = tasks::get(&f.db, &card).unwrap();
     assert_eq!(kade1.identifier, "KADE-1");
     let run = runs::create(&f.db, &f.be, &kade1.id, "backend", &ids::new_id(), "/tmp", "/tmp", "b", "/tmp/l").unwrap();
+    // (GA-172: in its note for KADE, made by that run)
     memory::learned(&f.db, &f.be, "KADE-1", &["Run the fake CLI in tests.".to_string()], Some(&run), "2026-10-10").unwrap();
-    f.stamp(&["Agents/QA Agent/Notes", "Decisions/Use SQLite", "Standards/Rust style", "Agents/Backend Agent/Notes"]);
+    f.stamp(&["Agents/Backend Agent/Notes", "Agents/QA Agent/Notes", "Decisions/Use SQLite", "Standards/Rust style", "Agents/Backend Agent/KADE"]);
 
     let recent = memory::recent(&f.db, &f.you(), 30).unwrap();
     let rows: Vec<(&str, i64, Option<&str>, Option<&str>)> = recent.iter()
         .map(|c| (c.note.path.as_str(), c.version, c.author_name.as_deref(), c.author_kind.as_deref())).collect();
     assert_eq!(rows, [
-        ("Agents/Backend Agent/Notes", 2, Some("Backend Agent"), Some("agent")),
+        ("Agents/Backend Agent/KADE", 1, Some("Backend Agent"), Some("agent")),
         ("Standards/Rust style", 2, Some("Team Lead"), Some("agent")),
         ("Decisions/Use SQLite", 1, Some("Team Lead"), Some("agent")),
         ("Agents/QA Agent/Notes", 1, Some("QA Agent"), Some("agent")),
+        ("Agents/Backend Agent/Notes", 1, Some("Backend Agent"), Some("agent")),
     ]);
     // the run and its card are on the version a run wrote, and on no other
     let learned = &recent[0];
@@ -103,7 +105,7 @@ fn recent_lists_each_note_once_by_its_last_saved_version_newest_first_with_who_w
     assert!(recent[1..].iter().all(|c| c.run_id.is_none() && c.task_id.is_none() && c.task_identifier.is_none()));
     // newest first, and `at` is when the last version was saved
     assert!(recent.windows(2).all(|w| w[0].at > w[1].at), "{:?}", recent.iter().map(|c| c.at).collect::<Vec<_>>());
-    assert_eq!(recent[1].at, 1_000_000 + 2000 + 2);
+    assert_eq!(recent[1].at, 1_000_000 + 3000 + 2);
     // the note comes without its text, as `list` gives it
     assert!(recent.iter().all(|c| c.note.body_md.is_empty()));
     assert_eq!(recent[1].note.current_version, 2);

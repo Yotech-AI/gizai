@@ -1,6 +1,6 @@
 // The agent run on a task (design system: RunCard): live transcript with Stop and Open in terminal while it runs;
 // otherwise the last run's result and a Run button with an agent picker.
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "lucide-react";
 import { continueAfterRunForMe, continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
@@ -19,7 +19,9 @@ export function outcomeBadge(r: Run) {
   return <span className={`badge ${b.cls}`}>{b.text}</span>;
 }
 
-export function Stream({ events }: { events: SeqEvent[] }) {
+/** A run's log. Memoised (GA-176): it redraws when an event arrives, not when the panel around it does; an earlier event's
+ *  Markdown isn't parsed again then, as MarkdownView is memoised on its text. */
+export const Stream = memo(function Stream({ events }: { events: SeqEvent[] }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [events.length]);
   return (
@@ -40,6 +42,13 @@ export function Stream({ events }: { events: SeqEvent[] }) {
       <div ref={end} />
     </div>
   );
+});
+
+/** How long the live run has run, ticking each second: on its own, so the clock redraws only itself (GA-176). */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  return <>{elapsed(since, now)}</>;
 }
 
 /** The tool calls the run's CLI refused: nobody could approve them during the run. */
@@ -87,8 +96,6 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
   // Continue with a message: your note goes to the agent with Continue, and on the card as your comment.
   const [note, setNote] = useState("");
   useEffect(() => setNote(""), [task.id]);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { if (!live) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [live]);
   useEffect(() => { setAgentId(""); suggestAgent(task.id).then(setSuggested).catch(() => setSuggested(null)); }, [task.id, task.stateId, task.assigneeId]);
   const suggestedName = agents.find((a) => a.actorId === suggested)?.name;
   const result = [...events].reverse().find((e) => e.event.kind === "result")?.event;
@@ -120,7 +127,7 @@ export function RunPanel({ task, team }: { task: Task; team: Team }) {
         <div className="run-head">
           <span className="pulse" aria-hidden /><span className="title">Live run</span>
           <span className="who"><Avatar name={run.agentName} kind="agent" size="sm" />{run.agentName}</span><span className="chip-id">{run.id.slice(-8)}</span>
-          <span className="right">{elapsed(run.startedAt ?? run.createdAt, now)}
+          <span className="right"><Elapsed since={run.startedAt ?? run.createdAt} />
             <button className="btn sm ghost" onClick={copy} disabled={!run.sessionId}><Terminal className="icon" />{copied ? "Copied" : "Open in terminal"}</button>
             <BusyButton className="btn sm danger" pending={pending} name="stop" busyLabel="Stopping…" icon={<Square className="icon" />} onClick={stop}>Stop</BusyButton></span>
         </div>

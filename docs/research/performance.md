@@ -257,6 +257,169 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
 in Hyprland on your screen, so its numbers are for comparing before and after, not the ones you feel. For your own Gizai,
 the read-only line in section 3 gives its memory and CPU.
 
+## 8. Proposed cards
+
+In order. Each is one pull request for one agent run, starts in **To do** (none needs a screen designed first: they change
+how screens work, not how they look), and measures its gain with P1's harness on `main` and on its branch, both tables in
+the pull request. The expected gains are my estimates **[I]** until P1's baseline is in.
+
+**Order and what can run at the same time:** P1a, then P1b. After P1b, two lanes side by side: frontend P2 → P4 → P7 and
+P6 → P9; backend P3 → P5 and P8 → P10. P2 and P9 both change `Sidebar.tsx`, so P9 waits for P2; P3 and P8 both touch
+`db.rs`, so P8 waits for P3.
+
+### P1a. Benchmark data and query bench (backend)
+- **Builds:** `crates/gizai-core/examples/prep_perf.rs` (the data in section 7, part 1) and
+  `crates/gizai-core/examples/bench_queries.rs` (part 4); two markers in the fake CLIs: `FAKE_STREAM` in
+  `crates/gizai-agents/tests/fake-claude.sh` (a run that writes text, tool-use and tool-result events at a set rate, e.g.
+  `FAKE_STREAM 50x20` for 50 a second for 20 s) and `FAKE_CHAT_STREAM` in `fake-claude-chat.py` (a Team Lead answer of
+  about 20 KB, streamed in small pieces).
+- **Acceptance:**
+  - [ ] `prep_perf` makes the data on a copy of the demo data and prints the ids the probe needs on one line.
+  - [ ] `bench_queries` prints one JSON line per query: name, runs, median and p95 in µs.
+  - [ ] A test covers each new fake marker; `cargo test --workspace` passes.
+- **Builds on:** nothing. **Gain:** none by itself; it is the measuring stick.
+
+### P1b. Benchmark harness: the probe and `scripts/perf.sh` (frontend)
+- **Builds:** the `perf:<scenario>` probe in `src/selftest.ts` (start, board, chat, memory, runlog, idle, editor, lead),
+  its `invoke` counter, `scripts/perf.sh` with its `/proc` sampling and `--compare`, and `scripts/bundle-size.mjs` (section
+  7, parts 2, 3 and 5). Fills section 3's second table of this document with today's medians: the baseline.
+- **Acceptance:**
+  - [ ] `scripts/perf.sh` runs every scenario five times headless, prints the medians and writes `.devdata/perf/<commit>.json`.
+  - [ ] `scripts/perf.sh --compare a.json b.json` prints both with the change in %.
+  - [ ] `node scripts/bundle-size.mjs` lists each file with bytes and gzip bytes, start files apart.
+  - [ ] Outside a `perf:` mode nothing in the app changes; `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+  - [ ] The baseline table is committed.
+- **Builds on:** P1a.
+
+### P2. Reload only what a write changed (frontend)
+- **Builds:** `useData` learns which tables a fetch reads (one map in one place, e.g. `src/lib/tables.ts`; a fetch it
+  doesn't know reloads on any write, as today) and reloads only for those (`src/lib/useData.ts:15-20`); notices that arrive
+  within one frame cause one reload; the sidebar and the page share one fetch of the same list (the cards, the team, the
+  projects: `Sidebar.tsx:42-45`, `TasksPage.tsx:103-106`). The tables come from the notices the backend sends today:
+  `settings`, `tasks`, `docs`, `workflow_states`, `actors`, `teams`, `team`, `labels`, `files`, `contacts`, `clients`,
+  `projects`, `comments`, `chat_threads`, `chat_messages`, `runs`, `subscription_limits`, `pending_actions`
+  (`src-tauri/src/commands.rs`, `runs.rs`, `chat.rs`, `tools/`).
+- **Acceptance:**
+  - [ ] A `settings` notice reloads nothing on the board; a `tasks` notice reloads the card list once, not twice.
+  - [ ] Ten notices within 50 ms reload once.
+  - [ ] Unit tests for the table map and the coalescing; `npm test` passes.
+- **Expected gain:** calls per write on the board from about 8 to at most 2, on the Memory graph from about 14 to at most 3.
+- **Measure:** P1 `runlog` (a fake run writing): calls per `rows-changed`, and the longest frame; before and after.
+- **Builds on:** P1b.
+
+### P3. No command on the main thread; reads beside writes (backend)
+- **Builds:** the 112 plain `fn` commands (`src-tauri/src/commands.rs`, `terminal.rs`, `lib.rs`, `unsaved.rs`, `tour.rs`)
+  run off the main thread: `async fn` that runs its body in `tauri::async_runtime::spawn_blocking`, or
+  `#[tauri::command(async)]` for the ones that only read memory. `Db` (`crates/gizai-core/src/db.rs:12-18`) gets two
+  read-only connections for `read`, so reads go on while the one writer writes (WAL allows it between connections).
+- **Acceptance:**
+  - [ ] No `#[tauri::command]` plain `fn` does database or file work (a test or a lint lists them).
+  - [ ] A test: a read finishes while another thread holds a write transaction open.
+  - [ ] `cargo test --workspace` and `scripts/ui-test.sh` pass.
+- **Expected gain:** the window never waits for SQL, a file or the database lock; reads stop queueing behind an agent's
+  writes.
+- **Measure:** P1 `runlog` and `board` (drag while a fake run writes): the longest frame; `bench_queries` with a writer
+  running: read p95.
+- **Builds on:** P1b.
+
+### P4. Stream without drawing the past again (frontend)
+- **Builds:** `MarkdownView` memoised on its text, with its plugin list and components made once
+  (`src/components/MarkdownView.tsx:26-46`); `MessageGroup` memoised (`src/components/chat/ChatMessage.tsx:75`) and
+  `groupMessages` kept until the messages change (`ChatThread.tsx:233`), so a streamed piece re-renders only the draft;
+  following the bottom once a frame instead of a layout effect per piece (`ChatThread.tsx:153-156`); the run panel's
+  one-second clock in its own small component, and `Stream` memoised (`src/components/RunPanel.tsx:22`, `:90-91`);
+  `mergeEvents` appends without sorting when the next event is the next `seq` (`src/lib/runs.ts:4-8`).
+- **Acceptance:**
+  - [ ] While the fake Team Lead streams, past messages don't render again (a test counts renders).
+  - [ ] While a run is live, the log doesn't render again on the clock's tick.
+  - [ ] `npm test` and `scripts/ui-test.sh` pass.
+- **Expected gain:** per streamed piece, from re-parsing every message's Markdown to parsing only the draft; the longest
+  frame while streaming no longer grows with the chat's length.
+- **Measure:** P1 `lead` (the 1,000-message chat) and `runlog`: frames a second and the longest frame.
+- **Builds on:** P1b; can run beside P5.
+
+### P5. Batch the run and chat streams (backend)
+- **Builds:** run and chat events go to the window at most once every 50 ms per run or chat, all events since the last
+  send in one message, as the terminal does with 8 ms (`crates/gizai-agents/src/terminal.rs:38`); `run_events` returns only
+  what a panel lacks. `src/api.ts`'s `onRunEvent` and `onChatEvent` unpack the batches, so the components don't change.
+- **Contract (word for word):**
+  - Event `run-events` (replaces `run-event`): `{ runId: string; events: { seq: number; event: RunEvent }[] }`, in `seq`
+    order, at most every 50 ms per run.
+  - Event `chat-events` (replaces `chat-event`): `{ threadId: string; events: ChatEvent[] }`, at most every 50 ms per chat;
+    `delta` events of one block that follow each other are joined into one.
+  - Command `run_events(runId: string, afterSeq: number | null) -> SeqEvent[]`: the events with `seq > afterSeq` (all when
+    `null`), at most the last 500.
+  - `onRunEvent(cb)` and `onChatEvent(cb)` in `src/api.ts` keep their signatures and call `cb` once per event of a batch.
+- **Acceptance:**
+  - [ ] A fake run streaming 200 events a second makes at most 20 `run-events` messages a second, and loses or doubles none.
+  - [ ] `cargo test --workspace`, `npm test` and `scripts/ui-test.sh` pass.
+- **Expected gain:** messages to the window during a run from one per stream event to at most 20 a second; React renders
+  follow (React batches the updates of one message).
+- **Measure:** P1 `runlog` and `lead`: events heard a second, CPU % of the app and its web process.
+- **Builds on:** P1b, and P3 (both change `src-tauri/src/runs.rs`).
+
+### P6. Load a page when it opens; the self-test only in test runs (frontend)
+- **Builds:** `React.lazy` for the pages that aren't the start page (`src/App.tsx:10-25`), each with a light fallback; the
+  self-test loaded with `import()` only when `app_info` says it is a test run (`src/App.tsx:27`, used at `:77-167`).
+- **Acceptance:**
+  - [ ] `scripts/bundle-size.mjs`: the start files hold no self-test code and are smaller than the baseline's by the
+    agreed amount.
+  - [ ] Every page still opens; `scripts/ui-test.sh` and the tour capture pass.
+- **Expected gain:** the start files lose the self-test (about a fifth of the app's own code) and the pages that aren't the
+  board; the first card shows sooner by their parse and run time.
+- **Measure:** `scripts/bundle-size.mjs` start bytes; P1 `start`: `domContentLoadedEventEnd` and the first card, median of
+  four warm starts.
+- **Builds on:** P1b.
+
+### P7. Draw only what is in sight in long lists (frontend)
+- **Builds:** the chat thread, a run's log and the Memory note list drawn with `@tanstack/react-virtual` (as
+  `src/components/DataTable.tsx` already is), with measured heights, keeping the chat at the bottom while you are there.
+- **Acceptance:**
+  - [ ] The 1,000-message chat has at most about 60 messages in the page at once.
+  - [ ] Opening it takes about as long as a 50-message chat.
+  - [ ] `scripts/ui-test.sh` passes (the chat, Memory and run tests).
+- **Expected gain:** a long chat opens and scrolls like a short one, and uses less of the web process's memory.
+- **Measure:** P1 `chat`: first screen in ms, nodes in the page, the web process's RSS.
+- **Builds on:** P4. **Risk:** the window's own find (Ctrl+F) can't see messages out of sight; the Chat Archive's search
+  still finds them.
+
+### P8. Database: indexes and queries (backend)
+- **Builds:** migration `0018`: `CREATE INDEX chat_messages_thread ON chat_messages(thread_id, created_at)` and
+  `CREATE INDEX comments_task ON comments(task_id, created_at)` (neither table has an index today:
+  `crates/gizai-core/migrations/0001_init.sql:285-291`, `:350-359`); `PRAGMA optimize=0x10002` when the database opens and
+  with the daily housekeeping (`crates/gizai-core/src/db.rs:153-168`, `src-tauri/src/lib.rs:544-562`).
+- **Acceptance:**
+  - [ ] A test reads `EXPLAIN QUERY PLAN` for a chat's messages and a card's comments and finds the index, not a `SCAN`.
+  - [ ] `bench_queries` shows the gain; `cargo test --workspace` passes.
+- **Expected gain:** opening a chat or a card no longer scans every message or comment ever written.
+- **Measure:** `bench_queries` before and after.
+- **Builds on:** P1a and P3.
+
+### P9. Quiet when nothing happens (frontend)
+- **Builds:** the sidebar's 30-second check of open Editor folders (`src/components/Sidebar.tsx:294`) and the Editor's
+  10-second and 3-second checks (`src/pages/EditorPage.tsx:194`, `:248`, `:389-394`) run only while the window is in
+  sight and in use, and once when it comes back; first check that `document.hidden` turns true on Hyprland when the window
+  is closed to the tray or on another workspace, and else use Tauri's window focus.
+- **Acceptance:**
+  - [ ] With the window hidden, P1's `idle` scenario counts no Editor or git calls.
+  - [ ] Coming back shows fresh git marks within a second.
+- **Expected gain:** no git processes and no reloads while you aren't looking.
+- **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest.
+- **Builds on:** P2 (both change `Sidebar.tsx`).
+
+### P10. Small backend costs (backend)
+- **Builds:** the login PATH read once and kept (refreshed when Settings → Coding CLIs looks again), instead of a login
+  shell per call (`src-tauri/src/runs.rs:785-797`); WebKitGTK's cache model set to document viewer on Linux, kept only if
+  P1 shows less memory and no slower page; the start's phases (lock, database, seed, recovery, housekeeping) timed and
+  written to the log once, so a slow start says where it went (`src-tauri/src/lib.rs:227-276`).
+- **Acceptance:**
+  - [ ] A test: two calls of the PATH lookup start one shell.
+  - [ ] The start's phase times appear in the log; `cargo test --workspace` passes.
+- **Expected gain:** one shell start less per run, terminal and Editor action; maybe tens of MB less for the web process
+  **[I]**.
+- **Measure:** P1 `runlog` and `start`; the web process's RSS in `idle`.
+- **Builds on:** P5 (both change `src-tauri/src/runs.rs`).
+
 ## 9. Open questions
 
 1. **A baseline on your machine now, or with P1?** Two things you can run in seconds give today's numbers before any card:

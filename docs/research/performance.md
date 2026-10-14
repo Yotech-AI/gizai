@@ -587,7 +587,8 @@ by side.
   at once.
 - Backend, after P1b: P3 first (it changes most commands, `run_events` among them); then P5, P8 and P10 side by side.
   They change different parts of `src-tauri/src/lib.rs` (`:288-295`, `:544-562`, `:227-276`) and of `runs.rs`, so
-  whichever merges last only brings its branch up to date.
+  whichever merges last only brings its branch up to date. P11 after P10 (`runs.rs`, around `start_inner`). So at most
+  three backend cards at once.
 
 ### P1a. Benchmark data and query bench (backend)
 - **Builds:** `crates/gizai-core/examples/prep_perf.rs` (the data in section 7, part 1) and
@@ -636,7 +637,8 @@ by side.
 
 ### P3. No command on the main thread; reads beside writes (backend)
 - **Builds:** the 112 plain `fn` commands (`src-tauri/src/commands.rs`, `terminal.rs`, `lib.rs`, `unsaved.rs`, `tour.rs`)
-  run off the main thread: `async fn` that runs its body in `tauri::async_runtime::spawn_blocking`, or
+  run off the main thread, first the ones that start processes (`chat_clis` and `check_repo`, F4) and the lists F1
+  reloads: `async fn` that runs its body in `tauri::async_runtime::spawn_blocking`, or
   `#[tauri::command(async)]` for the ones that only read memory. `Db` (`crates/gizai-core/src/db.rs:12-18`) gets a
   small pool of read-only connections (four) for `read`, so reads go on while the one writer writes (WAL allows it
   between connections) and while the board check reads (F3). The minute loop's `runs::pull` and `board::tick` run their
@@ -764,26 +766,49 @@ by side.
   and in use, and once when it comes back; the run panel's clock and the Usage page's tick stop when hidden too
   (`RunPanel.tsx:91`, `UsagePage.tsx:234`); a terminal out of sight keeps its bytes and writes them when shown, if P1 shows
   that parsing them costs (`src/lib/terminals.ts:346`). First check that `document.hidden` turns true on Hyprland when the
-  window is closed to the tray or on another workspace; else use Tauri's window focus and visibility.
+  window is closed to the tray or on another workspace; else use Tauri's window focus and visibility. The sidebar's
+  30-second check asks each folder only for its uncommitted marks (`editor_git`); how it stands against main
+  (`editor_main`, some 15 to 30 git processes, F4) is asked when a folder opens, on focus and after a fetch
+  (`src/components/Sidebar.tsx:283-297`).
 - **Acceptance:**
   - [ ] With the window hidden, P1's `idle` scenario counts no Editor or git calls.
+  - [ ] With the window shown and folders open, the sidebar's timer makes no `editor_main` call.
   - [ ] Coming back shows fresh git marks within a second.
-- **Expected gain:** no git processes and no reloads while you aren't looking.
+- **Expected gain:** no git processes and no reloads while you aren't looking, and a few git processes a minute instead
+  of dozens per folder while you are.
 - **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest, with the window shown and hidden.
 - **Builds on:** P2 (both change `Sidebar.tsx`).
 
 ### P10. Small backend costs (backend)
 - **Builds:** the login PATH read once and kept (refreshed when Settings → Coding CLIs looks again), instead of a login
-  shell per call (`src-tauri/src/runs.rs:785-801`); WebKitGTK's cache model set to document viewer on Linux, kept only if
+  shell per call (`src-tauri/src/runs.rs:785-801`), and with it the Claude Code lookup (`runs.rs:320`), so opening a
+  chat no longer waits for a shell (F4); WebKitGTK's cache model set to document viewer on Linux, kept only if
   P1 shows less memory and no slower page; the start's phases (lock, database, seed, recovery, housekeeping) timed and
   written to the log once, so a slow start says where it went (`src-tauri/src/lib.rs:227-276`).
 - **Acceptance:**
   - [ ] A test: two calls of the PATH lookup start one shell.
   - [ ] The start's phase times appear in the log; `cargo test --workspace` passes.
-- **Expected gain:** one shell start less per run, terminal and Editor action; maybe tens of MB less for the web process
-  **[I]**.
-- **Measure:** P1 `runlog` and `start`; the web process's RSS in `idle`.
-- **Builds on:** P5 (both change `src-tauri/src/runs.rs`).
+- **Expected gain:** one or two shell starts less per chat page, run, terminal and Editor action, the chat's on the main
+  thread; maybe tens of MB less for the web process **[I]**.
+- **Measure:** P1 `chat` (first screen in ms), `runlog` and `start`; the web process's RSS in `idle`.
+- **Builds on:** P3.
+
+### P11. Start waiting cards side by side (backend)
+- **Builds:** `pull` holds its lock only to choose and claim cards (`src-tauri/src/runs.rs:1616-1651`, the claim in
+  `starting`), and each claimed card's start (fetch, worktree, copy, install) runs in its own task, so one card's install
+  no longer holds the next card or the minute loop's board check (`src-tauri/src/lib.rs:569-570`). The project folder's
+  lock covers the copy out of the project's folder, not the install in the worktree (`runs.rs:748-758`). `start_inner`'s
+  git calls and login shell run in `spawn_blocking` (`runs.rs:838`, `:864-870`, `:908`, `:929`).
+- **Acceptance:**
+  - [ ] A test with two waiting cards whose install takes 5 s each (a fake install command): both agents start within a
+    second of each other, not 5 s apart.
+  - [ ] No card starts twice, and the run limits still hold (a test).
+  - [ ] `cargo test --workspace` and `scripts/ui-test.sh` (the run probe) pass.
+- **Expected gain:** with several cards waiting, each starts when its own preparation is done: for projects that install
+  `node_modules`, the second and third card start minutes sooner **[I]**; the board check runs on time.
+- **Measure:** the test's start times before and after; P1 `runlog` with two waiting cards: time from Ready to each
+  run's first event.
+- **Builds on:** P3, and P10 (it changes `command_path`, right above `start_inner` in `runs.rs`).
 
 ## 9. Open questions
 

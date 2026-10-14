@@ -4,13 +4,15 @@ Status: research only, no code. Written by the R&D Agent for GA-171 on 2026-10-1
 Legend: **[V]** = verified today, in the code (file and line) or in the primary source named (link and date in §9). **[I]** = my judgement, or a fact I could not check in a primary source (the reason is given).
 Limits of this research: the run may not read GizAi's database or run logs (they are real user data), nor start `cargo`, `npm` or any CLI, so no run was measured. The token figures for GizAi's prompt are counted from the code; the dollar figures per agent are the ones Jefsev gave on the card (Claude Code's estimate at API prices, October 1 to 14). Everything that needs a real run is an experiment in §5.
 
-> Draft in progress: sections marked *(to come)* are filled in by later commits of this run.
-
 ---
 
 ## 1. Summary
 
-*(to come)*
+1. **Where the tokens go.** This team spent $2,771 at API prices in 14 days (§2.7): builders and QA 72%, the Team Lead 18%. In a run nearly all input is the growing conversation read again from the cache on every turn; GizAi's own prompt is only 4,000–15,000 tokens of it. Most agents run Opus 5.5 at `max` or `xhigh`, while Claude Code's own default for it is `medium`. GizAi saves only totals per run, so the split into cache reads, writes and output, and the cost per card, can't be seen yet.
+2. **caveman.so** CAVEMAN_LINE
+3. **A proxy is out.** With a Claude subscription, a proxy that changes requests breaks them, and Anthropic doesn't permit third-party developers to "intermediate" a plan's session tokens; GizAi's model, the user's own unmodified Claude Code with their own login, is the one its terms allow (§3.4). Codex is looser, but the same design works for both.
+4. **The ideas, ranked, each a setting with a default (§4):** effort and model by card size, raised after a QA fail; a stable Team Lead prompt so its chat stays in the cache; board checks on their own model and effort; a cap on a run's context; shorter test and build output with the full log kept; comments and memory as ranges; short messages; and room left in the subscription's windows.
+5. **Recommended: build them natively in GizAi (option A, §6), measure first.** Card M1 records the token split, turns, effort and largest context per run; then every idea runs as an experiment on half the cards, with QA's pass rate, rounds and failed runs as the guard (§5). Thirteen cards (§8); 13 open questions (§9).
 
 ---
 
@@ -487,7 +489,7 @@ Commands (`src/api.ts`, next to `usageSummary` at `:158`): `usage_cards(period: 
 
 ### 7.4 How a saving is counted
 
-- **Exact:** characters kept out of a prompt (comments, memory) and out of the context by `gizai-quiet` (the full output, or Claude Code's own cut of it when smaller (§3.6), minus what was printed).
+- **Exact:** characters kept out of a prompt (comments, memory) and out of the context by `gizai-quiet`: what the CLI would have shown, minus what was printed. For Claude Code that is the whole output up to about 30,000 characters, or a file path and 2,000-character preview past that, when the command succeeded, and up to about 10,000 characters when it failed (§2.4, §3.6).
 - **About, in tokens:** characters ÷ 4, labelled "about".
 - **About, at API prices:** what those tokens would have cost in this run: one cache write at the run's model's price, plus one cache read for every turn after the command (Gizai has the turn of each tool call from the stream). Labelled "at API prices, not a bill"; on a subscription, it is part of a window the run didn't use.
 - **Effort, model and size:** no per-run counterfactual. Usage → Savings shows cost per card per size and effort, and, during an experiment, the two groups side by side with QA's pass rate, rounds, failed runs and questions (§5.2).
@@ -665,4 +667,48 @@ Builds: §4.4. Setting: **Compact a run's context at**, off (the CLI's own), 100
 
 ## 10. Sources
 
-*(to come)*
+All read on 2026-10-14. Quotes from code.claude.com's and platform.claude.com's `.md` pages are word for word; quotes from other pages came through a fetch tool asked to quote word for word, and are marked where only a copy or a secondary source could be read.
+
+**GizAi** (main at `24535e3`): the files named in the text, with their lines.
+
+**caveman.so and RTK**
+CAVEMAN_SOURCES
+- RTK repository data: https://api.github.com/repos/rtk-ai/rtk ; README: https://raw.githubusercontent.com/rtk-ai/rtk/develop/README.md
+
+**Anthropic: Claude Code docs**
+- Legal and compliance: https://code.claude.com/docs/en/legal-and-compliance.md
+- LLM gateway, and its protocol guide: https://code.claude.com/docs/en/llm-gateway.md , https://code.claude.com/docs/en/llm-gateway-protocol.md
+- Environment variables: https://code.claude.com/docs/en/env-vars.md
+- Tools reference (Bash output, Read): https://code.claude.com/docs/en/tools-reference.md
+- Hooks: https://code.claude.com/docs/en/hooks.md ; SDK hooks: https://code.claude.com/docs/en/agent-sdk/hooks.md
+- Costs: https://code.claude.com/docs/en/costs.md
+- Prompt caching in Claude Code: https://code.claude.com/docs/en/prompt-caching.md
+- Model configuration (effort, compaction window): https://code.claude.com/docs/en/model-config.md
+- How Claude Code works (compaction): https://code.claude.com/docs/en/how-claude-code-works.md
+- Output styles: https://code.claude.com/docs/en/output-styles.md
+- Subagents: https://code.claude.com/docs/en/sub-agents.md
+- MCP: https://code.claude.com/docs/en/mcp.md ; tool search: https://code.claude.com/docs/en/agent-sdk/tool-search.md ; context window: https://code.claude.com/docs/en/context-window.md
+- CLI reference: https://code.claude.com/docs/en/cli-reference.md
+
+**Anthropic: API docs, terms and support**
+- Pricing: https://platform.claude.com/docs/en/about-claude/pricing
+- Effort: https://platform.claude.com/docs/en/build-with-claude/effort
+- Prompt caching: https://platform.claude.com/docs/en/build-with-claude/prompt-caching.md
+- Context editing: https://platform.claude.com/docs/en/build-with-claude/context-editing
+- API credits for Max and Team plans: https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers.md
+- Opus 4.5 launch (effort and SWE-bench): https://www.anthropic.com/news/claude-opus-4-5
+- Consumer Terms of Service: https://www.anthropic.com/legal/consumer-terms
+- Support: https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan , https://support.claude.com/en/articles/11647753-how-do-usage-and-length-limits-work , https://support.claude.com/en/articles/11049741-what-is-the-max-plan , https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan , https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans
+- Secondary (posts on X by Anthropic staff, read through the api.fxtwitter.com mirror because x.com refused the fetch): https://x.com/trq212/status/2009689809875591565 (2026-01-09), https://x.com/bcherny/status/2040206440556826908 (2026-04-03)
+
+**OpenAI: Codex**
+- Authentication: https://learn.chatgpt.com/docs/auth
+- Advanced configuration (`openai_base_url`, providers): https://learn.chatgpt.com/docs/config-file/config-advanced
+- Configuration reference: https://learn.chatgpt.com/docs/config-file/config-reference ; sample: https://learn.chatgpt.com/docs/config-file/config-sample.md
+- Hooks: https://learn.chatgpt.com/docs/hooks
+- Sign in with ChatGPT through a gateway: https://learn.chatgpt.com/docs/enterprise/sign-in-with-chatgpt-through-a-gateway
+- Pricing and plan limits: https://learn.chatgpt.com/docs/pricing
+- DevDay 2026 (ChatGPT sign-in for apps): https://learn.chatgpt.com/docs/whats-new/devday-2026
+- Secondary: OpenAI's Terms of Use as copied by https://tostracker.app/document/openai (openai.com answered 403); Codex's output cut as described in the open issue https://github.com/openai/codex/issues/14206
+
+(developers.openai.com/codex pages now redirect to learn.chatgpt.com.)

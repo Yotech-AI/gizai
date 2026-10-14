@@ -380,7 +380,7 @@ Read from the code; no query plan was taken in this run (it can't run SQLite), s
   travel the same way on all three: Tauri 2.12.1 sends each through its `ipc` custom protocol with `fetch` and falls back
   to `postMessage` only if that fails (`tauri-2.12.1/scripts/ipc-protocol.js:20-37`, `:61-66`) **[V]**. Where they
   differ: a hidden window. Tauri's `backgroundThrottling` setting, which sets whether a hidden web view throttles or
-  suspends its timers, works on macOS 14 and later only, and is "Unsupported" on Linux and Windows (`tauri-utils-2.10.1/src/config.rs:2236-2250`)
+  suspends its timers, works on macOS 14 and later only, and is "Unsupported" on Linux and Windows (`tauri-utils-2.10.1/src/config.rs:2234-2249`)
   **[V]**; so on Linux only Gizai's own visibility checks quiet a hidden window (F7, P9). WebView2 can be asked to use
   less memory while hidden (`MemoryUsageTargetLevel`, section 5); WebKitGTK has the cache model and the memory pressure
   settings instead. The costs in F1 to F7 are Gizai's own work, so they are the same on all three **[I]**.
@@ -923,7 +923,7 @@ All read on 14 Oct 2026. P: primary (official docs, source code, release notes, 
 - P: Linux graphics (NVIDIA, DMA-BUF, compositing switches): https://v2.tauri.app/develop/debug/linux-graphics/
 - P: Debugging (the inspector in release builds): https://v2.tauri.app/develop/debug/
 - P: Window config (background throttling per system): https://docs.rs/tauri-utils/latest/tauri_utils/config/struct.WindowConfig.html,
-  and the same text in tauri-utils 2.10.1's `src/config.rs:2236-2250`: https://docs.rs/crate/tauri-utils/2.10.1/source/src/config.rs
+  and the same text in tauri-utils 2.10.1's `src/config.rs:2234-2249`: https://docs.rs/crate/tauri-utils/2.10.1/source/src/config.rs
 - P: Tauri 2.12.1's crate source, read in the copy Cargo keeps in the main checkout (`.cargo/registry`), the same files as
   on docs.rs: the plugin builder's `js_init_script` (https://docs.rs/crate/tauri/2.12.1/source/src/plugin.rs), the page's
   `invoke` (https://docs.rs/crate/tauri/2.12.1/source/scripts/core.js), `ipc` (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc.js)

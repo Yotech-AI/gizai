@@ -660,6 +660,8 @@ Builds: §4.4. Setting: **Compact a run's context at**, off (the CLI's own), 100
 9. **A proxy in the request path (Caveman's runtime or similar):** confirm it stays out. *Recommendation: yes, out (§3.4).*
 10. **Experiments by card parity** run half the cards with a setting off for two weeks. Acceptable on client work? *Recommendation: yes, one setting at a time, with Stop always one click away; or limit an experiment to one project.*
 11. **Subagents' model.** After a month of M1 data, add a "Subagents" model to the agent form if agents use subagents a lot? *Recommendation: decide on M1's numbers (Claude Code's `modelUsage` per run).*
+12. **An `ANTHROPIC_API_KEY` in Gizai's environment** makes every Claude Code run bill the API instead of the plan (§3.4). Warn about it, or keep it out of runs? *Recommendation: a warning in Settings → Coding CLIs and in the run's facts when the variable is set, now (a small card); a switch "Runs use my plan, not an API key from my environment" only if users ask, since some want API billing.*
+13. **Max plans' monthly API credits** (§3.4): Anthropic's two pages disagree on whether they cover `claude -p`. *Recommendation: don't build on them until the credits page says so; then a second Claude Code account on an API key (Settings → Coding CLIs already takes more accounts) could run board checks or DevOps on the credits.*
 
 ## 10. Sources
 

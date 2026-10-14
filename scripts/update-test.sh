@@ -4,7 +4,8 @@
 #   - a scratch install of this checkout's build (install.sh --skip-build with HOME in the scratch folder);
 #   - a fake release v9.9.9: a local repository whose install.sh is a quick stub, and a latest.json shaped like GitHub's
 #     answer;
-#   - that installed Gizai, started with HOME, XDG_DATA_HOME and its data in the scratch folder.
+#   - that installed Gizai, started with HOME, XDG_DATA_HOME and its data in the scratch folder, without the first
+#     start's onboarding (GIZAI_SKIP_ONBOARDING=1: the data folder is new).
 # Run 1 makes the stub's build fail: the notice must say the update failed, Settings → Updates must say why, and the
 # installed Gizai must stay as it was. Run 2: the update must install 9.9.9, back up the data and offer the restart.
 # Neither presses Check now: in run 1 the release check that runs 20 seconds after start must find the release by
@@ -72,6 +73,7 @@ RUN
     WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
     XDG_DATA_HOME="$P/share" XDG_CACHE_HOME="$T/xdg/cache" XDG_CONFIG_HOME="$T/xdg/config" \
     GIZAI_DATA_DIR="$T/data" GIZAI_REPO="$R" GIZAI_RELEASES_URL="file://$T/latest.json" GIZAI_SELFTEST_MODE="steps:$steps" \
+    GIZAI_SKIP_ONBOARDING=1 \
     __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
     timeout -k 5 75 dbus-run-session -- cage -- "$T/runner.sh" > "$OUT/$name.log" 2>&1
   for s in 1-offered 2-updating 3-end; do [ -s "$OUT/$name-$s.png" ] || fail "$name: no screenshot $s (see $OUT/$name.log)"; done

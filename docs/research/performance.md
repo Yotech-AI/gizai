@@ -370,7 +370,8 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
    2,000 finished runs over 90 days with tokens and cost (Usage, Inbox, `check_board`); one chat of 1,000 messages (every
    tenth with a tool call) among 60 chats; 300 Memory notes that link each other (`prep_graph`'s pattern); a finished run on
    KADE-1 whose log has 5,000 events; agents paused and Claude Code pointed at the fake. It prints the ids the probe needs on
-   one line, as `prep_graph` does.
+   one line, as `prep_graph` does. A `--years <n>` option multiplies the runs, comments, chat messages and with them the
+   `changes` log, so the query bench can show how F3's scans grow with use.
 2. **The probe, `GIZAI_SELFTEST_MODE=perf:<scenario>`** in `src/selftest.ts`, reported as `perf` in the self-test JSON.
    It counts each command's calls, answer size (JSON length) and time, and the events heard, through a small
    `src/lib/perf.ts` (7.1), and times frames with `requestAnimationFrame` (frames a second, the longest frame), as the
@@ -409,9 +410,11 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
    results side by side with the change in %. Optional: `--webkit-env 'WEBKIT_DISABLE_COMPOSITING_MODE=1'` runs the same
    with an environment variable, to compare WebKitGTK's drawing modes.
 4. **The query bench, `crates/gizai-core/examples/bench_queries.rs`** (new): on the `prep_perf` data, without a window,
-   times each hot core function 30 times (the task list with each filter, the team, the usage summary, the big chat's
-   messages, the Memory list and search, the board check's queries, a card's activity) and prints the median and p95 in
-   µs as JSON lines: `cargo run --release -p gizai-core --example bench_queries -- <data dir>`.
+   times each hot core function 30 times (the task list with each filter, the project list, the team, the chat list, the
+   usage summary, the big chat's messages, a card's comments and activity, the Memory list and search, and the whole
+   board check, `gizai_core::board::check`, which is also how long it holds the lock) and prints the median and p95 in
+   µs as JSON lines: `cargo run --release -p gizai-core --example bench_queries -- <data dir>`. With `--plan` it prints
+   each query's `EXPLAIN QUERY PLAN` too.
 5. **The bundle report, `scripts/bundle-size.mjs`** (new): after `npm run build`, lists `dist/assets/*` with bytes and
    gzip bytes (Node's `zlib`), and marks what `dist/index.html` loads at start (its script and `modulepreload` links)
    apart from the chunks loaded later.
@@ -563,13 +566,17 @@ by side.
 
 ### P1b. Benchmark harness: the probe and `scripts/perf.sh` (frontend)
 - **Builds:** the `perf:<scenario>` probe in `src/selftest.ts` (start, board, chat, memory, runlog, idle, editor, lead),
-  its `invoke` counter, `scripts/perf.sh` with its `/proc` sampling and `--compare`, and `scripts/bundle-size.mjs` (section
-  7, parts 2, 3 and 5). Fills section 3's second table of this document with today's medians: the baseline.
+  its counter `src/lib/perf.ts` with the perf run's flag in `src-tauri/src/lib.rs` and `src/api.ts` importing from it,
+  `scripts/perf.sh` with its `/proc` sampling and `--compare`, and `scripts/bundle-size.mjs` (section 7, parts 2, 3 and
+  5; the code in 7.1 is the starting point). Fills section 3's second table of this document with today's medians: the
+  baseline. Its one backend line (the flag) is small enough to ride along in this frontend card.
 - **Acceptance:**
   - [ ] `scripts/perf.sh` runs every scenario five times headless, prints the medians and writes `.devdata/perf/<commit>.json`.
   - [ ] `scripts/perf.sh --compare a.json b.json` prints both with the change in %.
   - [ ] `node scripts/bundle-size.mjs` lists each file with bytes and gzip bytes, start files apart.
-  - [ ] Outside a `perf:` mode nothing in the app changes; `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+  - [ ] In the `start` scenario the counter sees `app_info`, the first call the page makes.
+  - [ ] Outside a `perf:` mode nothing in the app changes (`invoke` and `listen` are Tauri's own, a unit test checks it);
+    `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
   - [ ] The baseline table is committed.
 - **Builds on:** P1a.
 

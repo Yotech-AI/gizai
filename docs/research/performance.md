@@ -212,6 +212,51 @@ numbers; each finding's code is verified **[V]**.
   links each, that is some 450,000 title comparisons per keystroke **[I]**.
 - **The task search** writes two `localStorage` keys per keystroke (`src/pages/TasksPage.tsx:100-101`).
 
+### F5. The database: one lock for everything, scans that grow with history
+
+Read from the code; no query plan was taken in this run (it can't run SQLite), so P1a's `bench_queries` and P8's
+`EXPLAIN QUERY PLAN` test confirm each line **[V]** for the code, **[I]** for the cost.
+
+- **Background work holds the one lock too.** The board check reads the whole board inside one `db.read`
+  (`crates/gizai-core/src/board.rs:155-352`): per agent its spend this month (`:143-154`), the busy and finished runs
+  per agent (`:157-158`, `:168`), then per card in Ready, In progress and Testing its active runs, its last change, its
+  last run and, when held for a decision, its newest comment (`:196-347`), then the Review cards the Team Lead may merge
+  (`:348`, `:364-399`). It runs from the minute loop on the async runtime, not `spawn_blocking` (`src-tauri/src/lib.rs:565-572`,
+  `src-tauri/src/board.rs:113-123`), whenever the Team Lead's check interval has passed. While it reads, every reload of
+  F1 waits for it, on the main thread. The same minute loop runs `runs::pull` first, which reads the waiting cards with a
+  run subquery per card (`crates/gizai-core/src/workflow.rs:174-201`); every card write runs it again (`wake`,
+  `src-tauri/src/commands.rs:26-29`, through `dispatch` to `pull`, `src-tauri/src/runs.rs:1600-1601`).
+- **Four tables only grow.** Runs, changes, comments and chat messages are never deleted (no `DELETE FROM` for them in
+  `crates/gizai-core/src/`; housekeeping removes old log files and tokens, and "the runs themselves stay",
+  `crates/gizai-core/src/housekeeping.rs:27-29`). Every query below that reads one of them whole gets slower every week:
+  - **a card's comments** and its activity: `comments` has no index (`crates/gizai-core/src/comments.rs:10`,
+    `tasks.rs:470-489`), so opening a card reads every comment of every card; the board check does it per card
+    (`board.rs:219-223`, and `stamp` at `:419-431`);
+  - **a chat's messages**: `chat_messages` has no index, and a chat is read twice, once for its messages and once for
+    their files (`crates/gizai-core/src/chat.rs:382`, `:386-388`);
+  - **the Usage page**: its period filter is on `runs.created_at`, which no index starts with, so one `usage_summary`
+    reads every run four times (totals, per day, per agent, per project: `crates/gizai-core/src/usage.rs:149-184`), and
+    again on every write while the page is open (`src/pages/UsagePage.tsx:246`);
+  - **the project list**: per project, two counts over the cards and two sums over the runs joined to cards
+    (`crates/gizai-core/src/projects.rs:13-17`), on every write twice with the board (F1);
+  - **a card's last change** (`stamp`, `board.rs:419-431`): `row_id = ? OR row_id IN (its comments) OR row_id IN (its
+    runs)`, newest first. Whether SQLite answers it from `changes_row` or walks `changes`, every write ever, from the
+    newest back, is the first thing P8's query plan test settles **[I]**.
+- **Small queries in loops (N+1).** The chat list looks up each linked card's number one query at a time
+  (`crates/gizai-core/src/chat.rs:165-174`), for every chat, because the sidebar asks for all of them on every write
+  (`src/components/Sidebar.tsx:52`); the team reads each column's agents per column (`crates/gizai-core/src/team.rs:190-192`);
+  every card list and every single card reads every card's labels, archived cards' too, and drops the others in Rust
+  (`crates/gizai-core/src/tasks.rs:47-56`, `:129`). Each is a key lookup or a small scan, cheap alone **[I]**; they run
+  on every write.
+- **Indexes that don't fit.** `tasks_board` starts with `org_id`, which no query names
+  (`crates/gizai-core/migrations/0001_init.sql:267`; `tasks.rs:64-71`), and `runs_agent_period` is on `started_at` while
+  the spend and the last check filter on `created_at` (`0001_init.sql:325`; `crates/gizai-core/src/runs.rs:335-339`,
+  `board.rs:447-454`). No `ANALYZE` or `PRAGMA optimize` ever runs, so SQLite plans without statistics.
+- **How big, today** **[I]**: with hundreds of cards and thousands of runs, comments and messages, each scan takes
+  milliseconds, not seconds. The cost is that they run on every write (F1), on the main thread (F1), and grow with every
+  week of use; and that the board check holds the lock while it walks every open card. `bench_queries` on `prep_perf`
+  gives the numbers.
+
 ### F6. Costs while nothing happens, and small ones
 
 - **Timers.** The sidebar checks every open Editor folder every 30 s (`editor_folders`, then `editor_git` and `editor_main`

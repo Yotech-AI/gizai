@@ -270,7 +270,7 @@ Quality signals GizAi records today, per card and per run, with no change [V]:
 | Questions | `runs.outcome` = `needs_decision` | runs that stopped to ask; more of them after a cut can mean missing context |
 | Review | cards sent back from Review, and pull requests that needed changes after QA passed | what the user and CI catch that QA didn't |
 
-What it can't measure yet, and card M1 adds (§8): the split of input into fresh, cache writes and cache reads, the turns, the effort and the efficiency settings each run had, and the share of the 5-hour and weekly windows each run used.
+What it can't measure yet, and card M1 adds (§8): the split of input into fresh, cache writes and cache reads, the turns, the largest context of a run, the effort and the efficiency settings each run had. The share of the 5-hour and weekly windows a single run used can only be estimated: Claude Code reports a window's use when it changes, for the whole account, while several runs share it (`crates/gizai-core/src/limits.rs:5-9`) [V for the readings; I for the estimate].
 
 ### 5.2 How every experiment runs
 
@@ -315,6 +315,8 @@ Tokens     Every saving is yours to switch. Usage → Savings shows what each on
   Read less
     Shorten test and build output     [x]        Last 30 days: 4.1 M characters kept out (about $38 at API prices)
     Lines kept around a failure       [ 40 ]     10 to 200
+  Context
+    Compact a run's context at        [      ]   tokens, 100,000 to 1,000,000; empty: the CLI's own
   Prompts
     Comments per run                  [ 10 ]     0 to 20
     Characters per comment            [ 2000 ]   500 to 8,000
@@ -389,6 +391,7 @@ Word for word, for the cards in §8 (TypeScript in `src/types.ts`, Rust structs 
 export type TokenSettings = {
   shortenOutput: boolean;      // default true
   failureLines: number;        // 10–200, default 40
+  compactAtTokens: number | null; // 100000–1000000, default null (the CLI's own)
   commentsPerRun: number;      // 0–20, default 10
   commentChars: number;        // 500–8000, default 2000
   memoryChars: number;         // 1000–12000, default 6000
@@ -399,7 +402,7 @@ export type TokenSettings = {
   windowCap: number;           // 50–100 (percent), default 90; 100 = no cap
   experiment: TokenExperiment | null; // default null
 };
-export type TokenSetting = "shortenOutput" | "shortMessages" | "comments" | "effortHigh";
+export type TokenSetting = "shortenOutput" | "shortMessages" | "comments" | "effortHigh" | "compactAt";
 export type TokenExperiment = { setting: TokenSetting; startedAt: number };
 export type CardSize = "small" | "normal" | "large";
 
@@ -418,6 +421,8 @@ export type TokenFacts = {
   memory: { givenChars: number; totalChars: number };
   shortened: { command: string; fullChars: number; shownChars: number; log: string }[];
   unshortened: number;         // test or build commands the agent ran without gizai-quiet
+  peakContextTokens: number;   // the largest input of one request in the run (new + cache written + cache read)
+  compactions: number;
   sizeReason?: "card" | "raisedAfterQaFail" | null;
   models: { model: string; inputTokens: number; outputTokens: number; costUsdMicros: number }[]; // Claude Code's modelUsage
 };
@@ -465,7 +470,7 @@ No proxy, no automatic router, no rewriting of a model's answers, no Caveman or 
 
 In order. Each is one pull request that fits in one agent run; the contract they share is §7.3, word for word. A card starting in Design gets its screens from the Design Agent first; every card goes to Testing (QA) as usual.
 
-**Default for freelancers and small agencies**, the column the card asks for: every setting below is on by default except Short messages and an experiment, and every value starts where today's behaviour is, except the effort of board checks and new cards' sizes (Normal changes nothing) and the window cap (§9, questions 2 and 3).
+**Default for freelancers and small agencies**, the column the card asks for: every setting below is on by default except Short messages, the context cap and an experiment, and every value starts where today's behaviour is, except the effort of board checks and new cards' sizes (Normal changes nothing) and the window cap (§9, questions 2 and 3).
 
 | # | Card | Role | Starts in | Its setting: default, range | Builds on |
 |---|---|---|---|---|---|
@@ -481,8 +486,9 @@ In order. Each is one pull request that fits in one agent run; the contract they
 | T8 | Settings → Tokens | frontend | Design | shows every setting above | M1, T1, T5, T6, T7 |
 | T9 | Savings and experiments | backend | To do | Try a setting on half the cards: none running | M1, T5, T6 |
 | T10 | Usage → Savings, and what each setting saved | frontend | Design | shows the experiment and the savings | T8, T9 |
+| T11 | Cap a run's context | backend | To do | Compact a run's context at: off (the CLI's own), 100,000–1,000,000 tokens | M1, and M1's first weeks of numbers |
 
-**At the same time:** M1 first (it holds the settings every other card reads). Then T1, T2, T4, T6, T7 and M2 can be built side by side: they touch different files (`src-tauri/src/chat.rs` and `memory.rs`; the run start and `team.rs`; a new crate; `prompt.rs`; the scheduler; `UsagePage.tsx`). T5 follows T4, T3 follows T2, T9 follows T5 and T6, and T8 and T10 come last. No setting ships before its field: T1 to T7 reach users in the release that has T8 (and T3 for the size rows).
+**At the same time:** M1 first (it holds the settings every other card reads). Then T1, T2, T4, T6, T7 and M2 can be built side by side: they touch different files (`src-tauri/src/chat.rs` and `memory.rs`; the run start and `team.rs`; a new crate; `prompt.rs`; the scheduler; `UsagePage.tsx`). T5 follows T4, T3 follows T2, T9 follows T5 and T6, and T8 and T10 come last. T11 waits for M1's numbers: build it only if runs grow large contexts (§4.4); its field then joins Settings → Tokens. No setting ships before its field: T1 to T7 reach users in the release that has T8 (and T3 for the size rows).
 
 ### M1. Record where each run's tokens go, and the token settings (backend, To do)
 
@@ -491,6 +497,7 @@ Builds: the input split, turns, effort and models of every run and chat turn, an
 - [ ] Claude Code: cache reads and writes saved from the result's `usage`; for `crates/gizai-agents/tests/fixtures/run-refused.jsonl:21`, 604,313 read, 11,139 written, 185 new, and `input_tokens` still their sum.
 - [ ] Codex: `cached_input_tokens` of `turn.completed` saved as cache reads (`crates/gizai-agents/src/cli.rs:599-603`).
 - [ ] Turns (already parsed, `crates/gizai-agents/src/stream.rs:127`), effort and Claude Code's `modelUsage` per model saved per run, chat turn and board check.
+- [ ] The run's largest context (the biggest input of one request, from each assistant message's `usage`) and its compactions saved in `token_json`.
 - [ ] `Run`, `UsageTotals` and `Usage` carry the new fields (§7.3); `Usage.checks` holds board checks apart from `chat`; `usage_cards(period)` returns each card's runs, rounds (`tasks.bounce_count`), QA result and totals.
 - [ ] `Settings.tokens` (`TokenSettings`, §7.3) with its defaults and ranges, saved by `save_settings` and refused out of range, like the run limits (`src-tauri/src/runs.rs:234-272`).
 - [ ] `cargo test --workspace` and `npm test` pass.
@@ -586,6 +593,13 @@ Builds: Usage → Savings (§7.1), Start and Stop under Settings → Tokens → 
 - [ ] The tab shows each setting's line and, during an experiment, the two groups side by side.
 - [ ] Only one experiment at a time; Stop asks once.
 - [ ] UI tests.
+
+### T11. Cap a run's context (backend, To do; after M1's numbers)
+
+Builds: §4.4. Setting: **Compact a run's context at**, off (the CLI's own), 100,000–1,000,000 tokens.
+- [ ] With a value set, a Claude Code task run gets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>` in its environment and a Codex run `-c model_auto_compact_token_limit=<n>`; chat and board checks keep the CLI's own.
+- [ ] Each compaction is a Gizai note in the run's stream and counts in `TokenFacts.compactions`.
+- [ ] Empty: nothing is set, as today. Tests for both CLIs' arguments and the range.
 
 ## 9. Open questions
 

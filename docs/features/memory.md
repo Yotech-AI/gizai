@@ -20,8 +20,11 @@ Notes live in shared folders and a folder per agent, on the Memory page (sidebar
 
 - Each run gets the notes for its card: the agent's own, then the shared notes for the card's project, its client and the agent's role.
 - A note about another client or project never goes in.
-- Each run keeps what the agent learned: a `learned` list on its result line becomes dated lines in the agent's notes.
-- The Team Lead keeps its answers to agents' questions in memory, linked to the card ([Agents ask the Team Lead first](team-lead.md#agents-ask-the-team-lead-first)).
+- Each run keeps what the agent learned: a `learned` list on its result line becomes dated lines in the agent's note for the card's project, like `Agents/Backend Agent/GA`. Only runs on that project's cards get them; a card without a project keeps them in the agent's `Notes`.
+- A label an agent copies into a line, like `2026-10-12 (GA-111):`, is taken off, so each line says its date and card once.
+- When a note is too long for a run, the run gets its newest learned lines and a line on how many older ones stay in Memory.
+- The first time Gizai starts with notes per project, the lines already in each agent's `Notes` move to their project's note, in their order. This happens once.
+- The Team Lead keeps its answers to agents' questions in memory, linked to the card ([Agents ask the Team Lead first](team-lead.md#agents-ask-the-team-lead-first)). A note it names that doesn't exist yet is made for the card's project, so the next run on that project gets it.
 
 Memory reaches agents as plain text in the prompt, so it works the same on Claude Code, Codex, Gemini and other CLIs.
 

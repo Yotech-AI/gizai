@@ -439,7 +439,129 @@ No proxy, no automatic router, no rewriting of a model's answers, no Caveman or 
 
 ## 8. Proposed cards
 
-*(to come)*
+In order. Each is one pull request that fits in one agent run; the contract they share is §7.3, word for word. A card starting in Design gets its screens from the Design Agent first; every card goes to Testing (QA) as usual.
+
+**Default for freelancers and small agencies**, the column the card asks for: every setting below is on by default except Short messages and an experiment, and every value starts where today's behaviour is, except the effort of board checks and new cards' sizes (Normal changes nothing) and the window cap (§9, questions 2 and 3).
+
+| # | Card | Role | Starts in | Its setting: default, range | Builds on |
+|---|---|---|---|---|---|
+| M1 | Record where each run's tokens go, and the token settings | backend | To do | none (records only, always on); adds `Settings.tokens` with every default and range of §7.3 | — |
+| M2 | Usage per card, the input split, and Chat apart from Board checks | frontend | To do | none | M1 |
+| T1 | Keep the Team Lead's prompt stable | backend | To do | Keep the Team Lead's prompt stable: on | M1 |
+| T2 | Card size, with model and effort per size, and the board check's own | backend | To do | card Size: Normal; Small and Large rows: empty (as Normal); Raise effort after a QA fail: on; board check effort: `medium` on a new install | M1 |
+| T3 | The card's Size and the agent form's size and board check rows | frontend | Design | as T2 | T2 |
+| T4 | `gizai-quiet`: shorten test and build output, keep the full log | backend | To do | (used by T5) | — |
+| T5 | Runs use `gizai-quiet`, and keep the full logs | backend | To do | Shorten test and build output: on; Lines kept around a failure: 40, 10–200 | M1, T4 |
+| T6 | Comments, memory and Short messages as settings | backend | To do | Comments per run 10 (0–20); Characters per comment 2,000 (500–8,000); Memory per run 6,000 (1,000–12,000); List the other notes: on; Short messages: off | M1 |
+| T7 | Leave room in the subscription's windows | backend | To do | Start no new runs above 90% (50–100) | M1 |
+| T8 | Settings → Tokens | frontend | Design | shows every setting above | M1, T1, T5, T6, T7 |
+| T9 | Savings and experiments | backend | To do | Try a setting on half the cards: none running | M1, T5, T6 |
+| T10 | Usage → Savings, and what each setting saved | frontend | Design | shows the experiment and the savings | T8, T9 |
+
+**At the same time:** M1 first (it holds the settings every other card reads). Then T1, T2, T4, T6, T7 and M2 can be built side by side: they touch different files (`src-tauri/src/chat.rs` and `memory.rs`; the run start and `team.rs`; a new crate; `prompt.rs`; the scheduler; `UsagePage.tsx`). T5 follows T4, T3 follows T2, T9 follows T5 and T6, and T8 and T10 come last. No setting ships before its field: T1 to T7 reach users in the release that has T8 (and T3 for the size rows).
+
+### M1. Record where each run's tokens go, and the token settings (backend, To do)
+
+Builds: the input split, turns, effort and models of every run and chat turn, and the settings struct the other cards use.
+- [ ] Migration `0018_tokens.sql`: `runs.turns`, `runs.effort`, `runs.size`, `runs.token_json`, `runs.experiment`; `cache_read_tokens` and `cache_write_tokens` filled from now on.
+- [ ] Claude Code: cache reads and writes saved from the result's `usage`; for `crates/gizai-agents/tests/fixtures/run-refused.jsonl:21`, 604,313 read, 11,139 written, 185 new, and `input_tokens` still their sum.
+- [ ] Codex: `cached_input_tokens` of `turn.completed` saved as cache reads (`crates/gizai-agents/src/cli.rs:599-603`).
+- [ ] Turns (already parsed, `crates/gizai-agents/src/stream.rs:127`), effort and Claude Code's `modelUsage` per model saved per run, chat turn and board check.
+- [ ] `Run`, `UsageTotals` and `Usage` carry the new fields (§7.3); `Usage.checks` holds board checks apart from `chat`; `usage_cards(period)` returns each card's runs, rounds (`tasks.bounce_count`), QA result and totals.
+- [ ] `Settings.tokens` (`TokenSettings`, §7.3) with its defaults and ranges, saved by `save_settings` and refused out of range, like the run limits (`src-tauri/src/runs.rs:234-272`).
+- [ ] `cargo test --workspace` and `npm test` pass.
+
+### M2. Usage per card, the input split, and Chat apart from Board checks (frontend, To do)
+
+Builds: Usage → Cards; Total's input as new, cache written and cache read; the Team Lead as two lines; a run's Tokens row with the split and turns. It reuses the Usage page's tabs and table, so it needs no design first.
+- [ ] Usage → Cards lists each card of the period: identifier (a link), title, size, runs, rounds, QA result, tokens in and out, cost; sorted by cost.
+- [ ] Total shows input split three ways, with the cost note as today (`src/pages/UsagePage.tsx:30-42`).
+- [ ] Agents shows the Team Lead's Chat and Board checks on two lines.
+- [ ] A run's facts: "2.1 M in (1.9 M cache read, 160 k cache written, 12 k new), 48 k out · 87 turns" (`src/components/RunHistory.tsx:80`).
+- [ ] UI tests for the tab and the facts.
+
+### T1. Keep the Team Lead's prompt stable (backend, To do)
+
+Builds: §4.2. Setting: **Keep the Team Lead's prompt stable**, switch, on.
+- [ ] With it on, a chat thread's system prompt (`src-tauri/src/chat.rs:954-996`) is the same at every turn: the date and the Memory block as at the thread's first turn, the list of other notes without sizes. Only a change in the projects' copies renews it, as today (`chat.rs:957`).
+- [ ] The bracket line before a message names the notes added, removed or changed since the thread began (at most ten, then "and N more").
+- [ ] Off: today's prompt, word for word.
+- [ ] Board checks unchanged.
+- [ ] Tests: a note's size change, a note the Team Lead writes, and a new day leave the system prompt unchanged when on, and change it when off.
+
+### T2. Card size, with model and effort per size, and the board check's own (backend, To do)
+
+Builds: §4.1 and §4.3. Settings: card **Size** (Small · Normal · Large, default Normal); agent **Small cards** and **Large cards** model and effort (default empty, as Normal); **Raise effort after a QA fail** (on); **Board check model** (default the Team Lead's) and **effort** (`medium` on a new install).
+- [ ] `tasks.size` and the six `agent_configs` columns (§7.2); `Task`, `TaskPatch`, `AgentInput` and `Member` carry them; the effort is checked against the CLI's levels like today's (`crates/gizai-core/src/team.rs:319-321`).
+- [ ] A run's model and effort come from its card's size and the agent's rows, on Claude Code (`--model`, `--effort`) and Codex (`-m`, `model_reasoning_effort`), and are recorded on the run with why ("card" or "raisedAfterQaFail").
+- [ ] With Raise on, a builder's first run after `qa_fail` goes one size up; Large stays Large.
+- [ ] Board checks use the check model and effort when set (`src-tauri/src/chat.rs:1456`, `:1461`).
+- [ ] Gizai's task tools for the Team Lead take and return `size`; the lead's template (`crates/gizai-core/src/seed.rs:198-215`) gets one line: "Give each card a size: small for a small fix, large for a hard or wide change, normal otherwise."
+- [ ] Seed: a new install's builders get Small one effort level below Normal.
+
+### T3. The card's Size and the agent form's size and board check rows (frontend, Design)
+
+Builds: §7.1's Size row and agent form rows.
+- [ ] Properties has Size above Testing, and says what it means for the card's agent ("Backend Agent: Sonnet 5.5, effort medium").
+- [ ] The agent form has Small cards and Large cards rows (model and effort, empty = as Normal), with the levels the form offers for each model; the Team Lead's Chat section has Board check model and effort.
+- [ ] Read-only cards and agents show them read-only.
+- [ ] UI tests.
+
+### T4. `gizai-quiet`: shorten test and build output, keep the full log (backend, To do)
+
+Builds: the command of §4.4, its own crate next to `crates/gizai-mcp`, shipped next to Gizai like `gizai-mcp` (`install.sh:3`; `src-tauri/src/mcp.rs:65`).
+- [ ] `gizai-quiet <command> [args…]` starts the command without a shell, writes the whole output to `$TMPDIR/outputs/<nn>-<command>.log`, and passes on its exit code.
+- [ ] It prints the command, exit code, time, counts, every failure with its message and up to `GIZAI_QUIET_LINES` lines around it (default 40), every error and warning line, and the full log's path and size.
+- [ ] Recognises cargo test and build, Vitest and Jest, `tsc`, ESLint, `npm run build`, PHPUnit and Pest, Composer; anything else as its first and last lines, never as nothing.
+- [ ] Tests on recorded outputs, passing and failing, for each format.
+- [ ] If a rule is taken from RTK or Caveman, the file says so and NOTICE gets their line (§3.5).
+
+### T5. Runs use `gizai-quiet`, and keep the full logs (backend, To do)
+
+Builds: §4.4 in the runs. Settings: **Shorten test and build output** (on), **Lines kept around a failure** (40, 10–200).
+- [ ] With it on, each `Bash(X:*)` in a Claude Code agent's allowed commands gets `Bash(gizai-quiet X:*)` beside it, never more; the run finds `gizai-quiet` (on its PATH or by full path, both tested on Claude Code and Codex).
+- [ ] "How this run works" gets one line: run tests and builds through `gizai-quiet`, and read the full log with `rg` or `tail` when needed.
+- [ ] The run's `outputs/` is copied to `<data>/runs/<run-id>/outputs/` before the temp folder is emptied; `run_outputs` and `open_run_output` (§7.3).
+- [ ] `TokenFacts.shortened` and `unshortened` saved; a Gizai note in the stream for each shortened command.
+- [ ] Off: no rules, no line, as today.
+
+### T6. Comments, memory and Short messages as settings (backend, To do)
+
+Builds: §4.5 and §4.6. Settings: **Comments per run** (10, 0–20), **Characters per comment** (2,000, 500–8,000), **Memory per run** (6,000, 1,000–12,000), **List the other notes** (on), **Short messages** (off).
+- [ ] The prompt takes the last N comments, each cut at the setting with the mark "… (cut at 2,000 of 5,400 characters; the full comment is on the card)" (`crates/gizai-agents/src/prompt.rs:37`, `:78-84`; `src-tauri/src/runs.rs:912-913`).
+- [ ] QA's latest comment is left out of a builder's prompt when its issues are in "QA found these issues last time" (`prompt.rs:71-77`).
+- [ ] Memory's caps come from the setting (own notes half of it, as `OWN_CAP` is now, `crates/gizai-core/src/memory.rs:30-35`); the list only with List the other notes on.
+- [ ] Short messages on adds §4.6's line to "How this run works" for every CLI (`prompt.rs:297-353`).
+- [ ] `TokenFacts.comments` and `memory` saved; tests at each range's edges.
+
+### T7. Leave room in the subscription's windows (backend, To do)
+
+Builds: §4.7. Setting: **Start no new runs above**, 90% (50–100).
+- [ ] No automatic start for an agent while the newest reading of its CLI account's 5-hour or weekly window (`crates/gizai-core/src/limits.rs`) is above the setting and not yet reset; Run by hand still starts.
+- [ ] The waiting card says which window, its percentage and when it resets.
+- [ ] 100 = today's behaviour. Tests with readings above, below and after a reset.
+
+### T8. Settings → Tokens (frontend, Design)
+
+Builds: the tab of §7.1, every field of `TokenSettings` but `experiment` (T10), saved with Save settings.
+- [ ] A Tokens tab after Agents and runs, address `#/settings/tokens`.
+- [ ] Each field with its range in the hint; an out-of-range value says so, as the run limits do.
+- [ ] `docs/settings.md` gets the tab.
+- [ ] UI tests.
+
+### T9. Savings and experiments (backend, To do)
+
+Builds: §5.2's card parity and §7.4's counting.
+- [ ] Starting an experiment saves `tokens.experiment`; every run of a card is put in its group by the card's number (even on, odd off) and records it (`runs.experiment`); stopping clears it.
+- [ ] `usage_savings(period)`: per setting, runs, characters kept out and their price at API prices (one cache write plus a read per later turn, at the run's model's prices), and the two groups' cost per card, QA pass rate, rounds, failed runs and questions.
+- [ ] Tests on recorded runs.
+
+### T10. Usage → Savings, and what each setting saved (frontend, Design)
+
+Builds: Usage → Savings (§7.1), Start and Stop under Settings → Tokens → Compare, and the "last 30 days" line under each setting.
+- [ ] The tab shows each setting's line and, during an experiment, the two groups side by side.
+- [ ] Only one experiment at a time; Stop asks once.
+- [ ] UI tests.
 
 ## 9. Open questions
 

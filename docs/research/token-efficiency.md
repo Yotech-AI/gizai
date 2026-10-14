@@ -52,21 +52,61 @@ A continued run (Continue, an answered question, GizAi's nudge) resumes the same
 
 What this means [I]: the prompt itself is not where most tokens go. Even at 8,000 tokens, a 150-turn run reads it back about 150 times, 1.2 million cache-read tokens, which is the price of about 120,000 fresh input tokens: some $0.50 at Opus 5.5's input price. It counts, but the context that grows during the run (tool results, file reads, thinking) is read back the same way and is usually far bigger.
 
+**One real run, measured.** GizAi's tests keep the event stream of a real Claude Code 2.1.289 run (Haiku 4.5, the GA-48 shell-rules check) as a fixture. Its last line says (`crates/gizai-agents/tests/fixtures/run-refused.jsonl:21`): [V]
+
+| | Tokens | Price (Haiku 4.5) | Share of the $0.0944 |
+|---|---|---|---|
+| Fresh input | 185 | $1 / M | 0.2% |
+| Cache writes, all with the **1-hour** lifetime (`ephemeral_1h_input_tokens: 11139`) | 11,139 | $2 / M (2×) | 24% |
+| Cache reads | 604,313 | $0.10 / M (0.1×) | 64% |
+| Output (832 of it thinking) | 2,300 | $5 / M | 12% |
+
+The shares add up to Claude Code's own `total_cost_usd` of $0.09439 to the cent [V, arithmetic]. The run had 23 turns of tiny tool results (`git status`, `ls`), and its last request was 29,292 tokens, nearly all from the cache: so Claude Code's own system prompt and tools plus GizAi's prompt were already some 25,000–29,000 tokens before any work [I]. Two lessons: on a subscription, Claude Code writes its cache with the 1-hour lifetime (2× input), so a cache miss is expensive; and in a real run nearly all input tokens are cache reads, turn after turn, of a context that only grows.
+
 ### 2.4 What agents read and write during a run
 
-*(to come: test and build output, file reads, diffs; numbers for GizAi's own repository)*
+- **Test and build output.** The project tells every builder to run, before it says it is done, `cargo test --workspace`, `npm test`, `npm run build` and `scripts/ui-test.sh` when the UI changed (CLAUDE.md:39-44), and QA runs the whole suite twice, "once to see where things stand and once more after your new tests" (`crates/gizai-core/roles/qa.md:10`). GizAi's own suites are big: 1,519 Rust tests whose names alone are 105,631 characters (`rg` over `#[test]` functions, test names average 66 characters), and 1,915 `it`/`test` calls in 131 test files. A passing `cargo test --workspace` prints one line per test, so roughly 130,000–150,000 characters (35,000–40,000 tokens), and a fresh worktree first prints a `Compiling` line for each of the 588 crates in `Cargo.lock` [I, estimated from the counts; not run]. Claude Code cuts long command output itself *(its limit and how it cuts: §3.6)*, so what the model reads is less, but whatever it reads stays in the context for the rest of the run.
+- **Files, diffs and searches.** Read, Grep and `git diff` results enter the context the same way. GizAi doesn't shape them today; the CLIs' own limits apply *(§3.6)*.
+- **Thinking and text.** On Opus 4.5 and later, thinking stays in the context (§2.2), so effort `max` grows the context too, not only the output.
 
 ### 2.5 The Team Lead: chat answers and board checks
 
-*(to come)*
+- **Chat.** "One message is one turn: `claude -p` resumes the thread's session" (`src-tauri/src/chat.rs:1`, `:819-865`). Its system prompt is appended with `--append-system-prompt` (`chat.rs:1191`) and holds the Team Lead's fixed rules (`chat.rs:975-990`), one line per project copy of the code, its folders, its instructions, and **its Memory block**: its own notes in full (up to 6,000 characters) and a list of every other note it may read, each with its size, `- {path} ({n} characters)` (up to 4,000; `chat.rs:993`, `:1000-1003`; `src-tauri/src/memory.rs:19-31`; `crates/gizai-core/src/memory.rs:1848-1956`, the line at `:1946`). [V]
+- **The chat's cache breaks more often than the code expects.** The code says the system prompt is "The same from turn to turn (only the projects change it), so the prompt cache keeps working" (`chat.rs:957`). But it also changes when the Team Lead writes to its own notes (its instructions ask it to keep Memory up to date: `crates/gizai-core/src/seed.rs:209`), when **any** note in the list changes size, which happens every time an agent's run adds a `learned` line to its Notes, and at midnight ("Today is {today}", `chat.rs:976`, `:994`). Since the system prompt comes before the messages in the cache's order, each such change makes the next chat turn write the whole conversation to the cache again, at 2× the input price on the 1-hour cache. [V for the code; I for how often it happens and what it costs: GizAi doesn't record cache writes per turn, §2.7]
+- **Board checks** run only when the code finds something new (`src-tauri/src/board.rs:113-125`; `crates/gizai-core/src/board.rs:1-9`), each in a fresh session that is never resumed (`chat.rs:1420`, `:1459-1460`), with Gizai's MCP server and Read, Glob and Grep (`chat.rs:1438-1458`), on the Team Lead's own model and effort (`chat.rs:1456`, `:1461`). A check is already lean in what starts it; each one still pays the fixed prefix (Claude Code's prompt and tools, Gizai's tools, the Team Lead's prompt and memory), from the cache only if the same prefix was written within the hour. [V; I for the cost]
+- The Team Lead is the team's biggest single agent: $499 of $2,771 in October so far (§2.7).
 
 ### 2.6 Models and effort
 
-*(to come)*
+- Each agent has a model and an effort in its form, and every run and chat turn uses them: `--model` and `--effort` for Claude Code (`crates/gizai-agents/src/claude.rs:47`, `:99-104`), `-m` and `-c model_reasoning_effort=…` for Codex (`crates/gizai-agents/src/cli.rs:214-219`), from `agent.model` and `agent.effort` (`src-tauri/src/runs.rs:1031`). No card sets its own. The form offers the levels Claude Code reports for the model (`src/lib/models.ts:1-17`). [V]
+- A card already has one cost switch: **Testing**. "On: a finished run sends the card to Testing for the QA Agent. Off: straight to Review (a small fix)" (`crates/gizai-core/src/model.rs:183-184`). [V]
+- Most of this team runs Opus 5.5 at `max` or `xhigh` (the card). Anthropic's effort page says Opus 5.5 **defaults to `medium`**; `xhigh` is for "Long-running agentic and coding tasks (over 30 minutes) with token budgets in the millions"; and for Opus 5.5: "Run an effort sweep on your own evals rather than carrying settings over from an earlier model". Of `max` it says, for Opus 4.7: "On most workloads `max` adds significant cost for relatively small quality gains, and on some structured-output or less intelligence-sensitive tasks it can lead to overthinking." For Sonnet 5.5: "For agentic coding and multistep tool use, start with `medium` for well-specified tasks and move to `high` for harder or longer ones." [V, platform.claude.com effort page]
+- Anthropic's own data point for effort, from the Opus 4.5 launch: "Set to a medium effort level, Opus 4.5 matches Sonnet 4.5's best score on SWE-bench Verified, but uses 76% fewer output tokens." [V, anthropic.com]
 
 ### 2.7 What GizAi records, and the real numbers
 
-*(to come)*
+**Per run** (`runs` table, `crates/gizai-core/migrations/0008_board_check.sql:23-50`): the agent, card, trigger (`assigned`, `routed`, `chat`, `manual`, `approval`, `nudge`, `board_check`), role, model, outcome, start and end, input tokens, output tokens and cost. [V]
+- Input tokens are fresh input + cache writes + cache reads added together (`crates/gizai-agents/src/stream.rs:116-127`); the `cache_read_tokens` and `cache_write_tokens` columns exist but "stay empty" (`crates/gizai-core/src/usage.rs:7-8`). So GizAi can't tell a cache miss from a cache hit, though the two differ 20× in price. [V]
+- The cost is Claude Code's `total_cost_usd`; Codex and Gemini report none, so their runs show tokens with an unknown cost (`usage.rs:5-10`). [V]
+- Not saved: the number of turns (parsed, `stream.rs:127`, then dropped), the effort, the thinking tokens, and Claude Code's `modelUsage` per model (`run-refused.jsonl:21` shows it has one entry per model a run used, subagents included). [V]
+- Subscription limits: the newest reading per CLI and window (5-hour, 7-day, and per model), not per run (`crates/gizai-core/src/limits.rs:1-16`). [V]
+
+**The Usage page** (`src/pages/UsagePage.tsx:24`, `:247-273`; `usage.rs:99-119`): a Subscription tab (the limits), then totals, per day, per agent and per project, for today, 7 or 30 days or this month. Chat turns and board checks are one "chat" line; there is no view per card and no split of input into fresh, written and read. [V]
+
+**The real numbers** this team gave on the card (Claude Code's estimate at API prices, October 1–14, 2026, subscriptions, not bills):
+
+| Agent | API-price estimate | Share |
+|---|---|---|
+| Team Lead (chat and board checks) | $499 | 18.0% |
+| Backend Agents ($290 + $490) | $780 | 28.1% |
+| QA Agents ($360 + $359) | $719 | 25.9% |
+| Frontend Agents ($152 + $166) | $318 | 11.5% |
+| R&D Agent | $226 | 8.2% |
+| Design Agent | $173 | 6.2% |
+| DevOps Agents ($35 + $21) | $56 | 2.0% |
+| **All** | **$2,771** | 100% |
+
+About $198 a day at API prices [V, arithmetic]. Builders and QA are 72% of it, so savings in task runs matter most; the Team Lead is next. How these dollars split into cache reads, cache writes and output can't be read from GizAi today (above); if this team's runs look like the measured one and like typical long agent runs, cache reads are the largest part, then output, then cache writes [I]. Card M1 (§7) records the split, so the first week after it gives the real one.
 
 ---
 

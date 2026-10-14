@@ -146,7 +146,21 @@ What it can't measure yet, and card M1 adds (§8): the split of input into fresh
 
 ## 6. Options
 
-*(to come)*
+Three ways to build "fewer tokens without losing quality" into GizAi. All three keep Jefsev's rule: each saving is a setting the user switches or sets.
+
+**Option A: native, in GizAi (recommended).** GizAi already writes the prompt, chooses the CLI's flags and environment, sets each agent's model and effort, and reads every event of the run. The savings are made there: effort and model per role and per card, a small output filter of its own that agents run their tests and builds through (`gizai-quiet`, full log kept with the run), a stable Team Lead prompt, a "short messages" line in "How this run works", and ranges for comments and memory. Plus what makes it visible and testable: per-run token detail, Usage per card, a Savings view and card-parity experiments.
+- Libraries: none new for the app. The filter is a small Rust binary shipped next to Gizai like `gizai-mcp` (`crates/gizai-mcp`), with its own parsers for the formats this user's projects use (cargo, Vitest, tsc, ESLint, PHPUnit and Pest, Composer and npm), and a generic rule for the rest. Rules may be borrowed from RTK or Caveman under Apache-2.0 with a NOTICE line (§3.5). [I]
+- Risks: a filter bug that hides an error (mitigated: exit code and counts always shown, every error-like line kept, full log one command away, a fidelity test suite on recorded outputs); agents that forget to use the filter (measured: GizAi sees each command in the stream); lower effort that costs quality (guarded by the experiments of §5 and by raising effort after a QA fail). [I]
+- Size: about ten cards (§8), each one agent run; the first three are independent. [I]
+
+**Option B: bundle an existing filter (RTK) and its Claude Code hook.** RTK ("CLI proxy that reduces LLM token consumption by 60-90% on common dev commands. Single Rust binary, zero dependencies") is Apache-2.0, has 83,281 stars and was pushed to today (GitHub API, 2026-10-14). Its README says it hooks into Claude Code with a "PreToolUse hook" that rewrites commands, keeps "Failures only, passing tests collapsed to a count" for `cargo test` and `npm test`, and measures savings with `rtk gain`; it says nothing about keeping the full output. [V, its README and the GitHub API]
+- What it takes: shipping or asking the user to install a second fast-moving binary (1,520 open issues), turning hooks back on for headless runs, which GizAi turns off on purpose today (`--settings {"disableAllHooks":true}`, `crates/gizai-agents/src/claude.rs:39`, `:93-95`; `cli.rs:181-184`), and adding a way to keep the full output.
+- Risk: the user's own hooks and plugins would run in agents' runs again unless GizAi also stops loading user settings; a rewrite the agent never sees is hard to show in the run. Only the "reads less" part. [I]
+- Size: smaller than A for the filter itself, plus the same measurement cards.
+
+**Option C: put Caveman (or another proxy) between the CLIs and the model provider.** *(Its runtime, what it changes, and the terms for subscription logins: §3.)* It would bring all three of Caveman's ways at once, including routing. What it takes: every request of every agent passes through a third-party local service; GizAi can't show per-setting control or savings except through Caveman's own numbers; and routing would override the model the user chose in each agent's form. [I]
+
+**Recommendation: A.** It is the only option that works the same for Claude Code and Codex on a subscription login without touching the request path, keeps each saving a GizAi setting with GizAi's own "what it did" in the run and on Usage, and starts with the measurement that tells whether quality holds. B's filter rules are worth reading (and borrowing with attribution) when building `gizai-quiet`. C's terms risk alone rules it out for a product that runs on the user's own subscription (§3.4). [I]
 
 ## 7. The design of the recommended option
 

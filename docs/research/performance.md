@@ -5,7 +5,20 @@ dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, aga
 
 **Marks:** **[V]** verified in the code or a primary source (named next to it); **[I]** my judgement or an estimate.
 
-> Draft in progress: the findings, cards and sources follow below as the research goes on.
+## 1. Summary
+
+- **Biggest cost: one write reloads everything, on the main thread (F1).** Any database write makes every open screen
+  reload its whole lists: about 8 calls on the board, about 14 on the Memory graph. Those commands are 112 plain `fn`s that
+  Tauri runs on the window's main thread, all behind one database lock.
+- **Then streaming (F2).** Each streamed piece of a Team Lead answer re-parses the Markdown of every message in the chat,
+  and a live run's log redraws up to 500 events every second.
+- **Then the start (F3).** Every page and the 300 KB self-test load at start. xterm.js (547 KB) and the Editor's languages
+  already load on demand. WebKitGTK 2.54 already draws on the GPU (FW): no WebKit setting to change.
+- **Measured here:** the last bundle built (7 Oct) was one 1.21 MB file, before the graph and terminals were added. Start-up,
+  memory, CPU and frame rates need a running Gizai, which this run can't start; the harness takes them.
+- **Recommendation (option A):** build the benchmark harness first (P1a, P1b), then fix by cost, each card measured before
+  and after: P2 reload only what changed, P3 no command on the main thread, P4 and P5 cheap streaming, P6 lazy pages, P7
+  long lists in sight only, P8 indexes, P9 quiet when idle, P10 small backend costs.
 
 ## 2. The project now
 
@@ -263,9 +276,10 @@ In order. Each is one pull request for one agent run, starts in **To do** (none 
 how screens work, not how they look), and measures its gain with P1's harness on `main` and on its branch, both tables in
 the pull request. The expected gains are my estimates **[I]** until P1's baseline is in.
 
-**Order and what can run at the same time:** P1a, then P1b. After P1b, two lanes side by side: frontend P2 → P4 → P7 and
-P6 → P9; backend P3 → P5 and P8 → P10. P2 and P9 both change `Sidebar.tsx`, so P9 waits for P2; P3 and P8 both touch
-`db.rs`, so P8 waits for P3.
+**Order and what can run at the same time:** P1a, then P1b. After P1b, frontend and backend cards run side by side.
+Frontend: P2 then P9 (both change `Sidebar.tsx`), P4 then P7, and P6 on its own. Backend: P3 first; then P5 and P8 side by
+side (P5 changes `runs.rs` after P3, P8 changes `db.rs` after P3); P10 after P5 (both change `runs.rs`). So at most three
+frontend and two backend cards can be open at once.
 
 ### P1a. Benchmark data and query bench (backend)
 - **Builds:** `crates/gizai-core/examples/prep_perf.rs` (the data in section 7, part 1) and

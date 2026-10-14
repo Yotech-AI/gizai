@@ -135,6 +135,30 @@ numbers; each finding's code is verified **[V]**.
   `src/selftest.ts:3`, `src/lib/changes.ts:6`, `src/components/changes/ChangesView.tsx:12`) and d3-force (the Memory graph).
 - The self-test alone is 301,604 bytes of source that every start parses and never uses outside tests.
 
+### FW. The webview: WebKitGTK already draws on the GPU; keep it that way
+
+- **What Gizai sets.** The launcher only points EGL at Mesa when the machine has no NVIDIA GPU (`install.sh:316-317`) and
+  starts Gizai through a login shell so agents find their tools (`install.sh:320`); neither it nor Gizai sets any WebKit
+  variable (`rg WEBKIT_` finds none in `src-tauri/` or the scripts) **[V]**.
+- **What WebKitGTK does now.** Arch's `webkit2gtk-4.1` is 2.54.1 (built 2 Oct 2026, archlinux.org's package data), so an
+  up-to-date Omarchy runs 2.54 **[V]** (the version on this PC itself couldn't be read in this run). In 2.54 "the web
+  process compositor now uses the Skia API instead of the venerable TextureMapper", compositing is damage-aware by default
+  ("each draw the compositor issues is restricted to the damaged rectangles"), "Asynchronous scrolling is smoother", and
+  "hardware acceleration is now always used, and the on-demand policy behaves like
+  `WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS`" (WebKitGTK 2.54 highlights, webkitgtk.org) **[V]**. So there is no
+  WebKit switch to flip for speed on Linux; the common Tauri workarounds `WEBKIT_DISABLE_COMPOSITING_MODE=1` and
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` move drawing to slower paths and belong only on machines where the window stays blank
+  **[I]**.
+- **What still costs on the GPU path** **[I]**: anything that changes every frame makes WebKit composite every frame, also
+  at rest: animations that never stop (the pulsing "is working" dot on a card, `Board.tsx:47`; the chat's caret and
+  "Thinking" pulse, `ChatThread.tsx:239-240`), and full-window layers. Damage tracking in 2.54 limits the area redrawn, not
+  the wake-ups. P1's `idle` scenario, with and without a live run, shows what they cost.
+- **A login shell per action.** On Linux, `command_path()` starts `bash -lc` to read your login PATH each time it is called
+  (`src-tauri/src/runs.rs:785-797`): at a run's preparation (`runs.rs:756`), a terminal's start
+  (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
+  coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
+  paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
+
 One entry point, `scripts/perf.sh`, built by the first proposed card (P1) and used by every later one: each card runs it on
 `main` and on its branch, on the same machine with nothing else running, and puts both tables in its pull request. It reuses
 what exists: the headless `cage` start of `scripts/smoke-cage.sh`, the self-test report (`GIZAI_SELFTEST`,

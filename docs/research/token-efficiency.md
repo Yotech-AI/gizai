@@ -11,8 +11,8 @@ Limits of this research: the run may not read GizAi's database or run logs (they
 1. **Where the tokens go.** This team spent $2,771 at API prices in 14 days (§2.7): builders and QA 72%, the Team Lead 18%. In a run nearly all input is the growing conversation read again from the cache on every turn; GizAi's own prompt is only 4,000–15,000 tokens of it. Most agents run Opus 5.5 at `max` or `xhigh`, while Claude Code's own default for it is `medium`. GizAi saves only totals per run, so the split into cache reads, writes and output, and the cost per card, can't be seen yet.
 2. **caveman.so** is real and open (Apache-2.0): a prompt that makes replies terse, a local proxy and hooks that shrink tool output with the originals kept, and a closed cloud router (§3). Its numbers are thinner than its site: the 33.2% comes from 6 tasks of large noisy outputs, the 65% isn't measured against a concise prompt, and the routing's 0.46× is an interim run of 85 tasks in which "Most of the saving comes from lower effort" (§3.3). GizAi can do each of the three natively.
 3. **A proxy is out.** With a Claude subscription, a proxy that changes requests breaks them, and Anthropic doesn't permit third-party developers to "intermediate" a plan's session tokens; GizAi's model, the user's own unmodified Claude Code with their own login, is the one its terms allow (§3.5). Codex is looser, but the same design works for both.
-4. **The ideas, ranked (§4),** each a switch or a value in a range with a default, which the run shows it used and Usage shows what it saved: effort and model by card size, raised after a QA fail; a stable Team Lead prompt so its chat stays in the cache; board checks on their own model and effort; a cap on a run's context; shorter test and build output with the full log kept; comments and memory as ranges; short messages; and room left in the subscription's windows.
-5. **Recommended: build them natively in GizAi (option A, §6), measure first.** Card M1 records the token split, turns, effort and largest context per run; then every idea runs as an experiment on half the cards, with QA's pass rate, rounds and failed runs as the guard (§5). Thirteen cards (§8); 13 open questions (§10).
+4. **The ideas, ranked (§4),** each a switch or a value in a range with a default, which the run shows it used and Usage shows what it saved: effort and model by card size, raised after a QA fail; board checks on their own model and effort; a cap on a run's context; shorter test and build output with the full log kept; comments and memory as ranges; short messages; and room left in the subscription's windows.
+5. **Recommended: build them natively in GizAi (option A, §6), measure first.** Card M1 records the token split, turns, effort and largest context per run; then every idea runs as an experiment on half the cards, with QA's pass rate, rounds and failed runs as the guard (§5). Thirteen cards (§8), one of them a fix found on the way: within a chat thread the Team Lead sees its notes and the date as they were at the thread's start (§2.5). 13 open questions (§10).
 
 ---
 
@@ -83,7 +83,7 @@ The shares add up to Claude Code's own `total_cost_usd` of $0.09439 to the cent 
 ### 2.5 The Team Lead: chat answers and board checks
 
 - **Chat.** "One message is one turn: `claude -p` resumes the thread's session" (`src-tauri/src/chat.rs:1`, `:819-865`). Its system prompt is appended with `--append-system-prompt` (`chat.rs:1191`) and holds the Team Lead's fixed rules (`chat.rs:975-990`), one line per project copy of the code, its folders, its instructions, and **its Memory block**: its own notes in full (up to 6,000 characters) and a list of every other note it may read, each with its size, `- {path} ({n} characters)` (up to 4,000; `chat.rs:993`, `:1000-1003`; `src-tauri/src/memory.rs:19-31`; `crates/gizai-core/src/memory.rs:1848-1956`, the line at `:1946`). [V]
-- **The chat's cache breaks more often than the code expects.** The code says the system prompt is "The same from turn to turn (only the projects change it), so the prompt cache keeps working" (`chat.rs:957`). But it also changes when the Team Lead writes to its own notes (its instructions ask it to keep Memory up to date: `crates/gizai-core/src/seed.rs:209`), when **any** note in the list changes size, which happens every time an agent's run adds a `learned` line to its Notes, and at midnight ("Today is {today}", `chat.rs:976`, `:994`). Since the system prompt comes before the messages in the cache's order, each such change makes the next chat turn write the whole conversation to the cache again, at 2× the input price on the 1-hour cache. [V for the code; I for how often it happens and what it costs: GizAi doesn't record cache writes per turn, §2.7]
+- **The chat's prompt changes more often than the code expects, but Claude Code doesn't apply the change.** The code says the system prompt is "The same from turn to turn (only the projects change it), so the prompt cache keeps working" (`chat.rs:957`). It also changes when the Team Lead writes to its own notes (its instructions ask it to keep Memory up to date: `crates/gizai-core/src/seed.rs:209`), when **any** note in the list changes size, which happens every time an agent's run adds a `learned` line to its Notes, and at midnight ("Today is {today}", `chat.rs:976`, `:994`). Older Claude Code would then have written the whole conversation to the cache again. Current Claude Code doesn't: "By default, Claude Code builds the system prompt once, on a conversation's first request, with the text from any system prompt flags applied, and records it in the session. Until the conversation is compacted, every later request uses that recorded prompt, including after you return to the conversation with `--resume` or `--continue`." Before v2.1.265, passing a system prompt flag turned that recording off; GizAi's fixtures come from 2.1.289 (`crates/gizai-agents/tests/fixtures/run-refused.jsonl:1`). So the chat's cache holds, and the other side of it is that **within a chat thread the Team Lead sees its notes, the list of notes, its code copies and the date as they were at the thread's first turn**, until Claude Code compacts the thread. [V for the code and Claude Code's CLI reference; I that this team's Claude Code is that recent] That is not a token cost, but it is a gap in what chat promises ("so every answer has its notes", `chat.rs:998`); card T1 (§8) closes it.
 - **Board checks** run only when the code finds something new (`src-tauri/src/board.rs:113-125`; `crates/gizai-core/src/board.rs:1-9`), each in a fresh session that is never resumed (`chat.rs:1420`, `:1459-1460`), with Gizai's MCP server and Read, Glob and Grep (`chat.rs:1438-1458`), on the Team Lead's own model and effort (`chat.rs:1456`, `:1461`). A check is already lean in what starts it; each one still pays the fixed prefix (Claude Code's prompt and tools, Gizai's tools, the Team Lead's prompt and memory), from the cache only if the same prefix was written within the hour. [V; I for the cost]
 - The Team Lead is the team's biggest single agent: $499 of $2,771 in October so far (§2.7).
 
@@ -196,7 +196,7 @@ My reading [I, not legal advice]: a local proxy that holds and forwards the user
 
 **A gotcha for every subscription user of GizAi** [V for the doc; V that runs don't remove it]: "`ANTHROPIC_API_KEY` … In non-interactive mode (`-p`), the key is always used when present." GizAi's runs start with Gizai's own environment plus their own lines (`crates/gizai-agents/src/claude.rs:49-50`, `:56-62`), and nothing removes that variable (`rg` finds no removal in the run code), so a key in the user's shell makes every agent run bill the API instead of the plan. §10, question 12.
 
-**What fits one subscription.** Anthropic gives no absolute numbers: "Both Pro and Max plans have a five-hour session limit and a weekly limit", and Max gives "5x or 20x the Pro plan's usage allowance" [V, support.claude.com]. Codex's pricing page gives Plus and Business a number of local messages per five hours per model, says "Pro plans currently have no five-hour limit", and that "Weekly limits may also apply" [V, learn.chatgpt.com pricing]. So what fits is measured, not looked up: GizAi already reads each window's use (§2.7), and M1 adds what each run and card cost. For scale: this team's 14 days came to $2,771 at API prices across 12 agents (§2.7); a freelancer with one plan runs a fraction of that, which is why the effort and size settings (§4.1) and the window cap (§4.8) matter more to them than to a team with several plans. Since 7 October 2026, Max and Team plans also come with monthly API credits ($100 for Max 5x, $200 for Max 20x), but Anthropic's credits page lists "Claude Code" under "Doesn't cover" [V, platform.claude.com api-credits-for-subscribers]; its support article, updated the same day, says they cover "the Claude Agent SDK, `claude -p`, the Claude API, and Claude Managed Agents", and also that "When you're signed in with your Claude plan instead, `claude -p` and Agent SDK usage still draw from your plan's usage limits and don't use your API credits" [support.claude.com, quoted through the fetch tool]. The two disagree, so GizAi shouldn't build on the credits yet (§10, question 13).
+**What fits one subscription.** Anthropic gives no absolute numbers: "Both Pro and Max plans have a five-hour session limit and a weekly limit", and Max gives "5x or 20x the Pro plan's usage allowance" [V, support.claude.com]. Codex's pricing page gives Plus and Business a number of local messages per five hours per model, says "Pro plans currently have no five-hour limit", and that "Weekly limits may also apply" [V, learn.chatgpt.com pricing]. So what fits is measured, not looked up: GizAi already reads each window's use (§2.7), and M1 adds what each run and card cost. For scale: this team's 14 days came to $2,771 at API prices across 12 agents (§2.7); a freelancer with one plan runs a fraction of that, which is why the effort and size settings (§4.1) and the window cap (§4.7) matter more to them than to a team with several plans. Since 7 October 2026, Max and Team plans also come with monthly API credits ($100 for Max 5x, $200 for Max 20x), but Anthropic's credits page lists "Claude Code" under "Doesn't cover" [V, platform.claude.com api-credits-for-subscribers]; its support article, updated the same day, says they cover "the Claude Agent SDK, `claude -p`, the Claude API, and Claude Managed Agents", and also that "When you're signed in with your Claude plan instead, `claude -p` and Agent SDK usage still draw from your plan's usage limits and don't use your API credits" [support.claude.com, quoted through the fetch tool]. The two disagree, so GizAi shouldn't build on the credits yet (§10, question 13).
 
 ### 3.6 What Claude Code and Codex already do
 
@@ -230,15 +230,14 @@ Ranked by what they should save for this team and how much they risk quality. Ev
 | # | Idea | Caveman's way | Expected saving | Risk to quality | Setting, default |
 |---|---|---|---|---|---|
 | 1 | Effort and model by card size, raised after a QA fail | picks the model | high: 10–20% of a Normal card's runs moved from `max`/`xhigh` to `high`; 30–50% on Small cards | medium, guarded | card **Size** Small · Normal · Large (Normal); agent form: model and effort per size (Normal = today's); switch **Raise effort after a QA fail** (on) |
-| 2 | A stable Team Lead prompt, so its chat stays in the cache | (the rest) | medium on the Team Lead: 10–30% of its chat cost | none | switch **Keep the Team Lead's prompt stable** (on) |
-| 3 | Board checks on their own model and effort | picks the model | medium on the Team Lead's checks: 30–60% of their cost | low | agent form → Chat: **Board check model** (the Team Lead's) and **effort** (`medium`) |
-| 4 | Cap a run's context: compact earlier than the CLI would | (the rest) | unknown until M1 records each run's largest context; high on runs that grow past a few hundred thousand tokens | medium | **Compact a run's context at** 100,000–1,000,000 tokens (the CLI's own: off) |
-| 5 | Shorter test and build output, full log kept | reads less | low: 1–3% of a QA or builder run, plus fewer follow-up reads | low, with its safeguards; improves what a failing run shows | switch **Shorten test and build output** (on), **Lines kept around a failure** 10–200 (40) |
-| 6 | Comments and memory as ranges, cuts marked | (the rest) | small: about 1% of a run | low at the defaults | **Comments per run** 0–20 (10), **Characters per comment** 500–8,000 (2,000), **Memory per run** 1,000–12,000 (6,000), switch **List the other notes** (on) |
-| 7 | Short messages between tool calls | says less | small: 1–3% of a run | low | switch **Short messages** (off) |
-| 8 | Leave room in the subscription's windows | (fits one subscription) | none per run; keeps part of the window for the user | none | **Start no new runs above** 50–100% of a window (90%) |
+| 2 | Board checks on their own model and effort | picks the model | medium on the Team Lead's checks: 30–60% of their cost | low | agent form → Chat: **Board check model** (the Team Lead's) and **effort** (`medium`) |
+| 3 | Cap a run's context: compact earlier than the CLI would | (the rest) | unknown until M1 records each run's largest context; high on runs that grow past a few hundred thousand tokens | medium | **Compact a run's context at** 100,000–1,000,000 tokens (the CLI's own: off) |
+| 4 | Shorter test and build output, full log kept | reads less | low: 1–3% of a QA or builder run, plus fewer follow-up reads | low, with its safeguards; improves what a failing run shows | switch **Shorten test and build output** (on), **Lines kept around a failure** 10–200 (40) |
+| 5 | Comments and memory as ranges, cuts marked | (the rest) | small: about 1% of a run | low at the defaults | **Comments per run** 0–20 (10), **Characters per comment** 500–8,000 (2,000), **Memory per run** 1,000–12,000 (6,000), switch **List the other notes** (on) |
+| 6 | Short messages between tool calls | says less | small: 1–3% of a run | low | switch **Short messages** (off) |
+| 7 | Leave room in the subscription's windows | (fits one subscription) | none per run; keeps part of the window for the user | none | **Start no new runs above** 50–100% of a window (90%) |
 
-Not proposed now, with the reason, in §4.9: continuing a builder's session after a QA fail, MCP servers switched per card, a model for subagents, sharing Claude Code's cache between worktrees, and reordering the prompt for the cache.
+Not proposed now, with the reason, in §4.8: a stable Team Lead prompt (Claude Code already keeps it), continuing a builder's session after a QA fail, MCP servers switched per card, a model for subagents, sharing Claude Code's cache between worktrees, and reordering the prompt for the cache.
 
 ### 4.1 Effort and model by card size
 
@@ -258,21 +257,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** Card parity (§5.2) on Normal cards: even cards at `high`, odd cards at the agent's current effort, two weeks; per card: cost, QA pass rate, rounds, failed runs, questions. A second one for Small cards: Sonnet 5.5 against the agent's Opus. The effort experiment is the one big enough to read with about 35 cards per group (§5.2).
 
-### 4.2 A stable Team Lead prompt
-
-**What it does.** The Team Lead's system prompt holds its own notes in full and a list of every other note with its size, and the date (§2.5). Any change to it, between two turns of a chat, makes the next turn write the whole conversation to the cache again (2× the input price on the 1-hour cache) instead of reading it (0.05× on Opus 5.5). With the switch on, Gizai freezes the Memory block and the date in the system prompt for the life of a chat thread (as they were at its first turn), and gives the list of other notes without their sizes, so it would change only when a note is added or removed. What changed since goes, as one short line, into the bracket line Gizai already puts before a message ("A message may start with a line from Gizai in square brackets", `chat.rs:984`): "Notes changed since this chat started: Agents/Backend Agent/Notes, Projects/GA. Read them with memory_read." The Team Lead wrote its own new notes in this chat, so it has them already. [V for the prompt and its bracket line; I for the design]
-
-**Saving.** For a chat whose context is 80,000 tokens, one avoidable miss costs about (2 − 0.05) × 80,000 × $4/M ≈ $0.62 at Opus 5.5 API prices on top of a hit. Each agent's `learned` line, each note the Team Lead writes and midnight cause one today. If a third of the turns miss for these reasons, the chat's input cost falls by roughly 10–30% [I]. M1 measures it exactly: cache writes per chat turn, before and after.
-
-**The setting.** Settings → Tokens: **Keep the Team Lead's prompt stable**, on. Off restores today's behaviour (useful to compare).
-
-**What the user sees.** In a chat turn's facts (the chat run in Usage → Agents): the cache written and read; on Usage → Savings: "Team Lead: cache writes per turn, last 7 days vs before". In chat itself, nothing changes.
-
-**Risk.** None to answers: the same facts reach the Team Lead, a turn later at most, and it can always read Memory with its tools. Board checks are separate sessions and keep their fresh block.
-
-**Experiment.** Not by card: by week, since the Team Lead is one agent. A week off then a week on, comparing cache writes per chat turn and cost per turn; quality is unchanged by design (same information).
-
-### 4.3 Board checks on their own model and effort
+### 4.2 Board checks on their own model and effort
 
 **What it does.** A board check runs only when Gizai's code finds something new, in a fresh session, on the Team Lead's own model and effort (§2.5). Most checks are routine: a card waiting, a run that ended, a question to route. With two new fields in the Team Lead's form, a check runs on its own model and effort. [V for today's code; I for the design]
 
@@ -284,7 +269,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** Alternate checks (even and odd run numbers) between the Team Lead's effort and `medium` for two weeks; compare cost per check and, from the board, cards left waiting longer than an hour and questions answered late.
 
-### 4.4 Cap a run's context
+### 4.3 Cap a run's context
 
 **What it does.** Claude Code compacts a conversation by itself only when it nears the model's window: "Models running with a native 1M window compact before the window fills, at about 967K tokens by default", Opus 4.7 and later and Sonnet 5 and later among them. Until then every request reads the whole context again. With this value set, Gizai starts a Claude Code run with `CLAUDE_CODE_AUTO_COMPACT_WINDOW` ("Set the auto-compact window in tokens, from `100000` to `1000000`") and a Codex run with `-c model_auto_compact_token_limit=<n>` ("Token threshold that triggers automatic history compaction"), so a long run compacts earlier; Claude Code "clears older tool outputs first, then summarizes the conversation if needed". [V for the CLIs' docs (§3.6); I for the design]
 
@@ -298,7 +283,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** After M1: if a fifth or more of the runs pass 300,000 tokens, card parity at 300,000 for two weeks: cost per card, QA pass rate, rounds, and files read again after a compaction.
 
-### 4.5 Shorter test and build output, with the full log kept
+### 4.4 Shorter test and build output, with the full log kept
 
 **What it does.** A small command of Gizai's, `gizai-quiet`, runs a test or build command, writes its whole output to a file in the run's temp folder, and prints only what the agent needs: the command, its exit code and time, the counts (passed, failed, ignored), every failure with its message and the lines around it, every error and warning line from compilers and linters, and the path of the full log. The exit code is the command's own, so `&&` chains keep working. Agents are told in "How this run works" to run tests and builds through it, and their allowed commands get one rule per allowed command they already have: `Bash(gizai-quiet cargo:*)` next to `Bash(cargo:*)`, so it never widens what an agent may run. After the run Gizai keeps the full logs with the run's log (`<data>/runs/<run-id>/outputs/`), because the temp folder is emptied. A hook could do the same without the agent's help (Claude Code's `PostToolUse` can replace a tool's result), but GizAi turns all hooks off on purpose, so that the user's own hooks stay out of headless runs, and Claude Code has "no way to disable an individual hook while keeping it in the configuration" (§3.6). [I: the design; Caveman's and RTK's filters do the same job by other routes: a proxy or a `PostToolUse` hook (§3.2), a rewriting `PreToolUse` hook (§6)]
 
@@ -314,7 +299,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** Card parity for QA and builders, two weeks: tokens per run and per card, QA pass rate, rounds, and QA's `needs_decision` runs; plus a fidelity check on every failing run in the "on" group: the user (or a script) compares the failures in the full log with what the agent reported.
 
-### 4.6 Comments and memory as ranges, cuts marked
+### 4.5 Comments and memory as ranges, cuts marked
 
 **What it does.** The prompt's comments and memory have fixed caps today: the last 10 comments by anyone, each cut to 2,000 characters with no mark (`runs.rs:912-913`, `prompt.rs:37`, `:81`), and 6,000 characters of notes plus a 4,000-character list (`crates/gizai-core/src/memory.rs:30-35`). This idea makes them values the user sets, marks a cut ("… (cut at 2,000 of 5,400 characters; the full comment is on the card)"), and leaves QA's comment out of a builder's prompt when its issues are already the prompt's "QA found these issues" section (§2.3, row 3). [V for today's caps]
 
@@ -326,7 +311,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** No card split needed for the saving: the characters left out are exact. For quality, a two-week period at 5 comments of 1,500 characters, watching questions (`needs_decision`) and QA fails that name a missed instruction.
 
-### 4.7 Short messages between tool calls
+### 4.6 Short messages between tool calls
 
 **What it does.** With the switch on, each CLI is asked for terser text in its own way, and nothing rewrites an answer afterwards. Claude Code gets its built-in **Concise** output style: "Responses lead with the result and leave out preamble, narration, and recaps"; GizAi already gives every run a `--settings` JSON, and `outputStyle` would go in it [V for the style and the setting; I that the two combine, to check]. Codex gets `model_verbosity = "low"` ("Optional GPT-5 Responses API verbosity override"). Any other CLI gets one line in "How this run works": "Between tool calls, write at most one short sentence. Code, commands, file paths, error messages and your final summary and hand-over stay complete and exact." This is Caveman's "says less" for the part of an agent's output that nobody hands over. [I]
 
@@ -338,7 +323,7 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** Card parity, two weeks: output tokens per turn, hand-over length, QA pass rate.
 
-### 4.8 Leave room in the subscription's windows
+### 4.7 Leave room in the subscription's windows
 
 **What it does.** Gizai already reads each CLI's 5-hour and weekly windows (§2.7). With this value set, agents start no new run from an Auto column while a window of their CLI is above it; Run by hand still works, as with Pause all agents (`src/pages/SettingsPage.tsx:113`). It saves no tokens; it keeps a freelancer's own Claude Code or Codex usable during the day. [V for the readings; I for the design]
 
@@ -350,8 +335,9 @@ Not proposed now, with the reason, in §4.9: continuing a builder's session afte
 
 **Experiment.** None needed for tokens. For a week after it ships, Usage → Subscription shows how often a window reached the cap and how long cards waited; if they wait more than the user likes, the value goes up.
 
-### 4.9 Not proposed now
+### 4.8 Not proposed now
 
+- **A stable Team Lead prompt.** Freezing the Team Lead's Memory block per chat thread, so that a note's change wouldn't make the chat write its whole conversation to the cache again, would save nothing. Claude Code already does it: it records the system prompt on a conversation's first request and reuses it on `--resume` until compaction (§2.5). Nothing to save; what is left is the stale-notes gap, which card T1 closes.
 - **Continuing the builder's session after a QA fail** instead of a fresh one with QA's issues (`runs.rs:918`). The session knows what it did, but QA's run usually takes longer than the cache's hour, so the whole old context would be written again at 2×; a fresh run with the issues is often cheaper. An experiment after M1 [I].
 - **MCP servers per card.** Task runs get only the agent's own servers (agent form → Tools), and Claude Code already keeps their tools out of the context until they are used: "MCP tool definitions are deferred by default, so only tool names and server instructions enter context until Claude uses a specific tool" (§3.6). Little left to save [I].
 - **A model for subagents.** Claude Code's subagents (the Task and Agent tools, always on: `crates/gizai-agents/src/tool_catalog.rs:80-81`) can be pointed at a cheaper model with `CLAUDE_CODE_SUBAGENT_MODEL` (§3.6). How much agents use them is not recorded today; M1 records it (Claude Code's `modelUsage` per model), and then it can be a field in the agent form (§10, question 11).
@@ -388,10 +374,10 @@ The experiment for each idea is under the idea in §4; card T9 builds the parity
 
 Three ways to build "fewer tokens without losing quality" into GizAi. All three keep Jefsev's rule: each saving is a setting the user switches or sets.
 
-**Option A: native, in GizAi (recommended).** GizAi already writes the prompt, chooses the CLI's flags and environment, sets each agent's model and effort, and reads every event of the run. The savings are made there: effort and model per card size, a stable Team Lead prompt, board checks on their own model and effort, a cap on a run's context through the CLIs' own compaction settings, a small output filter of its own that agents run their tests and builds through (`gizai-quiet`, full log kept with the run), each CLI's own terser mode, and ranges for comments and memory (§4). Plus what makes it visible and testable: per-run token detail, Usage per card, a Savings view and card-parity experiments.
+**Option A: native, in GizAi (recommended).** GizAi already writes the prompt, chooses the CLI's flags and environment, sets each agent's model and effort, and reads every event of the run. The savings are made there: effort and model per card size, board checks on their own model and effort, a cap on a run's context through the CLIs' own compaction settings, a small output filter of its own that agents run their tests and builds through (`gizai-quiet`, full log kept with the run), each CLI's own terser mode, and ranges for comments and memory (§4). Plus what makes it visible and testable: per-run token detail, Usage per card, a Savings view and card-parity experiments.
 - Libraries: none new for the app. The filter is a small Rust binary shipped next to Gizai like `gizai-mcp` (`crates/gizai-mcp`), with its own parsers for the formats this user's projects use (cargo, Vitest, tsc, ESLint, PHPUnit and Pest, Composer and npm), and a generic rule for the rest. Rules may be borrowed from RTK or Caveman under Apache-2.0 with a NOTICE line (§3.4). [I]
 - Risks: a filter bug that hides an error (mitigated: exit code and counts always shown, every error-like line kept, full log one command away, a fidelity test suite on recorded outputs); agents that forget to use the filter (measured: GizAi sees each command in the stream); lower effort that costs quality (guarded by the experiments of §5 and by raising effort after a QA fail). [I]
-- Size: thirteen cards (§8), each one agent run: M1 first, then six that can be built side by side. [I]
+- Size: thirteen cards (§8), each one agent run: twelve for the savings and their measurement, M1 first and then five side by side, and one fix this research found (T1). [I]
 
 **Option B: bundle an existing filter (RTK) and its Claude Code hook.** RTK ("CLI proxy that reduces LLM token consumption by 60-90% on common dev commands. Single Rust binary, zero dependencies") is Apache-2.0, has 83,286 stars and 1,520 open issues, and was pushed to today (GitHub API, 2026-10-14). Its README says it hooks into Claude Code with a "PreToolUse hook (native binary)" and into Codex with a "PreToolUse hook (`updatedInput`) + AGENTS.md", both of which rewrite the agent's commands; it keeps "Failures only, passing tests collapsed to a count" for `cargo test` and `npm test`, and shows savings with `rtk gain`; it says nothing about keeping the full output. [V, its README and the GitHub API]
 - What it takes: shipping or asking the user to install a second fast-moving binary, turning hooks back on for headless runs, which GizAi turns off on purpose today (`--settings {"disableAllHooks":true}`, `crates/gizai-agents/src/claude.rs:39`, `:93-95`; `cli.rs:181-184`), and adding a way to keep the full output.
@@ -430,8 +416,6 @@ Tokens     Every saving is yours to switch. Usage → Savings shows what each on
     List the other notes              [x]
   Effort
     Raise effort after a QA fail      [x]        A builder's next run goes one card size up
-  Team Lead
-    Keep the Team Lead's prompt stable [x]       Fewer cache writes in chat
   Messages
     Short messages                    [ ]        One short sentence between tool calls; hand-overs stay complete
   Subscription
@@ -504,7 +488,6 @@ export type TokenSettings = {
   commentChars: number;        // 500–8000, default 2000
   memoryChars: number;         // 1000–12000, default 6000
   listNotes: boolean;          // default true
-  stableLeadPrompt: boolean;   // default true
   raiseAfterQaFail: boolean;   // default true
   shortMessages: boolean;      // default false
   windowCap: number;           // 50–100 (percent), default 90; 100 = no cap
@@ -558,7 +541,7 @@ Commands (`src/api.ts`, next to `usageSummary` at `:158`): `usage_cards(period: 
 
 - No proxy and no change to the CLIs' login, base URL or requests; nothing new leaves the computer.
 - `gizai-quiet` never widens what an agent may run: its allowed rules are made from the agent's own (`Bash(gizai-quiet cargo:*)` only when `Bash(cargo:*)` is allowed), it starts the command directly (no shell, so no injection through its arguments), and it writes only in the run's temp folder. The full logs are kept like the run logs, readable only by the user, and may hold whatever the tests print, as run logs do today.
-- The Team Lead's stable prompt carries the same information as today; nothing is hidden from it.
+- T1 tells the Team Lead more than today, not less: what changed since its chat began.
 - An experiment is visible on every run it touches (its group in the run's facts) and stops with one click.
 
 ### 7.6 How it is tested
@@ -566,7 +549,7 @@ Commands (`src/api.ts`, next to `usageSummary` at `:158`): `usage_cards(period: 
 - `gizai-quiet`: recorded outputs of each tool it knows, passing and failing (cargo test and build, Vitest, `tsc`, ESLint, `npm run build`, PHPUnit and Pest, Composer), checked line by line: every failure and error line kept, counts right, exit code passed through, an unknown output shown as its first and last lines and never as nothing.
 - The prompt: comments and memory at the edges of their ranges, the cut mark, QA's issues once; "How this run works" with and without Short messages and `gizai-quiet` (`crates/gizai-agents/src/prompt.rs`'s tests).
 - Size: the model and effort a run gets for each size, the raise after `qa_fail`, the Team Lead's line; the board check's own model and effort.
-- The Team Lead's prompt: the same system prompt across a note's change, and the bracket line naming the changed notes.
+- The Team Lead's chat (T1): the bracket line naming what changed since the thread began, and none when nothing did.
 - Usage: the split from Claude Code's result line (`crates/gizai-agents/tests/fixtures/run-refused.jsonl:21` has every field) and from a Codex `turn.completed`; usage per card and per trigger; savings from recorded runs.
 - Flow tests with the fake Claude Code scripts (CLAUDE.md:45), UI tests for the new tab, rows and Usage tabs.
 
@@ -584,21 +567,21 @@ In order. Each is one pull request that fits in one agent run; the contract they
 |---|---|---|---|---|---|
 | M1 | Record where each run's tokens go, and the token settings | backend | To do | none (records only, always on); adds `Settings.tokens` with every default and range of §7.3 | — |
 | M2 | Usage per card, the input split, and Chat apart from Board checks | frontend | To do | none | M1 |
-| T1 | Keep the Team Lead's prompt stable | backend | To do | Keep the Team Lead's prompt stable: on | M1 |
+| T1 | Tell the Team Lead what changed since its chat began (not a saving: the gap of §2.5) | backend | To do | none: a fix, no cost | — |
 | T2 | Card size, with model and effort per size, and the board check's own | backend | To do | card Size: Normal; Small and Large rows: empty (as Normal), on a new install Small on Sonnet 5.5 and Large at `xhigh`; Raise effort after a QA fail: on; board check effort: `medium` on a new install | M1 |
 | T3 | The card's Size and the agent form's size and board check rows | frontend | Design | as T2 | T2 |
 | T4 | `gizai-quiet`: shorten test and build output, keep the full log | backend | To do | (used by T5) | — |
 | T5 | Runs use `gizai-quiet`, and keep the full logs | backend | To do | Shorten test and build output: on; Lines kept around a failure: 40, 10–200 | M1, T4 |
 | T6 | Comments, memory and Short messages as settings | backend | To do | Comments per run 10 (0–20); Characters per comment 2,000 (500–8,000); Memory per run 6,000 (1,000–12,000); List the other notes: on; Short messages: off | M1 |
 | T7 | Leave room in the subscription's windows | backend | To do | Start no new runs above 90% (50–100) | M1 |
-| T8 | Settings → Tokens | frontend | Design | shows every setting above | M1, T1, T5, T6, T7 |
+| T8 | Settings → Tokens | frontend | Design | shows every setting above | M1, T5, T6, T7 |
 | T9 | Savings and experiments | backend | To do | Try a setting on half the cards: none running | M1, T5, T6 |
 | T10 | Usage → Savings, and what each setting saved | frontend | Design | shows the experiment and the savings | T8, T9 |
 | T11 | Cap a run's context | backend | To do | Compact a run's context at: off (the CLI's own), 100,000–1,000,000 tokens | M1, and M1's first weeks of numbers |
 
-**Ranked by what they save** (the ideas' ranks, §4): after M1 and M2, which measure, come T2 and T3 (ideas 1 and 3), T1 (idea 2), T11 (idea 4, if M1's numbers call for it), T4 and T5 (idea 5), T6 (ideas 6 and 7) and T7 (idea 8); T8, T9 and T10 make all of them visible and testable.
+**Ranked by what they save** (the ideas' ranks, §4): after M1 and M2, which measure, come T2 and T3 (ideas 1 and 2), T11 (idea 3, if M1's numbers call for it), T4 and T5 (idea 4), T6 (ideas 5 and 6) and T7 (idea 7); T8, T9 and T10 make all of them visible and testable. T1 saves nothing: it fixes what this research found in the Team Lead's chat (§2.5), and can go first.
 
-**At the same time:** M1 first (it holds the settings every other card reads). Then T1, T2, T4, T6, T7 and M2 can be built side by side: they touch different files (`src-tauri/src/chat.rs` and `memory.rs`; the run start and `team.rs`; a new crate; `prompt.rs`; the scheduler; `UsagePage.tsx`). T5 follows T4, T3 follows T2, T9 follows T5 and T6, and T8 and T10 come last. T11 waits for M1's numbers: build it only if runs grow large contexts (§4.4); its field then joins Settings → Tokens. No setting ships before its field: T1 to T7 reach users in the release that has T8 (and T3 for the size rows).
+**At the same time:** M1 first (it holds the settings every other card reads); T1 any time, it touches only `src-tauri/src/chat.rs` and `memory.rs`. Then T2, T4, T6, T7 and M2 can be built side by side: they touch different files (the run start and `team.rs`; a new crate; `prompt.rs`; the scheduler; `UsagePage.tsx`). T5 follows T4, T3 follows T2, T9 follows T5 and T6, and T8 and T10 come last. T11 waits for M1's numbers: build it only if runs grow large contexts (§4.3); its field then joins Settings → Tokens. No setting ships before its field: T2 to T7 reach users in the release that has T8 (and T3 for the size rows).
 
 ### M1. Record where each run's tokens go, and the token settings (backend, To do)
 
@@ -621,18 +604,17 @@ Builds: Usage → Cards; Total's input as new, cache written and cache read; the
 - [ ] A run's facts: "2.1 M in (1.9 M cache read, 160 k cache written, 12 k new), 48 k out · 87 turns" (`src/components/RunHistory.tsx:80`).
 - [ ] UI tests for the tab and the facts.
 
-### T1. Keep the Team Lead's prompt stable (backend, To do)
+### T1. Tell the Team Lead what changed since its chat began (backend, To do)
 
-Builds: §4.2. Setting: **Keep the Team Lead's prompt stable**, switch, on.
-- [ ] With it on, a chat thread's system prompt (`src-tauri/src/chat.rs:954-996`) is the same at every turn: the date and the Memory block as at the thread's first turn, the list of other notes without sizes. Only a change in the projects' copies renews it, as today (`chat.rs:957`).
-- [ ] The bracket line before a message names the notes added, removed or changed since the thread began (at most ten, then "and N more").
-- [ ] Off: today's prompt, word for word.
-- [ ] Board checks unchanged.
-- [ ] Tests: a note's size change, a note the Team Lead writes, and a new day leave the system prompt unchanged when on, and change it when off.
+Builds: the fix for §2.5's gap, not a saving, so no setting. Claude Code keeps a chat thread's first system prompt until it compacts the thread, so the Team Lead's notes, list of notes, code copies and date go stale within a thread. Gizai puts what changed into the bracket line it already writes before a message (`src-tauri/src/chat.rs:984`), a user message, so the cache is untouched.
+- [ ] Gizai remembers, per chat thread, what its first turn's system prompt held (`chat.rs:954-996`): the date, the Team Lead's notes, the list of other notes and the code copies.
+- [ ] From the second turn on, the bracket line names what differs since: "Today is …" on a new day; the notes added, removed or changed (at most ten, then "and N more", to read with `memory_read`); a copy added or removed.
+- [ ] Nothing is added when nothing changed; board checks, which start fresh, are unchanged.
+- [ ] Tests: a note's change, a note the Team Lead writes itself, a new project copy and a new day each give one bracket line; an unchanged thread gives none.
 
 ### T2. Card size, with model and effort per size, and the board check's own (backend, To do)
 
-Builds: §4.1 and §4.3. Settings: card **Size** (Small · Normal · Large, default Normal); agent **Small cards** and **Large cards** model and effort (default empty, as Normal); **Raise effort after a QA fail** (on); **Board check model** (default the Team Lead's) and **effort** (`medium` on a new install).
+Builds: §4.1 and §4.2. Settings: card **Size** (Small · Normal · Large, default Normal); agent **Small cards** and **Large cards** model and effort (default empty, as Normal); **Raise effort after a QA fail** (on); **Board check model** (default the Team Lead's) and **effort** (`medium` on a new install).
 - [ ] `tasks.size` and the six `agent_configs` columns (§7.2); `Task`, `TaskPatch`, `AgentInput` and `Member` carry them; the effort is checked against the CLI's levels like today's (`crates/gizai-core/src/team.rs:319-321`).
 - [ ] A run's model and effort come from its card's size and the agent's rows, on Claude Code (`--model`, `--effort`) and Codex (`-m`, `model_reasoning_effort`), and are recorded on the run with why ("card" or "raisedAfterQaFail").
 - [ ] With Raise on, a builder's first run after `qa_fail` goes one size up; Large stays Large.
@@ -650,7 +632,7 @@ Builds: §7.1's Size row and agent form rows.
 
 ### T4. `gizai-quiet`: shorten test and build output, keep the full log (backend, To do)
 
-Builds: the command of §4.5, its own crate next to `crates/gizai-mcp`, shipped next to Gizai like `gizai-mcp` (`install.sh:3`; `src-tauri/src/mcp.rs:65`).
+Builds: the command of §4.4, its own crate next to `crates/gizai-mcp`, shipped next to Gizai like `gizai-mcp` (`install.sh:3`; `src-tauri/src/mcp.rs:65`).
 - [ ] `gizai-quiet <command> [args…]` starts the command without a shell, writes the whole output to `$TMPDIR/outputs/<nn>-<command>.log`, and passes on its exit code.
 - [ ] It prints the command, exit code, time, counts, every failure with its message and up to `GIZAI_QUIET_LINES` lines around it (default 40), every error and warning line, and the full log's path and size.
 - [ ] Recognises cargo test and build, Vitest and Jest, `tsc`, ESLint, `npm run build`, PHPUnit and Pest, Composer; anything else as its first and last lines, never as nothing.
@@ -659,7 +641,7 @@ Builds: the command of §4.5, its own crate next to `crates/gizai-mcp`, shipped 
 
 ### T5. Runs use `gizai-quiet`, and keep the full logs (backend, To do)
 
-Builds: §4.5 in the runs. Settings: **Shorten test and build output** (on), **Lines kept around a failure** (40, 10–200).
+Builds: §4.4 in the runs. Settings: **Shorten test and build output** (on), **Lines kept around a failure** (40, 10–200).
 - [ ] With it on, each `Bash(X:*)` in a Claude Code agent's allowed commands gets `Bash(gizai-quiet X:*)` beside it, never more; the run finds `gizai-quiet` (on its PATH or by full path, both tested on Claude Code and Codex).
 - [ ] "How this run works" gets one line: run tests and builds through `gizai-quiet`, and read the full log with `rg` or `tail` when needed.
 - [ ] The run's `outputs/` is copied to `<data>/runs/<run-id>/outputs/` before the temp folder is emptied; `run_outputs` and `open_run_output` (§7.3).
@@ -668,16 +650,16 @@ Builds: §4.5 in the runs. Settings: **Shorten test and build output** (on), **L
 
 ### T6. Comments, memory and Short messages as settings (backend, To do)
 
-Builds: §4.6 and §4.7. Settings: **Comments per run** (10, 0–20), **Characters per comment** (2,000, 500–8,000), **Memory per run** (6,000, 1,000–12,000), **List the other notes** (on), **Short messages** (off).
+Builds: §4.5 and §4.6. Settings: **Comments per run** (10, 0–20), **Characters per comment** (2,000, 500–8,000), **Memory per run** (6,000, 1,000–12,000), **List the other notes** (on), **Short messages** (off).
 - [ ] The prompt takes the last N comments, each cut at the setting with the mark "… (cut at 2,000 of 5,400 characters; the full comment is on the card)" (`crates/gizai-agents/src/prompt.rs:37`, `:78-84`; `src-tauri/src/runs.rs:912-913`).
 - [ ] QA's latest comment is left out of a builder's prompt when its issues are in "QA found these issues last time" (`prompt.rs:71-77`).
 - [ ] Memory's caps come from the setting (own notes half of it, as `OWN_CAP` is now, `crates/gizai-core/src/memory.rs:30-35`); the list only with List the other notes on.
-- [ ] Short messages on gives a Claude Code run the Concise output style (`"outputStyle":"Concise"` in the `--settings` JSON it already gets, `crates/gizai-agents/src/claude.rs:93-95`), a Codex run `-c model_verbosity="low"`, and any other CLI §4.7's line in "How this run works" (`prompt.rs:297-353`); each checked on the CLI's current version first.
+- [ ] Short messages on gives a Claude Code run the Concise output style (`"outputStyle":"Concise"` in the `--settings` JSON it already gets, `crates/gizai-agents/src/claude.rs:93-95`), a Codex run `-c model_verbosity="low"`, and any other CLI §4.6's line in "How this run works" (`prompt.rs:297-353`); each checked on the CLI's current version first.
 - [ ] `TokenFacts.comments` and `memory` saved; tests at each range's edges.
 
 ### T7. Leave room in the subscription's windows (backend, To do)
 
-Builds: §4.8. Setting: **Start no new runs above**, 90% (50–100).
+Builds: §4.7. Setting: **Start no new runs above**, 90% (50–100).
 - [ ] No automatic start for an agent while the newest reading of its CLI account's 5-hour or weekly window (`crates/gizai-core/src/limits.rs`) is above the setting and not yet reset; Run by hand still starts.
 - [ ] The waiting card says which window, its percentage and when it resets.
 - [ ] 100 = today's behaviour. Tests with readings above, below and after a reset.
@@ -706,7 +688,7 @@ Builds: Usage → Savings (§7.1), Start and Stop under Settings → Tokens → 
 
 ### T11. Cap a run's context (backend, To do; after M1's numbers)
 
-Builds: §4.4. Setting: **Compact a run's context at**, off (the CLI's own), 100,000–1,000,000 tokens.
+Builds: §4.3. Setting: **Compact a run's context at**, off (the CLI's own), 100,000–1,000,000 tokens.
 - [ ] With a value set, a Claude Code task run gets `CLAUDE_CODE_AUTO_COMPACT_WINDOW=<n>` in its environment and a Codex run `-c model_auto_compact_token_limit=<n>`; chat and board checks keep the CLI's own.
 - [ ] Each compaction is a Gizai note in the run's stream and counts in `TokenFacts.compactions`.
 - [ ] Empty: nothing is set, as today. Tests for both CLIs' arguments and the range.

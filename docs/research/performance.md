@@ -77,6 +77,20 @@ that need a running Gizai are in the second table, with how the harness (section
 | Data hooks that reload after any write, mounted with the board | **9** (the sidebar 5, the task page 4), 2 of which load every card | `src/lib/useData.ts:15-20`, `src/components/Sidebar.tsx:42-52`, `src/pages/TasksPage.tsx:103-107` |
 | Cards drawn on the board | at most 50 per column (Show more for the rest); Backlog, Done and Cancelled start as narrow rails without cards | `src/components/Board.tsx:3`, `:21`, `:67-73`, `:91-93` |
 | A live run's log | the last 500 events, each text event drawn as Markdown | `src/lib/runs.ts:4-8`, `src/components/RunPanel.tsx:22-30` |
+| This PC's GPU, as the headless cage saw it | **AMD Radeon RX 7800 XT** (Mesa's radeonsi, navi32), EGL from Mesa, kernel 7.2.5-3-omarchy: no NVIDIA in the render node the tests use | wlroots' start lines in the last headless runs, `/home/jefsev/Herd/gizai/.devdata/smoke.log:9-14` and `shot.log:9-14` (7 Oct) |
+
+**What the repository already measures.** Three UI tests time the screen and fail above a budget, so on `main` these
+held when they last ran (`scripts/ui-test.sh` runs them; their numbers aren't kept, each run overwrites
+`.devdata/selftest.json`) **[V]**:
+
+- the Memory graph with `prep_graph`'s 500 notes: loaded within 4 s, a frame's work under 16 ms, at least 30 frames a
+  second while it lays out, settled within 6 s (`src/selftest.ts:2004-2005`; `scripts/ui-test.sh:61`);
+- Changes on a 2,000-line (32 files) and a 15,000-line (245 files) card: the first screen within 300 ms and 3 s of
+  scrolling without a frame over 100 ms or under 30 frames a second (`src/selftest.ts:2828-2829`; `scripts/ui-test.sh:75-76`);
+- a terminal running `yes` for 10 s: at least 100 frames and no frame over a second (`src/selftest.ts:3097`).
+
+So the graph and the diff view were built to a budget; the board, the chat, Memory's list and the run log have none.
+P1 adds theirs, with the same frame timing.
 
 **What needs a running Gizai** (not taken in this run):
 
@@ -213,7 +227,8 @@ numbers; each finding's code is verified **[V]**.
 
 - **What Gizai sets.** The launcher only points EGL at Mesa when the machine has no NVIDIA GPU (`install.sh:316-317`) and
   starts Gizai through a login shell so agents find their tools (`install.sh:320`); neither it nor Gizai sets any WebKit
-  variable (`rg WEBKIT_` finds none in `src-tauri/` or the scripts) **[V]**.
+  variable (`rg WEBKIT_` finds none in `src-tauri/` or the scripts) **[V]**. This PC draws on an AMD GPU through Mesa
+  (section 3), so the NVIDIA problems in section 5 don't apply to it.
 - **What WebKitGTK does now.** Arch's `webkit2gtk-4.1` is 2.54.1 (built 2 Oct 2026, archlinux.org's package data), so an
   up-to-date Omarchy runs 2.54 **[V]** (the version on this PC itself couldn't be read in this run). In 2.54 "the web
   process compositor now uses the Skia API instead of the venerable TextureMapper", compositing is damage-aware by default
@@ -282,9 +297,17 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
    KADE-1 whose log has 5,000 events; agents paused and Claude Code pointed at the fake. It prints the ids the probe needs on
    one line, as `prep_graph` does.
 2. **The probe, `GIZAI_SELFTEST_MODE=perf:<scenario>`** in `src/selftest.ts`, reported as `perf` in the self-test JSON.
-   It changes nothing in the app: it wraps `window.__TAURI_INTERNALS__.invoke` (what `@tauri-apps/api`'s `invoke` calls)
-   to count each command's calls, answer size (JSON length) and time, counts the events heard, and times frames with
-   `requestAnimationFrame` (frames a second, the longest frame).
+   It counts each command's calls, answer size (JSON length) and time, and the events heard, through a small
+   `src/lib/perf.ts` (7.1), and times frames with `requestAnimationFrame` (frames a second, the longest frame), as the
+   Changes probe already does. It can't wrap Tauri's own `invoke`: Tauri 2.12.1 defines
+   `window.__TAURI_INTERNALS__.invoke` and `.ipc` with `Object.defineProperty` and a bare `value`, so neither can be
+   replaced (`tauri-2.12.1/scripts/core.js:81-113`, `scripts/ipc.js:142-144`) **[V]**. It wraps the app's own instead:
+   `src/api.ts` is the only module that imports `invoke` and `listen` (`src/api.ts:2-3`; `rg` finds no other), so one line
+   there sees every call. To count from the very first call, the backend sets a flag with a plugin's `js_init_script`,
+   which runs "before the HTML document has been parsed and before any other script included by the HTML document is
+   run" (`tauri-2.12.1/src/plugin.rs:329-330`, `:371`) **[V]**, and only in a perf run; outside one, `perf.ts` hands back
+   Tauri's `invoke` and `listen` themselves, so the app runs exactly as today. The listener registrations themselves
+   (`plugin:event|listen`, made inside `@tauri-apps/api`) aren't counted; the probe counts them as `listen` calls.
 
    | Scenario | Route and data | Numbers |
    |---|---|---|
@@ -303,8 +326,11 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
    the probe's first-card time minus the launch. Every 500 ms it reads, for the PIDs it started only (the app, and its
    children found with `pgrep -P` as `scripts/shot-cage.sh:25` does), `VmRSS` from `/proc/<pid>/status` and
    `utime + stime` from `/proc/<pid>/stat`: memory per process and CPU % over the scenario, at rest and under load. Each
-   scenario runs five times (the first after a fresh data copy counts as cold, the other four as warm); it prints the
-   medians as a table and writes `.devdata/perf/<commit>.json`. `scripts/perf.sh --compare a.json b.json` prints two
+   scenario runs five times on a fresh copy of the data; the first, with WebKit's cache folder empty (`XDG_CACHE_HOME` is
+   a new folder), counts as cold, the other four as warm; it prints the medians as a table and writes
+   `.devdata/perf/<commit>.json`. "Cold" here leaves the system's file cache warm: a start straight from disk, as after a
+   reboot, needs root to empty that cache (`sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`), so it is taken by hand
+   with `scripts/perf.sh start --once` after a reboot, not in every card. `scripts/perf.sh --compare a.json b.json` prints two
    results side by side with the change in %. Optional: `--webkit-env 'WEBKIT_DISABLE_COMPOSITING_MODE=1'` runs the same
    with an environment variable, to compare WebKitGTK's drawing modes.
 4. **The query bench, `crates/gizai-core/examples/bench_queries.rs`** (new): on the `prep_perf` data, without a window,
@@ -314,6 +340,116 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
 5. **The bundle report, `scripts/bundle-size.mjs`** (new): after `npm run build`, lists `dist/assets/*` with bytes and
    gzip bytes (Node's `zlib`), and marks what `dist/index.html` loads at start (its script and `modulepreload` links)
    apart from the chunks loaded later.
+
+### 7.1 The harness's core, as code
+
+A starting point for P1b, written against `main` at 24535e3; not run in this card (it may not change the app). Four
+pieces:
+
+**The flag** (`src-tauri/src/lib.rs`, in `run()`, next to the other `let builder = …` lines at `:442-465`):
+
+```rust
+// GA-170's benchmark harness: in a perf run (GIZAI_SELFTEST_MODE=perf:…) the page counts its backend calls from the
+// first one (src/lib/perf.ts). The init script runs before any of the page's own scripts.
+let perf_run = std::env::var("GIZAI_SELFTEST_MODE").is_ok_and(|m| m.starts_with("perf:"));
+let builder = if perf_run {
+    builder.plugin(tauri::plugin::Builder::new("gizai-perf").js_init_script("window.__GIZAI_PERF__ = true;").build())
+} else {
+    builder
+};
+```
+
+**The counter** (`src/lib/perf.ts`, new; `src/api.ts` then imports `invoke` and `listen` from it instead of from
+`@tauri-apps/api`, and keeps `Channel` from there):
+
+```ts
+// GA-170's benchmark harness (P1b): in a perf run, counts every backend call and every event the page hears.
+// Outside one, invoke and listen are Tauri's own: the app runs exactly as without this file.
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+
+type Stat = { calls: number; ms: number; bytes: number; errors: number };
+export const perfOn = (window as { __GIZAI_PERF__?: boolean }).__GIZAI_PERF__ === true;
+export const perfCalls = new Map<string, Stat>();
+export const perfEvents = new Map<string, number>();
+const stat = (name: string) => perfCalls.get(name) ?? perfCalls.set(name, { calls: 0, ms: 0, bytes: 0, errors: 0 }).get(name)!;
+
+export const invoke: typeof tauriInvoke = !perfOn ? tauriInvoke : (async (cmd: string, args?: never, options?: never) => {
+  const s = stat(cmd);
+  s.calls += 1;
+  const t0 = performance.now();
+  try {
+    const out = await tauriInvoke(cmd, args, options);
+    s.bytes += out == null ? 0 : JSON.stringify(out).length; // the answer's size as JSON
+    return out;
+  } catch (e) {
+    s.errors += 1;
+    throw e;
+  } finally {
+    s.ms += performance.now() - t0;
+  }
+}) as typeof tauriInvoke;
+
+export const listen: typeof tauriListen = !perfOn ? tauriListen : ((event, handler, options) => {
+  stat("listen").calls += 1;
+  return tauriListen(event, (e) => { perfEvents.set(event, (perfEvents.get(event) ?? 0) + 1); return handler(e); }, options);
+}) as typeof tauriListen;
+
+/** `ms` of frames, doing `step` (a scroll, a keystroke) before each: frames a second and the longest frame, taken as the
+ * Changes probe takes them (src/selftest.ts:2810-2825). */
+export async function perfFrames(ms: number, step?: () => void) {
+  const gaps: number[] = [];
+  let last = performance.now();
+  const end = last + ms;
+  while (performance.now() < end) {
+    step?.();
+    await new Promise((r) => requestAnimationFrame(r));
+    const now = performance.now();
+    gaps.push(now - last);
+    last = now;
+  }
+  const total = gaps.reduce((n, g) => n + g, 0) || 1;
+  return { fps: Math.round((gaps.length * 1000) / total), longestFrameMs: Math.round(Math.max(0, ...gaps)) };
+}
+
+/** The probe's `perf` report: the calls by command (most bytes first), the events heard, and when the page began. */
+export const perfReport = () => ({
+  timeOrigin: performance.timeOrigin,
+  calls: [...perfCalls].map(([cmd, s]) => ({ cmd, ...s, ms: Math.round(s.ms) })).sort((a, b) => b.bytes - a.bytes),
+  events: Object.fromEntries(perfEvents),
+});
+```
+
+**The sampler** (inside `scripts/perf.sh`'s runner, written and started in `cage` as `scripts/shot-cage.sh` writes its
+runner at `:14-27` and starts it at `:29-34`): it notes the launch, starts Gizai, and every 500 ms writes one line per process of the app and everything
+under it (WebKit's web and network processes, agent runs), however deep:
+
+```bash
+tree() { echo "$1"; for c in $(pgrep -P "$1"); do tree "$c"; done; }
+date +%s%3N > "$OUT/launch_ms"
+"$GZ/target/release/gizai" & APP=$!
+while kill -0 "$APP" 2>/dev/null; do
+  now=$(date +%s%3N)
+  for p in $(tree "$APP"); do
+    stat=$(cat "/proc/$p/stat" 2>/dev/null) || continue
+    set -- ${stat##*) }   # the fields after the command's name: $12 is utime, $13 stime (clock ticks)
+    rss=$(grep -m1 '^VmRSS:' "/proc/$p/status" | tr -s ' ' | cut -d' ' -f2)
+    echo "$now $p $(cat "/proc/$p/comm" 2>/dev/null) ${rss:-0} $(( $12 + $13 ))"
+  done >> "$OUT/samples.txt"
+  sleep 0.5
+done
+```
+
+CPU % of a process between two samples is the change in ticks ÷ `getconf CLK_TCK` (100 on Linux) ÷ the seconds between
+them × 100. Start to board is `timeOrigin` + the probe's first-card time − `launch_ms`.
+
+**The report:** a few lines of Python at the end of `perf.sh` (as `scripts/smoke-cage.sh:23-33` reads its report) join
+each run's `perf` report and samples, take the median of the runs, and print one table per scenario:
+
+```
+scenario  start→board ms  longest frame ms  fps  calls  KB back  app RSS MB  web RSS MB  app CPU %  web CPU %
+board     …
+```
 
 **What it can't show** **[I]**: the headless cage draws with wlroots' `gles2` renderer on the same GPU
 (`WLR_RENDERER=gles2`, `WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128`, `scripts/smoke-cage.sh:18`) in a 1280 × 720 output, not
@@ -519,8 +655,11 @@ frontend and two backend cards can be open at once.
    sight first (P7), and page only if P1 shows that loading 1,000 messages is itself slow.
 5. **The self-test out of the app's start.** It would load only in test runs (`GIZAI_SELFTEST` set), as a separate file
    inside the app. *Recommendation:* yes; the UI tests keep working, and only test runs load it.
-6. **NVIDIA.** Does this PC have an NVIDIA GPU next to its main one (the launcher's `lspci` check, `install.sh:316`)? It
-   decides whether WebKitGTK's DMA-BUF path is worth a look. *Recommendation:* tell me or the P1 card; no change before.
+6. **NVIDIA.** This PC draws on an AMD Radeon RX 7800 XT through Mesa (section 3), so the NVIDIA problems in section 5
+   don't touch it, and P1's numbers won't show them. Should Gizai do anything for users with NVIDIA GPUs before 1.0?
+   *Recommendation:* no setting by default (Tauri's guide warns against unconditional overrides); if a user reports a slow
+   or blank window, ask for `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` or `__NV_DISABLE_EXPLICIT_SYNC=1` as a test, and only
+   then add a launcher setting for NVIDIA machines.
 7. **macOS and Windows.** Measure there too? *Recommendation:* not now: the harness is Linux-only (cage), and the fixes are
    the same on all three; CI's runners are too noisy for frame numbers.
 

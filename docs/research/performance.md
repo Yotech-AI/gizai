@@ -131,7 +131,8 @@ numbers; each finding's code is verified **[V]**.
   doesn't result in UI freezes or slowdowns": Tauri's Calling Rust page **[V]**); and each takes the database's only
   connection (`crates/gizai-core/src/db.rs:13`, `read` at `:204-207` takes the same `Mutex` as `write` at `:209-222`). A reload waits for any write in progress (an agent's
   run writing from another thread), and while it waits the window waits too.
-- **Then the page.** The answers are parsed and the page renders again: the task list sorts, filters and groups every card
+- **Then the page.** The answers are parsed and set as new state even when nothing in them changed
+  (`src/lib/useData.ts:11`), so the page renders again: the task list sorts, filters and groups every card
   (`TasksPage.tsx:131-136`), and the board's cards render again although `Card` is memoised (`Board.tsx:26`), because the
   page passes a new `onOpen` function each time (`TasksPage.tsx:221`) and `Board` builds a new `byId` map on every render
   (`Board.tsx:119`).
@@ -652,7 +653,8 @@ by side.
 ### P2. Reload only what a write changed (frontend)
 - **Builds:** `useData` learns which tables a fetch reads (one map in one place, e.g. `src/lib/tables.ts`; a fetch it
   doesn't know reloads on any write, as today) and reloads only for those (`src/lib/useData.ts:15-20`); notices that arrive
-  within one frame cause one reload; the sidebar and the page share one fetch of the same list (the cards, the team, the
+  within one frame cause one reload; a reload whose answer is the same as the last one keeps the old data, so nothing
+  renders again; the sidebar and the page share one fetch of the same list (the cards, the team, the
   projects, and on the Inbox the chats: `Sidebar.tsx:42-45`, `:52`, `TasksPage.tsx:103-107`). The tables come from the
   notices the backend sends today:
   `settings`, `tasks`, `docs`, `workflow_states`, `actors`, `teams`, `team`, `labels`, `files`, `contacts`, `clients`,
@@ -662,6 +664,7 @@ by side.
 - **Acceptance:**
   - [ ] A `settings` notice reloads nothing on the board; a `tasks` notice reloads the card list once, not twice.
   - [ ] Ten notices within 50 ms reload once.
+  - [ ] A reload that brings back the same list renders nothing again (a test counts renders).
   - [ ] Unit tests for the table map and the coalescing; `npm test` passes.
 - **Expected gain:** calls per write on the board from 9 to at most 2, on the Inbox from 10 to at most 2, on the Memory
   graph from 13 to at most 3.

@@ -8,7 +8,7 @@ dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, aga
 ## 1. Summary
 
 - **Biggest cost: one write reloads everything, on the main thread (F1).** Any database write makes every open screen
-  reload its whole lists: about 8 calls on the board, about 14 on the Memory graph. Those commands are 112 plain `fn`s that
+  reload its whole lists: 9 calls on the board, 13 on the Memory graph. Those commands are 112 plain `fn`s that
   Tauri runs on the window's main thread, all behind one database lock.
 - **Then streaming (F2).** Each streamed piece of a Team Lead answer re-parses the Markdown of every message in the chat,
   and a live run's log redraws up to 500 events every second.
@@ -100,8 +100,8 @@ numbers; each finding's code is verified **[V]**.
   board, nine of these hooks are mounted: the sidebar's `listProjects`, `listTasks`, `getTeam`, `memoryNotes` and
   `listChatThreads` (`src/components/Sidebar.tsx:42-52`) and the task page's `getTeam`, `listProjects`, `listUsers` and
   `listTasks` (`src/pages/TasksPage.tsx:103-106`). So one write anywhere (a comment, a setting, a Memory note an agent
-  saves, a run's status) costs about eight full reloads: every card twice, the team twice, the projects twice, every Memory
-  note and every chat. On the Memory graph it is about fourteen, among them every note with its text
+  saves, a run's status) costs nine full reloads: every card twice, the team twice, the projects twice, the people, every
+  Memory note and every chat. On the Memory graph it is thirteen, among them every note with its text
   (`src/pages/MemoryPage.tsx:50`, `memoryNotes(true)`), every card, open or closed, only to know their ids (`:51`), and the
   graph's own cards, projects, clients, people and team (`src/components/memory/MemoryGraph.tsx:21-25`).
 - **Where they run.** Each of those is a plain `fn` command (`src-tauri/src/commands.rs:82` `list_projects`, `:97`
@@ -317,7 +317,7 @@ frontend and two backend cards can be open at once.
   - [ ] A `settings` notice reloads nothing on the board; a `tasks` notice reloads the card list once, not twice.
   - [ ] Ten notices within 50 ms reload once.
   - [ ] Unit tests for the table map and the coalescing; `npm test` passes.
-- **Expected gain:** calls per write on the board from about 8 to at most 2, on the Memory graph from about 14 to at most 3.
+- **Expected gain:** calls per write on the board from 9 to at most 2, on the Memory graph from 13 to at most 3.
 - **Measure:** P1 `runlog` (a fake run writing): calls per `rows-changed`, and the longest frame; before and after.
 - **Builds on:** P1b.
 

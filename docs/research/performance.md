@@ -163,6 +163,25 @@ numbers; each finding's code is verified **[V]**.
   coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
   paid again each time; the launcher pays it once more at every start (`install.sh:320`). Small, but free to cache **[I]**.
 
+## 5. Compared with what Tauri, WebKitGTK, React, Vite and SQLite recommend
+
+Each line: the advice (quoted from a primary source, read on 14 Oct 2026, links in section 10), what Gizai does, and the gap.
+
+| Advice | Gizai today | Gap |
+|---|---|---|
+| **Tauri:** "Commands without the async keyword are executed on the main thread"; "Asynchronous commands are preferred in Tauri to perform heavy work in a manner that doesn't result in UI freezes or slowdowns" (Calling Rust; Tauri's macro does the same: a plain `fn` gets the blocking execution context, `tauri-macros/src/command/wrapper.rs`) | 112 of 187 commands are plain `fn`, every list and search among them (F1) | **Large** (P3) |
+| **Tauri:** "The event system is not designed for low latency or high throughput situations"; "Channels are designed to be fast and deliver ordered data" (Calling the frontend) | Terminals use a channel with 8 ms batching; run and chat streams send one JSON event per stream event (`src-tauri/src/lib.rs:290-295`) | **Medium** (P5) |
+| **Tauri:** large answers are slow as JSON; "To return array buffers in an optimized way, use tauri::ipc::Response" | Lists come back whole, as JSON, after every write (F1) | Medium; fixed mostly by P2 (fewer reloads), not by a new format |
+| **WebKitGTK:** hardware acceleration is the default, and in 2.54 "now always used"; the DMA-BUF renderer is the only accelerated one since 2.44 ("The X11 and WPE renderers have been removed in favor of the DMA-BUF one"); 2.54's Skia compositor improves MotionMark "by around 36%… while keeping the GPU markedly less busy" | Gizai sets no WebKit variable (FW) | None. Keep it so; `WEBKIT_DISABLE_DMABUF_RENDERER=1` would turn acceleration off altogether (WebKit's `AcceleratedBackingStore.cpp` leaves no transport mode when it is set, so `canUseHardwareAcceleration()` is false; my reading of the source **[I]**) |
+| **Tauri's Linux graphics guide:** most NVIDIA problems come from "the WebKitGTK DMABUF renderer requesting buffer formats the NVIDIA driver does not provide"; `__NV_DISABLE_EXPLICIT_SYNC=1` fixes "Error 71" "without a performance cost"; the other switches cost speed; "Only ship an unconditional override like this if you have verified your app is affected" | The launcher's only graphics setting is Mesa's EGL on machines without NVIDIA (`install.sh:316-317`) | None for this PC; question 6 for NVIDIA machines. One third-party report (xnmp/tauri-explorer#1057, secondary) measured scrolling at 44 to 68 ms a frame on 2.54.1 with an RTX 3070, and 17 ms with `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` |
+| **WebKitGTK memory:** the cache model `WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER` would "Disable the cache completely, which substantially reduces memory usage" (the default is the web browser model); `MemoryPressureSettings` sets the web process's memory limit ("the system's RAM size with a maximum of 3GB" by default) | Neither is set (`rg` finds no cache model or memory pressure setting) | Small, worth one measured try: Gizai's pages come from inside the app, so a web cache buys little **[I]** (P9) |
+| **WebView2 (Windows):** "Batch messages wherever possible, because frequent message passing can increase CPU usage"; set `MemoryUsageTargetLevel` to Low "on inactive WebViews" (wry has `set_memory_usage_level` since 0.35.0) | Unbatched run and chat events; no memory level when the window is closed to the tray | Medium on Windows; P5 batches for all three systems |
+| **macOS (WKWebView):** each web view's page runs in its own WebContent process, and since macOS Sonoma "all drawing… occurs in the 'GPU Process'" | Nothing macOS-specific in drawing; a login shell runs once at start for the PATH (`src-tauri/src/shell_path.rs:8-18`) | None known |
+| **React:** "lazy lets you defer loading component's code until it is rendered for the first time"; "memo is only valuable when your component re-renders often with the same exact props, and its re-rendering logic is expensive" (it is, for Markdown); `useDeferredValue` keeps typing responsive with a slow list; for long lists "we recommend using a technique known as 'windowing'" (the old docs; react.dev has no newer page) | No `lazy`; `MarkdownView`, `MessageGroup`, `Stream` and `Column` aren't memoised; only `DataTable` virtualises | **Large** for streaming (P4), medium for start (P6) and long lists (P7) |
+| **React Compiler 1.0** (7 Oct 2025): "a build-time tool that optimizes your React app through automatic memoization" | Not used (`@vitejs/plugin-react` 5.2.0) | Option for later; P4's hand-made memoisation is smaller and easier to check |
+| **Vite 8 / Rolldown:** dynamic `import()` splits code ("we don't put imported code together with the importers"); the object form of `manualChunks` is gone, and chunks are grouped with `build.rolldownOptions.output.codeSplitting` | Two dynamic imports (terminals, languages); no chunk groups; the chunk warning raised to 2,000 KB (`vite.config.ts:10`) | Medium (P6): `lazy` pages split by themselves; no chunk groups needed |
+| **SQLite:** WAL: "readers do not block writers and a writer does not block readers", but only between connections ("there is no isolation between operations… within the same database connection"); `synchronous=NORMAL` is "safe from corruption" in WAL; long-lived connections should run `PRAGMA optimize=0x10002` when opened and then "once per day or once per hour" | One connection behind one `Mutex` for all reads and writes (`db.rs:13`, `:204-222`); `synchronous` NORMAL, as advised (`db.rs:164`); no `PRAGMA optimize` anywhere | **Large** for the lock (P3); small for `optimize` (P8) |
+
 ## 6. Options
 
 Three ways to go about "a faster app". None needs a new library: `@tanstack/react-virtual` (MIT, 3.14.13 here, 3.14.19
@@ -237,3 +256,23 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
 (`WLR_RENDERER=gles2`, `WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128`, `scripts/smoke-cage.sh:18`) in a 1280 × 720 output, not
 in Hyprland on your screen, so its numbers are for comparing before and after, not the ones you feel. For your own Gizai,
 the read-only line in section 3 gives its memory and CPU.
+
+## 9. Open questions
+
+1. **A baseline on your machine now, or with P1?** Two things you can run in seconds give today's numbers before any card:
+   the bundle (`source scripts/env.sh && npm run build` in this worktree; `dist/` is ignored by git) and your Gizai's memory
+   (the `ps` line in section 3, once at rest and once while an agent works). *Recommendation:* let P1 take all of it, in the
+   cage, so every later card compares against the same setup; run the `ps` line once if you want a feel for today's memory.
+2. **What should feel faster first?** Staying smooth while agents and the Team Lead work (F1, F2), the start (F3), or long
+   chats and big boards? *Recommendation:* smooth while agents work: it is paid all day, and its fixes are the smallest.
+3. **Budgets.** Should the harness fail a card that makes things slower, with fixed limits (for example a warm start to the
+   board under 1.5 s, the longest frame under 50 ms while a run streams, at most two calls per write)? *Recommendation:* yes,
+   but set the limits from P1's baseline, not before.
+4. **Long chats.** Load only a chat's last 200 messages, with "Show older"? *Recommendation:* not yet: draw only what is in
+   sight first (P7), and page only if P1 shows that loading 1,000 messages is itself slow.
+5. **The self-test out of the app's start.** It would load only in test runs (`GIZAI_SELFTEST` set), as a separate file
+   inside the app. *Recommendation:* yes; the UI tests keep working, and only test runs load it.
+6. **NVIDIA.** Does this PC have an NVIDIA GPU next to its main one (the launcher's `lspci` check, `install.sh:316`)? It
+   decides whether WebKitGTK's DMA-BUF path is worth a look. *Recommendation:* tell me or the P1 card; no change before.
+7. **macOS and Windows.** Measure there too? *Recommendation:* not now: the harness is Linux-only (cage), and the fixes are
+   the same on all three; CI's runners are too noisy for frame numbers.

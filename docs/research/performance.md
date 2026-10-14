@@ -115,10 +115,19 @@ numbers; each finding's code is verified **[V]**.
   (`TasksPage.tsx:131-136`), and the board's cards render again although `Card` is memoised (`Board.tsx:26`), because the
   page passes a new `onOpen` function each time (`TasksPage.tsx:221`) and `Board` builds a new `byId` map on every render
   (`Board.tsx:119`).
+- **Other pages.** A card's page reloads 14 lists per write (the sidebar's 5, the page's 6 at
+  `src/pages/TaskPage.tsx:104-109`, the run panel's, the pull request panel's and the files', `RunPanel.tsx:78`,
+  `PullPanel.tsx:22`, `FileDrop.tsx:25`); the chat page 8. In all, 55 `useData` calls in `src/` reload this way.
+- **Who writes.** Every saved chat message and every tool result in a Team Lead answer sends a notice
+  (`src-tauri/src/chat.rs:348`, `:1274`), and so do an agent's own writes through Gizai's tools during a run (comments,
+  Memory notes, limits). So each step of a Team Lead answer, in any chat, costs the board its 9 reloads.
+- **At start** the default route makes 16 backend calls and 18 listener registrations (each one an IPC call too): `app_info`,
+  `terminal_list`, the sidebar's 5 lists, `live_runs` twice, `chat_live`, `editor_apps`, `update_status` and the task page's
+  4 lists.
 - **When it bites.** With an agent run going and while the Team Lead works, writes come every few seconds; each one costs
   the reload storm above. This is the most likely cause of "Gizai gets sluggish while agents work" **[I]**.
 
-### F2. Streaming text re-renders, and re-parses, everything above it
+### F2. Streaming text redraws, and re-parses, everything above it
 
 - **The Team Lead's answer.** Each streamed piece (`delta`) updates the draft (`src/components/chat/useChat.ts:77-84`),
   which renders the whole thread again: `groupMessages` runs again in render (`src/components/chat/ChatThread.tsx:233`) and
@@ -128,13 +137,16 @@ numbers; each finding's code is verified **[V]**.
   (`src/components/MarkdownView.tsx:26-46`), so react-markdown parses every message's Markdown again, for every piece of
   text that streams in. Then a layout effect scrolls to the bottom on each piece (`ChatThread.tsx:153-156`), which makes
   WebKit lay out the whole thread at once. The cost grows with the chat's length: in a chat of 1,000 messages every
-  streamed word re-parses up to 1,000 Markdown bodies **[I]**.
+  streamed word re-parses up to 1,000 Markdown bodies **[I]**. Typing in the chat's text box does the same per keystroke:
+  its text is state of the whole thread (`ChatThread.tsx:134`, passed down at `:47`). And each tool card parses its JSON
+  result again on every render (`src/lib/chat.ts:30`, `:51`).
 - **A live run's log.** `Stream` renders up to 500 events, text events through `MarkdownView`
   (`src/components/RunPanel.tsx:22-30`); it isn't memoised, and `RunPanel` re-renders every second while the run is live
   (`RunPanel.tsx:90-91`) and on each event (`RunPanel.tsx:66`, merged by `mergeEvents`, which copies, sorts and cuts the
   list each time, `src/lib/runs.ts:4-8`). So watching a live run re-parses up to 500 Markdown blocks every second, plus once
   per event. On the backend, each `run_events` call clones the live run's whole event list, or reads and parses the whole
-  log file, on the main thread (`src-tauri/src/runs.rs:394-410`).
+  log file, on the main thread (`src-tauri/src/runs.rs:394-410`). A finished run's log, opened from the run history, has no
+  500 cap at all: every event of the log is drawn (`src/components/RunHistory.tsx:47`, `:97`).
 - **What the terminal shows is possible.** Terminals already stream the right way: raw bytes over a `tauri::ipc::Channel`,
   at most one message every 8 ms (`crates/gizai-agents/src/terminal.rs:38`, `:1022-1026`;
   `src-tauri/src/terminal.rs:73-74`).
@@ -147,10 +159,30 @@ numbers; each finding's code is verified **[V]**.
   module's top level before the first render **[I]**.
 - What is already split: xterm.js and its addons load when a terminal opens (`src/lib/terminals.ts:224-233`), and the
   Editor's language packs when a file of that language opens (`src/lib/codeLanguages.ts:48-112`). So the card's guess that
-  xterm.js loads at start is wrong; CodeMirror's core does load at start (the Markdown editor imports
-  `@codemirror/lang-markdown`, `src/components/MarkdownEditor.tsx:29`), and so do `@codemirror/merge` (through
-  `src/selftest.ts:3`, `src/lib/changes.ts:6`, `src/components/changes/ChangesView.tsx:12`) and d3-force (the Memory graph).
-- The self-test alone is 301,604 bytes of source that every start parses and never uses outside tests.
+  xterm.js loads at start is wrong.
+- CodeMirror does load at start, through the shell itself: the drawers are always mounted (`src/App.tsx:175`) and imported
+  statically (`src/lib/drawers.tsx:3-8`), and five of them import the Markdown editor (`NewTaskDrawer.tsx:11`,
+  `ProjectForm.tsx:10`, `ClientForm.tsx:9`, `AgentForm.tsx:20`, `DocDrawer.tsx:7`), which imports
+  `@codemirror/lang-markdown` (`src/components/MarkdownEditor.tsx:29`). That package imports `@codemirror/lang-html`, which
+  imports the CSS and JavaScript languages (`node_modules/@codemirror/lang-markdown/dist/index.js:6`,
+  `node_modules/@codemirror/lang-html/dist/index.js:2-3`), so those three can't leave the start bundle even though
+  `codeLanguages.ts` asks for them with `import()`.
+- The self-test, 301,604 bytes of source that every start parses and never uses outside tests, brings more along:
+  `@codemirror/view` and `@codemirror/merge` (`src/selftest.ts:2-3`), the Memory graph's canvas and with it d3-force
+  (`:15`), and the terminal view (`:16`).
+
+### F4. Typing redraws the page it is on
+
+- **A card's page.** Its title and the comment being written are state of the whole page (`src/pages/TaskPage.tsx:113-114`),
+  so each keystroke draws the page again: every comment through `MarkdownView` (`TaskPage.tsx:274`), and the run panel
+  with its log.
+- **The Editor.** Each edit or cursor move sets the status bar's cursor in the page's state (`src/pages/EditorPage.tsx:311`),
+  which draws the 833-line page again, with a tab ref that calls `scrollIntoView` on every render (`:670`).
+- **A Memory note.** Its side panel finds backlinks and unlinked mentions on every render (`src/components/memory/NotePane.tsx:211-212`):
+  for each wikilink of each note it scans every note's title (`src/lib/memory.ts:360-361` calling `resolve`, `:165`), which
+  grows with the square of the notes. While you edit a note, that runs on every keystroke. With 300 notes of about five
+  links each, that is some 450,000 title comparisons per keystroke **[I]**.
+- **The task search** writes two `localStorage` keys per keystroke (`src/pages/TasksPage.tsx:100-101`).
 
 ### FW. The webview: WebKitGTK already draws on the GPU; keep it that way
 

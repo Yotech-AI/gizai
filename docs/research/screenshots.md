@@ -78,7 +78,26 @@ When an agent builds something with a screen, the card has screenshots of it by 
 
 ### 3.2 Claude Desktop, checked
 
-(Being written: the web part.)
+**What it is.** Claude Code in the Claude desktop app (its Code tab) has a **Browser pane**, and "Claude can start a dev server and open it in the Browser pane to verify its changes." [V desktop docs] It came as app preview on 20 February 2026 ("Claude Code on desktop can now start dev servers and preview your running app directly in the desktop interface") and became a built-in browser in week 28 of 2026 (6–10 July, Claude Code v2.1.202–2.1.206: "Claude Code on desktop now has a built-in browser"). [V blog, what's new] It is in the macOS and Windows apps (Cmd+Shift+B or Ctrl+Shift+B) and the Linux beta ("live app preview"). [V desktop docs, desktop-linux docs]
+
+**How it starts the page.** "Claude automatically detects your dev server setup and stores the configuration in `.claude/launch.json` at the root of the folder you selected when starting the session." Each configuration has `name`, `runtimeExecutable` (like `npm`), `runtimeArgs` (like `["run", "dev"]`), `port` ("Defaults to 3000"), `cwd`, `env`, `autoPort`, `program`, `args` and `url`; and "When Claude picks a different port, it passes the assigned port to your server via the `PORT` environment variable." You "Start or stop servers, or stop them all at once, from the **Dev servers** menu in the Browser pane's header". [V desktop docs] OO already has such a file, from your own Claude Desktop sessions: a `template-preview` on port 4173 (`otus-os/.claude/launch.json:1-14`). [V]
+
+**How it takes screenshots.** "Auto-verify is on by default": "When `autoVerify` is enabled, Claude automatically verifies code changes after editing files. It takes screenshots, checks for errors, and confirms changes work before completing its response." [V desktop docs] Anthropic's docs name no tools; users' reports in the `anthropics/claude-code` issues do (quoted from the issues, not from Anthropic): today a built-in MCP server `Claude_Browser` with `navigate`, `preview_start`, `preview_list`, `preview_stop`, `preview_logs`, `computer`, `read_page`, `get_page_text`, `find`, `form_input`, `javascript_tool`, `read_console_messages`, `read_network_requests`, `tabs_*` and `resize_window` (#92046), before that `Claude_Preview` with `preview_start`, `preview_screenshot`, `preview_snapshot`, `preview_click`, `preview_eval` and `preview_resize` (#62653, #30122). A screenshot is the `computer` tool's `screenshot` action. [V in the issues]
+
+**Where the images go, and what you saw.** Into the conversation only: "`mcp__Claude_Browser__computer` with `action: "screenshot"` returns the image into the conversation. It has no `filePath` parameter, so there is no way to get the bytes onto disk." (#94503, titled "Browser pane screenshot has no filePath — can't produce a file for gh --attach or any file consumer"). You see the live page in the pane, not a gallery of what was shot. The answer you saw in September, "region crop not yet supported", is the Browser pane's `zoom`: "zoom: region crop not yet supported in the Browser pane; full screenshot returned" (#96717, Windows, Claude Desktop 2.7032.0); a comment of 8 October says `zoom` now crops. `javascript_tool` is the pane's too: its tools copy the Chrome extension's, as "Browsing in the Browser pane uses the same safety model as the Claude in Chrome extension". [V desktop docs, issues]
+
+**What Gizai can use or copy.**
+
+- **Use: nothing directly.** [I] The Browser pane's tools exist only in the desktop app's own sessions (not even in its SSH sessions: #98288), so a `claude -p` that Gizai starts doesn't get them. The CLI's way, Claude in Chrome (`--chrome`), drives *your* Chrome with your logins, which Gizai's hidden browser exists to avoid (`browser.rs:1-4`), and it stays off with an API key or a `claude setup-token` login. [V chrome docs, for the last]
+- **Copy: a launch command per project, with the port handed in.** That is §3.5's Preview command, with `GIZAI_PREVIEW_PORT`, and, as Claude Desktop does, the same port in `PORT` for the preview command only (OO's API reads `PORT`). When a repository has a `.claude/launch.json`, the project form can offer its configurations as the preview command, as it offers paths "found in the repository" to copy today (`ProjectForm.tsx:109-110`). [I]
+- **Copy: verify, then answer.** The agent takes its pictures after its last change and before its result line (§3.3).
+- **Don't copy: images in the conversation.** Gizai's agents save each picture to a file (`filePath`), so a set costs almost nothing in tokens (§3.6), and Gizai can keep and show them, which Claude Desktop can't.
+
+**Other coding agents, in a line each:**
+
+- **GitHub Copilot coding agent** runs the web app with Playwright, on by default, and "Copilot can even share screenshots of what it has done in its pull request" (GitHub changelog, 2 July 2025). [V]
+- **Devin** tests in its own browser and records a video of it: "The recording is sent directly to you as an attachment". [V, read by a helper; not re-read]
+- **Cursor** cloud agents "produce merge-ready PRs with artifacts (videos, screenshots, and logs)" (changelog, 24 February 2026); posting them to GitHub is a setting, with links that are "viewable without authentication". [V, read by a helper; not re-read]
 
 ### 3.3 Who takes them, and when
 
@@ -180,6 +199,75 @@ exec php artisan serve --no-reload --host=127.0.0.1 --port="$GIZAI_PREVIEW_PORT"
 - **Network:** MN's map tiles (OpenFreeMap, PDOK) and YouTube embeds, and YO's Google Fonts at build time, come from the web; the hidden browser can reach any address (`AgentCliTools.tsx:116`). [V, from the sweep]
 
 **OO, Otus OS** (npm workspaces; NestJS 11 API with SQLite through `node:sqlite` that migrates itself; the dashboard on Vite): the API needs `OTUS_SECRET_KEY`, `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` or it exits (`apps/api/src/config/env.spec.ts:144-166`), keeps its database at `DB_PATH` (default `database/database.sqlite`), and can serve the dashboard's build from `apps/api/public` on its own port (`apps/api/src/main.ts:33-36`, `:73-89`, as the Dockerfile does). So `npm run preview:gizai`: build, copy the dashboard's build there, and start the API with `PORT=$GIZAI_PREVIEW_PORT`, `DB_PATH=$GIZAI_PREVIEW_DIR/otus.sqlite` and a throwaway owner (`npm run hash-password -w @otus/api` makes the hash) — one port, no CORS to set. The two-port way is Vite's dashboard on the port with `VITE_API_URL` and `DASHBOARD_ORIGIN` pointing at the API on the next port (`apps/dashboard/vite.config.ts:13-16` has 5173 with `strictPort`, `src/api.ts:66`). Its data starts empty; `scripts/demo-registers.mjs` fills registers through the API. OO also has a **`.claude/launch.json`** with a `template-preview` configuration on port 4173 (`.claude/launch.json:1-14`): the file Claude Desktop's preview reads (§3.2). [V for the code; I for the script]
+
+### 3.6 Cost and safety
+
+**Tokens: a picture saved to a file costs almost nothing; one in the conversation costs on every later turn.**
+
+- With `filePath`, Chrome DevTools MCP 1.10.1 writes the file and answers one line: `Saved screenshot to ${result.filename}.`; without it, a picture under 2,000,000 bytes is attached to the answer for the model to see (`attachImage`), a bigger one goes to a temp file (`src/tools/screenshot.ts` at tag `chrome-devtools-mcp-v1.10.1`). `filePath` is "The absolute path, or a path relative to the current working directory, to save the screenshot to instead of attaching it to the response." 1.10.1 (23 September 2026) is still the newest version (`npm view chrome-devtools-mcp version`, via the helper). [V]
+- A picture in the conversation costs "`⌈width / 28⌉ × ⌈height / 28⌉` visual tokens"; Opus 5.5 and Sonnet 5.5 are in the high-resolution tier ("Claude 4.7 and later models", long edge 2576 px, at most 4784 tokens), which "can use up to roughly three times more visual tokens" than the standard tier. Opus 5.5's input is $4 per million tokens. [V vision docs] So [I, computed]: a 1440 × 900 screenshot is 52 × 33 = **1,716 tokens**, 1280 × 800 is 1,334, 900 × 600 is 726, 390 × 844 is 434, and a whole page of 1280 × 5000 is scaled to about 660 × 2576, 2,208 tokens.
+- Once in the conversation it is sent again with every later turn (from the cache, at a fraction of the price: GA-171 found 0.05× for cache reads and 2× for the 1-hour cache's writes on Opus 5.5 [I, not re-read today]). Eight desktop screenshots looked at early in a run with 40 more turns: about 13,700 tokens written, then 13,700 read 40 times, together about 55,000 input tokens' worth, **about $0.22 a run** at API prices, or that much of a subscription's limits. With `filePath`: eight tool calls and their one-line answers, about 1,200 tokens (roughly $0.005). [I]
+- And more than 20 pictures in one request lower the limit for each to 2000 px a side (vision docs), so an agent that keeps looking at whole pages would start failing. [V]
+- **So the rule for agents:** always `filePath`; look at a picture only when it must (opening the saved file costs the same tokens as above); check what a page says with `take_snapshot` (the page as text) instead. [I]
+- **Tool calls:** about 2–4 browser calls a picture (navigate or click, resize or emulate, `take_screenshot`), so a set of 8 is 20–30 of the run's 200 (Settings → Runs). The agent form already warns: "Every click is a tool call, and the cap per run is in Settings" (`AgentCliTools.tsx:106`). [V for the hint; I for the counts]
+
+**Time per run** [I, to be measured by SB2 on each project]:
+
+| Step | Estimate |
+|---|---|
+| Preview start: GW (`astro dev`), Gizai's browser mode (Vite) | 2–5 s |
+| Preview start: MN, YO (migrate and seed SQLite, `npm run build`) | 15–90 s; QC more, it builds twice |
+| Preview start: OO (`npm run build` of the workspaces) | 30–120 s |
+| The hidden browser's first call (it starts Chrome then: `browser.rs:7`) | 1–3 s |
+| Each picture (go there, size, wait, shoot) | 2–5 s; a set of 8 in 1–2 minutes |
+
+All of it inside the run's own limit (90 minutes by default, `runs.rs:23`); the preview starts while nothing else waits for it but the agent.
+
+**Disk** [I]: an interface PNG at 1440 × 900 is usually 100–400 KB (flat colours compress well), a mobile one 50–150 KB, a whole page or a photo-heavy page (MN's collection, maps) 1–5 MB. A set of 8 is 1–4 MB, a card with three sets 3–12 MB, 100 cards 0.3–1.2 GB. The same picture in two runs is stored once (content hash, `files.rs:94-97`). **When they go** (the settings in §3.8): a card keeps its newest 3 sets, the rows of an older set go when a fourth arrives; all of a card's screenshots go 30 days after it reached Done or Cancelled; and a new housekeeping step deletes a blob once no row uses it any more, because today nothing ever deletes a blob (`files.rs:162`, `housekeeping.rs:9-18`).
+
+**Privacy rules:**
+
+1. **Demo data, never yours.** The preview serves the card's branch with a throwaway database filled by the project's seeders (§3.5), never the database in the worktree's `.env`; the agent's prompt says to shoot only the preview's address, never a `.test` site, a live site or an account of yours. Gizai can't stop the browser opening another address ("they can reach any address", `AgentCliTools.tsx:116`), so this is a rule in the prompt, with the preview as the easy way. [I]
+2. **They stay on this computer.** In Gizai's data folder (the blob store), shown only in Gizai's window. `.gizai-tmp/` is excluded from git in every repository (`worktree.rs:202-206`; all five projects' `info/exclude` have it), so they can't be committed by accident, and Gizai pushes only commits. [V]
+3. **The model sees only what the agent opens.** With `filePath`, nothing; a picture it opens goes to Anthropic as the rest of its conversation does ("Anthropic does not use uploaded images to train models.", vision docs). [V]
+4. **The hidden browser** is headless with a throwaway profile, never your browser, profile or logins (`browser.rs:1-4`). [V]
+5. **To GitHub only when you choose, later.** Since gh v2.99.0 (1 September 2026) `gh pr create`, `gh pr edit` and `gh pr comment` take `--attach`; "You need push access to the repository to attach files."; it works with "either the OAuth token from `gh auth login` or a classic personal access token". "In the case of private and internal repositories, only people with access to the repository can view the uploaded files", and "For public repositories, uploaded files can be accessed without authentication"; at most "10MB for images and gifs". [V GitHub docs and changelog] So a later **Add to pull request** on the tab can post a set as a PR comment with `gh pr comment --attach`, as your choice per set; Bitbucket has no such path in Gizai. Not in the first version (§5.8), and **never by an agent**: QA's list allows `gh pr create` and `gh pr edit` with any arguments (`seed.rs:260`), so with gh 2.99.0 a QA agent could attach a file today; its screenshot line says never to, and the folder is emptied at its run's end. Committing pictures to the branch is never an option: git keeps them for good, in a repository that may be public. [I]
+
+### 3.7 The Screenshots tab, in words
+
+For the Design Agent, who designs it (card SD); every choice here is a recommendation. [I]
+
+- **Where:** a third tab at the top, **Card | Changes | Screenshots**, at `#/task/<id>/screenshots` (and `…/screenshots/<run>` for one run's set), full width like Changes (`TaskPage.tsx:221-227`, `:230`). At the top because it is what you look at first in Review, before Changes, and pictures need the width; not among Comments, Activity and Runs, which sit under the card's text. Icon: Lucide `images` (the design system has no concept for it yet: `design/README.md:137-154`).
+- **The count on the tab:** the newest set's number ("Screenshots 6"), as Changes shows its counts; "None" in faint text when the card has none, as Changes says "No changes". The tab shows only on a project whose screenshots are on (§3.8).
+- **Per run, newest first:** a heading per run with screenshots: the agent (avatar, name, role icon), its answer in words (Ready for testing, QA passed, QA failed, Needs a decision, or Stopped at the time limit), when ("2 h ago"), how many, and a link to the run in the Runs tab. Under it a grid of thumbnails at their own proportions, each with its caption, its size ("1440 × 900") and, small, its file name. Older runs folded after the newest two.
+- **A larger view:** a click opens the picture over the page, fitted to the window, its caption under it; a click or `1` shows it at 100% (drag or scroll to look around), ← and → go to the set's next and previous picture, Esc closes. **Open** opens it in the system's image viewer, as Attachments do (`open_file`).
+- **Compare with the previous run:** in the larger view, when the run before had a picture with the same file name: side by side, or one over the other with a slider. The same picture (the same content hash) says "Unchanged"; a name the previous run didn't have says "New"; names it had that this run hasn't are listed under the set, "Not taken this time". The heading of a set says "3 changed, 2 unchanged, 1 new" when there is a set before it.
+- **A run that took none,** while the project's screenshots are on, says why in its heading: "No screen changed" (the agent said so in its summary), "The preview didn't start", or "Left out 3: not images".
+- **On the board:** a card in a Review column whose newest set has screenshots shows a small `images` sign with the count, next to its pull request sign (`Board.tsx:37`); other columns show none, to keep the board quiet. **In the Inbox,** a card waiting for your review says "6 screenshots" and opens on the tab.
+- **Empty tab:** "No screenshots yet. Agents with the browser save screenshots of the screens they changed at the end of their run." with a link to the project's Preview settings when it has no preview command.
+- **Light and dark:** the thumbnails sit on the page's surface with a 1 px border, so a light screenshot in the dark theme (and the other way round) keeps its edge.
+
+### 3.8 Settings you control
+
+Jefsev's rule (14 Oct 2026): every part is a switch or a value within a range, with a default. Gizai checks each range when saving, as Settings → Runs does (`src-tauri/src/runs.rs:234-252`). [I for the values]
+
+| Setting | Default | Range | Where | Card |
+|---|---|---|---|---|
+| **Screenshots** for the project | on | on, off | project form → Preview | SB1, SF2 |
+| **Preview command** | empty (no preview, so no screenshots) | a command, run with `bash -c` | project form → Preview | SB2, SF2 |
+| **Start time** for the preview | 120 s | 10–600 s | project form → Preview | SB2, SF2 |
+| **Sizes** | Desktop 1280 × 800 and Mobile 390 × 844; for Gizai Window 1440 × 900 and Small 900 × 600 | 1–4 sizes; width 320–3840, height 320–2400 | project form → Preview | SB1, SF2 |
+| **Both themes** | off; on for Gizai | on, off | project form → Preview | SB1, SF2 |
+| **Whole page** (the full length, not one screen) | off | on, off | project form → Preview | SB1, SF2 |
+| **Take screenshots of what it built** for the agent | on for Frontend, Design and QA agents that have the browser; off for the rest | on, off; only with the browser on | agent form → Tools → Browser | SB1, SF2 |
+| **Screenshots per run** | 12 | 1–30 | Settings → Agents and runs → Runs | SB1, SF2 |
+| **Largest screenshot** | 10 MB | 1–50 MB | Settings → Agents and runs → Runs | SB1, SF2 |
+| **Keep** per card | the newest 3 sets | 1–20 sets | Settings → Agents and runs → Runs | SB1, SF2 |
+| **Delete a finished card's screenshots after** | 30 days in Done or Cancelled | 0–365 days (0 = keep them) | Settings → Agents and runs → Runs | SB1, SF2 |
+| **Preview ports** | 47100–47999 | from 1024 to 65535, at least ten ports for each run at once | Settings → Agents and runs → Runs | SB2, SF2 |
+| **Screenshots before Review** for the card | the project's switch | on, off | the card's Properties, under Test before Review (`Properties.tsx:56-57`) | SB1, SF2 |
+
+The prompt line an agent gets (§5.4) names the sizes, the themes and the limit, so the agent knows its set before it starts; the collect step holds Gizai to the limits whatever the agent did.
 
 
 

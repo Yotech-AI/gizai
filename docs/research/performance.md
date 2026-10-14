@@ -30,7 +30,7 @@ Agents run in the background, one process tree per run, and stream what they do 
 |---|---|---|
 | Shell | Tauri 2.12.1 on wry 0.57.0; WebKitGTK on Linux (crate `webkit2gtk` 2.0.2), WKWebView on macOS, WebView2 on Windows | `src-tauri/`, `src-tauri/tauri.conf.json` |
 | UI | React 19.3.0, TypeScript 6.0.3, built by Vite 8.3.3 (Rolldown 1.2.12), `build.target` `safari16`, one entry | `src/`, `vite.config.ts:10` |
-| Bridge | 187 `#[tauri::command]` functions; events `rows-changed`, `runs-changed`, `run-event`, `chat-event`, `chat-changed`, `update-changed`, `editor-updated`, `terminals-changed` | `src-tauri/src/lib.rs:279-302`, `:575-620`; the UI side only in `src/api.ts` |
+| Bridge | 187 `#[tauri::command]` functions; events `rows-changed`, `runs-changed`, `run-event`, `chat-event`, `chat-changed`, `update-changed`, `editor-updated`, `terminals-changed`, and `quit-requested` | `src-tauri/src/lib.rs:279-302`, `:575-620`, `src-tauri/src/unsaved.rs:97`; the UI side only in `src/api.ts` |
 | Core | `gizai-core` (SQLite through rusqlite 0.40.2, SQLite bundled), `gizai-agents` (processes, git, worktrees, terminals), `gizai-mcp` | `crates/` |
 | Data | one database `gizai.db` in the data folder, WAL with `synchronous` NORMAL, **one connection behind one `Mutex`**; run and chat logs as files next to it | `crates/gizai-core/src/db.rs:12-18`, `:162-165` |
 | Tests | `cargo test`, `npm test` (Vitest), headless UI tests in `cage` driven by self-test probes | `scripts/ui-test.sh`, `scripts/smoke-cage.sh`, `scripts/shot-cage.sh`, `src/selftest.ts`, `crates/gizai-core/examples/prep_*.rs` |
@@ -46,7 +46,9 @@ Agents run in the background, one process tree per run, and stream what they do 
    main thread: the data folder's lock (`lib.rs:229`), opening and upgrading the database (`lib.rs:230`; a snapshot first
    when the schema is older, `db.rs:155-160`), the seed (`lib.rs:231-235`), Memory's groups and folders (`:237-243`), runs
    a previous Gizai left (`:247-255`, a git call per such run through `runs::record_head`), questions and chat queues
-   (`:257-261`), stray chat configs (`:262`) and housekeeping (`:263`), then the pending actions (`:275`).
+   (`:257-261`), stray chat configs (`:262`) and housekeeping (`:263`), then the pending actions (`:275`). The page's own
+   files come through Tauri's protocol, which the main thread serves, so the page can't load further until `setup`
+   returns **[I]**: `open_state`'s time is part of every start.
 3. Then background work starts (`lib.rs:491-572`): Memory's import from Claude Code (`spawn_blocking`), the
    notifications watcher, the MCP socket, the Team Lead's code copies, the pull request check (at once, then every two
    minutes), the release check (after 20 s), housekeeping (hourly tick), and every 60 s `runs::pull` and `board::tick`.
@@ -589,8 +591,10 @@ by side.
   `FAKE_STREAM 50x20` for 50 a second for 20 s) and `FAKE_CHAT_STREAM` in `fake-claude-chat.py` (a Team Lead answer of
   about 20 KB, streamed in small pieces).
 - **Acceptance:**
-  - [ ] `prep_perf` makes the data on a copy of the demo data and prints the ids the probe needs on one line.
-  - [ ] `bench_queries` prints one JSON line per query: name, runs, median and p95 in µs.
+  - [ ] `prep_perf` makes the data on a copy of the demo data and prints the ids the probe needs on one line;
+    `--years <n>` multiplies the history.
+  - [ ] `bench_queries` prints one JSON line per query (name, runs, median and p95 in µs), the whole board check among
+    them; `--plan` adds each query's `EXPLAIN QUERY PLAN`.
   - [ ] A test covers each new fake marker; `cargo test --workspace` passes.
 - **Builds on:** nothing. **Gain:** none by itself; it is the measuring stick.
 
@@ -702,10 +706,12 @@ by side.
 
 ### P6. Load a page when it opens; the self-test only in test runs (frontend)
 - **Builds:** `React.lazy` for the pages that aren't the start page (`src/App.tsx:10-25`), each with a light fallback; the
-  self-test loaded with `import()` only when `app_info` says it is a test run (`src/App.tsx:27`, used at `:77-167`).
+  drawers loaded when first asked for (`src/lib/drawers.tsx:3-8`), which takes the Markdown editor and CodeMirror out of
+  the start files (F5); the self-test loaded with `import()` only when `app_info` says it is a test run
+  (`src/App.tsx:27`, used at `:77-167`).
 - **Acceptance:**
-  - [ ] `scripts/bundle-size.mjs`: the start files hold no self-test code and are smaller than the baseline's by the
-    agreed amount.
+  - [ ] `scripts/bundle-size.mjs`: the start files hold no self-test code and no CodeMirror, and are smaller than the
+    baseline's by the agreed amount.
   - [ ] Every page still opens; `scripts/ui-test.sh` and the tour capture pass.
 - **Expected gain:** the start files lose the self-test (about a fifth of the app's own code) and the pages that aren't the
   board; the first card shows sooner by their parse and run time.

@@ -5,7 +5,7 @@
 // bar about the open file (changed on disk, read-only, couldn't save); the status bar at the bottom is the open file's.
 // Outside changes (research §5.3): every 3 seconds the open files' versions (an untouched tab reloads, a tab with changes
 // here offers Reload and Keep mine); every 10 seconds and when the window gets the focus, git's status; on the focus also
-// the tree's open folders. No file watcher.
+// the tree's open folders. A focus 5 seconds or less after the last refresh leaves it alone (GA-177). No file watcher.
 // Behind main (GA-114, F3; design §5, contract C3): the top bar says how the folder stands against main, with Fetch; main
 // is fetched when the folder opens and every 10 minutes while the page shows it, and looked at (locally) every 10 seconds.
 // Under the top bar, the behind bar: Update and what it will do, or why it can't; Update running; how it ended, with
@@ -42,6 +42,7 @@ import { BehindBar, FetchButton, Standing } from "../components/editor/BehindBar
 import { fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../lib/behind";
 import { TerminalButton, TerminalPanel, useTerminalPanel } from "../components/editor/TerminalPanel";
 import { panelKey, terminalOff } from "../lib/terminalPanel";
+import { FOCUS_GAP, onWindowFocus } from "../lib/windowFocus";
 
 export function EditorPage({ id, youId }: { id?: string; youId: string }) {
   return id ? <FolderEditor key={id} folderId={id} youId={youId} /> : <NoFolder />;
@@ -191,11 +192,10 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
   const refreshGit = useCallback(() => { editorGit(id).then(setGit).catch(() => {}); }, [id]);
   useEffect(() => {
     refreshGit();
-    const t = setInterval(() => { if (!document.hidden) { refreshGit(); void loadFolder(); } }, 10_000);
-    const focus = () => { refreshGit(); refreshTree(); void loadFolder(); };
-    window.addEventListener("focus", focus);
-    return () => { clearInterval(t); window.removeEventListener("focus", focus); };
-  }, [refreshGit, refreshTree, loadFolder]);
+    return onWindowFocus(() => { refreshGit(); void loadFolder(); }, FOCUS_GAP, 10_000);
+  }, [refreshGit, loadFolder]);
+  // the tree's open folders on the focus, with a gap of their own: the 10-second refresh above leaves them alone
+  useEffect(() => onWindowFocus(refreshTree), [refreshTree]);
 
   // ---- main: how the folder stands against it, Fetch, Update ----
   const [main, setMain] = useState<FolderMain | null>(null);
@@ -236,18 +236,15 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
       .finally(() => { fetchingRef.current = false; setFetching(false); });
   }, [id, showMain]);
   // When the folder opens: how it stands as last fetched at once, then a fetch. Then every 10 seconds a look (local), and a
-  // fetch 10 minutes after the last; not while the window is hidden, and on the focus at once.
+  // fetch 10 minutes after the last; not while the window is hidden, and on the focus at once (unless the last was 5
+  // seconds ago or less).
   useEffect(() => {
     refreshMain();
     fetchMain();
-    const tick = () => {
-      if (document.hidden) return;
+    return onWindowFocus(() => {
       const m = mainRef.current;
       if ((!m || hasMain(m)) && fetchDue(lastFetch.current, Date.now(), m)) fetchMain(); else refreshMain();
-    };
-    const t = setInterval(tick, 10_000);
-    window.addEventListener("focus", tick);
-    return () => { clearInterval(t); window.removeEventListener("focus", tick); };
+    }, FOCUS_GAP, 10_000);
   }, [refreshMain, fetchMain]);
   // An update's end: the bar says how it ended; the standing, git's marks and the tree show the new state.
   useEffect(() => {

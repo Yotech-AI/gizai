@@ -5,6 +5,8 @@
 // onEditorUpdated. The 10-second look and the 10-minute fetch are run with fake timers. As in EditorPage.test.tsx there is
 // no DOM: a small hook runtime stands in for React (components are called as functions and keep their hooks by their
 // place in the tree, effects run after each render) and the CodeMirror view is a stand-in.
+// GA-177 QA: a window focus refreshes git, the folder, the tree's open folders and main's standing at most once every 5
+// seconds (on Omarchy the focus follows the mouse); the 10-second refresh and look keep their timing and skip while hidden.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import type { EditorState, Transaction, TransactionSpec } from "@codemirror/state";
@@ -117,7 +119,7 @@ vi.mock("../api", async (orig) => {
   const mine = (folder: string) => { if (folder !== FOLDER) throw new Error(`The Editor can't open ${folder}`); };
   return {
     ...out,
-    editorFolders: () => Promise.resolve([folderInfo]),
+    editorFolders: () => { calls.push("folders"); return Promise.resolve([folderInfo]); },
     editorList: async (folder: string): Promise<DirEntry[]> => { mine(folder); calls.push("list"); return [{ name: "README.md", path: "README.md", dir: false, size: 14, ignored: false, git: null }]; },
     editorVersions: async (folder: string, paths: string[]) => { mine(folder); return paths.map(() => "v1"); },
     editorGit: async (folder: string): Promise<FolderGit> => { mine(folder); calls.push("git"); return { branch: repo.branch, files: {}, uncommitted: repo.uncommitted }; },
@@ -548,5 +550,115 @@ describe("a fetch that failed, with Try again", () => {
     await open();
     expect(standing()).toBe("main · not fetched yet");
     expect(mainBar()?.say).toBe("Couldn't fetch main from origin: could not resolve host github.com. Gizai can't tell yet whether kade-portal is behind.");
+  });
+});
+
+describe("GA-177: a window focus refreshes at most once every 5 seconds", () => {
+  const focus = () => win.dispatchEvent(new Event("focus"));
+  const KINDS = ["git", "folders", "list", "main", "fetch"] as const;
+  const counts = () => Object.fromEntries(KINDS.map((k) => [k, count(k)])) as Record<(typeof KINDS)[number], number>;
+  /** What was asked since `before`. */
+  const since = (before: ReturnType<typeof counts>) => Object.fromEntries(KINDS.map((k) => [k, count(k) - before[k]]));
+  const none = { git: 0, folders: 0, list: 0, main: 0, fetch: 0 };
+  const once = { git: 1, folders: 1, list: 1, main: 1, fetch: 0 };
+
+  it("20 focus events within 3 seconds refresh git, the folder, the tree and main's standing once, not 20 times (criterion 1)", async () => {
+    await open();
+    await wait(1000);
+    const before = counts();
+    const at: number[] = [];
+    for (let i = 0; i < 20; i++) { at.push(Date.now()); focus(); await wait(150); }
+    expect(at.length).toBe(20);
+    expect(at[19]! - at[0]!).toBeLessThan(3000);
+    expect(since(before)).toEqual(once);
+  });
+
+  it("a focus more than 5 seconds after the last refresh refreshes at once; 5 seconds or less after it, nothing (criterion 2)", async () => {
+    await open();
+    await wait(1000);
+    focus();
+    await settle();
+    let before = counts();
+    await wait(5000);
+    focus();
+    await settle();
+    expect(since(before)).toEqual(none);
+    before = counts();
+    await wait(1);
+    focus();
+    await settle();
+    expect(since(before)).toEqual(once);
+  });
+
+  it("the first focus after a quiet while refreshes at once: hidden for 20 minutes, a focus refreshes git and fetches main", async () => {
+    await open();
+    const before = counts();
+    doc.hidden = true;
+    await wait(20 * MIN);
+    expect(since(before), "nothing while the window is hidden").toEqual(none);
+    doc.hidden = false;
+    focus();
+    await settle();
+    // main's fetch was due, so the focus fetches (its answer is the standing) instead of looking
+    expect(since(before)).toEqual({ git: 1, folders: 1, list: 1, main: 0, fetch: 1 });
+  });
+
+  it("git and the folder every 10 seconds and main's look keep their timing: a focus doesn't move them (criterion 4)", async () => {
+    await open();
+    let before = counts();
+    await wait(8000);
+    focus(); // 8 s: refreshes
+    await settle();
+    expect(since(before)).toEqual(once);
+    before = counts();
+    await wait(2000); // 10 s: the 10-second refresh and look, though the focus was 2 s ago
+    expect(since(before)).toEqual({ git: 1, folders: 1, list: 0, main: 1, fetch: 0 });
+    before = counts();
+    await wait(9999);
+    expect(since(before)).toEqual(none);
+    await wait(1); // 20 s
+    expect(since(before)).toEqual({ git: 1, folders: 1, list: 0, main: 1, fetch: 0 });
+  });
+
+  it("a focus 5 seconds or less after the 10-second refresh starts no git; the tree, refreshed only on a focus, keeps its own gap", async () => {
+    await open();
+    await wait(4000);
+    focus(); // 4 s: refreshes everything
+    await settle();
+    await wait(6000); // 10 s: the 10-second refresh and look
+    let before = counts();
+    await wait(3000);
+    focus(); // 13 s: 3 s after the 10-second refresh, 9 s after the tree's last
+    await settle();
+    expect(since(before)).toEqual({ git: 0, folders: 0, list: 1, main: 0, fetch: 0 });
+    before = counts();
+    await wait(2001);
+    focus(); // 15.001 s: more than 5 s after the 10-second refresh, 2 s after the tree's
+    await settle();
+    expect(since(before)).toEqual({ git: 1, folders: 1, list: 0, main: 1, fetch: 0 });
+  });
+
+  it("the 10-second refresh and look skip while the window is hidden, and start again when it shows (criterion 4)", async () => {
+    await open();
+    let before = counts();
+    doc.hidden = true;
+    await wait(60_000);
+    expect(since(before)).toEqual(none);
+    doc.hidden = false;
+    before = counts();
+    await wait(10_000);
+    expect(since(before)).toEqual({ git: 1, folders: 1, list: 0, main: 1, fetch: 0 });
+  });
+
+  it("leaving the page stops the 10-second refresh and the focus", async () => {
+    await open();
+    root = () => null;
+    render();
+    const before = counts();
+    focus();
+    await wait(60_000);
+    focus();
+    await settle();
+    expect(since(before)).toEqual(none);
   });
 });

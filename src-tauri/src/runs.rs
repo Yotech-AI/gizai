@@ -511,7 +511,7 @@ pub fn kill_all(st: &AppState) -> usize {
         s.kill();
     }
     // their previews too (GA-182): a preview never outlives its run
-    crate::screenshots::end_all(&st.runs.previews);
+    crate::screenshots::end_previews(&st.runs.previews);
     live.len()
 }
 

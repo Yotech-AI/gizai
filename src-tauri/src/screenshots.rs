@@ -20,7 +20,7 @@ use tauri::State;
 use crate::AppState;
 
 /// The previews of the runs that have one now: each run's first port, and its preview's tree while it runs (so Gizai
-/// quitting at once can end it: `end_all`).
+/// quitting at once can end it: `end_previews`).
 pub(crate) type Previews = Arc<Mutex<HashMap<String, (u16, Option<Tree>)>>>;
 
 /// A run's block of ports, held until the run has ended and its preview with it; dropped, the block is free again.
@@ -163,7 +163,7 @@ fn take_ports(st: &AppState, run_id: &str, from: u32, to: u32) -> Option<PortLea
 }
 
 /// Gizai exits with runs still live: ends their previews' trees at once (SIGKILL; on Windows their Job Objects).
-pub(crate) fn end_all(previews: &Previews) {
+pub(crate) fn end_previews(previews: &Previews) {
     for (_, tree) in previews.lock().unwrap_or_else(|e| e.into_inner()).values() {
         if let Some(t) = tree {
             t.end(End::Kill);

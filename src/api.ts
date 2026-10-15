@@ -199,6 +199,14 @@ export const cardFileDiff = (taskId: string, path: string, oldPath: string | nul
 /** The changes one run committed: from the commit it started at to the one it ended at. */
 export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes", { runId });
 
+// ---- Screenshots (GA-182, contract CS) ----
+/** The card's screenshot sets, newest run first: every run of the card that got the Screenshots section, also one that
+ *  saved none (its `shots` is empty), with what it left out and why its preview didn't start. They arrive when a run ends,
+ *  before "runs-changed": reload on onRunsChanged. */
+export const listScreenshots = (taskId: string) => invoke<T.ScreenshotSet[]>("list_screenshots", { taskId });
+/** One screenshot's bytes (PNG, JPEG or WebP), for a blob: URL. Any id that isn't a run's screenshot is refused. */
+export const screenshotBytes = (fileId: string) => invoke<ArrayBuffer>("screenshot_bytes", { fileId });
+
 /** Pushes a Review card's branch and opens its pull request: with gh on GitHub, through Bitbucket's API on Bitbucket (keeps an open one). */
 export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
 /** Asks GitHub or Bitbucket about the card's pull request now; a merge moves the card to Done. */

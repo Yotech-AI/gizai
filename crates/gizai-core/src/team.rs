@@ -51,8 +51,9 @@ pub struct Member {
     pub folders: Vec<crate::folders::Folder>,
     /// Its MCP servers and their tools, switched on or off (agent form → Tools; `mcp_servers`).
     pub tools: crate::mcp_servers::AgentTools,
-    /// Its CLI's own tools switched on: web search and fetch, built-in tools (agent form → Tools; `mcp_servers::CliTools`).
-    pub cli_tools: crate::mcp_servers::CliTools,
+    /// Its CLI's own tools switched on: web search and fetch, built-in tools (agent form → Tools; `mcp_servers::CliTools`),
+    /// and its Take screenshots of what it built (GA-182), its role's default until set.
+    pub cli_tools: crate::mcp_servers::SavedCliTools,
     /// Memory (GA-19): its runs get a Memory section and its `learned` lines are kept (agent form; on by default).
     pub use_memory: bool,
     /// Memory (GA-96): the agent whose memory folder it shares, its group's owner (agent form → Shares memory with);
@@ -119,7 +120,9 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
     let tools: Option<String> = r.get(12)?;
     let folders: Option<String> = r.get(24)?;
     let extra: Option<String> = r.get(25)?;
-    Ok(Member { actor_id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, role_key: r.get(3)?, title: r.get(4)?,
+    let role_key: String = r.get(3)?;
+    let cli_tools = crate::mcp_servers::SavedCliTools::parse(extra.as_deref(), &role_key);
+    Ok(Member { actor_id: r.get(0)?, name: r.get(1)?, kind: r.get(2)?, role_key, title: r.get(4)?,
                 adapter: r.get(5)?, instructions_md: r.get(6)?, handle: r.get(7)?, status: r.get(8)?,
                 is_lead: r.get::<_, i64>(9)? != 0, model: r.get(10)?, permission_mode: r.get(11)?,
                 allowed_tools: tools.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default(),
@@ -127,7 +130,7 @@ fn member_row(r: &rusqlite::Row) -> rusqlite::Result<Member> {
                 chat_enabled: r.get::<_, i64>(18)? != 0, effort: r.get(19)?, max_runs: r.get(20)?,
                 board_check_minutes: r.get(21)?, board_checked_at: r.get(22)?, board_check_paused: r.get(23)?,
                 folders: folders.and_then(|f| serde_json::from_str(&f).ok()).unwrap_or_default(),
-                tools: crate::mcp_servers::parse_tools(extra.as_deref()), cli_tools: crate::mcp_servers::parse_cli_tools(extra.as_deref()),
+                tools: crate::mcp_servers::parse_tools(extra.as_deref()), cli_tools,
                 use_memory: r.get::<_, i64>(26)? != 0, shares_memory_with: r.get(27)? })
 }
 

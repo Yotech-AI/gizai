@@ -771,22 +771,8 @@ pub struct ToolsView {
 }
 
 /// The agent's CLI tools as the agent form gets them (`T.CliTools`): its saved switches, and its Take screenshots of what
-/// it built (GA-182), saved next to them (`core_mcp::agent_screenshots`) and shown as it is, its role's default until set.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SavedCliTools {
-    #[serde(flatten)]
-    pub tools: core_mcp::CliTools,
-    /// Take screenshots of what it built: only with the browser on.
-    pub screenshots: bool,
-}
-
-impl std::ops::Deref for SavedCliTools {
-    type Target = core_mcp::CliTools;
-    fn deref(&self) -> &core_mcp::CliTools {
-        &self.tools
-    }
-}
+/// it built (GA-182), its role's default until set.
+pub use core_mcp::SavedCliTools;
 
 /// What the agent form saves (`T.CliTools`): the CLI's tools, and Take screenshots of what it built; left out, that switch
 /// keeps what was saved.
@@ -799,12 +785,9 @@ pub struct CliToolsInput {
     pub screenshots: Option<bool>,
 }
 
-/// The agent's saved CLI tools with its Take screenshots of what it built (`SavedCliTools`).
+/// The agent's saved CLI tools with its Take screenshots of what it built (`SavedCliTools`), as its Member has them.
 pub fn saved_cli_tools(st: &AppState, agent_id: &str) -> Result<SavedCliTools, String> {
-    let role = gizai_core::team::agent(&st.db, agent_id).map(|m| m.role_key).map_err(|e| e.to_string())?;
-    let tools = core_mcp::agent_cli_tools(&st.db, agent_id).map_err(|e| e.to_string())?;
-    let saved = core_mcp::agent_screenshots(&st.db, agent_id).map_err(|e| e.to_string())?;
-    Ok(SavedCliTools { tools, screenshots: core_mcp::takes_screenshots(saved, &role) })
+    gizai_core::team::agent(&st.db, agent_id).map(|m| m.cli_tools).map_err(|e| e.to_string())
 }
 
 /// Saves the agent form's CLI tools (`save_cli_tools`) and its Take screenshots of what it built (GA-182), and returns

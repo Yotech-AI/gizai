@@ -7,7 +7,7 @@ import {
 } from "../lib/agents";
 import { agentFolder } from "../lib/memory";
 import { CLAUDE_CODE, EFFORTS_BY_KIND, FOLDERS_NOTE, KIND_LABEL, kindOf, modeFor, PERMISSIONS, RISKY, usesAllowedTools } from "../lib/clis";
-import { fitCliTools, sameCliTools } from "../lib/cliTools";
+import { cliToolsToSave, fitCliTools, sameCliTools } from "../lib/cliTools";
 import { modKey } from "../lib/keys";
 import { cleanSwitches, sameSwitches } from "../lib/mcp";
 import { effortChoices, findModel, modelHint } from "../lib/models";
@@ -209,7 +209,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
       if (kind === "claude_code" && !sameSwitches(d.mcp, initial.mcp)) await saveAgentMcp(id, { mcp: cleanSwitches(d.mcp) });
       // Its web and built-in tool switches too, as far as its CLI takes them.
       const cliTools = fitCliTools(d.cliTools, kind);
-      if (!sameCliTools(cliTools, initial.cliTools)) await saveAgentCliTools(id, { ...cliTools, fetchDomains: cliTools.webFetch ? cliTools.fetchDomains : [] });
+      if (!sameCliTools(cliTools, initial.cliTools)) await saveAgentCliTools(id, cliToolsToSave(cliTools, initial.cliTools));
       onClose();
       if (isNew) go({ page: "agent", id });
     } catch (e) { setErr(String(e)); setBusy(false); }

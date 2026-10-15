@@ -122,7 +122,39 @@ impl CliTools {
     pub fn web_on(&self) -> bool {
         self.web_search || self.web_fetch
     }
+}
 
+/// An agent's CLI tools as the app shows them (`T.CliTools`: its `team::Member`, the agent form): its saved switches, and
+/// its Take screenshots of what it built (GA-182), saved next to them and shown as it is, its role's default until set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedCliTools {
+    #[serde(flatten)]
+    pub tools: CliTools,
+    /// Take screenshots of what it built: only with the browser on.
+    #[serde(default)]
+    pub screenshots: bool,
+}
+
+impl SavedCliTools {
+    /// From an agent's `mcp_extra_json` and its role.
+    pub fn parse(raw: Option<&str>, role: &str) -> SavedCliTools {
+        SavedCliTools { tools: parse_cli_tools(raw), screenshots: takes_screenshots(parse_screenshots(raw), role) }
+    }
+}
+
+impl std::ops::Deref for SavedCliTools {
+    type Target = CliTools;
+    fn deref(&self) -> &CliTools {
+        &self.tools
+    }
+}
+
+/// The agent's switches are these CLI tools (Take screenshots aside, which `CliTools` doesn't have).
+impl PartialEq<CliTools> for SavedCliTools {
+    fn eq(&self, other: &CliTools) -> bool {
+        self.tools == *other
+    }
 }
 
 /// Take screenshots of what it built (GA-182, agent form → Tools, under the browser), for an agent that never set it: on

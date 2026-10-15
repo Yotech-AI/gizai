@@ -24,11 +24,10 @@ export type Project = {
   worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
   /** Team Lead may merge (GA-86): the Team Lead may merge a pull request QA passed, once its checks are green. Off by default. */
   leadMayMerge?: boolean;
-  /** Screenshots (GA-182, contract CP; project form → Preview). Always sent; optional here only so the UI tests' fixtures
-   *  made before them still type-check. */
-  screenshots?: ProjectScreenshots;   // (SB1)
-  previewCommand?: string | null;     // null or "": no preview          (SB2)
-  previewStartSecs?: number;          // 120, 10–600                     (SB2)
+  /** Screenshots (GA-182, contract CP; project form → Preview). */
+  screenshots: ProjectScreenshots;    // (SB1)
+  previewCommand: string | null;      // null or "": no preview          (SB2)
+  previewStartSecs: number;           // 120, 10–600                     (SB2)
 };
 export type ProjectScreenshots = {
   on: boolean;                                                // true
@@ -69,9 +68,8 @@ export type Task = {
   /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
   withLead?: boolean;
   byHand: boolean;         // pinned to a person: agents leave it alone
-  /** Screenshots before Review (GA-182, contract CP; the card's Properties). Always sent; optional here only so the UI
-   *  tests' fixtures made before it still type-check. */
-  screenshots?: boolean | null;       // null: the project's switch       (SB1)
+  /** Screenshots before Review (GA-182, contract CP; the card's Properties). */
+  screenshots: boolean | null;        // null: the project's switch       (SB1)
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -347,13 +345,12 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   notifications: NotificationSwitches;
   editorRoots: string[];   // Settings → General → Editor folders; default ["~/Herd"]
   // Settings → Agents and runs → Screenshots (GA-182, contract CP); save_settings refuses values outside the ranges.
-  // Always sent; optional here only so the UI tests' fixtures made before them still type-check. Left out: kept.
-  screenshotsPerRun?: number;         // 12, 1–30                        (SB1)
-  screenshotMaxMb?: number;           // 10, 1–50                        (SB1)
-  screenshotsKeepSets?: number;       // 3, 1–20                         (SB3)
-  screenshotsKeepDays?: number;       // 30, 0–365; 0 keeps them         (SB3)
-  previewPortFrom?: number;           // 47100                           (SB2)
-  previewPortTo?: number;             // 47999; 1024–65535, at least 10 × maxConcurrentRuns ports (SB2)
+  screenshotsPerRun: number;          // 12, 1–30                        (SB1)
+  screenshotMaxMb: number;            // 10, 1–50                        (SB1)
+  screenshotsKeepSets: number;        // 3, 1–20                         (SB3)
+  screenshotsKeepDays: number;        // 30, 0–365; 0 keeps them         (SB3)
+  previewPortFrom: number;            // 47100                           (SB2)
+  previewPortTo: number;              // 47999; 1024–65535, at least 10 × maxConcurrentRuns ports (SB2)
 };
 /** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
  *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
@@ -673,11 +670,12 @@ export type CliTools = {
   builtin: string[];
   /** Slash commands and skills (Claude Code's SlashCommand and Skill, one switch): on, its task runs may use them. */
   slashCommands: boolean;
-  /** Take screenshots of what it built (GA-182, contract CP; agent form → Tools, under the browser). Always sent with an
-   *  agent's saved tools (its role's default until set); left out when saving, it keeps what was saved. Optional here only
-   *  so the UI tests' fixtures made before it still type-check. */
-  screenshots?: boolean;              // only with the browser on; a new agent's default: true for frontend, design and qa (SB1)
+  /** Take screenshots of what it built (GA-182, contract CP; agent form → Tools, under the browser). An agent's saved
+   *  tools carry it (its role's default until set). */
+  screenshots: boolean;               // only with the browser on; a new agent's default: true for frontend, design and qa (SB1)
 };
+/** What saving an agent's CLI tools sends: Take screenshots left out keeps the saved switch (its role's default until set). */
+export type CliToolsSave = Omit<CliTools, "screenshots"> & { screenshots?: boolean };
 /** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | slash | switch | always | elsewhere | off. */
 export type CatalogTool = { id: string; label: string; group: string; description: string; risk: string; how: string; note: string; reported: boolean };
 /** What the hidden browser needs, found or not; `missing` says what to install. */

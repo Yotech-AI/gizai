@@ -45,6 +45,9 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 .input::placeholder, .textarea::placeholder { color: var(--text-3); }
 .input:hover, .select:hover, .textarea:hover { border-color: var(--text-3); }
 .input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* a field with a problem (GA-164): a danger border, focused too (with the accent halo); its message is .field .error under
+   it, tied to it with aria-describedby */
+.input[aria-invalid="true"], .input.invalid, .select[aria-invalid="true"], .select.invalid { border-color: var(--danger); }
 .input.mono { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .textarea { height: auto; min-height: 88px; padding: 8px 10px; line-height: 1.5; resize: vertical; }
 .select { appearance: none; padding-right: 30px; cursor: pointer;

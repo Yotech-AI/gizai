@@ -15,7 +15,7 @@ type Token = { name: string; value: unknown; usage: string };
 const tokensJson = JSON.parse(read("design/tokens.json")) as Tokens & { color: { tokens: Token[] }; size: { tokens: Token[] } };
 const tokensFile = read("src/styles/tokens.css");
 const bandCss = read("src/styles/band.css");
-const APP_CSS = ["app.css", "components.css", "terminal.css", "changes.css", "appearance.css"].map((f) => [f, read(`src/styles/${f}`)] as const);
+const APP_CSS = ["app.css", "components.css", "terminal.css", "changes.css", "appearance.css", "onboarding.css"].map((f) => [f, read(`src/styles/${f}`)] as const);
 
 /** GA-139's Subtle pair (design/branding/new-tokens.json on its branch, cfb17b9). */
 const SUBTLE = {
@@ -149,8 +149,9 @@ describe("the layer (band.css)", () => {
     }
   });
 
-  it("goes in a window under 560px high, with more contrast, in forced colours and in print", () => {
-    const media = /@media ([^{]+)\{\s*\.app > \.band \{\s*display: none;\s*\}\s*\}/.exec(bandCss.replace(/\/\*[\s\S]*?\*\//g, ""));
+  // GA-164: the first start's onboarding (.onb) has the band too, as its first child, and it goes there likewise
+  it("goes in a window under 560px high, with more contrast, in forced colours and in print, in the app and in the onboarding", () => {
+    const media = /@media ([^{]+)\{\s*\.app > \.band, \.onb > \.band \{\s*display: none;\s*\}\s*\}/.exec(bandCss.replace(/\/\*[\s\S]*?\*\//g, ""));
     expect(media?.[1]?.split(",").map((q) => q.trim())).toEqual(["(max-height: 559px)", "(prefers-contrast: more)", "(forced-colors: active)", "print"]);
   });
 
@@ -163,7 +164,7 @@ describe("the layer (band.css)", () => {
 
   it("leaves the look as it was while it is off: every other rule needs data-band on <html>", () => {
     for (const r of band) {
-      if (r.selector === ".band" || r.selector === ".band > svg" || r.selector === ".app > .band") continue;
+      if (r.selector === ".band" || r.selector === ".band > svg" || r.selector === ".app > .band" || r.selector === ".onb > .band") continue;
       expect(r.selector).toMatch(/^\[data-band\] /);
     }
   });

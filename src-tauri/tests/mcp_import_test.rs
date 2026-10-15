@@ -567,11 +567,15 @@ fn scan_and_import_start_no_server_and_call_no_address() {
 
 #[test]
 fn the_import_panel_says_what_isnt_in_claude_codes_files() {
-    let ui = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../src/components/McpSettings.tsx")).unwrap();
+    // The panel is McpSettings.tsx; its rows (with the Already in the list badge) are McpImport.tsx since GA-164,
+    // which the first start's onboarding reuses.
+    let ui = ["McpSettings.tsx", "McpImport.tsx"].map(|f| {
+        std::fs::read_to_string(format!("{}/../src/components/{f}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }).join("\n");
     for must in ["Connectors from your claude.ai account and servers from plugins aren't in these files",
                  "Gizai doesn't change Claude Code's files, doesn't read its sign-ins and starts no server",
                  "Already in the list", "An import is a copy"] {
-        assert!(ui.contains(must), "McpSettings.tsx lacks: {must}");
+        assert!(ui.contains(must), "neither McpSettings.tsx nor McpImport.tsx has: {must}");
     }
 }
 

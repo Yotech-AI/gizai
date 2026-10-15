@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, startTransition, Suspense, useEffect, useState } from "react";
+import { TriangleAlert, X } from "lucide-react";
 import { appInfo, exitApp, getDoc, getTask, getTeam, listRuns, saveDoc, updateTask, listClients, listProjects, listTasks, selftestReport, tourStill, tourSteps } from "./api";
-import { useRoute } from "./router";
+import { href, useRoute, type Route } from "./router";
 import type { AppInfo } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { Band } from "./components/Band";
@@ -28,13 +29,20 @@ const UsagePage = lazy(() => import("./pages/UsagePage").then((m) => ({ default:
 const MemoryPage = lazy(() => import("./pages/MemoryPage").then((m) => ({ default: m.MemoryPage })));
 const EditorPage = lazy(() => import("./pages/EditorPage").then((m) => ({ default: m.EditorPage })));
 const TerminalPage = lazy(() => import("./pages/TerminalPage").then((m) => ({ default: m.TerminalPage })));
+// GA-164: only a new install's first start shows it
+const OnboardingPage = lazy(() => import("./pages/OnboardingPage").then((m) => ({ default: m.OnboardingPage })));
 
-export default function App() {
+/** `onboarding`: the first start's onboarding waits (main.tsx asks before anything is drawn). It shows instead of the app
+ *  until it is finished or skipped; without it Gizai opens as it always did. */
+export default function App({ onboarding = false }: { onboarding?: boolean }) {
   const route = useRoute();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [palette, setPalette] = useState(false);
   const [drawer, setDrawer] = useState<DrawerReq | null>(null);
+  const [setup, setSetup] = useState(onboarding);
+  /** Why finishing the onboarding opened no Team Lead chat, above the page until it is closed. */
+  const [note, setNote] = useState<string | null>(null);
 
   // the open terminals and their views live as long as the window, not a page (GA-135)
   useEffect(() => { startTerminals(); }, []);
@@ -43,6 +51,7 @@ export default function App() {
     // The theme and density are on <html> already (main.tsx); t and d switch them, like Settings → Appearance.
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return; // handled by an editor (Ctrl+K makes a link there)
+      if (document.querySelector(".onb")) return; // the first start's onboarding, without the app's keys (GA-164)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); return; }
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable], .cm-editor") || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -176,6 +185,26 @@ export default function App() {
       .catch((e) => setError(String(e)));
   }, []);
 
+  // The onboarding is finished or skipped: the app opens on `to` (the chat it started, or the board), or on the page it
+  // would open anyway. useRoute applies the new hash in a transition; the onboarding goes in that same one, so the page you
+  // had before (the board) doesn't show for a moment first.
+  const leave = (to: Route | null, why?: string) => {
+    setNote(why ?? null);
+    const done = () => startTransition(() => setSetup(false));
+    const hash = to ? href(to) : null;
+    if (hash && window.location.hash !== hash) {
+      window.addEventListener("hashchange", done, { once: true });
+      window.location.hash = hash;
+    } else done();
+  };
+  if (setup) {
+    return (
+      <Suspense fallback={null}>
+        <OnboardingPage onDone={leave} />
+      </Suspense>
+    );
+  }
+
   const newTask = (stateId?: string) => setDrawer({ kind: "task", stateId });
   return (
     <DrawerHost request={drawer} setRequest={setDrawer}>
@@ -185,6 +214,10 @@ export default function App() {
         <Sidebar youId={info?.you_id ?? ""} dataLabel={info?.data_label} dataDir={info?.data_dir} route={route} onSearch={() => setPalette(true)} onNewTask={() => newTask()} />
         <main className="main">
           {error && <div className="error-banner">{error}</div>}
+          {note && (
+            <div className="warn-banner" role="status"><TriangleAlert className="icon" /><span>{note}</span>
+              <button type="button" className="btn ghost sm icon-only" aria-label="Close" title="Close" onClick={() => setNote(null)}><X className="icon" /></button></div>
+          )}
           {/* while a page's code loads the first time, the page area stays empty (no spinner); useRoute's transition keeps
               the page you came from until the next one is ready (GA-178) */}
           <Suspense fallback={null}>

@@ -6,6 +6,7 @@ import { CLAUDE_CODE_NO_LIST, CLAUDE_CODE_SIGN_IN_HINT, linesOf, nameProblem, pa
 import { relTime } from "../lib/format";
 import type { McpScan, McpServerInput, McpServerView } from "../types";
 import { BrowserEntryRow } from "./BrowserEntry";
+import { ImportRows, importPicks, importProblem, tickedServers, type ImportPicks } from "./McpImport";
 import { McpToolList } from "./McpTools";
 
 type Draft = { id: string; name: string; transport: string; command: string; args: string; env: LineDraft[]; url: string; headers: LineDraft[];
@@ -51,45 +52,13 @@ function SecretLines({ what, lines, onChange, namePlaceholder }: { what: string;
 function ImportPanel({ scan, existing, busy, onImport, onCancel }: {
   scan: McpScan; existing: string[]; busy: boolean; onImport: (picks: { key: string; name: string }[]) => void; onCancel: () => void;
 }) {
-  const [picks, setPicks] = useState<Record<string, { on: boolean; name: string }>>(
-    () => Object.fromEntries(scan.servers.map((c) => [c.key, { on: false, name: c.name }])));
-  const ticked = scan.servers.filter((c) => picks[c.key]?.on);
-  const problem = (key: string) => {
-    const p = picks[key];
-    const others = ticked.filter((c) => c.key !== key).map((c) => picks[c.key].name.trim());
-    return p?.on ? nameProblem(p.name, [...existing, ...others]) : null;
-  };
-  const blocked = ticked.length === 0 || ticked.some((c) => problem(c.key));
+  const [picks, setPicks] = useState<ImportPicks>(() => importPicks(scan));
+  const ticked = tickedServers(scan, picks);
+  const blocked = ticked.length === 0 || ticked.some((c) => importProblem(scan, picks, existing, c.key));
   return (
     <div className="mcp-import" role="group" aria-label="Import from Claude Code">
       {scan.servers.length === 0 ? <span className="faint">No MCP servers in Claude Code's config files.</span> : (
-        <ul>
-          {scan.servers.map((c) => {
-            const p = picks[c.key];
-            const why = problem(c.key);
-            return (
-              <li key={c.key}>
-                <label className="check"><input type="checkbox" aria-label={`Import ${c.name} (${c.account}, ${c.scope} scope)`} checked={p.on}
-                  onChange={(e) => setPicks({ ...picks, [c.key]: { ...p, on: e.target.checked } })} /></label>
-                <span className="cl-name">
-                  <span><b>{c.name}</b> <span className="faint">· {c.account} · {c.scope} scope{c.folder ? `: ${c.folder}` : ""} · {TRANSPORT_LABEL[c.transport] ?? c.transport}</span>
-                    {c.already && <> <span className="badge outline">Already in the list</span></>}</span>
-                  <span className="mono faint cl-cmd">{serverWhere(c)}</span>
-                  {(c.envNames.length > 0 || c.headerNames.length > 0) && (
-                    <span className="faint">{c.envNames.length > 0 && <>Environment: <span className="mono">{c.envNames.join(", ")}</span></>}
-                      {c.headerNames.length > 0 && <>Headers: <span className="mono">{c.headerNames.join(", ")}</span></>} (values go to your keychain)</span>
-                  )}
-                  {p.on && (c.clash || why) && (
-                    <span className="input-group" style={{ maxWidth: 420 }}>
-                      <input className="input mono" aria-label={`New name for ${c.name}`} value={p.name} onChange={(e) => setPicks({ ...picks, [c.key]: { ...p, name: e.target.value } })} />
-                    </span>
-                  )}
-                  {why && <span className="warn">{why}</span>}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+        <ImportRows scan={scan} existing={existing} picks={picks} onPicks={setPicks} />
       )}
       {scan.problems.map((p) => <span key={p} className="warn">{p}</span>)}
       <span className="hint">Read only: Gizai doesn't change Claude Code's files, doesn't read its sign-ins and starts no server to find these. An import is a copy: later changes in Claude Code don't follow.

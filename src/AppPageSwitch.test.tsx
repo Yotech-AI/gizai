@@ -165,18 +165,27 @@ const { createElement } = await import("react");
 const { default: App } = await import("./App");
 
 // ---- helpers ----
-const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0)); };
+// One turn of the event loop for React, the hash and the module loader. A timer tick is about 16 ms on Windows, so the
+// helpers wait for what they wait for rather than for a number of ticks: at most 1.5 s, well within a test's time, and
+// the check after them then fails.
+const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+async function until(done: () => boolean) {
+  const end = Date.now() + 1500;
+  await tick();
+  while (!done() && Date.now() < end) await tick();
+}
 let container: FakeNode;
 let root: ReturnType<typeof createRoot> | null = null;
-/** Gizai started at `at` (a hash), with appInfo's answer `info`; its start has run. */
-async function start(at: string, info: Record<string, unknown> = {}) {
+/** Gizai started at `at` (a hash), with appInfo's answer `info`; its start has run, as far as `ready` says. */
+async function start(at: string, info: Record<string, unknown> = {}, ready = () => true) {
   hash = at;
   h.info = { version: "0.0.0", data_dir: "/data", you_id: "you", selftest: false, start_route: null, selftest_mode: null, ...info };
   container = doc.createElement("div");
   body.appendChild(container);
   root = createRoot(container as unknown as HTMLElement);
   await act(async () => { root!.render(createElement(App)); });
-  await act(settle);
+  for (let i = 0; i < 5; i++) await tick(); // appInfo's answer and what App does with it
+  await until(ready);
 }
 /** The text a node shows: React hides what a Suspense fallback replaces with display: none, and keeps it in the DOM. */
 const visible = (n: FakeNode): string => n.nodeType === 3 ? n.nodeValue ?? "" : n.style.display === "none" ? "" : n.childNodes.map(visible).join("");
@@ -185,16 +194,20 @@ const pageArea = () => container.all().find((n) => n.nodeName === "MAIN")!;
 const shown = () => visible(pageArea());
 const sidebar = () => visible(container.all().find((n) => n.nodeName === "NAV")!);
 const byClass = (c: string) => container.all().filter((n) => n.attrs.get("class") === c);
-/** Goes to `to` as a sidebar link, a card or a notification does: it sets the hash. */
-async function go(to: string) { await act(async () => { win.location.hash = to; await settle(); }); }
-/** The code of page `name` arrives. */
-async function arrive(name: string) { await act(async () => { h.gate(name).open(); await settle(); }); }
-async function key(k: string, ctrlKey = false) {
+/** Whether page `name`'s code has been asked for: React has drawn the new route by then, and found it missing. */
+const asked = (name: string) => () => h.loaded.includes(name);
+/** Whether the page area shows `text`. */
+const showing = (text: string) => () => shown() === text;
+/** Goes to `to` as a sidebar link, a card or a notification does (it sets the hash), until `then` holds. */
+async function go(to: string, then: () => boolean) { await act(async () => { win.location.hash = to; }); await until(then); }
+/** The code of page `name` arrives; waits until `then` holds. */
+async function arrive(name: string, then: () => boolean) { await act(async () => { h.gate(name).open(); }); await until(then); }
+async function key(k: string, ctrlKey: boolean, then: () => boolean) {
   await act(async () => {
     const e = { type: "keydown", key: k, ctrlKey, metaKey: false, altKey: false, target: body, defaultPrevented: false, preventDefault() { e.defaultPrevented = true; } };
     emit("keydown", e);
-    await settle();
   });
+  await until(then);
 }
 
 afterEach(async () => {
@@ -220,44 +233,44 @@ describe("opening a page the first time (GA-178)", () => {
 
   it("keeps the board and the sidebar as they are while a page's code loads, then shows the page", async () => {
     await start("#/board");
-    await go("#/chat/c1");
+    await go("#/chat/c1", asked("ChatPage"));
     // the chat's code was asked for, and until it is there the board stays: no empty page area
     expect(h.loaded).toEqual(["ChatPage"]);
     expect(shown()).toBe("TasksPage board");
     expect(sidebar()).toBe("at board");
 
-    await arrive("ChatPage");
+    await arrive("ChatPage", showing("ChatPage c1"));
     expect(shown()).toBe("ChatPage c1");
     expect(sidebar()).toBe("at chat");
   });
 
   it("opens a page whose code has loaded at once, the next time and with other props", async () => {
     await start("#/board");
-    await go("#/chat/c2");
+    await go("#/chat/c2", showing("ChatPage c2"));
     expect(shown()).toBe("ChatPage c2");
-    await go("#/chats");
+    await go("#/chats", showing("ChatPage archive"));
     expect(shown()).toBe("ChatPage archive");
-    await go("#/board");
+    await go("#/board", showing("TasksPage board"));
     expect(shown()).toBe("TasksPage board");
     expect(h.loaded).toEqual([]);
   });
 
   it("at start, a deep link to a page leaves the page area empty, with no spinner, until its code arrives", async () => {
-    await start("#/usage");
+    await start("#/usage", {}, asked("UsagePage"));
     expect(h.loaded).toEqual(["UsagePage"]);
     expect(pageArea().childNodes).toEqual([]);
     expect(sidebar()).toBe("at usage");
 
-    await arrive("UsagePage");
+    await arrive("UsagePage", showing("UsagePage"));
     expect(shown()).toBe("UsagePage");
   });
 
   it("a start route (GIZAI_ROUTE, scripts' deep links) keeps the Inbox until the page's code is there, and loads no self-test", async () => {
-    await start("#/inbox", { start_route: "memory/shared" });
+    await start("#/inbox", { start_route: "memory/shared" }, asked("MemoryPage"));
     expect(h.loaded).toEqual(["MemoryPage"]);
     expect(shown()).toBe("Inbox");
 
-    await arrive("MemoryPage");
+    await arrive("MemoryPage", showing("MemoryPage"));
     expect(shown()).toBe("MemoryPage");
     expect(sidebar()).toBe("at memory");
     expect(h.loaded).not.toContain("selftest");
@@ -265,21 +278,22 @@ describe("opening a page the first time (GA-178)", () => {
 
   it("Ctrl+K and N work while a page's code loads, and the page shows under them when it arrives", async () => {
     await start("#/board");
-    await go("#/settings/appearance");
+    await go("#/settings/appearance", asked("SettingsPage"));
     expect(shown()).toBe("TasksPage board");
 
-    await key("k", true);
+    const palettes = (n: number) => () => byClass("palette").length === n;
+    await key("k", true, palettes(1));
     expect(byClass("palette")).toHaveLength(1);
-    await key("k", true);
+    await key("k", true, palettes(0));
     expect(byClass("palette")).toHaveLength(0);
-    await key("n");
+    await key("n", false, () => byClass("drawer").length > 0);
     expect(byClass("drawer").map((n) => n.textContent)).toEqual(["drawer task"]);
     expect(shown()).toBe("TasksPage board");
 
-    await arrive("SettingsPage");
+    await arrive("SettingsPage", showing("SettingsPage appearance"));
     expect(shown()).toBe("SettingsPage appearance");
     expect(byClass("drawer")).toHaveLength(1);
-    await key("k", true);
+    await key("k", true, palettes(1));
     expect(byClass("palette")).toHaveLength(1);
   });
 
@@ -305,15 +319,15 @@ describe("opening a page the first time (GA-178)", () => {
     await start("#/board");
     let before = "TasksPage board";
     for (const [to, page, text] of WALK) {
-      await go(to);
+      await go(to, page ? asked(page) : showing(text));
       if (page) {
         expect(h.loaded.at(-1), to).toBe(page);
         expect(shown(), `${to} while its code loads`).toBe(before);
-        await arrive(page);
+        await arrive(page, showing(text));
       }
       expect(shown(), to).toBe(text);
       before = text;
     }
     expect(h.loaded).toEqual(WALK.map(([, page]) => page).filter(Boolean));
-  });
+  }, 15_000);
 });

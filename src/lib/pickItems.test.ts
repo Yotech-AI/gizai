@@ -1,5 +1,6 @@
-// GA-41: what the @ picker lists. Open tasks only, projects that aren't archived (and their docs), clients that aren't
-// archived, each agent once (not people on a team, not archived agents) and people. Kept for a short while.
+// GA-41: what the @ picker lists. Every task, done and cancelled ones too (GA-206; the list leaves archived cards out), projects
+// that aren't archived (and their docs), clients that aren't archived, each agent once (not people on a team, not archived
+// agents) and people. Kept for a short while.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -33,10 +34,11 @@ describe("loadPickItems", () => {
     answers();
   });
 
-  it("asks for open tasks only and lists every kind, archived ones left out", async () => {
+  it("asks for every task, done and cancelled ones too (GA-206), and lists every kind, archived ones left out", async () => {
     const { loadPickItems } = await import("./pickItems");
     const items = await loadPickItems();
-    expect(api.listTasks).toHaveBeenCalledWith({ openOnly: true });
+    expect(api.listTasks).toHaveBeenCalledTimes(1);
+    expect(api.listTasks).toHaveBeenCalledWith({ openOnly: false });
     expect(items.map((i) => `${i.kind}:${i.key}:${i.label}`)).toEqual([
       "task:GA-12:GA-12 - Fix the login",
       "project:GA:GA - Giz AI",
@@ -89,6 +91,41 @@ describe("loadPickItems", () => {
       ["GA-4", { name: "Backlog", place: 0 }],
     ]);
     expect(pickRows("task.", items).map((r) => (r.type === "item" ? r.item.key : r.kind))).toEqual(["GA-4", "GA-3", "GA-1", "GA-2"]);
+  });
+
+  it("marks done and cancelled tasks closed, and @task. heads them with their columns after Deploy (GA-206)", async () => {
+    const state = (name: string, category: string, sortKey: string) => ({ id: `s-${name}`, name, category, sortKey });
+    api.listTasks.mockResolvedValue([
+      { identifier: "SDH-20", title: "Plan it", projectName: "Stapsgewijs", stateName: "Backlog", stateCategory: "backlog" },
+      { identifier: "SDH-4", title: "Fix the header", projectName: "Stapsgewijs", stateName: "Review", stateCategory: "review" },
+      { identifier: "SDH-1", title: "Ship it", projectName: "Stapsgewijs", stateName: "Deploy", stateCategory: "deploy" },
+      { identifier: "SDH-2", title: "Release notes", projectName: "Stapsgewijs", stateName: "Done", stateCategory: "done" },
+      { identifier: "SDH-3", title: "Dropped", projectName: "Stapsgewijs", stateName: "Cancelled", stateCategory: "cancelled" },
+    ]);
+    api.getTeam.mockImplementation(async (id: string) => ({
+      members: [],
+      states: id === "t1"
+        ? [state("Done", "done", "f"), state("Backlog", "backlog", "a"), state("Cancelled", "cancelled", "g"), state("Review", "review", "d"), state("Deploy", "deploy", "e")]
+        : [],
+    }));
+    const { loadPickItems } = await import("./pickItems");
+    const { itemLink, pickRows, rowHeading } = await import("./itemLinks");
+    const items = await loadPickItems();
+    expect(api.listTasks).toHaveBeenCalledWith({ openOnly: false });
+    expect(items.filter((i) => i.kind === "task").map((i) => [i.key, i.column, i.closed ?? false])).toEqual([
+      ["SDH-20", { name: "Backlog", place: 0 }, false],
+      ["SDH-4", { name: "Review", place: 1 }, false],
+      ["SDH-1", { name: "Deploy", place: 2 }, false],
+      ["SDH-2", { name: "Done", place: 3 }, true],
+      ["SDH-3", { name: "Cancelled", place: 4 }, true],
+    ]);
+    const rows = pickRows("task.", items);
+    expect(rows.map((r, i) => `${rowHeading("task.", rows, i) ?? ""}|${r.type === "item" ? r.item.key : r.kind}`)).toEqual([
+      "Backlog|SDH-20", "Review|SDH-4", "Deploy|SDH-1", "Done|SDH-2", "Cancelled|SDH-3",
+    ]);
+    // A Done card is found by its ID, first, with the same link as an open one.
+    const found = pickRows("SDH-2", items)[0];
+    expect(found?.type === "item" && itemLink(found.item)).toBe("[SDH-2 - Release notes](gizai:task/SDH-2)");
   });
 
   it("still lists a task under its column's name when its team can't be read", async () => {

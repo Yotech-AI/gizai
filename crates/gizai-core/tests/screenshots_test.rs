@@ -736,3 +736,33 @@ fn an_agent_takes_screenshots_by_its_roles_default_until_its_own_switch_is_saved
     assert!(m::agent_screenshots(&b.db, "no-such-agent").is_err());
     assert!(m::set_agent_screenshots(&b.db, &b.you, "no-such-agent", true).is_err());
 }
+
+#[test]
+fn an_agents_member_carries_its_take_screenshots_switch_next_to_its_cli_tools() {
+    let b = board();
+    let backend = team::add_agent(&b.db, &b.you, &b.team, AgentInput { name: "Backend".into(), role_key: "backend".into(), ..Default::default() }).unwrap();
+    let qa = team::add_agent(&b.db, &b.you, &b.team, AgentInput { name: "QA".into(), role_key: "qa".into(), ..Default::default() }).unwrap();
+    let switch = |id: &str| team::agent(&b.db, id).unwrap().cli_tools.screenshots;
+    // never set: its role's default
+    assert_eq!((switch(&b.agent), switch(&qa), switch(&backend)), (true, true, false));
+    // its CLI tools saved, its switch never: still the role's default, the tools as saved
+    let cli = m::set_cli_tools(&b.db, &b.you, &b.agent, CliTools { web_search: true, builtin: vec!["Bash".into()], ..Default::default() }).unwrap();
+    let member = team::agent(&b.db, &b.agent).unwrap();
+    assert!(member.cli_tools.screenshots && member.cli_tools == cli, "{:?}", member.cli_tools);
+    assert!(member.cli_tools.web_on(), "its CLI tools read through it");
+    // its own switch wins over the role's, both ways
+    m::set_agent_screenshots(&b.db, &b.you, &b.agent, false).unwrap();
+    m::set_agent_screenshots(&b.db, &b.you, &backend, true).unwrap();
+    assert_eq!((switch(&b.agent), switch(&backend)), (false, true));
+    assert_eq!(team::agent(&b.db, &b.agent).unwrap().cli_tools.tools, cli, "the CLI tools stay");
+    // the team's members carry it too (the team page, the agent form)
+    let members = team::get(&b.db, &b.team).unwrap().members;
+    let of = |id: &str| members.iter().find(|m| m.actor_id == id).unwrap().cli_tools.screenshots;
+    assert_eq!((of(&b.agent), of(&qa), of(&backend)), (false, true, true));
+    // as the UI gets it (T.CliTools): the CLI's switches with screenshots next to them, in one object
+    let json = serde_json::to_value(&team::agent(&b.db, &b.agent).unwrap().cli_tools).unwrap();
+    assert_eq!(json["webSearch"], serde_json::json!(true));
+    assert_eq!(json["builtin"], serde_json::json!(["Bash"]));
+    assert_eq!(json["screenshots"], serde_json::json!(false));
+    assert!(json.get("tools").is_none(), "flattened: {json}");
+}

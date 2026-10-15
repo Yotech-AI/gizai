@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { appInfo, exitApp, getDoc, getTask, getTeam, listRuns, saveDoc, updateTask, listClients, listProjects, listTasks, selftestReport, tourStill, tourSteps } from "./api";
 import { useRoute } from "./router";
 import type { AppInfo } from "./types";
@@ -6,27 +6,28 @@ import { Sidebar } from "./components/Sidebar";
 import { Band } from "./components/Band";
 import { CommandPalette } from "./components/CommandPalette";
 import { CloseGuard } from "./components/CloseGuard";
-import { Placeholder } from "./pages/Placeholder";
-import { ClientsPage } from "./pages/ClientsPage";
-import { ClientPage } from "./pages/ClientPage";
-import { UsersPage } from "./pages/UsersPage";
-import { ProjectsPage } from "./pages/ProjectsPage";
-import { ProjectPage } from "./pages/ProjectPage";
 import { TasksPage } from "./pages/TasksPage";
-import { TaskPage } from "./pages/TaskPage";
-import { DocPage } from "./pages/DocPage";
-import { TeamPage } from "./pages/TeamPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { AgentPage } from "./pages/AgentPage";
-import { ChatPage } from "./pages/ChatPage";
-import { UsagePage } from "./pages/UsagePage";
-import { MemoryPage } from "./pages/MemoryPage";
-import { EditorPage } from "./pages/EditorPage";
-import { TerminalPage } from "./pages/TerminalPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
-import { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, runSteps, teamProbe, terminalProbe, usageProbe } from "./selftest";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 import { startTerminals } from "./lib/terminals";
+
+// GA-178: Gizai opens on the board or the Inbox (TasksPage); every other page loads when it is first opened.
+const Placeholder = lazy(() => import("./pages/Placeholder").then((m) => ({ default: m.Placeholder })));
+const ClientsPage = lazy(() => import("./pages/ClientsPage").then((m) => ({ default: m.ClientsPage })));
+const ClientPage = lazy(() => import("./pages/ClientPage").then((m) => ({ default: m.ClientPage })));
+const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const ProjectsPage = lazy(() => import("./pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
+const ProjectPage = lazy(() => import("./pages/ProjectPage").then((m) => ({ default: m.ProjectPage })));
+const TaskPage = lazy(() => import("./pages/TaskPage").then((m) => ({ default: m.TaskPage })));
+const DocPage = lazy(() => import("./pages/DocPage").then((m) => ({ default: m.DocPage })));
+const TeamPage = lazy(() => import("./pages/TeamPage").then((m) => ({ default: m.TeamPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const AgentPage = lazy(() => import("./pages/AgentPage").then((m) => ({ default: m.AgentPage })));
+const ChatPage = lazy(() => import("./pages/ChatPage").then((m) => ({ default: m.ChatPage })));
+const UsagePage = lazy(() => import("./pages/UsagePage").then((m) => ({ default: m.UsagePage })));
+const MemoryPage = lazy(() => import("./pages/MemoryPage").then((m) => ({ default: m.MemoryPage })));
+const EditorPage = lazy(() => import("./pages/EditorPage").then((m) => ({ default: m.EditorPage })));
+const TerminalPage = lazy(() => import("./pages/TerminalPage").then((m) => ({ default: m.TerminalPage })));
 
 export default function App() {
   const route = useRoute();
@@ -74,9 +75,14 @@ export default function App() {
         // GIZAI_SELFTEST_MODE=steps:<step>;<step>…: a step "#/route" goes there, any other step clicks that CSS selector;
         // runSteps has the rest (the product tour's named clicks and stills, GA-148).
         if (i.selftest_mode?.startsWith("steps:")) steps = i.selftest_mode.slice(6).split(";");
-        if (steps.length) await runSteps(steps, { still: tourStill, report: tourSteps });
+        // GA-178: the self-test's code loads only in a test run, before its first step or probe; a normal start never loads it.
+        if (steps.length) {
+          const { runSteps } = await import("./selftest");
+          await runSteps(steps, { still: tourStill, report: tourSteps });
+        }
         document.body.dataset.ready = "1";
         if (i.selftest) {
+          const { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, terminalProbe, usageProbe } = await import("./selftest");
           // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the
           // probe types in the editor and reports; the script quits Gizai from outside, so the page doesn't.
           if (i.selftest_mode?.startsWith("close-save:")) {
@@ -179,24 +185,28 @@ export default function App() {
         <Sidebar youId={info?.you_id ?? ""} dataLabel={info?.data_label} dataDir={info?.data_dir} route={route} onSearch={() => setPalette(true)} onNewTask={() => newTask()} />
         <main className="main">
           {error && <div className="error-banner">{error}</div>}
-          {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
-            : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
-            : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
-            : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} view={route.view === "changes" ? "changes" : "card"} run={route.run} youId={info?.you_id ?? ""} />
-            : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />
-            : route.page === "agent" && route.id ? <AgentPage key={route.id} id={route.id} />
-            : route.page === "team" ? <TeamPage />
-            : route.page === "settings" ? <SettingsPage tab={route.id} />
-            : route.page === "clients" ? <ClientsPage />
-            : route.page === "client" && route.id ? <ClientPage key={route.id} id={route.id} />
-            : route.page === "users" ? <UsersPage />
-            : route.page === "usage" ? <UsagePage />
-            : route.page === "memory" ? <MemoryPage key={route.scope ?? "all"} route={route} youId={info?.you_id ?? ""} />
-            : route.page === "editor" ? <EditorPage id={route.id} youId={info?.you_id ?? ""} />
-            : route.page === "terminal" ? <TerminalPage id={route.id} youId={info?.you_id ?? ""} />
-            : route.page === "projects" ? <ProjectsPage />
-            : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
-            : <Placeholder route={route} info={info} />}
+          {/* while a page's code loads the first time, the page area stays empty (no spinner); useRoute's transition keeps
+              the page you came from until the next one is ready (GA-178) */}
+          <Suspense fallback={null}>
+            {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
+              : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
+              : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
+              : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} view={route.view === "changes" ? "changes" : "card"} run={route.run} youId={info?.you_id ?? ""} />
+              : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />
+              : route.page === "agent" && route.id ? <AgentPage key={route.id} id={route.id} />
+              : route.page === "team" ? <TeamPage />
+              : route.page === "settings" ? <SettingsPage tab={route.id} />
+              : route.page === "clients" ? <ClientsPage />
+              : route.page === "client" && route.id ? <ClientPage key={route.id} id={route.id} />
+              : route.page === "users" ? <UsersPage />
+              : route.page === "usage" ? <UsagePage />
+              : route.page === "memory" ? <MemoryPage key={route.scope ?? "all"} route={route} youId={info?.you_id ?? ""} />
+              : route.page === "editor" ? <EditorPage id={route.id} youId={info?.you_id ?? ""} />
+              : route.page === "terminal" ? <TerminalPage id={route.id} youId={info?.you_id ?? ""} />
+              : route.page === "projects" ? <ProjectsPage />
+              : route.page === "project" && route.id ? <ProjectPage key={route.id} id={route.id} />
+              : <Placeholder route={route} info={info} />}
+          </Suspense>
         </main>
         <CommandPalette open={palette} onClose={() => setPalette(false)} onNewTask={() => newTask()} />
         <CloseGuard />

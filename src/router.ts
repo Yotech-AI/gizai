@@ -1,5 +1,5 @@
 // Tiny hash router: #/page or #/page/id.
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 
 export const PAGES_WITH_ID = ["task", "project", "client", "doc", "team", "agent", "chat"] as const;
 // chats: Chat → Archive, every chat with a search (chat/<id> is one chat).
@@ -66,7 +66,9 @@ export function go(r: Route) {
 export function useRoute(): Route {
   const [route, setRoute] = useState(() => parseHash(window.location.hash));
   useEffect(() => {
-    const on = () => setRoute(parseHash(window.location.hash));
+    // A transition (GA-178): a page whose code hasn't loaded yet suspends, and React keeps the page you came from on screen
+    // until it has, instead of an empty page area.
+    const on = () => startTransition(() => setRoute(parseHash(window.location.hash)));
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);

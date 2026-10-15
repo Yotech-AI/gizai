@@ -7,7 +7,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -450,90 +450,97 @@ pub struct Reading {
 /// A Gizai's memory limit for its agent runs, and the slice that enforces it (Linux). Nothing is enforced or read until
 /// `enable`, which Gizai's start does: a test's Gizai keeps its processes outside systemd, and its runs don't wait for
 /// memory, unless the test enables it (or fakes a reading).
+///
+/// Only `slice` waits while the slice is being set up (so no process starts outside it meanwhile); the limit, whether it
+/// is enforced and the readings never do, so Settings and the start check stay quick.
 #[derive(Default)]
 pub struct RunsMemory {
-    inner: Mutex<Inner>,
-}
-
-#[derive(Default)]
-struct Inner {
-    /// The slice's name and the limit in bytes, from `enable` and `set_limit`.
-    wanted: Option<(String, u64)>,
-    /// What setting the slice up gave, once tried: the slice, or why there is none.
-    made: Option<Result<Slice, String>>,
+    /// The slice's name, from `enable`.
+    name: Mutex<Option<String>>,
+    /// The limit in bytes, from `enable` and `set_limit`; 0 until enabled.
+    limit: AtomicU64,
+    /// What setting the slice up gave, once tried: the slice, or why there is none. Held while it is set up.
+    made: Mutex<Option<Result<Slice, String>>>,
+    /// Whether `made` holds a slice.
+    enforced: AtomicBool,
     /// Tests: readings that stand in for the real ones.
-    fake: Option<Reading>,
+    fake: Mutex<Option<Reading>>,
 }
 
 impl RunsMemory {
-    /// From now on, the processes `slice` hands out start in the slice `name`, with a limit of `limit` bytes. The slice is
-    /// set up at the first `slice` call.
+    /// From now on, the processes `slice` hands out start in the slice `name`, with a limit of `limit` bytes, and the
+    /// start check reads the memory. The slice is set up at the first `slice` call.
     pub fn enable(&self, name: &str, limit: u64) {
-        let mut s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        s.wanted = Some((name.to_string(), limit));
-        s.made = None;
+        let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
+        *self.name.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.to_string());
+        self.limit.store(limit, Ordering::SeqCst);
+        self.enforced.store(false, Ordering::SeqCst);
+        *made = None;
     }
 
     /// The slice to start agent processes in, set up at the first call after `enable` (Linux: systemctl and a first
     /// scope, well under a second). None when it isn't enabled, or can't be made: then they start as before, and Gizai
     /// logged why, once.
     pub fn slice(&self) -> Option<Slice> {
-        let mut s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if s.made.is_none()
-            && let Some((name, limit)) = s.wanted.clone()
+        let mut made = self.made.lock().unwrap_or_else(|e| e.into_inner());
+        let name = self.name.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if made.is_none()
+            && let Some(name) = name
         {
-            let made = Slice::set_up(&name, limit);
-            match &made {
+            let limit = self.limit.load(Ordering::SeqCst);
+            let set_up = Slice::set_up(&name, limit);
+            match &set_up {
                 Ok(slice) => eprintln!("gizai: agent runs start in {} ({}), with a memory limit of {:.1} GB together",
                                        slice.name(), slice.dir().display(), limit as f64 / GB as f64),
                 Err(why) => eprintln!("gizai: agent runs start without a memory limit: {why}. Gizai only waits for free memory \
                                        before it starts a run (Settings → Runs → Memory for agent runs)."),
             }
-            s.made = Some(made);
+            self.enforced.store(set_up.is_ok(), Ordering::SeqCst);
+            *made = Some(set_up);
         }
-        s.made.as_ref()?.as_ref().ok().cloned()
+        made.as_ref()?.as_ref().ok().cloned()
     }
 
     /// Whether the limit is enforced now: the slice is set up.
     pub fn enforced(&self) -> bool {
-        matches!(self.inner.lock().unwrap_or_else(|e| e.into_inner()).made, Some(Ok(_)))
+        self.enforced.load(Ordering::SeqCst)
     }
 
     /// The limit in bytes, once enabled.
     pub fn limit(&self) -> Option<u64> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).wanted.as_ref().map(|(_, l)| *l)
+        Some(self.limit.load(Ordering::SeqCst)).filter(|l| *l > 0)
     }
 
-    /// A new limit of `limit` bytes. A slice that is set up gets it at once, MemoryMax and MemoryHigh together.
+    /// A new limit of `limit` bytes. A slice that is set up gets it at once, MemoryMax and MemoryHigh together (after a
+    /// set-up that is under way, which used the old one).
     pub fn set_limit(&self, limit: u64) -> Result<(), String> {
-        let mut s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((_, l)) = s.wanted.as_mut() else { return Ok(()) };
-        *l = limit;
-        match &s.made {
+        if self.limit().is_none() {
+            return Ok(());
+        }
+        self.limit.store(limit, Ordering::SeqCst);
+        match self.made.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             Some(Ok(slice)) => slice.set_limit(limit),
             _ => Ok(()),
         }
     }
 
-    /// The start check's readings now: what the runs in the slice use (when it is set up) and what the computer has free.
-    /// Nothing until `enable` (or `fake_reading`), so a test's runs never wait for the test machine's memory.
+    /// The start check's readings now: what the runs in the slice use (once it is set up) and what the computer has
+    /// free. Nothing until `enable` (or `fake_reading`), so a test's runs never wait for the test machine's memory.
     pub fn reading(&self) -> Reading {
-        let slice = {
-            let s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(f) = s.fake {
-                return f;
-            }
-            if s.wanted.is_none() {
-                return Reading::default();
-            }
-            s.made.as_ref().and_then(|m| m.as_ref().ok()).cloned()
-        };
+        if let Some(f) = *self.fake.lock().unwrap_or_else(|e| e.into_inner()) {
+            return f;
+        }
+        if self.limit().is_none() {
+            return Reading::default();
+        }
+        // while the slice is being set up, there is nothing in it yet
+        let slice = self.made.try_lock().ok().and_then(|m| m.as_ref()?.as_ref().ok().cloned());
         Reading { used: slice.and_then(|s| s.used()), available: available() }
     }
 
     /// Tests: readings that stand in for the real ones; None goes back to the real ones.
     #[doc(hidden)]
     pub fn fake_reading(&self, reading: Option<Reading>) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).fake = reading;
+        *self.fake.lock().unwrap_or_else(|e| e.into_inner()) = reading;
     }
 }

@@ -1,8 +1,7 @@
 # Screenshots on the card: the design (GA-181)
 
-The design of GA-173's research (`docs/research/screenshots.md` §3.7, §3.8 and §5.1, on branch
-`gizai/ga-173-research-screenshots-of-what-an-agent-bu` until GA-175 merges) for Jefsev's review, before SF1 and SF2
-build it. It lives in Figma, file **Giz-AI**, page **App: Screenshots** (`158:2`):
+The design of GA-173's research (`docs/research/screenshots.md` §3.7, §3.8 and §5.1, on main since GA-175) for
+Jefsev's review, before SF1 and SF2 build it. It lives in Figma, file **Giz-AI**, page **App: Screenshots** (`158:2`):
 https://www.figma.com/design/Q2dp2xiv8MMm90Xwj3ToCI/Giz-AI?node-id=158-2
 
 Every frame is the window, 1440 × 900 (`src-tauri/tauri.conf.json`), drawn with the app's tokens (the GizAi colour and
@@ -21,15 +20,15 @@ Open one with `https://www.figma.com/design/Q2dp2xiv8MMm90Xwj3ToCI/Giz-AI?node-i
 | Screenshots tab · Older runs open · Dark | `168:564` | Scrolled down to the older runs: QA failed (a phone picture), a set with files left out, a run whose preview didn't start, a run where no screen changed |
 | Empty tab · No preview · Dark | `169:1291` | MN-31: the project has no Preview command; Set up the preview |
 | Empty tab · The agent's screenshots are off · Dark | `169:1947` | GW-9: the Frontend Agent's switch is off; Open Frontend Agent settings |
-| Empty tab · Off for this card · Dark | `169:2590` | GW-10: the card's own switch is off; Properties open with the new row |
+| Empty tab · Off for this card · Dark | `169:2590` | GW-10: the card's own switch is off; Show properties, and Properties open after its click, the focus on the new row |
 | Empty tab · No run yet · Dark | `169:3279` | GW-11: nothing yet; Screenshot settings |
 | Larger view · Dark | `170:2304` | One picture fitted, its caption, 2 of 4, Previous and Next, Fit \| 100%, Compare, Open, Close |
-| Compare · Side by side · Dark | `172:2896` | The run before and this run, paired by file name |
-| Compare · Slider · Dark | `172:3640` | One picture with a line to drag: the run before left of it, this run right |
+| Compare · Side by side · Dark | `172:2896` | The run before and this run, paired by file name; Compare pressed |
+| Compare · Slider · Dark | `172:3640` | One picture with a line to drag, here dragged to 40 %: the run before left of it, this run right |
 | Board · Review cards with the sign · Dark | `174:3626` | The board scrolled to its right end; GW-8 (6) and MN-29 (4) in Review carry the sign, GA-176 (no screenshots) doesn't, nor do other columns |
 | Inbox · Review rows with the sign · Dark | `174:4544` | GW-8 "6 screenshots", MN-29 "4 screenshots"; the card on hold has none |
 | Settings · The project: its form → Preview · Dark | `175:4306` | Edit gizai-website, the new Preview section |
-| Settings · The agent: its form → Tools → Browser · Dark | `175:4545` | Frontend Agent settings, the new Take screenshots of what it built under the browser |
+| Settings · The agent: its form → Tools → Browser · Dark | `175:4545` | Frontend Agent settings, the new Take screenshots of what it built under the browser; Instructions follows, as today |
 | Settings · Settings → Agents and runs → Screenshots · Dark | `175:4718` | The new Screenshots section under Runs |
 | Screenshots components | `158:8` | The new components, icons and glyphs (below) |
 
@@ -69,6 +68,12 @@ Inbox, y 4400 the settings; components at x 9000.
    radius-xl, shadow-pop), not a drawer: a picture needs the width.
 6. **The page behind a drawer** in the two form frames is the board, dimmed: the forms open from the project's and the
    agent's pages, which aren't drawn here.
+7. **The screenshot limits are a section of their own** in Settings → Agents and runs, Screenshots under Runs, not rows
+   in Runs as §3.8 has them: they're about pictures and previews rather than a run's minutes and calls, and the
+   section's intro can say where the sizes and themes are.
+8. **Off for this card links with Show properties**, the words of the top bar's button (`]`): it opens Properties and
+   puts the focus on the Screenshots switch. It stays in the notice while Properties is open, as the frame shows after
+   its click.
 
 ## Sizes and spacing
 
@@ -78,7 +83,8 @@ Inbox, y 4400 the settings; components at x 9000.
   the count (`.n`) in `text-3`; Changes' counts in `t-id` with `diff-add` and `diff-del`. Icons: Card `square-kanban`,
   Changes `file-diff`, Screenshots `images` (new in the icon map).
 - **The tab's content**: full width under the tabs like Changes (Properties closed; `]` opens it, 320 wide): x 248, y 94,
-  1192 × 806; padding 24 28; sets 28 apart (24 in the older-runs frame).
+  1192 × 806; padding 24 28; sets 28 apart (24 in the older-runs frame). At `#/task/<id>/screenshots`, as the research
+  has it (`…/screenshots/<run>` for one run's set).
 - **A set**: its heading (`Shot/Run head`, 28 high) then 12, then the grid: thumbnails 272 wide, 16 apart, rows 20 apart
   (four to a row at 1440). A note under the grid 12 below it.
 - **A thumbnail** (`Shot/Thumbnail`): a cell 272 × 170 (`side`, 1 px `line`, radius 6) with the picture fitted in at its own
@@ -89,7 +95,7 @@ Inbox, y 4400 the settings; components at x 9000.
   `text-2`), when (`t-small`, `text-3`). Open: `chevron-down`.
 - **Empty tab** (`.empty`): at the top of the content, padding 22 24, gap 8, a dashed 1 px `line-2` border, radius 10; a
   20 px `images` in `text-3`, the title `t-body-strong` `text`, the text `t-body` `text-2` at most 640 wide, then 6 and the
-  button (Secondary, Medium, `settings` icon) or the link (Accent, no icon).
+  button (Secondary, Medium; the `settings` icon, `panel-right` on Show properties) or the link (Accent, no icon).
 - **Larger view**: `scrim` over the window; the viewer at 24 from each edge (1392 × 852), `overlay`, 1 px `line-2`,
   radius 14, `App/shadow-pop`. Head 52 high, padding 0 12 0 20, gap 10, a `line` under it. Stage `side`, the picture
   fitted (1280 × 800 at 1062 × 664) in the middle; Previous and Next 40 × 40, 24 from its sides, centred. Foot padding 14
@@ -98,7 +104,9 @@ Inbox, y 4400 the settings; components at x 9000.
 - **Compare**: side by side, two panes 604 × 378 (24 apart, 80 from the sides), each with its label (Neutral "The run
   before", Info "This run"), run and commit above it. Slider: the picture at 1062 × 664, the run before left of a 2 px
   `text` line, under a 35 % `selected` tint; a 36 px round grip (`raised`, `line-2`) with `chevron-left` and
-  `chevron-right`; the two labels in the top corners, 12 in.
+  `chevron-right`; the two labels in the top corners, 12 in. The line opens in the middle; the frame shows it dragged to
+  40 % (425 of 1062). In both, the head's Compare is pressed (`selected` fill, as `aria-pressed` buttons are in
+  `components.css`) and Side by side \| Slider (`App/Seg`) takes the place of Fit \| 100%.
 - **Board card** (`App/Board card`): 282 in a 286 column, padding 10 12, gap 8, `raised`, 1 px `line`, radius 10; the sign
   after the pull request badge, 6 apart. Columns 12 apart; Done and Cancelled are 44 wide rails.
 - **Inbox row** (`App/Task row`): 40 high, padding 0 10, gap 12, radius 6; the sign 8 after the title.
@@ -107,7 +115,8 @@ Inbox, y 4400 the settings; components at x 9000.
   a 220 intro column (`t-section`, then `t-small` `text-3`), 24, the fields in two columns 20 apart, rows 16 apart, 28 under
   it and a `line`. A field: its label (`t-label`, `text-2`), 6, the control (`App/Input` 34 high), 6, the hint
   (`t-caption`, `text-3`). The new browser switch sits in an `accent-soft` box (radius 6, padding 8 10) inside the
-  browser's box.
+  browser's box. In the agent's form Instructions follows Tools, as today (its editor drawn as a box: `bg`, 1 px
+  `line-2`, `radius`, padding 8 10, 260 high).
 - **Settings**: the page at x 248, at most 1100 wide, padding 24 28, gap 18; its tabs as the card's.
 
 ## Tokens and components
@@ -122,7 +131,8 @@ descriptions). **No teal or magenta for screenshots**: nothing here is an agent 
 **Size**: `radius-s`, `radius`, `radius-l`, `radius-xl`, `radius-pill`. **Type**: App/t-section, t-body, t-body-strong,
 t-button, t-small, t-label, t-caption, t-badge, t-group, t-row, t-drawer-title, t-id, t-code, t-kbd.
 
-**From GA-168** (`135:21`): App/Button (Primary, Secondary, Ghost × Medium, Small; Default), App/Input (Default, Value and
+**From GA-168** (`135:21`): App/Button (Primary, Secondary, Ghost × Medium, Small; Default, and Compare pressed with a
+`selected` fill in the Compare frames), App/Input (Default, Value and
 Placeholder), App/Checkbox (On and Off; Default, and Focus on the card's new switch), App/Badge (Neutral, Info, Ok, Fail,
 Warn, Needs), App/Avatar (Agent and Person; Default and Small), App/Kbd, App/Link (Accent), App/Nav item (Default,
 Current, with the Inbox count), App/Nav label, Icon/*. The sidebar and the mountains are copies of the Chat frame's
@@ -151,11 +161,15 @@ States to build that the frames don't each show: a thumbnail's hover (`hover` be
 `line-2`) and focus (the 2 px `focus` ring, offset 1); the folded row's hover `hover`; Previous hidden on the first
 picture and Next on the last; Compare off (45 %) on a New picture, with the title "New in this run: the run before has no
 04-docs-search-desktop-light.png"; on an Unchanged one Compare shows one picture and "Unchanged: the same picture as the
-run before". Keys: ← → previous and next, `1` 100%, `C` compare, Esc close; in 100% drag or scroll to look around.
+run before". A file name the run before had and this run hasn't (§3.7): under the set, `Shot/Note` No change, "Not taken
+this time: <file name>, <file name>." Keys: ← → previous and next, `1` 100%, `C`
+compare, Esc close; in 100% drag or scroll to look around. In Compare there is no `1`: ← → go to the set's next pair,
+`C` goes back to one picture, Esc closes.
 
 ## Every text
 
-The sidebar, in every frame (from the Chat frame): New task, N, Search, Ctrl K, Inbox, 2, Work, Chat, Tasks, Clients,
+The sidebar, in every frame (from the Chat frame): New task, N, Search, Ctrl K, Inbox, 2 (3 on the board and in the
+Inbox, which count the cards that need you), Work, Chat, Tasks, Clients,
 Projects, gizai-website, Gizai, spoorwegmuseum, Terminal, New terminal, Editor, Open a folder, Agents, Team Lead,
 Backend Agent, Frontend Agent, QA Agent, DevOps Agent, Memory, Company, Usage, Team, Users, Settings.
 
@@ -196,7 +210,8 @@ Screenshots 6.
   same button.
 - Off for this card (`169:2590`): Tasks / gizai-website / GW-10 · Changes +42 −5 · "No screenshots: they’re off for this
   card." · "Screenshots before Review is off in this card’s Properties, so its agents take none here. gizai-website has
-  them on." Properties: Status In progress · Priority Medium · Testing Test before Review · **Screenshots Screenshots
+  them on." · Show properties (opens Properties, as `]` does, with the focus on its Screenshots switch). Properties:
+  Status In progress · Priority Medium · Testing Test before Review · **Screenshots Screenshots
   before Review** · "Off for this card. By default it follows gizai-website’s Screenshots switch, which is on." · Labels
   docs · Assignee FA Frontend Agent.
 - No run yet (`169:3279`): Tasks / gizai-website / GW-11 · Changes No changes · "No screenshots yet." · "Agents with the
@@ -208,11 +223,13 @@ Compare · Open · Results for “worktree”: five pages · Desktop · 1280 × 
 02-search-results-desktop-dark.png · ← → previous and next · 1 100% · C compare · Esc close. Titles: Previous (←),
 Next (→), Close (Esc).
 
-**Compare, side by side** (`172:2896`): as the larger view, with Side by side · Slider · The run before · Frontend Agent ·
-yesterday · 4c3b2a1 · This run · Frontend Agent · 3 h ago · 9f8e7d6 · "Paired by file name with the run before’s
-picture, captioned “Results for “worktree””."
+**Compare, side by side** (`172:2896`): as the larger view, with Side by side · Slider in the place of Fit · 100%, and
+The run before · Frontend Agent · yesterday · 4c3b2a1 · This run · Frontend Agent · 3 h ago · 9f8e7d6 · "Paired by file
+name with the run before’s picture, captioned “Results for “worktree””." The keys: ← → previous and next · C compare ·
+Esc close.
 
-**Compare, slider** (`172:3640`): Side by side · Slider · The run before · yesterday · This run · 3 h ago · drag the line.
+**Compare, slider** (`172:3640`): Side by side · Slider · The run before · yesterday · This run · 3 h ago; the keys:
+drag the line · ← → previous and next · C compare · Esc close.
 
 **Board** (`174:3626`): Tasks 14 · New task · Search ID or title · Filters · Sort. TO DO 2: GW-12 Footer: the legal links
 on every page (website); MN-33 Touchscreens: a bigger font for the timeline (touchscreens). IN PROGRESS 2: GW-11
@@ -256,7 +273,9 @@ Preview)." · "List its tools in Settings → MCP servers → chrome-devtools to
 tools are on." The field's hint: "Chrome DevTools: a hidden Chrome with a throwaway profile, never on your screen and
 never your own browser, profile or logins. Every click is a tool call, and the cap per run is in Settings → Runs.
 Suggested for QA, Frontend and Design agents, never switched on by Gizai." With the browser off, the new switch is off
-and disabled (45 %).
+and disabled (45 %). Then, as today: Instructions · "Sent with every run, before the task. Must end by asking for the
+GIZAI_RESULT line." · Instructions (the editor shows a sample of the agent's instructions); the foot: Ctrl+Enter saves ·
+Cancel · Save changes.
 
 **Settings** (`175:4718`): Settings · Save settings · General · Appearance · Notifications · Agents and runs · MCP
 servers · GitHub and Bitbucket. Runs (as today): Minutes per run 90 "5 to 480"; Tool calls per run 200 "20 to 2000. Every

@@ -106,6 +106,116 @@ pub fn with_memory(prompt: &str, memory: &str) -> String {
     format!("{}\n\n{}\n", prompt.trim_end(), memory.trim())
 }
 
+/// The Screenshots section (GA-182) of a run that gets it: the agent's browser and its Take screenshots of what it built
+/// are on, the card's Screenshots before Review switch (else its project's Screenshots) is on, and the project has a
+/// Preview command. Without all four the prompt has no such section and the run starts as before.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Screenshots {
+    /// QA's version: only what the builder's screenshots don't show.
+    pub qa: bool,
+    /// Where the preview serves the card's branch (`http://127.0.0.1:47130`), or why it didn't start: then the agent takes
+    /// none.
+    pub preview: Result<String, PreviewDown>,
+    /// The preview's output: `<worktree>/.gizai-tmp/preview/preview.log`.
+    pub log: String,
+    /// Where the screenshots go: `<worktree>/.gizai-tmp/screenshots`.
+    pub folder: String,
+    /// The project's sizes: (name, width, height).
+    pub sizes: Vec<(String, u32, u32)>,
+    /// Both themes: each changed screen in the first theme, and the card's main screen in the other one too.
+    pub both_themes: bool,
+    /// Whole page: the full length of each page.
+    pub full_page: bool,
+    /// Screenshots per run.
+    pub per_run: u32,
+}
+
+/// Why a run's preview didn't start, for its Screenshots section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewDown {
+    /// "It didn't answer on port 47130 in 120 s".
+    pub why: String,
+    /// The last lines of its log; "" when it wrote nothing.
+    pub tail: String,
+}
+
+/// `prompt` with the Screenshots section (`screenshots_section`) after the task, before "How this run works"
+/// (`with_rules`); unchanged without one.
+pub fn with_screenshots(prompt: &str, shots: Option<&Screenshots>) -> String {
+    match shots {
+        Some(s) => format!("{}\n\n{}\n", prompt.trim_end(), screenshots_section(s).trim()),
+        None => prompt.to_string(),
+    }
+}
+
+/// "Desktop 1280 x 800 and Mobile 390 x 844".
+fn sizes_text(sizes: &[(String, u32, u32)]) -> String {
+    let each: Vec<String> = sizes.iter().map(|(n, w, h)| format!("{n} {w} x {h}")).collect();
+    match each.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.clone(),
+        None => String::new(),
+    }
+}
+
+/// The Screenshots section, word for word as docs/research/screenshots.md §5.4 gives it, with the project's values filled
+/// in: the preview's address, the sizes, the themes, whole page or not, and the limit. QA's version starts with what it
+/// adds (its failures and at most four criteria) instead of the builder's first line, and leaves out the builder's
+/// screens to shoot. When the preview didn't start, the section says why (its log's last lines) and to take none.
+pub fn screenshots_section(s: &Screenshots) -> String {
+    let mut p = String::from("## Screenshots\n\n");
+    let url = match &s.preview {
+        Ok(url) => url,
+        Err(down) => {
+            let why = down.why.trim().trim_end_matches('.');
+            let mut chars = why.chars();
+            let why = match (chars.next(), chars.next()) {
+                (Some(first), Some(second)) if first.is_uppercase() && second.is_lowercase() => first.to_lowercase().chain(why.chars().skip(1)).collect(),
+                _ => why.to_string(),
+            };
+            p.push_str(&format!("The project's preview didn't start, so take no screenshots in this run: {why}."));
+            if !down.tail.trim().is_empty() {
+                p.push_str(&format!(" The last lines of its output ({}):\n\n````\n{}\n````", s.log, down.tail.trim_end()));
+            }
+            return p + "\n";
+        }
+    };
+    if s.qa {
+        p.push_str("Add only what the builder's screenshots don't show: each failure you found, and at most four acceptance criteria you \
+checked, each captioned with the criterion.\n");
+    } else {
+        p.push_str("When your change shows on a screen, take screenshots of it after your last commit and before your result line: the card \
+shows them in Review, before the pull request.\n");
+    }
+    let lines = [
+        format!("The card's branch is served at {}/ (Gizai started the project's preview; its output is in {}). Use only this address: \
+never a .test site, a live site or a real account.", url.trim_end_matches('/'), s.log),
+        format!("Shoot with the browser's take_screenshot, always with filePath, as {}/<nn>-<what>.png, numbered in the order to look at \
+them{}; each at {} (resize_page or emulate's viewport).", s.folder,
+                if s.qa { "" } else { ": the screens you changed, in the states the card names, and their empty and error states when you touched them" },
+                sizes_text(&s.sizes)),
+        if s.both_themes {
+            "Take each screen in the app's first theme, and the card's main screen in the other theme (light or dark) too.".to_string()
+        } else {
+            "Take them in one theme: the one the page opens in.".to_string()
+        },
+        if s.full_page {
+            "Take whole pages: take_screenshot with fullPage.".to_string()
+        } else {
+            "Take one window's height, not whole pages.".to_string()
+        },
+        format!("At most {}. Write a caption for each in {}/captions.json, like {{\"01-board-desktop.png\": \"The board with three cards\"}}.",
+                s.per_run, s.folder),
+        "Don't open your pictures unless you must: each one in your conversation costs tokens on every later turn. Check what a page \
+says with take_snapshot.".to_string(),
+        "Never commit them or attach them to the pull request: Gizai keeps them on the card.".to_string(),
+    ];
+    for l in lines {
+        p.push_str(&format!("- {l}\n"));
+    }
+    p
+}
+
 fn limits_section(l: RunLimits) -> String {
     format!("\n\n## Limits of this run\n\nGizai stops this run after {} tool calls or {} minutes, whichever comes first. \
 Commit your work on this branch as you go. If the task won't fit, stop before the limit: commit what you have and end with \

@@ -212,20 +212,37 @@ pub struct RunNote {
     pub left_out: Vec<String>,
     /// "It didn't answer on port 47130 in 120 s".
     pub preview: Option<String>,
+    /// While the run's preview runs: the id of the process Gizai started for it, which leads its process group, so a Gizai
+    /// that starts again after a crash ends it (`gizai_agents::process::end_orphan_group`). Not shown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_pid: Option<u32>,
 }
 
-/// Marks `run_id` as a run that got the Screenshots section, so its set shows on the card's tab also when it saves none,
-/// with why there was no preview when there wasn't (`preview`).
-pub fn begin(db: &Db, run_id: &str, preview: Option<&str>) -> Result<()> {
-    let note = RunNote { left_out: vec![], preview: preview.map(str::to_string) };
-    write_note(db, run_id, &note)
+/// Marks `run_id` as a run that got the Screenshots section, so its set shows on the card's tab also when it saves none.
+pub fn begin(db: &Db, run_id: &str) -> Result<()> {
+    write_note(db, run_id, &RunNote::default())
 }
 
-/// Saves what the run's collect left out, keeping its note's `preview`. Only a run `begin` marked has a set.
-pub fn set_left_out(db: &Db, run_id: &str, left_out: &[String]) -> Result<()> {
+/// Changes the note of a run `begin` marked; a run without one has no set, and keeps none.
+fn change_note(db: &Db, run_id: &str, change: impl FnOnce(&mut RunNote)) -> Result<()> {
     let Some(mut note) = run_note(db, run_id)? else { return Ok(()) };
-    note.left_out = left_out.to_vec();
+    change(&mut note);
     write_note(db, run_id, &note)
+}
+
+/// Why the run had no preview: "It didn't answer on port 47130 in 120 s".
+pub fn set_preview_why(db: &Db, run_id: &str, why: &str) -> Result<()> {
+    change_note(db, run_id, |n| n.preview = Some(why.to_string()))
+}
+
+/// The process the run's preview runs in while it runs (`RunNote::preview_pid`); None once it has ended.
+pub fn set_preview_pid(db: &Db, run_id: &str, pid: Option<u32>) -> Result<()> {
+    change_note(db, run_id, |n| n.preview_pid = pid)
+}
+
+/// Saves what the run's collect left out, keeping the rest of its note.
+pub fn set_left_out(db: &Db, run_id: &str, left_out: &[String]) -> Result<()> {
+    change_note(db, run_id, |n| n.left_out = left_out.to_vec())
 }
 
 /// The run's note, None when it had no Screenshots section (or its set was cleared).

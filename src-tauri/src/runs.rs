@@ -88,6 +88,8 @@ pub struct RunManager {
     pulling: tokio::sync::Mutex<()>,
     /// Since when the start check has been waiting for memory, and why (GA-202, `run_memory::wait_reason`).
     pub(crate) memory_wait: Mutex<Option<(i64, String)>>,
+    /// The runs' previews (GA-182): each run's block of ports, and its preview's tree while it runs.
+    pub(crate) previews: crate::screenshots::Previews,
 }
 
 impl RunManager {
@@ -217,6 +219,24 @@ pub struct Settings {
     /// your own (`gizai_core::editor::roots`).
     #[serde(default = "default_editor_roots")]
     pub editor_roots: Vec<String>,
+    /// Settings → Agents and runs → Screenshots (GA-182, contract CP): Screenshots per run, 12 (1–30). Each of these is
+    /// always given by `get_settings`; None (left out) keeps what was saved.
+    #[serde(default)]
+    pub screenshots_per_run: Option<u32>,
+    /// Largest screenshot in MB, 10 (1–50).
+    #[serde(default)]
+    pub screenshot_max_mb: Option<u32>,
+    /// Keep per card: a card's newest sets, 3 (1–20).
+    #[serde(default)]
+    pub screenshots_keep_sets: Option<u32>,
+    /// Delete a finished card's screenshots after this many days in Done or Cancelled, 30 (0–365; 0 keeps them).
+    #[serde(default)]
+    pub screenshots_keep_days: Option<u32>,
+    /// Preview ports, 47100 to 47999 (1024–65535): at least ten for each run at once.
+    #[serde(default)]
+    pub preview_port_from: Option<u32>,
+    #[serde(default)]
+    pub preview_port_to: Option<u32>,
 }
 
 fn default_minutes() -> u64 { DEFAULT_MAX_RUN_MINUTES }
@@ -227,6 +247,7 @@ fn default_chat_tool_calls() -> u32 { DEFAULT_MAX_CHAT_TOOL_CALLS }
 fn default_push_over() -> String { "ssh".into() }
 
 pub fn get_settings(st: &AppState) -> Settings {
+    let shots = gizai_core::screenshots::limits(&st.db);
     Settings {
         claude_bin: settings::get(&st.db, "claude_bin").ok().flatten(),
         data_dir: st.data_dir.display().to_string(),
@@ -244,6 +265,12 @@ pub fn get_settings(st: &AppState) -> Settings {
         push_over: crate::github::push_over_name(st),
         notifications: crate::notifications::switches(&st.db),
         editor_roots: gizai_core::editor::roots(&st.db),
+        screenshots_per_run: Some(shots.per_run),
+        screenshot_max_mb: Some(shots.max_mb),
+        screenshots_keep_sets: Some(shots.keep_sets),
+        screenshots_keep_days: Some(shots.keep_days),
+        preview_port_from: Some(shots.port_from),
+        preview_port_to: Some(shots.port_to),
     }
 }
 
@@ -273,6 +300,15 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
         return Err("pushes go over ssh or https".into());
     }
     let editor_roots = gizai_core::editor::clean_roots(&s.editor_roots, &gizai_core::folders::Places::without_checkouts(&st.db)).map_err(|e| e.to_string())?;
+    // Settings → Agents and runs → Screenshots (GA-182): a value left out keeps what was saved; one outside its range is
+    // refused with why, and nothing changes.
+    let saved = gizai_core::screenshots::limits(&st.db);
+    let shots = gizai_core::screenshots::Limits {
+        per_run: s.screenshots_per_run.unwrap_or(saved.per_run), max_mb: s.screenshot_max_mb.unwrap_or(saved.max_mb),
+        keep_sets: s.screenshots_keep_sets.unwrap_or(saved.keep_sets), keep_days: s.screenshots_keep_days.unwrap_or(saved.keep_days),
+        port_from: s.preview_port_from.unwrap_or(saved.port_from), port_to: s.preview_port_to.unwrap_or(saved.port_to),
+    };
+    gizai_core::screenshots::check_limits(&shots, s.max_concurrent_runs)?;
     let bin = s.claude_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
     settings::set(&st.db, "claude_bin", &bin).map_err(|e| e.to_string())?;
     let gh = s.gh_bin.as_ref().map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
@@ -287,6 +323,7 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
     settings::set(&st.db, gizai_core::editor::ROOTS, &editor_roots).map_err(|e| e.to_string())?;
+    gizai_core::screenshots::save_limits(&st.db, &shots, s.max_concurrent_runs).map_err(|e| e.to_string())?;
     if let Some(gb) = s.runs_memory_gb {
         crate::run_memory::save(st, gb)?;
     }
@@ -473,6 +510,8 @@ pub fn kill_all(st: &AppState) -> usize {
     for s in &live {
         s.kill();
     }
+    // their previews too (GA-182): a preview never outlives its run
+    crate::screenshots::end_all(&st.runs.previews);
     live.len()
 }
 
@@ -1039,6 +1078,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     // keychain) is left out, and the log says why.
     let mut allowed_tools = allowed_tools;
     let (mut mcp_config, mut mcp_refused) = (None, vec![]);
+    // GA-182: the browser is in this run, with its take_screenshot on (a run without it takes no screenshots)
+    let mut browser_in_run = false;
     // The servers Claude Code signs in to: a needs-auth in the init line then says to sign Claude Code in, not Gizai.
     let mut claude_code_signs_in: Vec<String> = vec![];
     if agent.tools.servers_on().next().is_some() {
@@ -1050,6 +1091,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                 let path = log_dir.join(format!("{run_id}.mcp.json"));
                 match gizai_agents::mcp_run::write_config(&path, &gizai_agents::mcp_run::config(vec![], &servers)) {
                     Ok(()) => {
+                        browser_in_run = servers.iter().any(|s| s.name == gizai_core::mcp_servers::BROWSER
+                                                                && !s.tools_off.iter().any(|t| t == "take_screenshot"));
                         let (allow, refuse) = gizai_agents::mcp_run::permissions(&servers);
                         allowed_tools.extend(allow);
                         mcp_refused = refuse;
@@ -1086,12 +1129,23 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if !memory.given.is_empty() && let Err(e) = gizai_core::memory::record_given(&st.db, &run_id, &memory.given) {
         eprintln!("gizai: saving which notes run {run_id} was given failed: {e}");
     }
-    let base_prompt = prompt::with_rules(&match &resume {
+    // Screenshots (GA-182): a run whose agent has the browser and takes screenshots, on a card (or project) with them on,
+    // in a project with a Preview command, gets the Screenshots section, and its preview is served first. Any other run
+    // starts as before.
+    let mut shots = if spec.kind == Kind::ClaudeCode && crate::screenshots::gets_section(st, browser_in_run, &agent_id, &role, &task, &project) {
+        Some(crate::screenshots::start(st, &run_id, &role, &project, &wt.path).await)
+    } else {
+        None
+    };
+    if let Some(n) = shots.as_mut().and_then(|s| s.note.take()) {
+        notes.push(n);
+    }
+    let base_prompt = prompt::with_rules(&prompt::with_screenshots(&match &resume {
         Some(Resume { nudge: true, .. }) => prompt::nudge_prompt(Some(limits)),
         Some(Resume { answer: Some(a), .. }) => prompt::answered_prompt_with(a, note.as_ref(), Some(limits)),
         Some(r) => prompt::continue_prompt_with(&r.reason, note.as_ref(), Some(limits)),
         None => prompt::with_memory(&prompt::build_from(&ctx, &instructions, fetched_from(&project)), &memory.text),
-    }, &rules);
+    }, shots.as_ref().map(|s| &s.section)), &rules);
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
         prompt: if untrusted { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
@@ -1102,7 +1156,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         folders, temp_dir, git_config,
     };
     // GA-202: the CLI and everything it starts run in the slice of the agent runs, under their memory limit (Linux).
-    let exec = process::Exec { slice: st.run_memory.slice(), ..agent_cli::task_exec(&spec, &run) };
+    let mut exec = process::Exec { slice: st.run_memory.slice(), ..agent_cli::task_exec(&spec, &run) };
+    // GA-182: the agent's own commands find the preview (GIZAI_PREVIEW_PORT, _URL and _DIR; not PORT)
+    if let Some(s) = &shots {
+        exec.env.extend(s.env.iter().cloned());
+    }
     // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then which
     // MCP servers Claude Code signs in to, then Gizai's notes.
     let head: String = (spec.kind != Kind::ClaudeCode).then(|| agent_cli::log_header(spec.kind)).into_iter()
@@ -1163,6 +1221,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let (run_agent, run_config) = (agent_id.clone(), mcp_config.clone());
     let (seen_log, seen_cli) = (log_path.clone(), cli.id.clone());
     let agent_name = agent.name.clone();
+    let shots_agent = agent_id.clone();
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
@@ -1227,6 +1286,15 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         // The tools Claude Code's init line named: the agent's "seen in the last run" (agent form → Tools → Built-in tools).
         if kind == Kind::ClaudeCode {
             crate::mcp_servers::record_seen_tools(&st2, &run_agent, &seen_cli, &seen_log);
+        }
+        // GA-182: its preview's whole tree ends, then its screenshots go onto the card, before its temp folder is emptied.
+        // A run Gizai's quitting stopped collects nothing (as `finish_run` tells such a run).
+        if let Some(run_shots) = shots {
+            let finished = matches!(&result, Some(RunEvent::Result { is_error: false, .. })) && exit == "exit:0";
+            let quit = is_closing(&st2) && (st2.runs.stopped.lock().unwrap().contains(&rid) || !finished);
+            if let Some(text) = crate::screenshots::finish(&st2, &rid, &tid, &shots_agent, &dir, run_shots, !quit).await {
+                note_run(&st2, &rid, &text);
+            }
         }
         if let Err(e) = worktree::empty_temp(&dir) {
             eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");

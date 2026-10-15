@@ -512,9 +512,9 @@ fn rows(c: &rusqlite::Connection, sql: &str) -> Rows {
 /// Steps a current database back to schema 7: 0007's runs table, none of 0008's columns, no agent folders (0009),
 /// none of 0011's column setup (no column agents, Auto or next columns, branches; an empty routing_rules table back)
 /// and no chat Runs on or queue (0012), no memory (0014), no Team Lead may merge (0015), no shared memory folders (0016)
-/// and no pending actions (0017).
+/// and no pending actions (0017), and none of 0019's screenshot columns.
 pub fn back_to_7(c: &rusqlite::Connection) {
-    let undo14 = format!("{UNDO_0017} {} ALTER TABLE projects DROP COLUMN lead_may_merge; {}", undo_0016(c), undo_0014());
+    let undo14 = format!("{UNDO_0019} {UNDO_0017} {} ALTER TABLE projects DROP COLUMN lead_may_merge; {}", undo_0016(c), undo_0014());
     let m7 = include_str!("../migrations/0007_card_flow.sql");
     let start = m7.find("CREATE TABLE runs_new (").unwrap();
     let end = start + m7[start..].find(") STRICT;").unwrap() + ") STRICT;".len();
@@ -538,6 +538,12 @@ pub fn back_to_7(c: &rusqlite::Connection) {
         DROP TABLE chat_queue; ALTER TABLE chat_messages DROP COLUMN meta_json; ALTER TABLE chat_threads DROP COLUMN session_cli; ALTER TABLE chat_threads DROP COLUMN cli;
         COMMIT; PRAGMA user_version = 7;")).unwrap();
 }
+
+/// Undoes GA-182's 0019: no screenshot columns on files, runs, tasks and projects, and no files_run index.
+const UNDO_0019: &str = "DROP INDEX files_run; ALTER TABLE files DROP COLUMN caption; ALTER TABLE files DROP COLUMN width;
+    ALTER TABLE files DROP COLUMN height; ALTER TABLE runs DROP COLUMN screenshots_note; ALTER TABLE tasks DROP COLUMN screenshots;
+    ALTER TABLE projects DROP COLUMN screenshots_json; ALTER TABLE projects DROP COLUMN preview_command;
+    ALTER TABLE projects DROP COLUMN preview_start_secs;";
 
 /// Undoes GA-102's 0017: no pending actions (its own table, so dropping it is enough).
 const UNDO_0017: &str = "DROP TABLE pending_actions;";

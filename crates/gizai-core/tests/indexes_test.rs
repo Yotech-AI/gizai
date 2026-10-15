@@ -237,7 +237,7 @@ fn the_project_lists_counts_and_runs_this_month_search_tasks_project() {
     p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
     (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
     (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown}),
-    p.lead_may_merge
+    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL";
@@ -268,14 +268,14 @@ fn check_indexes(c: &Connection) {
 
 #[test]
 fn a_new_database_has_the_eight_indexes() {
-    assert_eq!(db::SCHEMA_VERSION, 18);
+    assert_eq!(db::SCHEMA_VERSION, 19);
     Db::open_in_memory().unwrap().read(|c| {
         check_indexes(c);
         Ok(())
     }).unwrap();
 }
 
-/// Migrations 0001..0017 on a new file at `path`: a genuine schema 17 database, as the previous version leaves it.
+/// Migrations 0001..0017 on a new file at `path`: a genuine schema 17 database, as a version before GA-180 leaves it.
 fn v17_db(path: &Path) -> Connection {
     let all = [
         include_str!("../migrations/0001_init.sql"), include_str!("../migrations/0002_agents.sql"), include_str!("../migrations/0003_chat.sql"),
@@ -287,12 +287,45 @@ fn v17_db(path: &Path) -> Connection {
         include_str!("../migrations/0014_memory.sql"), include_str!("../migrations/0015_lead_merges.sql"),
         include_str!("../migrations/0016_memory_groups.sql"), include_str!("../migrations/0017_pending_actions.sql"),
     ];
-    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
+    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 2, "two schema steps back (0018, and GA-182's 0019 after it)");
     let mut c = Connection::open(path).unwrap();
     c.pragma_update(None, "foreign_keys", "OFF").unwrap();
     Migrations::new(all.iter().map(|sql| M::up(sql)).collect()).to_latest(&mut c).unwrap();
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     c
+}
+
+/// GA-182's 0019 columns: NULL in every row an upgrade keeps.
+const COLUMNS_0019: [(&str, &str); 8] = [("files", "caption"), ("files", "width"), ("files", "height"), ("runs", "screenshots_note"),
+    ("tasks", "screenshots"), ("projects", "screenshots_json"), ("projects", "preview_command"), ("projects", "preview_start_secs")];
+
+/// Undoes GA-182's 0019: no screenshot columns on files, runs, tasks and projects, and no files_run index.
+const UNDO_0019: &str = "DROP INDEX files_run; ALTER TABLE files DROP COLUMN caption; ALTER TABLE files DROP COLUMN width;
+    ALTER TABLE files DROP COLUMN height; ALTER TABLE runs DROP COLUMN screenshots_note; ALTER TABLE tasks DROP COLUMN screenshots;
+    ALTER TABLE projects DROP COLUMN screenshots_json; ALTER TABLE projects DROP COLUMN preview_command;
+    ALTER TABLE projects DROP COLUMN preview_start_secs;";
+
+/// As all_rows, without 0019's columns, each checked NULL in every row first: an upgraded database's rows, to compare
+/// with those of the schema before it.
+fn rows_without_0019(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
+    for (t, col) in COLUMNS_0019 {
+        let set: i64 = c.query_row(&format!("SELECT count(*) FROM {t} WHERE {col} IS NOT NULL"), [], |r| r.get(0)).unwrap();
+        assert_eq!(set, 0, "{t}.{col} is NULL in every kept row");
+    }
+    let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").unwrap()
+        .query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    tables.into_iter().map(|t| {
+        let cols: Vec<String> = c.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid").unwrap()
+            .query_map([&t], |r| r.get(0)).unwrap().map(Result::unwrap)
+            .filter(|n: &String| !COLUMNS_0019.contains(&(t.as_str(), n.as_str()))).collect();
+        let list = cols.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
+        let mut s = c.prepare(&format!("SELECT {list} FROM \"{t}\"")).unwrap();
+        let n = s.column_count();
+        let mut rows: Vec<String> = s.query_map([], |r| Ok((0..n).map(|i| format!("{:?}", r.get::<_, rusqlite::types::Value>(i).unwrap()))
+            .collect::<Vec<_>>().join(" | "))).unwrap().map(Result::unwrap).collect();
+        rows.sort();
+        (t, rows)
+    }).collect()
 }
 
 /// Every row of every table, sorted, as text: what an upgrade must keep.
@@ -372,10 +405,11 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     let db = Db::open(&path).unwrap();
     let w = work(&db);
     drop(db);
-    // one step back to the database the previous version leaves (schema 17): 0018 only adds indexes
+    // two steps back to the database a version before GA-180 leaves (schema 17): 0018 only adds indexes, and GA-182's 0019 only columns
+    // and an index
     let c = Connection::open(&path).unwrap();
     let drops: String = INDEXES.iter().map(|(name, ..)| format!("DROP INDEX {name}; ")).collect();
-    c.execute_batch(&format!("{drops}PRAGMA user_version = 17;")).unwrap();
+    c.execute_batch(&format!("{UNDO_0019} {drops}PRAGMA user_version = 17;")).unwrap();
     let other = tempfile::tempdir().unwrap();
     let genuine = v17_db(&other.path().join("gizai.db"));
     assert_eq!(schema(&c), schema(&genuine), "the step back is exactly schema 17 (migrations 0001..0017)");
@@ -390,13 +424,15 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     let (v, broken, ok): (i64, i64, String) = db.read(|c| Ok((version(c),
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?,
         c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken, ok.as_str()), (18, 0, "ok"), "schema 18, foreign keys and the file (indexes too) intact");
+    assert_eq!((v, broken, ok.as_str()), (19, 0, "ok"), "schema 19, foreign keys and the file (indexes too) intact");
+    let with_0019 = v17_db(&other.path().join("with-0019.db"));
+    with_0019.execute_batch(include_str!("../migrations/0019_screenshots.sql")).unwrap();
     db.read(|c| {
         check_indexes(c);
         let mut rest = schema(c);
         rest.retain(|(_, name, _)| !INDEXES.iter().any(|(n, ..)| name.as_str() == *n));
-        assert_eq!(rest, schema(&genuine), "the eight indexes and nothing else are new");
-        let after = all_rows(c);
+        assert_eq!(rest, schema(&with_0019), "the eight indexes and nothing else are new, besides 0019's columns and index");
+        let after = rows_without_0019(c);
         assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>(), "no table lost or added");
         for (t, rows) in &before {
             assert!(&after[t] == rows, "{t}: every row kept as it was ({} before, {} after)", rows.len(), after[t].len());
@@ -405,7 +441,7 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     }).unwrap();
     // the backup made before the upgrade is that schema 17 database, with the same rows
     let snaps: Vec<_> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().path()).collect();
-    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v18-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v19-"), "{snaps:?}");
     let old = Connection::open(&snaps[0]).unwrap();
     assert_eq!(version(&old), 17, "the backup is the schema 17 database");
     assert!(!schema(&old).iter().any(|(_, name, _)| INDEXES.iter().any(|(n, ..)| name.as_str() == *n)), "with none of 0018's indexes");
@@ -420,7 +456,7 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     };
     let db = Db::open(&path).unwrap();
     let (schema_2, rows_2, v) = db.read(|c| Ok((schema(c), all_rows(c), version(c)))).unwrap();
-    assert_eq!((schema_2, v), (schema_1, 18), "the same schema");
+    assert_eq!((schema_2, v), (schema_1, 19), "the same schema");
     assert!(rows_2 == rows_1, "the same rows");
     assert_eq!(std::fs::read_dir(dir.path().join("backups")).unwrap().count(), 1, "no new backup");
 
@@ -446,7 +482,7 @@ fn a_database_with_a_comments_task_index_of_its_own_still_opens_and_keeps_it() {
         c.query_row("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'comments_task'", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name IN ('chat_messages_thread', 'runs_chat', 'tasks_claimed',
                      'runs_active', 'runs_agent_created', 'runs_created', 'tasks_project')", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, sql.as_str(), others), (18, "CREATE INDEX comments_task ON comments(task_id)", 7), "its own comments_task kept, the seven others added");
+    assert_eq!((v, sql.as_str(), others), (19, "CREATE INDEX comments_task ON comments(task_id)", 7), "its own comments_task kept, the seven others added");
     let p = plan(&db, COMMENTS_LIST);
     assert!(searches(&p, "m", "comments_task") && no_scan(&p), "a card's comments still go through it: {p:?}");
 }

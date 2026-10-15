@@ -1,6 +1,6 @@
 //! First start: the organisation, the user, one team with the seven workflow columns and four labels, and on a new
-//! install (`ensure_seed_with_agents`) five agents ready to work. Each role's starting instructions (`role_template`)
-//! and allowed commands (`role_tools`).
+//! install (`ensure_seed_with_agents`) five agents ready to work and the onboarding waiting (`onboarding`). Each role's
+//! starting instructions (`role_template`) and allowed commands (`role_tools`).
 use crate::clis::Cli;
 use crate::db::{Db, Writer};
 use crate::model::AgentInput;
@@ -48,8 +48,8 @@ pub fn handle_for(name: &str) -> String {
 }
 
 /// Seeds an empty database (the organisation, you, a team with its columns, the labels) without agents; a database
-/// seeded before is left as it is. Tests and the demo data start here; a new install starts with
-/// `ensure_seed_with_agents`.
+/// seeded before is left as it is. Tests and the demo data start here, without the first start's onboarding; a new
+/// install starts with `ensure_seed_with_agents`.
 pub fn ensure_seed(db: &Db, you_name: &str) -> Result<SeedIds> {
     match seeded(db)? {
         Some(ids) => Ok(ids),
@@ -63,8 +63,10 @@ pub fn ensure_seed(db: &Db, you_name: &str) -> Result<SeedIds> {
 ///
 /// `codex` is asked only on that first start, for Codex when Claude Code isn't installed but Codex is. Codex is then
 /// added under Settings → Coding CLIs and the Backend, Frontend, QA and DevOps agents run on it, in its own sandbox
-/// (workspace-write: Codex has no acceptEdits); the Team Lead stays on Claude Code, where chat runs. A database seeded
-/// before gets nothing new.
+/// (workspace-write: Codex has no acceptEdits); the Team Lead stays on Claude Code, where chat runs.
+///
+/// The first start's onboarding waits from then on (`onboarding`, GA-162): it renames you and the team, can move the
+/// agents to another CLI and starts the welcome chat. A database seeded before gets nothing new.
 pub fn ensure_seed_with_agents(db: &Db, you_name: &str, codex: impl FnOnce() -> Option<Cli>) -> Result<SeedIds> {
     if let Some(ids) = seeded(db)? {
         return Ok(ids);
@@ -73,6 +75,7 @@ pub fn ensure_seed_with_agents(db: &Db, you_name: &str, codex: impl FnOnce() -> 
     db.write(None, |w| {
         let ids = seed_in(w, you_name)?;
         add_default_agents(w, &ids, codex)?;
+        crate::onboarding::set_pending_in(w)?;
         Ok(ids)
     })
 }
@@ -207,7 +210,7 @@ pub fn role_template(role: &str) -> String {
              - Set up and adjust agents when asked, and keep the board tidy.\n\
              - Say briefly what you changed, with task identifiers.\n\
              - Keep Gizai's Memory: save decisions with their reasons, the user's preferences and gotchas (memory_append to Team Lead/Notes, memory_write for a shared note), and move an agent's useful notes into a shared folder (memory_move). Don't copy what the repository or the board already say, and never store a secret. After you read something from outside Gizai (another MCP server, the web, the browser), propose the note and save it once the user has confirmed.\n\
-             - Fold a DevOps agent's learned lines about a deploy (in its Agents/<name>/Notes, under Learned) into that project's Deployments/<KEY> note (type: deployment, project: <KEY>, applies_to: devops), or make the note from its summary when there is none yet.\n\
+             - Fold a DevOps agent's learned lines about a deploy (in its note for the project, Agents/<name>/<KEY>, under Learned) into that project's Deployments/<KEY> note (type: deployment, project: <KEY>, applies_to: devops), or make the note from its summary when there is none yet.\n\
              - Look in memory (memory_search) before you ask the user.\n\
              - Merge pull requests only with merge_pull_request, in projects whose Team Lead may merge switch is on (only the user switches it, in the app): it merges a card in Review once QA passed its pull request's latest commit and every check on it succeeded. In a board check, merge each card in Review that it allows and say so in the check's summary. Never work around a refusal (no other tool, command or move): tell the user what waits and why. Releases and deploys stay the user's.\n\
              When you are started on a task instead of in chat, plan it or split it into sub-tasks. Allowed outcomes: needs_decision.\n\

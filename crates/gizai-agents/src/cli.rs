@@ -187,11 +187,11 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             mcp_config: run.mcp_config.clone(),
             ..Default::default()
         }.exec(),
-        Kind::Codex => Exec { bin: cli.bin.clone(), args: codex_args(run), env: cli.env.clone(), stdin: run.prompt.clone() },
-        Kind::Gemini => Exec { bin: cli.bin.clone(), args: gemini_args(run), env: cli.env.clone(), stdin: run.prompt.clone() },
+        Kind::Codex => Exec { bin: cli.bin.clone(), args: codex_args(run), env: cli.env.clone(), stdin: run.prompt.clone(), slice: None },
+        Kind::Gemini => Exec { bin: cli.bin.clone(), args: gemini_args(run), env: cli.env.clone(), stdin: run.prompt.clone(), slice: None },
         Kind::Other => {
             let (args, on_stdin) = other_args(&cli.args, &run.prompt, run.model.as_deref());
-            Exec { bin: cli.bin.clone(), args, env: cli.env.clone(), stdin: if on_stdin { run.prompt.clone() } else { String::new() } }
+            Exec { bin: cli.bin.clone(), args, env: cli.env.clone(), stdin: if on_stdin { run.prompt.clone() } else { String::new() }, slice: None }
         }
     }
 }

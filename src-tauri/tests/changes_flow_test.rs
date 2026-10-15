@@ -294,8 +294,11 @@ async fn a_merge_commit_a_squash_and_a_rebase_merge_each_save_the_whole_card_whi
         let checked = pulls::check_all(&c.st).await;
         assert_eq!(checked[0].moved_to.as_deref(), Some("Done"), "{how:?}");
         assert!(!c.wt.exists() && !has_branch(&c.local, &c.branch), "{how:?}: worktree and branch gone");
-        // (git remote -v shows origin rewritten to the bare repository, so card starts fetch the link into Gizai's own ref)
-        assert_eq!(git(&c.local, &["rev-parse", "refs/gizai/base/main"]), merge, "{how:?}: main fetched as a card start does");
+        // (origin is written as the link, so main comes through origin, which the clone's rewrite sends to the bare
+        // repository; GA-203)
+        assert_eq!(git(&c.local, &["rev-parse", "refs/remotes/origin/main"]), merge, "{how:?}: main fetched as a card start does");
+        assert!(!Command::new("git").args(["rev-parse", "--verify", "--quiet", "refs/gizai/base/main"]).current_dir(&c.local).output().unwrap()
+            .status.success(), "{how:?}: not fetched from the link");
         assert_eq!(git(&c.local, &["for-each-ref", "--format=%(refname) %(objectname)", "refs/gizai/merged/"]),
                    format!("refs/gizai/merged/KADE-1/base {}\nrefs/gizai/merged/KADE-1/head {tip}", c.start), "{how:?}");
 

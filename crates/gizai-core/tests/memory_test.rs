@@ -97,14 +97,14 @@ fn migration_0014_keeps_existing_docs_as_they_were_and_a_projects_doc_list_never
     let dir = tempfile::tempdir().unwrap();
     let path = v13_db(dir.path());
     let db = Db::open(&path).unwrap();
-    // 0014, and GA-86's 0015 (Team Lead may merge), GA-96's 0016 (agents share a memory folder) and GA-102's 0017 (pending
-    // actions) after it in the same step
-    assert_eq!(db::SCHEMA_VERSION, 17);
+    // 0014, and GA-86's 0015 (Team Lead may merge), GA-96's 0016 (agents share a memory folder), GA-102's 0017 (pending
+    // actions) and GA-180's 0018 (indexes) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 18);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (17, 0), "schema 17, foreign keys intact");
+    assert_eq!((v, broken), (18, 0), "schema 18, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v17-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v18-"), "{snaps:?}");
 
     // the old doc is unchanged: a doc of kind doc, no path, scope or owner, its text and versions as they were
     let row: (String, Option<String>, Option<String>, Option<String>, String, i64, i64) = db.read(|c| Ok(c.query_row(
@@ -479,27 +479,30 @@ fn every_agent_gets_its_own_folder_with_notes_and_renaming_it_moves_the_folder_a
 fn learned_lines_become_dated_bullets_in_the_agents_own_notes_with_the_run_on_the_version() {
     let f = setup();
     let p = f.project("Kade", "KADE", None);
-    let task = tasks::create(&f.db, &f.you, TaskInput { project_id: p, title: "Export".into(), ..Default::default() }).unwrap();
+    let task = tasks::create(&f.db, &f.you, TaskInput { project_id: p.clone(), title: "Export".into(), ..Default::default() }).unwrap();
+    tasks::create(&f.db, &f.you, TaskInput { project_id: p, title: "Import".into(), ..Default::default() }).unwrap();
     let run = runs::create(&f.db, &f.be, &task, "backend", "S", "/tmp", "/tmp", "gizai/x", "/tmp/r.jsonl").unwrap();
     let lines = vec!["Use the fake CLI in tests.".to_string(), "   ".into(), "- The token is ghp_abcdefghijklmnopqrstuvwxyz0123".into(),
                      "  * Run  cargo with\n -j 8. ".into()];
     let (v, left_out) = memory::learned(&f.db, &f.be, "KADE-1", &lines, Some(&run), "2026-10-09").unwrap();
-    assert_eq!(v, Some(2));
+    // GA-172: in the agent's note for the card's project, made now
+    assert_eq!(v, Some(1));
     assert_eq!(left_out, ["a learned line with a GitHub token (ghp_…) was not saved"]);
-    let n = memory::get(&f.db, &f.be(), "Agents/Backend Agent/Notes").unwrap();
+    let n = memory::get(&f.db, &f.be(), "Agents/Backend Agent/KADE").unwrap();
     assert!(n.body_md.ends_with("## Learned\n\n- 2026-10-09 (KADE-1): Use the fake CLI in tests.\n- 2026-10-09 (KADE-1): Run cargo with -j 8.\n"), "{}", n.body_md);
     assert!(!n.body_md.contains("ghp_"));
     assert_eq!(n.updated_by.as_deref(), Some("Backend Agent"), "written by the agent");
     let (author, run_on): (String, Option<String>) = f.db.read(|c| Ok(c.query_row(
-        "SELECT author_actor_id, run_id FROM doc_versions WHERE doc_id = ?1 AND version = 2", [&n.id], |r| Ok((r.get(0)?, r.get(1)?)))?)).unwrap();
+        "SELECT author_actor_id, run_id FROM doc_versions WHERE doc_id = ?1 AND version = 1", [&n.id], |r| Ok((r.get(0)?, r.get(1)?)))?)).unwrap();
     assert_eq!((author.as_str(), run_on.as_deref()), (f.be.as_str(), Some(run.as_str())));
+    assert_eq!(memory::get(&f.db, &f.be(), "Agents/Backend Agent/Notes").unwrap().current_version, 1, "its Notes as they were");
     // a later run adds below; a long line is cut; nothing to add saves nothing
     memory::learned(&f.db, &f.be, "KADE-2", &["x".repeat(400)], None, "2026-10-10").unwrap();
     let body = memory::get(&f.db, &f.be(), &n.id).unwrap().body_md;
     assert!(body.contains("-j 8.\n- 2026-10-10 (KADE-2): ") && body.trim_end().ends_with('…'), "{body}");
     assert!(body.lines().last().unwrap().chars().count() < 340);
     assert_eq!(memory::learned(&f.db, &f.be, "KADE-3", &["  ".into()], None, "2026-10-10").unwrap(), (None, vec![]));
-    assert_eq!(memory::get(&f.db, &f.be(), &n.id).unwrap().current_version, 3);
+    assert_eq!(memory::get(&f.db, &f.be(), &n.id).unwrap().current_version, 2);
     // the Team Lead's go into Team Lead/Notes
     memory::learned(&f.db, &f.lead, "KADE-1", &["Jeffrey wants short summaries.".into()], None, "2026-10-09").unwrap();
     assert!(memory::get(&f.db, &f.lead(), "Team Lead/Notes").unwrap().body_md.contains("## Learned\n\n- 2026-10-09 (KADE-1): Jeffrey wants short summaries.\n"));

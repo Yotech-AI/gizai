@@ -16,9 +16,11 @@ pub mod mcp;
 pub mod mcp_servers;
 pub mod memory;
 pub mod notifications;
+pub mod onboarding;
 pub mod pending;
 pub mod pulls;
 mod quit;
+pub mod run_memory;
 pub mod runs;
 pub mod shell_path;
 pub mod terminal;
@@ -40,6 +42,10 @@ pub struct AppState {
     pub you_id: String,
     pub data_dir: PathBuf,
     pub runs: Arc<runs::RunManager>,
+    /// Memory for agent runs (GA-202, see `run_memory`): the limit and, on Linux, the slice agent processes start in.
+    /// Off until `run_memory::start`, which Gizai's start calls: a test's Gizai keeps its processes outside systemd, and
+    /// its runs don't wait for memory unless the test fakes a reading (`RunsMemory::fake_reading`).
+    pub run_memory: Arc<gizai_agents::run_memory::RunsMemory>,
     /// Where the MCP server for chat turns listens (see `mcp::socket_path`).
     pub mcp_socket: PathBuf,
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
@@ -218,7 +224,8 @@ pub fn housekeeping(db: &Db, dir: &std::path::Path) {
 
 /// Opens (and on first start seeds) the database in `dir`. Runs a previous Gizai left behind are marked interrupted.
 /// A first start is a new install: it gets the five default agents, on Codex when only Codex is installed
-/// (`gizai_core::seed::ensure_seed_with_agents`).
+/// (`gizai_core::seed::ensure_seed_with_agents`), and the onboarding waits (`onboarding`), unless
+/// GIZAI_SKIP_ONBOARDING=1.
 pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -> Result<AppState, String> {
     open_data(dir, notify, true)
 }
@@ -233,9 +240,17 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     } else {
         gizai_core::seed::ensure_seed(&db, &display_name())
     }.map_err(|e| e.to_string())?;
+    // A script on a new, empty data folder (GIZAI_SKIP_ONBOARDING=1) starts as if the onboarding was skipped.
+    onboarding::skip_at_start(&db);
     // Memory (GA-96): a group of agents sharing one folder whose owner was removed goes on with its next agent.
     if let Err(e) = gizai_core::memory::ensure_groups(&db, &seed.you_id) {
         eprintln!("gizai: handing shared memory folders on failed: {e}");
+    }
+    // Memory (GA-172): once, the learned lines in the agents' Notes move to their notes per project, Agents/<name>/<KEY>.
+    match gizai_core::memory::learned_to_projects(&db, &seed.you_id) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("gizai: moved {n} learned lines from the agents' Notes to their notes per project"),
+        Err(e) => eprintln!("gizai: moving the agents' learned lines to their notes per project failed: {e}"),
     }
     // Memory (GA-19): agents made before it get their own folder, Agents/<name>/, with a Notes note.
     if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
@@ -264,7 +279,8 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let mcp_socket = mcp::socket_path(&dir);
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
-    let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
+    let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()),
+                  run_memory: Arc::new(Default::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
@@ -486,6 +502,9 @@ pub fn run() {
             // Desktop notifications go to the desktop (a test run only writes them to stderr).
             state.desktop = notifications::real(app.handle(), test_run);
             app.manage(state.clone());
+            // Memory for agent runs (GA-202): from now on agent processes start in this Gizai's own slice on Linux, which
+            // Settings → Runs limits; Gizai itself stays outside it.
+            run_memory::start(&state);
             // Memory (GA-85): the notes agents kept in Claude Code's own memory come into Gizai's, each file once. Not in
             // headless test and screenshot runs: they run in your own home folder, with your Claude Code accounts.
             if !test_run {
@@ -602,6 +621,7 @@ pub fn run() {
             commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
             commands::check_files, commands::item_id,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
+            commands::onboarding_pending, commands::finish_onboarding, commands::skip_onboarding,
             commands::pending_actions, commands::approve_pending_action, commands::approve_pending_actions, commands::discard_pending_action,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             changes::card_changes, changes::card_file_diff, changes::run_changes,

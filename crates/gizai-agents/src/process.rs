@@ -14,6 +14,7 @@ use crate::chat_stream::ChatEvent;
 use crate::claude::ClaudeArgs;
 use crate::cli;
 use crate::os::{self, End, Tree};
+use crate::run_memory::{OomWatch, Slice};
 use crate::stream::RunEvent;
 
 /// A program to start for one run or chat turn.
@@ -26,6 +27,9 @@ pub struct Exec {
     /// Written to stdin, which is then closed. Linux caps one argument at 128 KiB, so prompts go here when the CLI
     /// reads them there.
     pub stdin: String,
+    /// Linux: the slice of Gizai's agent runs (GA-202) to start it in, in a scope of its own (`Slice::command`), so the
+    /// memory limit for agent runs covers it and what it starts. None: outside it, as before.
+    pub slice: Option<Slice>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -56,12 +60,17 @@ impl StopHandle {
     }
 }
 
+/// The marker for a process Linux ended in a run at the memory limit for agent runs (GA-202), followed by how many it
+/// ended in that run so far: `oom_kill:1`.
+pub const OOM_KILL: &str = "oom_kill:";
+
 /// The events a run's stdout turns into: task runs read `RunEvent`s, chat turns `ChatEvent`s.
 pub trait StreamEvent: Clone + Send + 'static {
     fn parse(line: &str) -> Vec<Self>;
     /// An assistant message that calls a tool (counted against the turn cap).
     fn is_tool_call(&self) -> bool;
-    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`.
+    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`, and `oom_kill:<n>` when Linux
+    /// ended a process in the run at the memory limit for agent runs (the n-th in this run, `OOM_KILL`).
     fn other(raw: String) -> Self;
 }
 
@@ -170,12 +179,19 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
     spawn_exec(&args.exec(), cwd, log_path, caps, ClaudeLines)
 }
 
-/// Any CLI, its output read by `parser`. Must be called inside a Tokio runtime.
+/// Any CLI, its output read by `parser`. Must be called inside a Tokio runtime. With `exec.slice` it starts in a scope
+/// of its own in that slice, and the events get an `OOM_KILL` marker each time Linux ends a process in it at the limit.
 pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log_path: &Path, caps: Caps, mut parser: P)
     -> Result<RunHandle<E>, AgentError> {
     let stderr = std::fs::File::create(log_path.with_extension("stderr.log"))?;
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(log_path)?;
-    let mut cmd = os::tokio_command(&exec.bin);
+    // found on the PATH the CLI gets; a CLI that can't be found starts as before, so it fails the usual way
+    let path = exec.env.iter().rev().find(|(k, _)| k == "PATH").map(|(_, v)| std::ffi::OsString::from(v));
+    let scoped = exec.slice.as_ref().and_then(|s| Some((s.command_for(exec.bin.as_os_str(), path.as_deref())?, s)));
+    let (mut cmd, slice) = match scoped {
+        Some((c, s)) => (tokio::process::Command::from(c), Some(s)),
+        None => (os::tokio_command(&exec.bin), None),
+    };
     cmd.args(&exec.args)
         .envs(exec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .current_dir(cwd)
@@ -196,6 +212,14 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
 
     let (tx, rx) = mpsc::channel::<E>(512);
     let stop = Arc::new(Notify::new());
+
+    // Linux, in the slice: each process Linux ends in the run's scope at the memory limit, as it happens.
+    let watch = slice.map(|s| {
+        let tx = tx.clone();
+        OomWatch::start(s, pid, move |n| {
+            let _ = tx.blocking_send(E::other(format!("{OOM_KILL}{n}")));
+        })
+    });
 
     // Reader: log every line, forward its events, count tool-calling turns.
     let mut reader = {
@@ -260,6 +284,8 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
                     }
                 }
             };
+            // The last look at the run's scope, while what the run left in it may still be there.
+            let watched = watch.map(|w| tokio::task::spawn_blocking(move || w.finish()));
             timer.abort();
             // Background processes the agent started (a dev server, a watcher) would outlive the run
             // and keep stdout open; end them with the run. One that ignores SIGTERM gets SIGKILL after 3 s.
@@ -288,6 +314,9 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
                 },
                 Err(e) => format!("unknown ({e})"),
             };
+            if let Some(w) = watched {
+                let _ = w.await;
+            }
             let _ = tx.send(E::other(format!("exit:{code}"))).await;
         });
     }

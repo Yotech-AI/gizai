@@ -33,8 +33,8 @@ fn write_script(path: &Path, script: &str) {
 
 /// The fake ssh, set up once for this test binary (every test calls this first, before it starts any process):
 /// base/ssh-args (one line per call); "Bitbucket" at base/bitbucket/<workspace>/<repo>.git and "GitHub" at
-/// base/github/<owner>/<name>.git (found with or without .git). Bitbucket's API points at a closed local port, so
-/// nothing here could ever ask api.bitbucket.org.
+/// base/github/<owner>/<name>.git (found with or without .git), also behind your own SSH host aliases git@bb-work and
+/// git@gh-work. Bitbucket's API points at a closed local port, so nothing here could ever ask api.bitbucket.org.
 fn fake_ssh() -> &'static Path {
     static BASE: OnceLock<PathBuf> = OnceLock::new();
     BASE.get_or_init(|| {
@@ -52,6 +52,8 @@ for a in "$@"; do
     git-receive-pack*|git-upload-pack*) cmd="$a" ;;
     *@bitbucket.org) host=bitbucket ;;
     *@github.com) host=github ;;
+    *@bb-work) host=bitbucket ;;
+    *@gh-work) host=github ;;
   esac
 done
 if [ -z "$cmd" ]; then
@@ -194,6 +196,150 @@ fn remote_for_finds_the_remote_for_a_bitbucket_link_in_any_of_its_forms() {
     // both match: origin first
     git(&repo, &["remote", "set-url", "origin", "ssh://git@bitbucket.org/acme/site.git"]);
     assert_eq!(remote_for(&repo, link).as_deref(), Some("origin"));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// GA-203: your own insteadOf rule sends the remote to an SSH host alias of yours
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Your own rule in the repository's own git config (`url.<to>.insteadOf <from>`), which sends addresses starting with
+/// `from` to an SSH host alias of yours (for another key), the way SDH's checkout does. Never the global config.
+fn rewrite(repo: &Path, from: &str, to: &str) {
+    git(repo, &["config", &format!("url.{to}.insteadOf"), from]);
+}
+
+/// Whether `repo` has the ref `name`.
+fn has_ref(repo: &Path, name: &str) -> bool {
+    Command::new("git").args(["rev-parse", "--verify", "--quiet", name]).current_dir(repo).output().unwrap().status.success()
+}
+
+fn config_of(repo: &Path) -> String {
+    std::fs::read_to_string(repo.join(".git/config")).unwrap()
+}
+
+#[test]
+fn remote_for_finds_a_remote_your_own_insteadof_rule_sends_to_a_host_alias_by_its_url_as_written() {
+    fake_ssh();
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["remote", "add", "origin", "git@bitbucket.org:acme/site.git"]);
+    rewrite(&repo, "git@bitbucket.org:acme/", "git@bb-work:acme/");
+    assert_eq!(git(&repo, &["remote", "-v"]).lines().next(), Some("origin\tgit@bb-work:acme/site.git (fetch)"),
+               "git uses the alias, so only the URL as written says which repository it is");
+    let (config, url) = (config_of(&repo), git(&repo, &["remote", "get-url", "origin"]));
+
+    let link = "https://bitbucket.org/acme/site";
+    assert_eq!(remote_for(&repo, link).as_deref(), Some("origin"));
+    for form in ["https://bitbucket.org/acme/site.git", "https://jefsev@bitbucket.org/ACME/Site", "git@bitbucket.org:acme/site.git",
+                 "https://bitbucket.org/acme/site/src/main/"] {
+        assert_eq!(remote_for(&repo, form).as_deref(), Some("origin"), "link {form}");
+    }
+    assert_eq!(remote_for(&repo, "git@bb-work:acme/site.git").as_deref(), Some("origin"), "the URL as git uses it still counts");
+    for other in ["https://bitbucket.org/acme/site-other", "https://bitbucket.org/other/site", "https://github.com/acme/site"] {
+        assert_eq!(remote_for(&repo, other), None, "link {other}");
+    }
+    assert_eq!((config_of(&repo), git(&repo, &["remote", "get-url", "origin"])), (config, url), "no git config or remote changed");
+
+    // a fork as origin and the project's repository as upstream, which your rule sends to the alias: upstream
+    git(&repo, &["remote", "set-url", "origin", "git@bitbucket.org:jefsev/site.git"]);
+    git(&repo, &["remote", "add", "upstream", "git@bitbucket.org:acme/site.git"]);
+    assert_eq!(remote_for(&repo, link).as_deref(), Some("upstream"));
+    // both match: origin first, also when only origin's URL as written says so and upstream's URL as git uses it does
+    git(&repo, &["remote", "set-url", "origin", "git@bitbucket.org:acme/site.git"]);
+    git(&repo, &["remote", "set-url", "upstream", "ssh://git@bitbucket.org/acme/site.git"]);
+    assert_eq!(remote_for(&repo, link).as_deref(), Some("origin"));
+    // git fetches from a remote's first URL only
+    git(&repo, &["remote", "remove", "upstream"]);
+    git(&repo, &["remote", "set-url", "origin", "git@bitbucket.org:jefsev/site.git"]);
+    git(&repo, &["remote", "set-url", "--add", "origin", "git@bitbucket.org:acme/site.git"]);
+    assert_eq!(remote_for(&repo, link), None, "a second URL is only pushed to");
+
+    // GitHub: origin git@github.com:acme/shop.git, which your rule sends to git@gh-work
+    let gh = tmp.path().join("gh");
+    std::fs::create_dir(&gh).unwrap();
+    git(&gh, &["init", "-q", "-b", "main"]);
+    git(&gh, &["remote", "add", "origin", "git@github.com:acme/shop.git"]);
+    rewrite(&gh, "git@github.com:acme/", "git@gh-work:acme/");
+    assert_eq!(git(&gh, &["remote", "get-url", "origin"]), "git@gh-work:acme/shop.git");
+    assert_eq!(remote_for(&gh, "https://github.com/acme/shop").as_deref(), Some("origin"));
+    assert_eq!(remote_for(&gh, "acme/shop").as_deref(), Some("origin"));
+    assert_eq!(remote_for(&gh, "https://github.com/acme/shop-other"), None);
+    assert_eq!(remote_for(&gh, "https://bitbucket.org/acme/shop"), None);
+}
+
+#[tokio::test]
+async fn a_bitbucket_project_whose_origin_your_own_rule_sends_to_a_host_alias_starts_from_main_fetched_through_origin() {
+    fake_ssh();
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let h = Hosted::new(tmp.path(), "bitbucket", "acme/site-alias", "main");
+    git(&h.local, &["remote", "set-url", "origin", "git@bitbucket.org:acme/site-alias.git"]);
+    rewrite(&h.local, "git@bitbucket.org:acme/", "git@bb-work:acme/");
+    let (_, p) = project(&st, &h.local, "https://bitbucket.org/acme/site-alias", "main");
+    let (config, url) = (config_of(&h.local), git(&h.local, &["remote", "get-url", "origin"]));
+    assert_eq!(url, "git@bb-work:acme/site-alias.git");
+    let old = git(&h.local, &["rev-parse", "origin/main"]);
+    let new = h.push("on bitbucket");
+    assert_ne!(old, new);
+
+    let start = start_point(&p, &h.local, Some(START_FETCH_LIMIT)).unwrap();
+    assert_eq!(start, "refs/remotes/origin/main", "through the checkout's own remote");
+    assert_eq!(git(&h.local, &["rev-parse", &start]), new, "Bitbucket's latest main");
+    let calls: Vec<String> = ssh_calls().into_iter().filter(|l| l.contains("acme/site-alias")).collect();
+    assert!(!calls.is_empty() && calls.iter().all(|l| l.contains("git@bb-work ") && !l.contains("bitbucket.org")), "over ssh to the alias: {calls:?}");
+    assert!(!has_ref(&h.local, "refs/gizai/base/main"), "not fetched from the link (https://bitbucket.org, which this clone refuses)");
+    assert_eq!((config_of(&h.local), git(&h.local, &["remote", "get-url", "origin"])), (config, url), "no git config or remote changed");
+
+    // without a fetch: the same ref, as last fetched
+    let newer = h.push("not fetched yet");
+    assert_eq!(start_point(&p, &h.local, None).unwrap(), "refs/remotes/origin/main");
+    assert_eq!(git(&h.local, &["rev-parse", "refs/remotes/origin/main"]), new);
+    assert_eq!(start_point(&p, &h.local, Some(START_FETCH_LIMIT)).unwrap(), "refs/remotes/origin/main");
+    assert_eq!(git(&h.local, &["rev-parse", "refs/remotes/origin/main"]), newer);
+}
+
+#[tokio::test]
+async fn a_github_project_whose_origin_your_own_rule_sends_to_a_host_alias_starts_from_main_fetched_through_origin() {
+    fake_ssh();
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let h = Hosted::new(tmp.path(), "github", "acme/shop-alias", "main");
+    git(&h.local, &["remote", "set-url", "origin", "git@github.com:acme/shop-alias.git"]);
+    rewrite(&h.local, "git@github.com:acme/", "git@gh-work:acme/");
+    let (_, p) = project(&st, &h.local, "https://github.com/acme/shop-alias", "main");
+    let new = h.push("on github");
+
+    let start = start_point(&p, &h.local, Some(START_FETCH_LIMIT)).unwrap();
+    assert_eq!(start, "refs/remotes/origin/main");
+    assert_eq!(git(&h.local, &["rev-parse", &start]), new);
+    let calls: Vec<String> = ssh_calls().into_iter().filter(|l| l.contains("acme/shop-alias")).collect();
+    assert!(!calls.is_empty() && calls.iter().all(|l| l.contains("git@gh-work ") && !l.contains("github.com")), "over ssh to the alias: {calls:?}");
+    assert!(!has_ref(&h.local, "refs/gizai/base/main"));
+    assert_eq!(git(&h.local, &["config", "remote.origin.url"]), "git@github.com:acme/shop-alias.git");
+}
+
+#[tokio::test]
+async fn without_a_matching_remote_a_project_still_starts_from_main_fetched_from_its_link_into_gizais_own_ref() {
+    fake_ssh();
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let h = Hosted::new(tmp.path(), "elsewhere", "acme/site-nomatch", "main");
+    // the project's link is the hosted repository's path; origin, rewritten by your rule, is another repository
+    git(&h.local, &["remote", "set-url", "origin", "git@bitbucket.org:acme/other.git"]);
+    rewrite(&h.local, "git@bitbucket.org:acme/", "git@bb-work:acme/");
+    let link = h.bare.to_str().unwrap().to_string();
+    let (_, p) = project(&st, &h.local, &link, "main");
+    assert_eq!(remote_for(&h.local, &link), None);
+    let config = config_of(&h.local);
+    let new = h.push("on the host");
+
+    let start = start_point(&p, &h.local, Some(START_FETCH_LIMIT)).unwrap();
+    assert_eq!(start, "refs/gizai/base/main");
+    assert_eq!(git(&h.local, &["rev-parse", &start]), new);
+    assert_eq!(start_point(&p, &h.local, None).unwrap(), "refs/gizai/base/main");
+    assert_eq!(config_of(&h.local), config);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

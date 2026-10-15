@@ -16,7 +16,7 @@ import { MemorySetting } from "../components/MemorySetting";
 import { OldWorktrees } from "../components/OldWorktrees";
 import { QuitSettings } from "../components/QuitSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
-import { cardAgents, runsAtOnceWarning, type CardAgent } from "../lib/settings";
+import { cardAgents, runsAtOnceWarning, runsMemoryError, runsMemoryHint, type CardAgent } from "../lib/settings";
 
 /** Settings → Notifications: a switch per kind, in this order. */
 const NOTIFY: [keyof NotificationSwitches, string][] = [
@@ -58,6 +58,8 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
   const save = async (next: Settings = s) => {
     const usd = budget.trim() === "" ? null : Number(budget.replace(",", "."));
     if (usd !== null && !(usd > 0)) { setMsg({ ok: false, text: "The spending limit must be a positive amount, or empty for no limit." }); return; }
+    const memory = runsMemoryError(next.runsMemoryGb);
+    if (memory) { setMsg({ ok: false, text: memory }); return; }
     try { await saveSettings({ ...next, maxRunUsd: usd }); setMsg({ ok: true, text: "Settings saved." }); setSavedAt(Date.now()); } catch (e) { setMsg({ ok: false, text: String(e) }); }
   };
   const panel = (t: SettingsTab) => ({ role: "tabpanel", className: "form settings-panel", hidden: open !== t, "aria-label": TABS.find(([k]) => k === t)?.[2] });
@@ -105,6 +107,9 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
           <FormSection title="Runs" text="Each run is a process of the agent's coding CLI in its own git worktree. Gizai stops a run at the first limit it reaches, and tells the agent these limits so it can commit its work in time.">
             <Field label="Runs at once" htmlFor="s-max" hint="All agents together, 1 to 20; each agent also has its own cards at once"
               warn={runsAtOnceWarning(s.maxConcurrentRuns, agents)}><input id="s-max" className="input" type="number" min={1} max={20} value={s.maxConcurrentRuns} onChange={(e) => setS({ ...s, maxConcurrentRuns: Number(e.target.value) })} /></Field>
+            <Field label="Memory for agent runs" htmlFor="s-memory" hint={runsMemoryHint(s)}>
+              <div className="input-group"><input id="s-memory" className="input" type="number" min={2} max={s.computerMemoryGb || undefined} step={1} value={s.runsMemoryGb ?? ""}
+                onChange={(e) => setS({ ...s, runsMemoryGb: Number(e.target.value) })} /><span className="faint">GB</span></div></Field>
             <Field label="Spend per run ($)" htmlFor="s-usd" hint="Claude Code stops a run that reaches this amount; other CLIs don't report cost"><input id="s-usd" className="input" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="No limit" /></Field>
             <Field label="Minutes per run" htmlFor="s-min" hint="5 to 480"><input id="s-min" className="input" type="number" min={5} max={480} value={s.maxRunMinutes} onChange={(e) => setS({ ...s, maxRunMinutes: Number(e.target.value) })} /></Field>
             <Field label="Tool calls per run" htmlFor="s-calls" hint="20 to 2000. Every file read, edit and command is one."><input id="s-calls" className="input" type="number" min={20} max={2000} value={s.maxRunToolCalls} onChange={(e) => setS({ ...s, maxRunToolCalls: Number(e.target.value) })} /></Field>

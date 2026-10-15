@@ -2,6 +2,7 @@
 pub mod db;
 pub mod ids;
 pub mod seed;
+pub mod onboarding;
 pub mod model;
 pub mod clients;
 pub mod users;

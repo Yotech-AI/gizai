@@ -158,6 +158,9 @@ export type ColumnRemoval = { cards: number; archived: number; defaultTarget?: s
 /** A label with the number of cards that carry it. */
 export type LabelInfo = { id: string; name: string; color?: string | null; cards: number };
 export type AppInfo = { version: string; data_dir: string; selftest: boolean; you_id: string; start_route?: string | null; selftest_mode?: string | null; data_label?: string | null };
+/** What the first start's onboarding saves (GA-162): your name, the team's, and the id of a CLI in Settings → Coding CLIs
+ *  for the Backend, Frontend, QA and DevOps Agents (null: they stay where the seed put them). */
+export type OnboardingInput = { youName: string; teamName: string; agentsCli: string | null };
 export type Doc = { id: string; projectId?: string | null; title: string; bodyMd: string; currentVersion: number; updatedAt: number;
   /** "memory" for a memory note (GA-19), with its path like "Team Lead/Notes"; "doc" for a project's. */
   kind?: string; path?: string | null };
@@ -284,6 +287,10 @@ export type FileDiff = {
 };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
+  /** Settings → Runs → Memory for agent runs (GA-202), in GB: all agent runs together, half of the computer's memory
+   *  until set. Read-only next to it: the computer's memory in GB (0 when the system doesn't say), and whether the system
+   *  enforces the limit (Linux with a systemd user session; elsewhere Gizai only waits for free memory before a run). */
+  runsMemoryGb?: number; computerMemoryGb?: number; runsMemoryEnforced?: boolean;
   /** Settings → Runs: the limits of an answer of the Team Lead (also a board check and its look at a question). */
   maxChatMinutes: number; maxChatToolCalls: number;
   /** The GitHub CLI; null = found when needed. */

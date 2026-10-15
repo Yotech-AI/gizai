@@ -23,8 +23,9 @@
 [data-band] body { background: none; }
 
 /* Gizai's smallest window is 900 × 600, where the band is 84px; a tiling window manager can make it shorter, and there the
-   band goes. It goes too with the system's high contrast, in forced colours and on paper. */
-@media (max-height: 559px), (prefers-contrast: more), (forced-colors: active), print { .app > .band { display: none; } }
+   band goes. It goes too with the system's high contrast, in forced colours and on paper. The first start's onboarding
+   (.onb, GA-164) has it too, as its first child. */
+@media (max-height: 559px), (prefers-contrast: more), (forced-colors: active), print { .app > .band, .onb > .band { display: none; } }
 
 /* ---------- see-through: the canvases near the bottom ---------- */
 /* The sidebar, the chat's threads and the Editor's tree: their colour moves to a ::before under the band */

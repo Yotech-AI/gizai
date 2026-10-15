@@ -2,6 +2,8 @@
 # Screenshot one Gizai screen inside a HEADLESS cage (never on Jeffrey's screen).
 # SHOT_SIZE=<width>x<height> sets the headless screen's size (needs wlr-randr); the default is 1280x720.
 # Makes .devdata/demo when it is missing (and no data dir is given), and builds the app when it is missing or stale.
+# A new, empty data dir starts without the first start's onboarding (GIZAI_SKIP_ONBOARDING=1); GIZAI_SKIP_ONBOARDING=0
+# shows it.
 # usage: [MODE=open:project|steps:<sel>;#/route] [SHOT_WAIT=s] [SHOT_SIZE=WxH] scripts/shot-cage.sh <route e.g. tasks|clients|task/<id>> <out.png> [data-dir]
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -28,7 +30,7 @@ RUN
 chmod +x "$RUNNER"
 env -i HOME="$HOME" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$DEV/run" \
   WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
-  GIZAI_DATA_DIR="$DATA" GIZAI_ROUTE="$ROUTE" GIZAI_SELFTEST_MODE="${MODE:-}" \
+  GIZAI_DATA_DIR="$DATA" GIZAI_ROUTE="$ROUTE" GIZAI_SELFTEST_MODE="${MODE:-}" GIZAI_SKIP_ONBOARDING="${GIZAI_SKIP_ONBOARDING-1}" \
   XDG_DATA_HOME="$DEV/xdg/data" XDG_CACHE_HOME="$DEV/xdg/cache" XDG_CONFIG_HOME="$DEV/xdg/config" \
   __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
   timeout -k 5 30 dbus-run-session -- cage -- "$RUNNER" > "$DEV/shot.log" 2>&1

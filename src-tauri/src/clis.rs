@@ -83,16 +83,21 @@ fn git_bash_problem(cli: &Cli, path: &std::ffi::OsStr) -> Option<String> {
 
 /// Every CLI, Claude Code first, with the program each would run.
 pub fn list(st: &AppState) -> Result<Vec<CliStatus>, String> {
-    let path = crate::runs::command_path();
-    let all = core_clis::list(&st.db).map_err(|e| e.to_string())?;
-    Ok(all.into_iter().map(|c| status(st, c, &path)).collect())
+    list_in(st, &crate::runs::command_path())
 }
 
-/// Saves the CLIs added in Settings; returns the full list as `list` does.
+/// `list` with the programs looked up in `path`.
+fn list_in(st: &AppState, path: &std::ffi::OsStr) -> Result<Vec<CliStatus>, String> {
+    let all = core_clis::list(&st.db).map_err(|e| e.to_string())?;
+    Ok(all.into_iter().map(|c| status(st, c, path)).collect())
+}
+
+/// Saves the CLIs added in Settings; returns the full list as `list` does, with your login shell's PATH read again, so
+/// a CLI installed a moment ago is found.
 pub fn save(st: &AppState, clis: Vec<Cli>) -> Result<Vec<CliStatus>, String> {
     core_clis::save(&st.db, clis).map_err(|e| e.to_string())?;
     st.runs.forget_models();
-    list(st)
+    list_in(st, &crate::runs::fresh_command_path())
 }
 
 /// Coding CLIs Gizai knows how to start, by program name: kind, name and (Other) arguments.
@@ -104,10 +109,11 @@ const KNOWN: [(&str, &str, &str, &str); 5] = [
     ("crush", "other", "Crush", "run --quiet"),
 ];
 
-/// The known CLIs installed here (your login shell's PATH) that aren't in the list yet, ready to add.
+/// The known CLIs installed here (your login shell's PATH, read again so one installed a moment ago is found) that
+/// aren't in the list yet, ready to add.
 pub fn find(st: &AppState) -> Result<Vec<Cli>, String> {
     let have = core_clis::list(&st.db).map_err(|e| e.to_string())?;
-    Ok(find_in(&have, &crate::runs::command_path()))
+    Ok(find_in(&have, &crate::runs::fresh_command_path()))
 }
 
 /// The known CLIs found in `path` that aren't in `have` yet.
@@ -133,12 +139,13 @@ fn find_in(have: &[Cli], path: &std::ffi::OsStr) -> Vec<Cli> {
 }
 
 /// A new install's first start (`gizai_core::seed::ensure_seed_with_agents`): Codex, ready to add, when Claude Code isn't
-/// installed but Codex is (your login shell's PATH, as `find` looks). None when Claude Code is found, or Codex isn't.
+/// installed but Codex is (your login shell's PATH read now, as `find` looks). None when Claude Code is found, or Codex
+/// isn't.
 pub fn codex_at_first_start() -> Option<Cli> {
     if crate::runs::find_claude().is_some() {
         return None;
     }
-    find_in(&[], &crate::runs::command_path()).into_iter().find(|c| c.kind == "codex")
+    find_in(&[], &crate::runs::fresh_command_path()).into_iter().find(|c| c.kind == "codex")
 }
 
 /// What a run on `cli` starts: its kind, program, environment and arguments. `bin_override` replaces the program (tests).

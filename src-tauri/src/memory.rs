@@ -1,6 +1,7 @@
 //! Memory in Gizai's prompts (GA-19): the Memory block of the Team Lead's chat answers, board checks and task runs and
 //! of every agent's task run (`gizai_core::memory::prompt_block`), and the `learned` lines a run's result adds to its
-//! agent's own notes. Plain text in the prompt and a list on the result line, so it works the same on every coding CLI.
+//! agent's own notes (its note for the card's project, GA-172). Plain text in the prompt and a list on the result line,
+//! so it works the same on every coding CLI.
 //! At start-up, the notes agents kept in Claude Code's own memory come in (GA-85, `gizai_core::memory_import`).
 use gizai_core::memory::{self, Block, Context, Who};
 use gizai_core::memory_import::{self, Report};
@@ -87,9 +88,10 @@ paths, with {} notes, were left out)", r.imported.len(), r.skipped.len(), r.left
     }
 }
 
-/// Saves the `learned` lines on a run's result line (`outcome::learned`) in its agent's own notes (an agent in a group: the
-/// group's `Notes`, with its name), dated and with the card, the run on the note's version. Nothing when there are none or
-/// memory is off for the agent. Returns what to note in the run's log (lines left out, a failed save).
+/// Saves the `learned` lines on a run's result line (`outcome::learned`) in its agent's own notes, dated and with the card
+/// (`card`, its identifier), the run on the note's version: in its note for the card's project, `Agents/<name>/<KEY>`
+/// (GA-172), else in its `Notes` (an agent in a group: in the group's folder, with its name). Nothing when there are none
+/// or memory is off for the agent. Returns what to note in the run's log (lines left out, a failed save).
 pub fn save_learned(st: &AppState, run_id: &str, agent_id: &str, card: &str, lines: &[String]) -> Vec<String> {
     if lines.is_empty() || !memory::agent_uses(&st.db, agent_id) {
         return vec![];

@@ -103,6 +103,12 @@ export function OnboardingPage({ onDone }: { onDone: (to: Route | null, note?: s
   }, [step, mcp]);
 
   const claude = clis ? claudeCodeFound(clis.listed) : true;
+  // Look again found Claude Code: the warning goes with the Look again you pressed, so the focus goes to the heading
+  const hadClaude = useRef(claude);
+  useEffect(() => {
+    if (!hadClaude.current && claude && document.activeElement === document.body) heading.current?.focus();
+    hadClaude.current = claude;
+  }, [claude]);
   const rows = clis ? cliRows(clis.listed, clis.found, before ?? []) : [];
   const ticked = rows.filter((r) => isTicked(r, unticked));
   const agentsKey = pick && ticked.some((r) => r.key === pick) ? pick : defaultAgentsCli(rows, unticked);

@@ -13,12 +13,12 @@ build on them.
 
 ## Notes
 
-A note is a Markdown text in Gizai's database: a doc of kind `memory`, at organisation level (no project needed). So
+A note is a Markdown text in GizAi's database: a doc of kind `memory`, at organisation level (no project needed). So
 versions, authorship, activity, live refresh and backups work as for docs. The Memory page shows and edits a note
 (`#/memory/<id>`; an old `#/doc/<id>` link to a note opens it there). A project's doc list never shows notes.
 
 Notes follow Obsidian's file conventions, so a copy opens there: Markdown, `[[wikilinks]]`, YAML properties at the top
-(frontmatter, kept inside the note's text) and folders. Gizai does not use or need Obsidian.
+(frontmatter, kept inside the note's text) and folders. GizAi does not use or need Obsidian.
 
 Every note has:
 
@@ -36,7 +36,7 @@ Every note has:
 | `Team Lead/` | agent | the Team Lead and people | the Team Lead and people |
 
 A note goes in one of these folders; other top folders are refused, with the list. Each agent gets `Agents/<name>/Notes`
-when it is made (agents from before memory get theirs when Gizai starts), and a note per project, `Agents/<name>/<KEY>`,
+when it is made (agents from before memory get theirs when GizAi starts), and a note per project, `Agents/<name>/<KEY>`,
 the first time a run on that project's card keeps a learned line (Agents' runs). Renaming an agent moves its folder,
 and the links to its notes follow. The Team Lead's `Team Lead/Notes` is made the first time the Team Lead needs it, from
 a short template: the user's preferences, working agreements, open threads, and how to use memory.
@@ -71,7 +71,7 @@ owner, keeps *Its own folder*:
   are. From one group to another, its notes stay with the old group.
 - **The owner renamed:** its folder moves as before, and the group follows. **The owner removed** (or made the Team
   Lead): its notes stay, and the group's next agent (the oldest of the others) becomes the owner, so the folder is
-  renamed to that agent's name and the others share it. Gizai does this when an agent becomes the Team Lead, and for a
+  renamed to that agent's name and the others share it. GizAi does this when an agent becomes the Team Lead, and for a
   removed owner when it starts.
 
 The Team Lead's `get_agent` shows an agent's `shares_memory_with` (by name), its `memory_folder` and the agents that share
@@ -97,7 +97,7 @@ source: GA-19           # a card, chat or run
 
 ### Links
 
-On every save Gizai rebuilds the note's links (`doc_links`) from its text:
+On every save GizAi rebuilds the note's links (`doc_links`) from its text:
 
 - `[[Note]]`, `[[Folder/Note|text]]`, `[[Note#Heading]]`: a link; `![[Note]]`: an embed;
 - `KADE-12`: a card;
@@ -128,8 +128,8 @@ The Team Lead's tools: `memory_list`, `memory_search`, `memory_read`, `memory_wr
 read; a new path makes the note), `memory_append` (under a heading, without rewriting the note) and `memory_move` (move
 or copy, rewriting links). `memory_read`, `memory_append` and `memory_move` find a note by its path, its title (as a
 wikilink does) or its id. It sees every scope, and the activity feed shows it as the author. Once a chat answer has used
-a tool from outside Gizai (another MCP server, the web, the browser), `memory_write`, `memory_append` and `memory_move`
-aren't run for the rest of that answer, like its other tools that act: Gizai keeps each call under the answer for you to
+a tool from outside GizAi (another MCP server, the web, the browser), `memory_write`, `memory_append` and `memory_move`
+aren't run for the rest of that answer, like its other tools that act: GizAi keeps each call under the answer for you to
 approve with one click (GA-102). The preview shows the note's path and its new text, with what changes against the
 current version when the note exists (`memory_write`), the path, heading and text (`memory_append`), or from and to
 (`memory_move`). **Approve** saves exactly that, once, as the Team Lead, with the usual version check: a note that
@@ -159,7 +159,7 @@ A new task run's prompt has a Memory section after the task, built by `memory::p
 At most **6,000 characters** of notes in full, then the paths of the rest that match (**4,000**). When the card has
 shared notes, the agent's own notes take at most **3,000** of the 6,000 and the shared notes get the rest, in the order
 above, so a long `Notes` never pushes the card's notes out; without shared notes its own notes may use all 6,000
-(GA-103). A note that doesn't fit in what is left is cut at the end, with where the rest stays in Gizai's Memory (task
+(GA-103). A note that doesn't fit in what is left is cut at the end, with where the rest stays in GizAi's Memory (task
 runs have no memory tools to read it), or only its path is listed when less than 500 characters are left.
 
 An agent's own notes with a `## Learned` list (its `Notes`, its notes per project) grow at the end of that list (below),
@@ -188,7 +188,7 @@ An agent keeps what it learned by adding an optional `learned` list to its resul
 GIZAI_RESULT: {"outcome":"ready_for_testing","summary":"…","issues":[],"learned":["The fake CLI ignores --effort"]}
 ```
 
-Gizai adds each line under `## Learned` in the agent's note for the card's project, `Agents/<name>/<KEY>` (GA-172), as
+GizAi adds each line under `## Learned` in the agent's note for the card's project, `Agents/<name>/<KEY>` (GA-172), as
 a dated bullet with the card (`- 2026-10-09 (GA-19): …`), written by the agent, with the run on the note's version. The
 note is made the first time, like this for a GA card:
 
@@ -219,7 +219,7 @@ repeat: a date (`2026-10-12`), then maybe a space and a card (`GA-99`) or a part
 `2026-10-12: 2026-10-12 (GA-111): x`, `2026-10-11 GA-99: x` and `GA-111: x` are all kept as `x`. A date followed by
 other words (`2026-10-24 the token expires`) and a project key alone (`MN: tests take …`) stay.
 
-**The lines from before (GA-172).** Until then every learned line went into the agent's `Notes`. The first time Gizai
+**The lines from before (GA-172).** Until then every learned line went into the agent's `Notes`. The first time GizAi
 starts with notes per project, right after it hands groups on (above), each item under `## Learned` in each agent
 folder's `Notes` whose label names a card of a project, `- <date> (<KEY>-<n>…): …`, moves to that project's note in the
 folder (made as above), in the same order, with its doubled labels taken off. Items whose key is no project's, and the
@@ -273,7 +273,7 @@ When a task agent ends its run with `needs_decision`, the Team Lead looks at the
 5. **Escalated**, and also a failed or timed-out run, one without its result line, or an answer the agent can't be
    continued with: the Team Lead's comment "Needs <you>: why", the options and its advice, and the hold's reason becomes
    "Team Lead escalated to you: why", in the Inbox (it notifies as a new hold). A question still with the Team Lead when
-   Gizai stops goes to you at the next start. A later Continue doesn't count the Team Lead's comment as an answer. When the
+   GizAi stops goes to you at the next start. A later Continue doesn't count the Team Lead's comment as an answer. When the
    Team Lead can't run here at all (no gizai-mcp helper, its CLI not found), the question goes to you as before, without
    a comment, and the Runs tab says why.
 6. **Your answer.** When the agent starts again on a card whose question the Team Lead escalated, the comments people
@@ -287,14 +287,14 @@ questions with their cards.
 
 ## Claude Code's own memory
 
-One memory: Gizai's. Claude Code keeps notes of its own in `projects/<project folder>/memory/` in its account's folder
+One memory: GizAi's. Claude Code keeps notes of its own in `projects/<project folder>/memory/` in its account's folder
 (`CLAUDE_CONFIG_DIR`, else `~/.claude`), which only that account sees; agents kept theirs there before memory (like the
 DevOps Agent's `deploy-<KEY>`).
 
-**The import (GA-85).** When Gizai starts, after the migrations, each Markdown file there, for every Claude Code account
+**The import (GA-85).** When GizAi starts, after the migrations, each Markdown file there, for every Claude Code account
 in Settings → Coding CLIs, becomes a note `Team Lead/Imported/<project folder>/<file name>`: its text as it was, with
 `source: claude-code`, `claude_config_dir`, `claude_project` and `claude_file` added to its properties. `MEMORY.md`
-(Claude Code's index) and the folders below are left out. Only the folders of Gizai's own places come in
+(Claude Code's index) and the folders below are left out. Only the folders of GizAi's own places come in
 (`memory_import::places`): each project's linked folder, each card's worktree (`<data folder>/worktrees/<KEY>/<card>`),
 the Team Lead's code copies (`code/<KEY>`) and its working folder (`lead`). Claude Code names a folder after each path it
 works in, every character but an ASCII letter or digit as `-` (`/home/jefsev/Herd/gizai` is `-home-jefsev-Herd-gizai`;
@@ -305,11 +305,11 @@ also when it changes later. A file with a secret in it, not text or over 200 KB 
 tried again once it changes. `Team Lead/Notes` gets an open thread with what came in and what didn't (a list over 2,000
 characters goes in a note of its own), how many other folders were left out (not which), and the agents whose
 instructions still say `MEMORY.md`, so the Team Lead sorts the notes with you (`memory_move`, like `deploy-GA` into
-`Deployments/GA`); until then no agent gets them. Gizai only reads those files. Headless test and screenshot runs don't
+`Deployments/GA`); until then no agent gets them. GizAi only reads those files. Headless test and screenshot runs don't
 import.
 
 **The switch.** Task runs, chat answers, board checks and the Team Lead's runs on agents' questions on Claude Code get
-`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, after the account's own environment lines: in Gizai's runs Claude Code neither reads
+`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, after the account's own environment lines: in GizAi's runs Claude Code neither reads
 nor writes its memory folder, whatever its settings say. Codex and Gemini keep no such folder.
 
 ## Switches

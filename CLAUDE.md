@@ -1,11 +1,11 @@
-# Gizai (repo rules for Claude Code sessions and agents)
+# GizAi (repo rules for Claude Code sessions and agents)
 
-Gizai is Jeffrey's (they/them) desktop app: clients, projects and tasks, worked on by local Claude Code agents. It is built with Tauri 2, a React/TypeScript UI, Rust core crates and local SQLite. Jeffrey uses the installed Gizai every day, and Gizai's own agents now work on this repository.
+GizAi is Jeffrey's (they/them) desktop app: clients, projects and tasks, worked on by local Claude Code agents. It is built with Tauri 2, a React/TypeScript UI, Rust core crates and local SQLite. Jeffrey uses the installed GizAi every day, and GizAi's own agents now work on this repository.
 
 ## Start here
 
 1. `docs/HANDOFF-2026-10-07.md`: what is built, where it stands, and the decisions so far.
-2. `README.md`: what Gizai does, how a card moves, and the Development section (commands and repository layout).
+2. `README.md`: what GizAi does, how a card moves, and the Development section (commands and repository layout).
 3. `docs/v0.3-notes.md`: the latest build notes, rulings, deferred minors and Jeffrey's answers.
 4. Then the code that your card touches, and its tests.
 
@@ -17,11 +17,11 @@ Background, only when the card needs it:
 
 ## Never
 
-- **Never touch the Gizai Jeffrey uses.**
+- **Never touch the GizAi Jeffrey uses.**
   - Don't run `./install.sh`.
   - Don't start `~/.local/bin/gizai` or anything in `~/.local/lib/gizai`.
   - Don't open, copy or change `~/.local/share/gizai`: that is his real data, and an older build refuses a newer database.
-  - Test Gizai's own update only with a scratch install and a fake release, with `HOME` and `XDG_DATA_HOME` in the scratch folder too (`docs/RELEASING.md` → Testing an update).
+  - Test GizAi's own update only with a scratch install and a fake release, with `HOME` and `XDG_DATA_HOME` in the scratch folder too (`docs/RELEASING.md` → Testing an update).
 - **Never start a GUI on Jeffrey's screen.** UI tests run headless in `cage` (`scripts/ui-test.sh`, `scripts/shot-cage.sh`).
 - **Never kill by process name or pattern** (`pkill`, `killall`): end only the exact PIDs you started.
 - **Never run against Brave or its profile.**
@@ -44,11 +44,11 @@ Background, only when the card needs it:
 
   The tests use fake Claude Code scripts (`crates/gizai-agents/tests/fake-claude*.{sh,py}`), never the real one.
 - **Release build:** always use `npm run tauri build -- --no-bundle`. A plain `cargo build --release -p gizai` can produce a binary that loads the dev URL.
-- **Linux, macOS and Windows:** Gizai builds and runs on all three, and CI (`.github/workflows/ci.yml`) builds and tests each pull request on each. `docs/PLATFORMS.md` lists what differs.
+- **Linux, macOS and Windows:** GizAi builds and runs on all three, and CI (`.github/workflows/ci.yml`) builds and tests each pull request on each. `docs/PLATFORMS.md` lists what differs.
   - Put code for one system behind `cfg(unix)`, `cfg(windows)` or `cfg(target_os = …)`, and leave Linux's behaviour as it is.
   - Start programs with `gizai_agents::os::command` (on Windows it finds `.cmd` shims and opens no console window). Start an agent's or a build's whole process tree with `os::spawn_tree`, and end it with `Tree::end`, never with `libc::kill`.
   - Tests that need a Unix shell, signals or Unix permissions go behind `#[cfg(unix)]`.
-- **Git:** `main` is development (cards start from it); `production` is the released code, protected, changed only by a pull request from `main`. A release is a `vX.Y.Z` tag on `production`, which installed Gizais offer as an update (`docs/RELEASING.md` says how and when). Work on your card's branch. Commit as you go: Gizai stops a run at its limits. Write commit messages in plain English that say what changed for the person using Gizai.
+- **Git:** `main` is development (cards start from it); `production` is the released code, protected, changed only by a pull request from `main`. A release is a `vX.Y.Z` tag on `production`, which every installed GizAi offers as an update (`docs/RELEASING.md` says how and when). Work on your card's branch. Commit as you go: GizAi stops a run at its limits. Write commit messages in plain English that say what changed for the person using GizAi.
 - **Writing:** UI text and docs are plain and short, in sentence case, and say what happens.
 - **Design rules:**
   - teal `--live` only for an agent working now;

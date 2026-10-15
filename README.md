@@ -101,9 +101,9 @@ scripts/ui-test.sh        # UI tests in a headless compositor, never on your des
 scripts/tour-capture.sh --out <folder>   # the product tour's stills, in dark and light (default .devdata/tour/capture)
 ```
 
-The capture makes the product tour's stills: Gizai with made-up data in a headless compositor, scene by scene, in dark and light, with a `scenes.json` of what each step clicked. The tour video and the two GIFs above (`docs/tour/tour-dark.gif` and `tour-light.gif`) are made from those stills in the website's repository, which holds the tour's Remotion project.
+The capture makes the product tour's stills: GizAi with made-up data in a headless compositor, scene by scene, in dark and light, with a `scenes.json` of what each step clicked. The tour video and the two GIFs above (`docs/tour/tour-dark.gif` and `tour-light.gif`) are made from those stills in the website's repository, which holds the tour's Remotion project.
 
-On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds Gizai and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs Gizai from source on macOS and Windows with it (`.github/workflows/install.yml`). A pull request into `main` that changes nothing but Gizai's version, a release's first step, skips both, and its checks pass within a minute or two: the release's pull request into `production` runs them in full (`docs/RELEASING.md`).
+On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds GizAi and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs GizAi from source on macOS and Windows with it (`.github/workflows/install.yml`). A pull request into `main` that changes nothing but GizAi's version, a release's first step, skips both, and its checks pass within a minute or two: the release's pull request into `production` runs them in full (`docs/RELEASING.md`).
 
 [CLAUDE.md](CLAUDE.md) has the rules for working in this repository, [docs/HANDOFF-2026-10-07.md](docs/HANDOFF-2026-10-07.md) explains how it is built, and [docs/RELEASING.md](docs/RELEASING.md) how a release is made.
 

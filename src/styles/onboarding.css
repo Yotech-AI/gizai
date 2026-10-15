@@ -1,0 +1,111 @@
+/* The first start's onboarding (GA-164; GA-168's design: design/onboarding/README.md has the sizes). It takes the whole
+   window, without the sidebar: the top bar (the logo, the steps centred on the window, Skip setup), the step body (640
+   wide and centred; it scrolls between the top bar and the actions when it is taller) and the actions (Back and Next,
+   at one place on every step: 24px above the mountains along the bottom). The onboarding is see-through over the
+   mountains, as the app's main column is; panels, fields and notices keep their own fill. Everything else is
+   components.css as it is: .btn, .input, .select, .check, .field, .fields, .panel, .badge, .agent-chip, .empty, .link-btn.
+   Only OnboardingPage.tsx loads this file, so a normal start doesn't. */
+.onb { --onb-w: min(calc(640px + 20 * var(--ui-grow, 0px)), calc(100vw - 48px));
+  display: grid; grid-template-rows: var(--size-topbar) minmax(0, 1fr) auto auto; height: 100vh; overflow: hidden; }
+
+/* ---------- the top bar ---------- */
+.onb-top { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 0 20px;
+  border-bottom: 1px solid var(--line); }
+/* the logo, 20px high, in one colour: inside the app it is never pink (the brandbook) */
+.onb-logo { display: flex; color: var(--text-2); }
+.onb-logo svg { display: block; width: 79.7px; height: 20px; }
+.onb-skip { justify-self: end; }
+
+/* the steps: a 20px circle and the name, 8 apart; 12, a 32 × 1 connector and 12 between two steps. Done: a check on
+   selected, and a button that opens the step again; current: the number in accent on accent-soft with an accent ring, the
+   name bold; upcoming: a line-2 ring, all in text-3. The shape and the weight say it too, not the colour alone. */
+.onb-steps { display: flex; align-items: center; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.onb-steps li { display: flex; align-items: center; gap: 12px; }
+.onb-steps li + li::before { content: ""; width: 32px; height: 1px; background: var(--line-2); flex: none; }
+.onb-step { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; border-radius: var(--radius); background: none;
+  color: var(--text-3); font: inherit; font-size: var(--fs); line-height: 20px; white-space: nowrap; }
+.onb-step .num { display: grid; place-items: center; width: 20px; height: 20px; flex: none; border: 1px solid var(--line-2); border-radius: 50%;
+  font-size: 11.5px; font-weight: 600; line-height: 1; }
+button.onb-step { color: var(--text-2); cursor: pointer; }
+button.onb-step:hover { color: var(--text); }
+button.onb-step:disabled { cursor: default; }
+.onb-step.done .num { border-color: transparent; background: var(--selected); color: var(--text); }
+.onb-step.done .num .icon { width: 12px; height: 12px; stroke-width: 2.25; }
+.onb-step.on { color: var(--text); font-weight: 600; }
+.onb-step.on .num { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+/* a narrow window: only the current step keeps its name on screen (screen readers still get every name) */
+@media (max-width: 1023px) {
+  .onb-step:not(.on) .nm { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+
+/* ---------- the step body: the eyebrow, 8, the heading, 8, the line under it, then 32 (step 1) or 24 to the parts ---------- */
+.onb-scroll { min-height: 0; overflow-y: auto; }
+.onb-body { display: flex; flex-direction: column; width: var(--onb-w); margin: 0 auto; padding: 64px 0 24px; }
+.onb-eyebrow { margin: 0 0 8px; font-size: var(--fs-sm); color: var(--text-3); }
+.onb-body h1 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: var(--fs-xl); line-height: 1.15; font-weight: 700; letter-spacing: -.015em; }
+.onb-body h1:focus { outline: none; }
+.onb-body h1 .badge { letter-spacing: normal; }
+.onb-lead { margin: 8px 0 0; font-size: var(--fs-md); line-height: 1.6; color: var(--text-2); }
+.onb-parts { display: flex; flex-direction: column; gap: 24px; margin-top: 24px; }
+.onb-parts.first { margin-top: 32px; }
+@media (max-height: 700px) { .onb-body { padding-top: 32px; } }
+
+/* a part: its head 8 above the list, a caption 8 under it (10 on step 3) */
+.onb-part { display: flex; flex-direction: column; gap: 8px; }
+.onb-head { display: flex; align-items: center; gap: 12px; min-height: 26px; margin: 0; font-size: var(--fs-sm); font-weight: 500; color: var(--text-2); }
+.onb-head h2 { margin: 0; font: inherit; }
+.onb-head .btn { margin-left: auto; }
+.onb-head .right { margin-left: auto; font-weight: 400; color: var(--text-3); }
+.onb-caption { margin: 0; font-size: var(--fs-xs); line-height: 1.4; color: var(--text-3); }
+.onb-caption.warn { color: var(--warning); }
+.onb-mcp > .panel + .onb-caption { margin-top: 2px; }
+.onb-info { display: flex; align-items: center; gap: 8px; margin: 0; font-size: var(--fs-sm); color: var(--text-2); }
+.onb-info .icon { width: 14px; height: 14px; color: var(--text-3); }
+.onb-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+/* ---------- rows in a panel: CLIs (step 2) and Claude Code's MCP servers (step 3, Settings' import rows) ---------- */
+.onb-rows { margin: 0; padding: 0; list-style: none; overflow: hidden; }
+.onb-rows ul { margin: 0; padding: 0; list-style: none; }
+.onb-rows li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; }
+.onb-rows li + li { border-top: 1px solid var(--line); }
+.onb-rows .warn { font-size: var(--fs-xs); color: var(--warning); }
+/* a CLI: the tick, its name and "· Built in" 6 apart, its program on the right on one line */
+.onb-clis li { flex-wrap: wrap; align-items: center; min-height: calc(40px + var(--ui-box, 0px)); }
+.onb-clis .check { gap: 10px; min-width: 0; line-height: 20px; }
+.onb-clis .cli-name { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.onb-clis .prog { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: var(--fs-sm); color: var(--text-3); }
+.onb-clis .warn { flex-basis: 100%; padding-left: 25px; }
+/* a server: its tick in a 15 × 20 box, so it sits on the first line; its lines 2 apart */
+.onb-servers .check { height: 20px; flex: none; }
+.onb-servers .cl-name { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 20px; }
+.onb-servers .cl-cmd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
+
+/* ---------- step 4: the summary (a key 190 wide, the value, Change) and the first message, quoted ---------- */
+.onb-summary { margin: 0; }
+.onb-summary > div { display: flex; align-items: center; gap: 12px; min-height: calc(44px + var(--ui-box, 0px)); padding: 8px 8px 8px 16px; }
+.onb-summary > div + div { border-top: 1px solid var(--line); }
+.onb-summary dt { flex: none; width: 190px; font-size: var(--fs-sm); color: var(--text-3); }
+.onb-summary dd { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.onb-summary dd:last-child { flex: none; }
+.onb-quote { margin: 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); line-height: 1.5; color: var(--text); }
+
+/* ---------- a notice: a warning (no Claude Code) or a step's error, its words in text ---------- */
+.onb-notice { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid; border-radius: var(--radius); color: var(--text); }
+.onb-notice.warn { border-color: var(--warning); background: var(--warning-soft); }
+.onb-notice.bad { border-color: var(--danger); background: var(--danger-soft); }
+.onb-notice .ni { display: grid; place-items: center; width: 16px; height: 20px; flex: none; }
+.onb-notice.warn .ni { color: var(--warning); }
+.onb-notice.bad .ni { color: var(--danger); }
+.onb-notice .nt { display: flex; flex-direction: column; gap: 10px; min-width: 0; line-height: 20px; overflow-wrap: anywhere; }
+.onb-notice p { margin: 0; }
+.onb-notice .na { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.onb-link { display: inline-flex; align-items: center; gap: 4px; }
+.onb-link .icon { width: 13px; height: 13px; }
+
+/* ---------- the step's error and the actions, under the body ---------- */
+.onb-error { width: var(--onb-w); margin: 0 auto 16px; }
+.onb-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: var(--onb-w); margin: 0 auto 24px;
+  padding-top: 16px; border-top: 1px solid var(--line); }
+/* with the mountains on, the actions stay 24px above them (band.css: they go in a short window and with forced colours) */
+[data-band] .onb-actions { margin-bottom: calc(clamp(var(--size-band-min), 14vh, var(--size-band)) + 24px); }
+@media (max-height: 559px), (prefers-contrast: more), (forced-colors: active), print { [data-band] .onb-actions { margin-bottom: 24px; } }

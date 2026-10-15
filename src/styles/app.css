@@ -16,6 +16,10 @@ html, body, #root { height: 100%; margin: 0; }
 /* ---------- banners ---------- */
 .error-banner { display: flex; align-items: center; gap: 10px; margin: 12px 20px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius); color: var(--danger); background: var(--danger-soft); }
 .error-banner .btn { margin-left: auto; }
+/* a note above the page, its words in text: why the first start's onboarding opened no Team Lead chat (GA-164) */
+.warn-banner { display: flex; align-items: center; gap: 10px; margin: 12px 20px; padding: 6px 6px 6px 12px; border: 1px solid var(--warning); border-radius: var(--radius); color: var(--text); background: var(--warning-soft); }
+.warn-banner > .icon { color: var(--warning); }
+.warn-banner .btn { margin-left: auto; }
 .ok-banner { padding: 10px 14px; border-radius: var(--radius); background: var(--live-soft); color: var(--text); }
 
 /* ---------- data tables (clients, projects, users) ---------- */

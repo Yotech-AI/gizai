@@ -99,7 +99,8 @@ async function start(info: Record<string, unknown>, hash = "", done = (log: stri
   h.info = { version: "0.0.0", data_dir: "/data", you_id: "you", selftest: false, start_route: null, selftest_mode: null, ...info };
   fakeWindow.location.hash = hash;
   const { default: App } = await import("./App");
-  const tree = (App as () => ReactElement)();
+  // as React calls it: with its props, none here (main.tsx passes onboarding: false when the onboarding doesn't wait, GA-164)
+  const tree = (App as (props: object) => ReactElement)({});
   for (const f of h.effects.splice(0)) f();
   await vi.waitFor(() => { if (!done(h.log)) throw new Error(`not done: ${h.log.join(" | ")} ${JSON.stringify(h.sets.at(-1))}`); }, { timeout: 3000, interval: 10 });
   await new Promise((r) => setTimeout(r, 50)); // anything a start does after that, it does by now

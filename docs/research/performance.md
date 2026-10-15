@@ -1,0 +1,989 @@
+# Performance: where Gizai is slow, and how to make it faster (GA-170)
+
+Research for the roadmap item "Performance: a faster app" (gizai.app/roadmap, GW-5). Research only: no code, settings or
+dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, against `main` at 24535e3 (Gizai 0.11.0).
+
+**Marks:** **[V]** verified in the code or a primary source (named next to it); **[I]** my judgement or an estimate.
+
+## 1. Summary
+
+- **Biggest cost (F1):** any write makes every open screen reload whole lists (9 calls on the board, 13 on the Memory
+  graph), with fields they don't show, through commands Tauri runs on the window's main thread, behind one lock.
+- **Then (F2 to F4):** streamed text re-parses every chat message's Markdown; the board check holds that lock while it
+  walks every open card, and queries read tables that only grow, without indexes; opening a chat starts your login
+  shell on the main thread, and one card's install holds up every other waiting card.
+- **Then (F5 to F7):** every page and the 300 KB self-test load at start; typing redraws whole pages; timers, animations
+  and each window focus (it follows the mouse on Omarchy) cost git and redraws at rest. FW: WebKitGTK 2.54 uses the GPU.
+- **Measured here:** the 7 Oct bundle (one 1.21 MB file), library sizes, call counts, this PC's GPU and the UI tests'
+  speed budgets. Start-up, memory, CPU and frames need a running Gizai: the harness takes them (section 7, code in 7.1).
+- **Recommendation (option A):** the harness first (P1a, P1b), then one card per cost, each measured before and after.
+
+## 2. The project now
+
+**What it does.** Gizai is a desktop app for clients, projects and cards, worked on by local Claude Code agents. You see
+the board, the Inbox, a chat with the Team Lead, Memory (notes and their graph), a Code Editor, terminals and a Usage page.
+Agents run in the background, one process tree per run, and stream what they do back into the app.
+
+**How it is built** (versions from `npm ls` and `cargo tree` in this worktree) **[V]**:
+
+| Layer | What | Where |
+|---|---|---|
+| Shell | Tauri 2.12.1 on wry 0.57.0; WebKitGTK on Linux (crate `webkit2gtk` 2.0.2), WKWebView on macOS, WebView2 on Windows | `src-tauri/`, `src-tauri/tauri.conf.json` |
+| UI | React 19.3.0, TypeScript 6.0.3, built by Vite 8.3.3 (Rolldown 1.2.12), `build.target` `safari16`, one entry | `src/`, `vite.config.ts:10` |
+| Bridge | 187 `#[tauri::command]` functions; events `rows-changed`, `runs-changed`, `run-event`, `chat-event`, `chat-changed`, `update-changed`, `editor-updated`, `terminals-changed`, and `quit-requested` | `src-tauri/src/lib.rs:279-302`, `:575-620`, `src-tauri/src/unsaved.rs:97`; the UI side only in `src/api.ts` |
+| Core | `gizai-core` (SQLite through rusqlite 0.40.2, SQLite bundled), `gizai-agents` (processes, git, worktrees, terminals), `gizai-mcp` | `crates/` |
+| Data | one database `gizai.db` in the data folder, WAL with `synchronous` NORMAL, **one connection behind one `Mutex`**; run and chat logs as files next to it | `crates/gizai-core/src/db.rs:12-18`, `:162-165` |
+| Tests | `cargo test`, `npm test` (Vitest), headless UI tests in `cage` driven by self-test probes | `scripts/ui-test.sh`, `scripts/smoke-cage.sh`, `scripts/shot-cage.sh`, `src/selftest.ts`, `crates/gizai-core/examples/prep_*.rs` |
+| Release | `npm run tauri build -- --no-bundle`; release profile `lto = "thin"`, `codegen-units = 4`, `strip = true` | `Cargo.toml:24-27`, `docs/RELEASING.md` |
+
+**How a start goes** **[V]**:
+
+1. `run()` (`src-tauri/src/lib.rs:431`) builds Tauri with its plugins. On the event loop's Ready, Tauri first builds the
+   windows from `tauri.conf.json` and then calls Gizai's `setup` closure, on the main thread (Tauri 2.12.1,
+   `crates/tauri/src/app.rs`, `fn setup`: the `for window_config in app.config().app.windows` loop comes before
+   `(setup)(app)`).
+2. The window starts loading the page (WebKit's own web process) while `setup` runs `open_state` (`lib.rs:477`), which
+   is `open_data` with the default agents (`lib.rs:222-227`), on the main thread: the data folder's lock (`lib.rs:229`),
+   opening and upgrading the database (`lib.rs:230`; a snapshot first when the schema is older, `db.rs:155-160`, then the
+   migrations, `db.rs:184`), the seed (`lib.rs:231-235`), Memory's groups and folders (`:237-243`), runs a previous Gizai
+   left (`:247-255`, a git call per such run through `runs::record_head`), questions and chat queues (`:257-261`), stray
+   chat configs (`:262`), housekeeping (`:263`) and the pending actions (`:275`). Housekeeping reads the date of every
+   log in `runs/` and `chat/` (`crates/gizai-core/src/housekeeping.rs:29-54`), so it grows with the last 30 days of runs.
+   The page's own files come through Tauri's protocol, which wry hands to WebKitGTK as a URI scheme and answers on the
+   main thread's GLib loop (`MainContext::default().invoke`, `wry-0.57.0/src/webkitgtk/web_context.rs:144`, `:218-221`)
+   **[V]**, so the page can't load further until `setup` returns: `open_data`'s time is part of every start **[I]**.
+3. Then background work starts (`lib.rs:491-572`): Memory's import from Claude Code (`spawn_blocking`), the
+   notifications watcher, the MCP socket, the Team Lead's code copies, the pull request check (at once, then every two
+   minutes), the release check (after 20 s), housekeeping (hourly tick), and every 60 s `runs::pull` and `board::tick`.
+4. The page (`src/main.tsx`) applies the appearance, renders `App` (`src/App.tsx`), which calls `app_info` and mounts the
+   sidebar and the route's page; the default route is the task list (`src/router.ts:35`, an unknown page falls back to
+   `tasks`).
+
+**What the performance work touches:** all four layers. The costs below sit in the bridge (which thread a command runs on,
+how much comes back, how often), the database (one connection, queries), the UI (what loads at start, how much renders) and
+the webview (how WebKitGTK draws).
+
+## 3. Measurements
+
+**What this run could measure.** An R&D run may read files and run `git`, `rg`, `ls`, `wc`, `npm view`, `npm ls` and
+`cargo tree`. It may not build, start Gizai, run the repository's scripts, or read outside this worktree and
+`/home/jefsev/Herd` (so not `/proc` of a running Gizai). So the numbers below are the ones files and code give; the ones
+that need a running Gizai are in the second table, with how the harness (section 7, card P1) takes them.
+
+| What | Number | How it was taken |
+|---|---|---|
+| The last bundle built in the main checkout (7 Oct, 14:05: before the Memory graph, the terminals and the Editor's diff view) | **one JS file of 1,214,807 bytes** and one CSS file of 52,815 bytes; the fonts load on use (`font-display: swap`, `src/styles/fonts.css`) | `ls -la /home/jefsev/Herd/gizai/dist/assets`; `grep -o` shows CodeMirror (`cm-scroller`) and micromark in it, and no xterm.js (`xterm-screen`) and no d3-force (`forceManyBody`) yet |
+| The release binary of that build | `gizai` 14,938,488 bytes, `gizai-mcp` 459,712 bytes | `ls -la /home/jefsev/Herd/gizai/target/release` (7 Oct, 14:07) |
+| Today's libraries, as built files | xterm.js 344,970 bytes (minified) and its addons 201,924 (WebGL 126,558, search 39,031, unicode11 31,220, web links 3,148, fit 1,967): **547 KB that load only when a terminal opens**. React DOM's client 625,168 (not minified). CodeMirror and Lezer, 31 packages: 1,857,335 (not minified), of which `@codemirror/view` 493,290. d3-force with quadtree, dispatch and timer 17,427 (minified) | `wc -c node_modules/<package>/<file>` in this worktree (`npm ls`: xterm 6.0.0, React 19.3.0, CodeMirror view 6.43.13, d3-force 3.0.0) |
+| The self-test inside the app's bundle | `src/selftest.ts`: **301,604 bytes** of TypeScript, 19% of the app's own 1,576,897 bytes (tests left out), imported by `src/App.tsx:27` and so loaded at every start | `wc -c` over `src/` |
+| Commands and threads | 187 commands: **112 plain `fn`, which Tauri runs on the main thread**, 75 `async fn` on the async runtime, none `#[tauri::command(async)]` | `rg '#\[tauri::command' -A1 src-tauri/src` |
+| Data hooks that reload after any write, mounted with the board | **10** (the sidebar 5, the task page 5); **9** of them call the backend, 2 of which load every card (the task page's fifth asks for the chats only on the Inbox) | `src/lib/useData.ts:15-20`, `src/components/Sidebar.tsx:42-52`, `src/pages/TasksPage.tsx:103-107` |
+| Cards drawn on the board | at most 50 per column (Show more for the rest); Backlog, Done and Cancelled start as narrow rails without cards | `src/components/Board.tsx:3`, `:21`, `:67-73`, `:91-93` |
+| A live run's log | the last 500 events, each text event drawn as Markdown | `src/lib/runs.ts:4-8`, `src/components/RunPanel.tsx:22-30` |
+| This PC's GPU, as the headless cage saw it | **AMD Radeon RX 7800 XT** (Mesa's radeonsi, navi32), EGL from Mesa, kernel 7.2.5-3-omarchy: no NVIDIA in the render node the tests use | wlroots' start lines in the last headless runs, `/home/jefsev/Herd/gizai/.devdata/smoke.log:9-14` and `shot.log:9-14` (7 Oct) |
+
+**What the repository already measures.** Three UI tests time the screen and fail above a budget, so on `main` these
+held when they last ran (`scripts/ui-test.sh` runs them; their numbers aren't kept, each run overwrites
+`.devdata/selftest.json`) **[V]**:
+
+- the Memory graph with `prep_graph`'s 500 notes: loaded within 4 s, a frame's work under 16 ms, at least 30 frames a
+  second while it lays out, settled within 6 s (`src/selftest.ts:2004-2005`; `scripts/ui-test.sh:61`);
+- Changes on a 2,000-line (32 files) and a 15,000-line (245 files) card: the first screen within 300 ms and 3 s of
+  scrolling without a frame over 100 ms or under 30 frames a second (`src/selftest.ts:2828-2829`; `scripts/ui-test.sh:75-76`);
+- a terminal running `yes` for 10 s: at least 100 frames and no frame over a second (`src/selftest.ts:3097`).
+
+So the graph and the diff view were built to a budget; the board, the chat, Memory's list and the run log have none.
+P1 adds theirs, with the same frame timing.
+
+**What needs a running Gizai** (not taken in this run):
+
+| What the card asks | Why not here | How it is taken (P1, section 7) |
+|---|---|---|
+| Start-up, cold and warm, launch to board | needs Gizai started | `scripts/perf.sh start`: launch time to the page's `timeOrigin`, then to the first card drawn; 1 cold and 4 warm starts; the setup part (`open_state`) shows as the wait before the page's `responseStart` |
+| Memory (RSS) and CPU at rest, with a run, while the Team Lead answers | needs `/proc` of a running Gizai | `scripts/perf.sh idle runlog lead`: `VmRSS` and CPU % per process of the test Gizai it started. For **your own** Gizai, this read-only line gives memory per process now: `ps -o pid,rss,pcpu,etime,comm -p "$(pgrep -d, -x gizai),$(pgrep -d, -P "$(pgrep -x gizai)")"` (RSS in KiB; `pcpu` is the average since the process started, so for CPU now use `top -b -d 10 -n 2 -p <those pids>` and read the second block) |
+| The UI with 500 cards, 1,000 messages, 300 notes, a big repository, a run's live log | needs the window | `scripts/perf.sh board chat memory editor runlog` on `prep_perf`'s data: time to drawn, frames a second and the longest frame while scrolling or streaming |
+| `npm run build`'s chunk sizes today | needs a build | `npm run build && node scripts/bundle-size.mjs` |
+| Backend calls and how much comes back | needs the window | the probe's `invoke` counter in every scenario (calls, bytes and ms per command) |
+
+## 4. Findings, biggest cost first
+
+The order weighs how often a cost is paid by how much it blocks what you see. It is my judgement **[I]** until P1 gives
+numbers; each finding's code is verified **[V]**.
+
+### F1. One write makes every screen load everything again, on the main thread
+
+- **What happens.** `useData` reloads its fetch on **every** `rows-changed` event, whatever the table
+  (`src/lib/useData.ts:15-20`; `src/api.ts:320-322`: "Fires after any write; screens refetch what they show"). On the
+  board, nine of these hooks call the backend: the sidebar's `listProjects`, `listTasks`, `getTeam`, `memoryNotes` and
+  `listChatThreads` (`src/components/Sidebar.tsx:42-52`) and the task page's `getTeam`, `listProjects`, `listUsers` and
+  `listTasks` (`src/pages/TasksPage.tsx:103-106`); a tenth, the Inbox's chats (`:107`), calls nothing on the board but
+  still redraws the page. So one write anywhere (a comment, a setting, a Memory note an agent
+  saves, a run's status) costs nine full reloads: every card twice, the team twice, the projects twice, the people, every
+  Memory note and every chat. The notice names its table (`src-tauri/src/commands.rs:14-15`, `src/api.ts:320-322`), but
+  `useData` drops it; each hook listens on its own, and nothing joins notices that come together or reuses a reload
+  already on its way (`src/lib/useData.ts:10-19`), so a burst of ten writes costs ninety reloads. On the Memory graph it
+  is thirteen, among them every note with its text (`src/pages/MemoryPage.tsx:50`, `memoryNotes(true)`), every card, open or closed, only to know their ids (`:51`), and the
+  graph's own cards, projects, clients, people and team (`src/components/memory/MemoryGraph.tsx:21-25`).
+- **Where they run.** Each of those is a plain `fn` command (`src-tauri/src/commands.rs:82` `list_projects`, `:97`
+  `list_tasks`, `:163` `get_team`, `:227` `memory_notes`, `:576` `list_chat_threads`), so Tauri runs it on the main thread,
+  the one that also runs the window ("Commands without the async keyword are executed on the main thread unless defined
+  with #[tauri::command(async)]", and "Asynchronous commands are preferred in Tauri to perform heavy work in a manner that
+  doesn't result in UI freezes or slowdowns": Tauri's Calling Rust page **[V]**); and each takes the database's only
+  connection (`crates/gizai-core/src/db.rs:13`, `read` at `:204-207` takes the same `Mutex` as `write` at `:209-222`). A reload waits for any write in progress (an agent's
+  run writing from another thread), and while it waits the window waits too.
+- **Then the page.** The answers are parsed and set as new state even when nothing in them changed
+  (`src/lib/useData.ts:11`), so the page renders again: the task list sorts, filters and groups every card
+  (`TasksPage.tsx:131-136`), and the board's cards render again although `Card` is memoised (`Board.tsx:26`), because the
+  page passes a new `onOpen` function each time (`TasksPage.tsx:221`) and `Board` builds a new `byId` map on every render
+  (`Board.tsx:119`).
+- **What comes back.** Whole lists, with fields the board doesn't show. Every card comes with its acceptance criteria,
+  which only the card's own page shows, after asking for the card on its own (`crates/gizai-core/src/tasks.rs:9`,
+  `:64`; `src/pages/TaskPage.tsx:104`, `:251`). The team comes with every agent's instructions, which only the agent's
+  page and form show, after asking for the agent on its own (`crates/gizai-core/src/team.rs:112`, `:177`;
+  `src/pages/AgentPage.tsx:54`, `:167`; `src/components/AgentForm.tsx:164`); the five default agents' instructions are
+  about 30 KB (`crates/gizai-core/roles/*.md`, 28,048 bytes, and the Team Lead's in `crates/gizai-core/src/seed.rs:198-215`,
+  stored per agent at `:160`). A card is about 1 KB of JSON before its acceptance criteria (a sample card with a label,
+  a branch and a pull request, written out with its 33 fields: 958 bytes). So on a board of 500 cards a write brings
+  back a megabyte or more (the cards twice, about 0.5 MB each before their criteria, and the team twice), made into
+  JSON on the main thread and parsed again in the page **[I]**. P1's counter gives the real bytes.
+- **Other pages.** The Inbox reloads 10 lists per write (the board's 9, and every chat again,
+  `src/pages/TasksPage.tsx:107`); a card's page 14 (the sidebar's 5, the page's 6 at
+  `src/pages/TaskPage.tsx:104-109`, the run panel's, the pull request panel's and the files', `RunPanel.tsx:78`,
+  `PullPanel.tsx:22`, `FileDrop.tsx:25`); a recent chat 7 (the sidebar's 5 and `src/pages/ChatPage.tsx:37-38`). In all,
+  55 `useData` calls in `src/` reload this way.
+- **Who writes.** Every saved chat message and every tool result in a Team Lead answer sends a notice
+  (`src-tauri/src/chat.rs:348`, `:1274`), and so do an agent's own writes through Gizai's tools during a run (comments,
+  Memory notes, limits). So each step of a Team Lead answer, in any chat, costs the board its 9 reloads.
+- **At start** the default route makes 16 backend calls and 18 listener registrations (each one an IPC call too): `app_info`,
+  `terminal_list`, the sidebar's 5 lists, `live_runs` twice, `chat_live`, `editor_apps`, `update_status` and the task page's
+  4 lists. That is with no Editor folder in the sidebar; with some, `editor_folders` adds one call and each folder two
+  more, `editor_git` and `editor_main` (`src/components/Sidebar.tsx:283-293`).
+- **When it bites.** With an agent run going and while the Team Lead works, writes come every few seconds; each one costs
+  the reload storm above. This is the most likely cause of "Gizai gets sluggish while agents work" **[I]**.
+
+### F2. Streaming text redraws, and re-parses, everything above it
+
+- **The Team Lead's answer.** Each streamed piece (`delta`) updates the draft (`src/components/chat/useChat.ts:77-84`),
+  which renders the whole thread again: `groupMessages` runs again in render (`src/components/chat/ChatThread.tsx:233`) and
+  every `MessageGroup` (a plain function, not memoised, `src/components/chat/ChatMessage.tsx:75`) renders its messages again
+  (`ChatThread.tsx:260-261`), each agent message through `MarkdownView` (`ChatMessage.tsx:97`). `MarkdownView` isn't
+  memoised and passes a new `remarkPlugins` array and `components` object on each render
+  (`src/components/MarkdownView.tsx:26-46`), so react-markdown parses every message's Markdown again, for every piece of
+  text that streams in. Then a layout effect scrolls to the bottom on each piece (`ChatThread.tsx:153-156`), which makes
+  WebKit lay out the whole thread at once. The cost grows with the chat's length: in a chat of 1,000 messages every
+  streamed word re-parses up to 1,000 Markdown bodies **[I]**. Typing in the chat's text box does the same per keystroke:
+  its text is state of the whole thread (`ChatThread.tsx:134`, passed down to the composer at `:280`). And each tool card parses its JSON
+  result again on every render (`src/lib/chat.ts:30`, `:51`).
+- **A live run's log.** `Stream` renders up to 500 events, text events through `MarkdownView`
+  (`src/components/RunPanel.tsx:22-30`); it isn't memoised, and `RunPanel` re-renders every second while the run is live
+  (`RunPanel.tsx:90-91`) and on each event (`RunPanel.tsx:66`, merged by `mergeEvents`, which copies, sorts and cuts the
+  list each time, `src/lib/runs.ts:4-8`). So watching a live run re-parses up to 500 Markdown blocks every second, plus once
+  per event. On the backend, each `run_events` call clones the live run's whole event list, or reads and parses the whole
+  log file, on the main thread (`src-tauri/src/runs.rs:394-410`). A finished run's log, opened from the run history, has no
+  500 cap at all: Show the whole output draws every event of the log (`src/components/RunHistory.tsx:47`, `:95-97`).
+- **Which long lists draw everything.** The chat draws every message of a thread, and a finished run's log every event
+  (above); a live run's log its last 500. The others are already bounded: the board draws at most 50 cards a column
+  (section 3), Memory's tree draws the notes of open folders only (`src/pages/MemoryPage.tsx:224`, `:352-360`) and its
+  search at most 50 hits, searched once typing pauses for 150 ms (`:396`, `:404-406`, `:412`). So the card's "the
+  Memory list renders every item" holds only for a folder you open with hundreds of notes in it **[V]**.
+- **What the terminal shows is possible.** Terminals already stream the right way: raw bytes over a `tauri::ipc::Channel`,
+  at most one message every 8 ms (`crates/gizai-agents/src/terminal.rs:38`, `:1022-1026`;
+  `src-tauri/src/terminal.rs:73-74`).
+
+### F3. The database: one lock for everything, scans that grow with history
+
+Read from the code; no query plan was taken in this run (it can't run SQLite), so P1a's `bench_queries` and P8's
+`EXPLAIN QUERY PLAN` test confirm each line **[V]** for the code, **[I]** for the cost.
+
+- **Background work holds the one lock too.** The board check reads the whole board inside one `db.read`
+  (`crates/gizai-core/src/board.rs:155-352`), right after each budgeted agent's spend this month (`:143-154`, a read of
+  its own): the busy and finished runs per agent (`:157-158`, `:168`), then per card in Ready, In progress and Testing
+  its active runs, its last change, its last run and, when held for a decision, its newest comment (`:196-347`), then
+  the Review cards the Team Lead may merge (`:348`, `:364-399`). It runs from the minute loop on the async runtime, not `spawn_blocking`
+  (`src-tauri/src/lib.rs:565-572`, `src-tauri/src/board.rs:113-123`), whenever the Team Lead's check interval has
+  passed. While it reads, every reload of F1 waits for it, on the main thread. The same minute loop runs `runs::pull`
+  first, which reads the waiting cards with a run subquery per card (`crates/gizai-core/src/workflow.rs:174-201`); every
+  card you create, change, move or label runs it again (`wake`, `src-tauri/src/commands.rs:26-29`, called at `:104`,
+  `:111`, `:118`, `:125`, through `dispatch` to `pull`, `src-tauri/src/runs.rs:1600-1601`).
+- **Four tables only grow.** Runs, changes, comments and chat messages are never deleted (no `DELETE FROM` for them in
+  `crates/gizai-core/src/`; housekeeping removes old log files and tokens, and "the runs themselves stay",
+  `crates/gizai-core/src/housekeeping.rs:27-29`). Every query below that reads one of them whole gets slower every week:
+  - **a card's comments** and its activity: `comments` has no index (`crates/gizai-core/src/comments.rs:10`,
+    `tasks.rs:470-489`), so opening a card reads every comment of every card; the board check does it per card
+    (`board.rs:219-223`, and `stamp` at `:419-431`);
+  - **a chat's messages**: `chat_messages` has no index, and a chat is read twice, once for its messages and once for
+    their files (`crates/gizai-core/src/chat.rs:382`, `:386-388`);
+  - **the Usage page**: its period filter is on `runs.created_at`, which no index starts with, so one `usage_summary`
+    reads every run four times (totals, per day, per agent, per project: `crates/gizai-core/src/usage.rs:149-184`), and
+    again on every write while the page is open (`src/pages/UsagePage.tsx:246`);
+  - **the project list**: per project, two counts over the cards, and a sum and a count over the runs joined to cards
+    (`crates/gizai-core/src/projects.rs:13-17`), on every write twice with the board (F1);
+  - **a card's last change** (`stamp`, `board.rs:419-431`): `row_id = ? OR row_id IN (its comments) OR row_id IN (its
+    runs)`, newest first. Whether SQLite answers it from `changes_row` or walks `changes`, every write ever, from the
+    newest back, is the first thing P8's query plan test settles **[I]**.
+- **Small queries in loops (N+1).** The chat list looks up each linked card's number one query at a time
+  (`crates/gizai-core/src/chat.rs:165-174`), for every chat, because the sidebar asks for all of them on every write
+  (`src/components/Sidebar.tsx:52`); the team reads each column's agents per column
+  (`crates/gizai-core/src/team.rs:190-192`); every card list and every single card reads every card's labels, archived
+  cards' too, and drops the others in Rust (`crates/gizai-core/src/tasks.rs:47-56`, `:129`). Each is a key lookup or a
+  small scan, cheap alone **[I]**; they run on every write.
+- **The Inbox** is the task list filtered in the page: every card loaded, then filtered there
+  (`src/pages/TasksPage.tsx:106`, `:133`), and every chat (`:107`); the sidebar counts the Inbox the same way, from its
+  own copies of both lists (`src/components/Sidebar.tsx:43`, `:52-53`). So on the Inbox a write reloads every card and
+  every chat twice. The desktop notifications look at the Inbox on their own, off the main thread and at most once
+  every 3 s while notices about cards or chats come in (`src-tauri/src/lib.rs:281-286`,
+  `src-tauri/src/notifications.rs:33`, `:281-290`), but they too read whole lists: every open card, filtered in Rust
+  (`crates/gizai-core/src/tasks.rs:103-109`), and every chat twice, once for the Team Lead's questions and once for the
+  calls that wait for your approval (`crates/gizai-core/src/chat.rs:160-162`, `:307-309`), each time with the chat
+  list's lookups per card.
+- **Indexes that don't fit.** `tasks_board` starts with `org_id`, which no query names
+  (`crates/gizai-core/migrations/0001_init.sql:267`; `tasks.rs:64-71`), and `runs_agent_period` is on `started_at` while
+  the spend filters on `created_at` and the last check sorts on it (`0001_init.sql:325`;
+  `crates/gizai-core/src/runs.rs:335-339`, `board.rs:449-451`). No `ANALYZE` or `PRAGMA optimize` ever runs, so SQLite
+  plans without statistics.
+- **How big, today** **[I]**: with hundreds of cards and thousands of runs, comments and messages, each scan takes
+  milliseconds, not seconds. The cost is that they run on every write (F1), on the main thread (F1), and grow with every
+  week of use; and that the board check holds the lock while it walks every open card. `bench_queries` on `prep_perf`
+  gives the numbers.
+
+### F4. Slow work in the wrong place: a login shell and git on the main thread, one card's start holding the queue
+
+- **On the main thread.** Two plain `fn` commands start processes, so the window stands still until they end:
+  - `chat_clis` (`src-tauri/src/commands.rs:652-653`) lists the coding CLIs under the chat's text box. To find their
+    programs it starts your login shell (`src-tauri/src/clis.rs:85-89` calling `command_path()`, the `bash -lc` at
+    `src-tauri/src/runs.rs:790`), and a second one, `bash -lc 'command -v claude'`, when no Claude Code path is saved
+    (`clis.rs:44-46`, `runs.rs:320`). It runs each time a chat page opens (`src/components/chat/ChatThread.tsx:149-150`:
+    "finding their programs asks your login shell"), so every chat you open waits for your shell profile to load.
+  - `check_repo` (`src-tauri/src/commands.rs:172-173`) runs up to four git processes with no time limit, among them a full
+    `git status --porcelain` (`src-tauri/src/git.rs:33-47`), each time a project's page opens
+    (`src/pages/ProjectPage.tsx:18`) and while you type a repository path in the project form, 300 ms after typing
+    pauses (`src/components/ProjectForm.tsx:45-48`). On a big repository the window waits for `git status`.
+
+  Apart from the start's `git rev-parse` for each run a previous Gizai left (`src-tauri/src/lib.rs:252`, section 2),
+  everything else that starts git runs off the main thread: every Editor command goes through `spawn_blocking`
+  (`src-tauri/src/editor.rs:301-304`), and so do a run's preparation and every `git fetch` **[V]**.
+- **On the async runtime.** A run's start (`start_inner`, `src-tauri/src/runs.rs:803`) makes several git calls inline
+  on a runtime worker, not in `spawn_blocking` (`:865`, `:870`, `:908`, `:929`), and starts a login shell for an agent
+  that isn't on Claude Code (`:838`, `clis.rs:152`). Each one holds a worker that async commands and events also need.
+- **One card's start holds the queue.** The pull that starts waiting cards holds one lock across every start
+  (`src-tauri/src/runs.rs:1621`; `start_background` waits for `start_inner`, `:680-682`), and a start includes the fetch,
+  the worktree, copying folders such as `node_modules` and the install (`:848-852`, `:864-867`, `:748-758`). So when
+  three cards wait, the second starts only after the first one's install has finished, and the minute loop's board
+  check waits behind them (`src-tauri/src/lib.rs:569-570`). The copy is `cp -a --reflink=auto`
+  (`crates/gizai-agents/src/prepare.rs:248-252`): on btrfs or XFS it shares the blocks and is quick, elsewhere it copies
+  every byte.
+- **Git while nothing happens.** The Editor's standing against main (`editor_main`) runs a full `git status` and, by my
+  count of `behind::stand` and the checks it calls, some 15 to 30 git processes per folder
+  (`src-tauri/src/editor.rs:208-215`, `crates/gizai-agents/src/behind.rs:184-219`) **[I]**: every 10 s on the Editor page
+  and every 30 s for each open folder from the sidebar, on every page, and again on each window focus (F7). `editor_git`
+  adds a full `git status --untracked-files=all` each time (`crates/gizai-agents/src/editor.rs:896-902`, `:820`), which
+  on a big repository looks at every file in it (the harness's `editor` scenario, 20,000 files, times it). These run off
+  the main thread: they cost CPU and battery, not frames.
+- **The database lock is never held across a process, a file or the network:** every `db.read` and `db.write` closure
+  is SQL only, and files and git run before or after it (for example `crates/gizai-core/src/files.rs:59-68`: the file
+  is stored between a read and a write) **[V]**. So this work doesn't add to F3's waits.
+
+### F5. Every page and the self-test load at start
+
+- `src/App.tsx:5-27` imports every page and `src/selftest.ts` statically; there is no `React.lazy`, and Vite's chunk
+  warning is raised to 2,000 KB on purpose ("Desktop app: one local bundle, so a large chunk costs nothing over the
+  network", `vite.config.ts:9-10`). Over the network that is right, but WebKit still has to parse, compile and run every
+  module's top level before the first render **[I]**.
+- What is already split: xterm.js and its addons load when a terminal opens (`src/lib/terminals.ts:224-233`), and the
+  Editor's language packs when a file of that language opens (`src/lib/codeLanguages.ts:48-112`). So the card's guess that
+  xterm.js loads at start is wrong.
+- CodeMirror does load at start, through the shell itself: the drawer host is always mounted (`src/App.tsx:175`), and
+  although each drawer mounts only when asked for (`src/lib/drawers.tsx:29-34`), their code is imported statically
+  (`:3-8`), and five of them import the Markdown editor (`NewTaskDrawer.tsx:11`,
+  `ProjectForm.tsx:10`, `ClientForm.tsx:9`, `AgentForm.tsx:20`, `DocDrawer.tsx:7`), which imports
+  `@codemirror/lang-markdown` (`src/components/MarkdownEditor.tsx:29`). That package imports `@codemirror/lang-html`, which
+  imports the CSS and JavaScript languages (`node_modules/@codemirror/lang-markdown/dist/index.js:6`,
+  `node_modules/@codemirror/lang-html/dist/index.js:2-3`), so those three can't leave the start bundle even though
+  `codeLanguages.ts` asks for them with `import()`.
+- The self-test, 301,604 bytes of source that every start parses and never uses outside tests, brings more along:
+  `@codemirror/view` and `@codemirror/merge` (`src/selftest.ts:2-3`), the Memory graph's canvas and with it d3-force
+  (`:15`), and the terminal view (`:16`). The pages import these too (the diff view through `TaskPage.tsx:32` and
+  `ChangesView.tsx:12`, d3-force through `MemoryPage.tsx:22`, `MemoryGraph.tsx:15` and `GraphCanvas.tsx:8`, the terminal
+  view through `TerminalPage.tsx:21`), so they leave the start files only when both the self-test and those pages load
+  on demand (P6 does both).
+
+### F6. Typing redraws the page it is on
+
+- **A card's page.** Its title and the comment being written are state of the whole page (`src/pages/TaskPage.tsx:113-114`),
+  so each keystroke draws the page again: every comment through `MarkdownView` (`TaskPage.tsx:274`), and the run panel
+  with its log.
+- **The Editor.** Each edit or cursor move sets the status bar's cursor in the page's state (`src/pages/EditorPage.tsx:311`),
+  which draws the 833-line page again, with a tab ref that calls `scrollIntoView` on every render (`:670`).
+- **A Memory note.** Its side panel finds backlinks and unlinked mentions on every render (`src/components/memory/NotePane.tsx:211-212`):
+  for each wikilink of each note it scans every note's title (`src/lib/memory.ts:360-361` calling `resolve`, `:165`), which
+  grows with the square of the notes. While you edit a note, that runs on every keystroke. With 300 notes of about five
+  links each, that is some 450,000 title comparisons per keystroke **[I]**.
+- **The task search** writes two `localStorage` keys per keystroke (`src/pages/TasksPage.tsx:100-101`).
+
+### F7. Costs while nothing happens, and small ones
+
+- **Timers.** The sidebar checks every open Editor folder every 30 s (`editor_folders`, then `editor_git` and `editor_main`
+  per folder, which run git) and again on every window focus (`src/components/Sidebar.tsx:286-295`). The Editor refreshes
+  git and its folder every 10 s (`src/pages/EditorPage.tsx:194`), its standing against main every 10 s (`:248`, a `git
+  fetch` when one is due) and its open files' versions every 3 s (`:390`). These skip while `document.hidden` is true, and
+  nothing else in the app listens for visibility; whether WebKitGTK sets it when Gizai is closed to the tray or sits on
+  another Hyprland workspace is not known (P9 checks it). The run panel's 1 s clock (`RunPanel.tsx:91`) and the Usage page's
+  60 s tick (`src/pages/UsagePage.tsx:234`) don't check at all.
+- **A window focus is a refresh.** The sidebar, the Editor page and the terminal page also load again on every window
+  `focus` event (`src/components/Sidebar.tsx:295`, `src/pages/EditorPage.tsx:196`, `:249`,
+  `src/pages/TerminalPage.tsx:102`). On the Editor page, with its folder also open in the sidebar, one focus asks for
+  the folder's git marks twice (`editor_git`: two git processes, `crates/gizai-agents/src/editor.rs:777-782`, `:817-824`,
+  `:896-902`), its standing against main twice (`editor_main`, F4's 15 to 30 git processes, or a fetch when one is due)
+  and every open level of the file tree again (`editor_list`: three git processes each, for what git ignores and what
+  changed, `:383-420`, `:786`): by my count 35 to 65 git processes, plus three per open folder **[I]**. Omarchy turns
+  on Hyprland's focus follows mouse (`follow_mouse = 1` in its `default/hypr/input.lua`, unless your own
+  `~/.config/hypr/input.lua` sets it otherwise) **[V]**, so the window gets focus whenever the pointer moves onto it:
+  moving the mouse between a terminal and Gizai's Editor starts that many git processes each time **[I]** (P9 counts
+  the focus events first).
+- **Animations that never stop** while agents work: the `gz-ping` pulse runs forever (`src/styles/components.css:133`) on
+  every live marker: a working card (`Board.tsx:47`), the sidebar's live tags (`Sidebar.tsx:122`), a read-only Editor
+  folder (`Sidebar.tsx:335`) and the run panel (`RunPanel.tsx:121`). Each keeps WebKit compositing every frame while it is
+  in sight **[I]**.
+- **Terminals out of sight** still parse all their output (`src/lib/terminals.ts:346`), each with a 5,000-line scrollback
+  (`:116`), at up to one message every 8 ms each.
+- **The mountains** (on by default, `src/lib/appearance.ts:26`) are a fixed layer along the bottom with an SVG mask
+  (`src/styles/band.css:15`, `src/assets/mountains.svg:4`) under see-through columns (`band.css:31-35`). Static, but whether
+  scrolling see-through content over it makes WebKit repaint it is a risk to measure (P1's `board` scenario with the
+  mountains on and off), not a finding.
+- **A login shell per action.** On Linux, `command_path()` starts `bash -lc` to read your login PATH each time it is called
+  (`src-tauri/src/runs.rs:785-801`, the shell at `:790`): at a run's preparation (`runs.rs:756`), a terminal's start
+  (`src-tauri/src/terminal.rs:35`), the Editor's Open in and Update (`src-tauri/src/editor.rs:129`, `:293`), finding the
+  coding CLIs (`src-tauri/src/clis.rs:86`, `:110`, `:141`, `:152`) and more. Its cost is your shell profile's start time,
+  paid again each time. Every start pays it twice: in the launcher (`install.sh:320`), and when the sidebar asks for the
+  editor apps (`editor_apps`, off the main thread, `src-tauri/src/editor.rs:117-119`, `:365-366`; called through
+  `src/components/editor/Menus.tsx:61`, `Sidebar.tsx:281`). Small, but free to cache **[I]**.
+
+### FW. The webview: WebKitGTK already draws on the GPU; keep it that way
+
+- **What Gizai sets.** The launcher only points EGL at Mesa when the machine has no NVIDIA GPU (`install.sh:316-317`) and
+  starts Gizai through a login shell so agents find their tools (`install.sh:320`); neither it nor Gizai sets any WebKit
+  variable (`rg WEBKIT_` finds none in `src-tauri/` or the scripts) **[V]**. This PC draws on an AMD GPU through Mesa
+  (section 3), so the NVIDIA problems in section 5 don't apply to it.
+- **What WebKitGTK does now.** Arch's `webkit2gtk-4.1` is 2.54.1 (built 2 Oct 2026, archlinux.org's package data), so an
+  up-to-date Omarchy runs 2.54 **[V]** (the version on this PC itself couldn't be read in this run). In 2.54 "the web
+  process compositor now uses the Skia API instead of the venerable TextureMapper", compositing is damage-aware by default
+  ("each draw the compositor issues is restricted to the damaged rectangles"), "Asynchronous scrolling is smoother", and
+  "hardware acceleration is now always used, and the on-demand policy behaves like
+  `WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS`" (WebKitGTK 2.54 highlights, webkitgtk.org) **[V]**. So there is no
+  WebKit switch to flip for speed on Linux; the common Tauri workarounds `WEBKIT_DISABLE_COMPOSITING_MODE=1` and
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` move drawing to slower paths and belong only on machines where the window stays blank
+  **[I]**.
+- **What still costs on the GPU path** **[I]**: anything that changes every frame makes WebKit composite every frame, also
+  at rest (F7's animations). Damage tracking in 2.54 limits the area redrawn, not the wake-ups.
+- **macOS and Windows differ less than Linux does.** All three run the page in its own process and draw on the GPU
+  (WKWebView's WebContent and GPU processes; WebView2's renderer and GPU processes; links in section 10) **[V]**. Calls
+  travel the same way on all three: Tauri 2.12.1 sends each through its `ipc` custom protocol with `fetch` and falls back
+  to `postMessage` only if that fails (`tauri-2.12.1/scripts/ipc-protocol.js:20-37`, `:61-66`) **[V]**. Where they
+  differ: a hidden window. Tauri's `backgroundThrottling` setting, which sets whether a hidden web view throttles or
+  suspends its timers, works on macOS 14 and later only, and is "Unsupported" on Linux and Windows (`tauri-utils-2.10.1/src/config.rs:2234-2249`)
+  **[V]**; so on Linux only Gizai's own visibility checks quiet a hidden window (F7, P9). WebView2 can be asked to use
+  less memory while hidden (`MemoryUsageTargetLevel`, section 5); WebKitGTK has the cache model and the memory pressure
+  settings instead. The costs in F1 to F7 are Gizai's own work, so they are the same on all three **[I]**.
+
+## 5. Compared with what Tauri, WebKitGTK, React, Vite and SQLite recommend
+
+Each line: the advice (quoted from a primary source, read on 14 Oct 2026, links in section 10), what Gizai does, and the gap.
+
+| Advice | Gizai today | Gap |
+|---|---|---|
+| **Tauri:** "Commands without the async keyword are executed on the main thread"; "Asynchronous commands are preferred in Tauri to perform heavy work in a manner that doesn't result in UI freezes or slowdowns" (Calling Rust; Tauri's macro does the same: a plain `fn` gets the blocking execution context, `tauri-macros/src/command/wrapper.rs`) | 112 of 187 commands are plain `fn`, every list and search among them (F1) | **Large** (P3) |
+| **Tauri:** "The event system is not designed for low latency or high throughput situations"; "Channels are designed to be fast and deliver ordered data" (Calling the frontend) | Terminals use a channel with 8 ms batching; run and chat streams send one JSON event per stream event (`src-tauri/src/lib.rs:290-295`) | **Medium** (P5) |
+| **Tauri:** large answers are slow as JSON; "To return array buffers in an optimized way, use tauri::ipc::Response" | Lists come back whole, as JSON, after every write, with fields the board doesn't show (F1) | Medium; fixed mostly by P2 (fewer reloads) and P12 (smaller lists), not by a new format |
+| **WebKitGTK:** hardware acceleration is the default, and in 2.54 "now always used"; the DMA-BUF renderer is the only accelerated one since 2.44 ("The X11 and WPE renderers have been removed in favor of the DMA-BUF one"); 2.54's Skia compositor improves MotionMark "by around 36%… while keeping the GPU markedly less busy" | Gizai sets no WebKit variable (FW) | None. Keep it so; `WEBKIT_DISABLE_DMABUF_RENDERER=1` would turn acceleration off altogether (WebKit's `AcceleratedBackingStore.cpp` leaves no transport mode when it is set, so `canUseHardwareAcceleration()` is false; my reading of the source **[I]**) |
+| **Tauri's Linux graphics guide:** most NVIDIA problems come from "the WebKitGTK DMABUF renderer requesting buffer formats the NVIDIA driver does not provide"; `__NV_DISABLE_EXPLICIT_SYNC=1` fixes "Error 71" "without a performance cost"; the other switches cost speed; "Only ship an unconditional override like this if you have verified your app is affected" | The launcher's only graphics setting is Mesa's EGL on machines without NVIDIA (`install.sh:316-317`) | None for this PC; question 6 for NVIDIA machines. One third-party report (xnmp/tauri-explorer#1057, secondary) measured scrolling at 44 to 68 ms a frame on 2.54.1 with an RTX 3070, and 17 ms with `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` |
+| **WebKitGTK memory:** the cache model `WEBKIT_CACHE_MODEL_DOCUMENT_VIEWER` would "Disable the cache completely, which substantially reduces memory usage" (the default is the web browser model); `MemoryPressureSettings` sets the web process's memory limit ("the system's RAM size with a maximum of 3GB" by default) | Neither is set (`rg` finds no cache model or memory pressure setting) | Small, worth one measured try: Gizai's pages come from inside the app, so a web cache buys little **[I]** (P9) |
+| **WebView2 (Windows):** "Batch messages wherever possible, because frequent message passing can increase CPU usage"; set `MemoryUsageTargetLevel` to Low "on inactive WebViews" (wry has `set_memory_usage_level` since 0.35.0) | Unbatched run and chat events; no memory level when the window is closed to the tray | Medium on Windows; P5 batches for all three systems |
+| **macOS (WKWebView):** each web view's page runs in its own WebContent process, and since macOS Sonoma "all drawing… occurs in the 'GPU Process'" | Nothing macOS-specific in drawing; a login shell runs once at start for the PATH (`src-tauri/src/shell_path.rs:8-18`) | None known |
+| **React:** "lazy lets you defer loading component's code until it is rendered for the first time"; "memo is only valuable when your component re-renders often with the same exact props, and its re-rendering logic is expensive" (it is, for Markdown); `useDeferredValue` keeps typing responsive with a slow list; for long lists "we recommend using a technique known as 'windowing'" (the old docs; react.dev has no newer page) | No `lazy`; `MarkdownView`, `MessageGroup`, `Stream` and `Column` aren't memoised; only `DataTable` virtualises | **Large** for streaming (P4), medium for start (P6) and long lists (P7) |
+| **React Compiler 1.0** (7 Oct 2025): "a build-time tool that optimizes your React app through automatic memoization" | Not used (`@vitejs/plugin-react` 5.2.0) | Option for later; P4's hand-made memoisation is smaller and easier to check |
+| **Vite 8 / Rolldown:** dynamic `import()` splits code ("we don't put imported code together with the importers"); the object form of `manualChunks` is gone, and chunks are grouped with `build.rolldownOptions.output.codeSplitting` | Two dynamic imports (terminals, languages); no chunk groups; the chunk warning raised to 2,000 KB (`vite.config.ts:10`) | Medium (P6): `lazy` pages split by themselves; no chunk groups needed |
+| **SQLite:** WAL: "readers do not block writers and a writer does not block readers", but only between connections ("there is no isolation between operations… within the same database connection"); `synchronous=NORMAL` is "safe from corruption" in WAL; long-lived connections should run `PRAGMA optimize=0x10002` when opened and then "once per day or once per hour" | One connection behind one `Mutex` for all reads and writes (`db.rs:13`, `:204-222`); `synchronous` NORMAL, as advised (`db.rs:164`); no `PRAGMA optimize` anywhere | **Large** for the lock (P3); small for `optimize` (P8) |
+
+## 6. Options
+
+Three ways to go about "a faster app". None needs a new library: `@tanstack/react-virtual` (MIT, 3.14.13 here, 3.14.19
+on npm, 63,728 bytes unpacked; `npm view`, 14 Oct 2026) is already a dependency (`src/components/DataTable.tsx`), and the
+rest is Tauri, React and SQLite as they are.
+
+| | A. Measure, then fix by cost (recommended) | B. Rework the data flow in one go | C. Quick fixes, no harness |
+|---|---|---|---|
+| **What** | The harness first (P1), then one card per finding, biggest first, each proving its gain with the harness | A client-side store fed by row-level change notices (the changed ids with each notice, patched into the store), every command async with a pool of read connections, lists paged by the backend | Memoise the hot components, lazy pages, async commands and a table filter in `useData`, straight away |
+| **Size** | Fourteen cards of one pull request each (section 8); the harness (P1a, P1b) and P3 are the biggest | Three to five large cards that touch every page at once | Two or three cards |
+| **Gain** | Each finding's gain, shown in numbers before and after | The largest in the long run, and what a future sync needs (`changes` is meant as its log, `crates/gizai-core/src/db.rs:1-2`) | Most of A's gains for F1, F2 and F5 |
+| **Risk** | Low: small steps, each checked; the order can change when the numbers come | High: one change across the app, hard to test in steps, in the way of every card in flight | Unproven: no numbers to show the gain or catch a step back, and the roadmap's "faster" can't be shown |
+| **Libraries** | none new | possibly TanStack Query (MIT) for the store, or Gizai's own | none new |
+
+**Recommendation: A.** The biggest costs (F1, F2) have small, local fixes; the harness turns "feels faster" into numbers
+the roadmap can show, and it guards the gains afterwards. B's direction (say what changed, reload only that) is kept in the
+small: P2 filters by table first, and row ids can follow if P1's numbers ask for it.
+
+## 7. The benchmark harness
+
+One entry point, `scripts/perf.sh`, built by the first proposed card (P1) and used by every later one: each card runs it on
+`main` and on its branch, on the same machine with nothing else running, and puts both tables in its pull request. It reuses
+what exists: the headless `cage` start of `scripts/smoke-cage.sh`, the self-test report (`GIZAI_SELFTEST`,
+`src-tauri/src/lib.rs:103-110`), the frame timing of the Changes and terminal probes (`src/selftest.ts:2804-2826`,
+`:3089-3100`), the Memory graph probe's numbers (`src/selftest.ts:1988-2005`: load, frames a second while it lays out,
+settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/examples/prep_*.rs`).
+
+**Its five parts:**
+
+1. **The data, `crates/gizai-core/examples/prep_perf.rs`** (new; usage like the others, `prep_graph.rs:8`:
+   `cargo run -p gizai-core --example prep_perf -- <data dir> <fake claude>`). On a copy of the demo data:
+   500 cards in project KADE over every column (each with a 1 to 3 KB description, up to three labels and three comments);
+   2,000 finished runs over 90 days with tokens and cost (Usage, Inbox, `check_board`); one chat of 1,000 messages (every
+   tenth with a tool call) among 60 chats; 300 Memory notes that link each other (`prep_graph`'s pattern); a finished run on
+   KADE-1 whose log has 5,000 events; agents paused and Claude Code pointed at the fake. It prints the ids the probe needs on
+   one line, as `prep_graph` does. A `--years <n>` option multiplies the runs, comments, chat messages and with them the
+   `changes` log, so the query bench can show how F3's scans grow with use.
+2. **The probe, `GIZAI_SELFTEST_MODE=perf:<scenario>`** in `src/selftest.ts`, reported as `perf` in the self-test JSON.
+   It counts each command's calls, answer size (JSON length) and time, and the events heard, through a small
+   `src/lib/perf.ts` (7.1), and times frames with `requestAnimationFrame` (frames a second, the longest frame), as the
+   Changes probe already does. It can't wrap Tauri's own `invoke`: Tauri 2.12.1 defines
+   `window.__TAURI_INTERNALS__.invoke` and `.ipc` with `Object.defineProperty` and a bare `value`, so neither can be
+   replaced (`tauri-2.12.1/scripts/core.js:81-113`, `scripts/ipc.js:142-144`) **[V]**. It wraps the app's own instead:
+   `src/api.ts` is the only module that imports `invoke` and `listen` (`src/api.ts:2-3`; `rg` finds no other), so one line
+   there sees every call. To count from the very first call, the backend sets a flag with a plugin's `js_init_script`,
+   which runs "before the HTML document has been parsed and before any other script included by the HTML document is
+   run" (`tauri-2.12.1/src/plugin.rs:329-330`, `:371`) **[V]**, and only in a perf run; outside one, `perf.ts` hands back
+   Tauri's `invoke` and `listen` themselves, so the app runs exactly as today. The listener registrations themselves
+   (`plugin:event|listen`, made inside `@tauri-apps/api`) aren't counted; the probe counts them as `listen` calls.
+
+   | Scenario | Route and data | Numbers |
+   |---|---|---|
+   | `start` | the default route | `performance.timeOrigin`; the navigation entry's `responseStart` and `domContentLoadedEventEnd`; `app_info` answered; first card drawn; calls and bytes in the first 5 s |
+   | `board` | `#/board`, 500 cards | all columns drawn (ms); 3 s scrolling each column (fps, longest frame); a drag to the next column (ms to drawn; calls after the drop) |
+   | `chat` | the 1,000-message chat | first screen (ms); scroll to the top (fps, longest frame); 50 characters typed in the composer (longest frame) |
+   | `memory` | `#/memory`, 300 notes; `#/memory/graph` | tree drawn (ms); search typing (longest frame); the graph probe's load, fps, settle and frame numbers |
+   | `runlog` | the card with the 5,000-event run; then a fake run streaming 50 events a second for 20 s | log drawn (ms); scroll (fps, longest frame); live: fps, longest frame, calls and events counted |
+   | `idle` | `#/board`, 60 s, nothing happening | calls and bytes, events heard |
+   | `editor` | the Editor on a made git repository of 20,000 files | tree drawn (ms); a 5,000-line file opened (ms); calls a minute while it sits open |
+   | `lead` | the chat, with the fake Team Lead streaming a 20 KB answer | fps and longest frame while it streams; events heard |
+
+3. **The script, `scripts/perf.sh [scenario …]`.** Builds when stale (`gz_app`, `scripts/app-ready.sh:20-27`), makes the
+   data once, then per scenario starts `target/release/gizai` in the headless `cage` exactly as `scripts/smoke-cage.sh:16-22`
+   does, with the probe's mode. It notes the launch time (`date +%s%3N`), so start to board is the page's `timeOrigin` plus
+   the probe's first-card time minus the launch. Every 500 ms it reads, for the PIDs it started only (the app, and its
+   children found with `pgrep -P` as `scripts/shot-cage.sh:25` does), `VmRSS` from `/proc/<pid>/status` and
+   `utime + stime` from `/proc/<pid>/stat`: memory per process and CPU % over the scenario, at rest and under load. Each
+   scenario runs five times on a fresh copy of the data; the first, with WebKit's cache folder empty (`XDG_CACHE_HOME` is
+   a new folder), counts as cold, the other four as warm; it prints the medians as a table and writes
+   `.devdata/perf/<commit>.json`. "Cold" here leaves the system's file cache warm: a start straight from disk, as after a
+   reboot, needs root to empty that cache (`sync; echo 3 | sudo tee /proc/sys/vm/drop_caches`), so it is taken by hand
+   with `scripts/perf.sh start --once` after a reboot, not in every card. `scripts/perf.sh --compare a.json b.json` prints two
+   results side by side with the change in %. Optional: `--webkit-env 'WEBKIT_DISABLE_COMPOSITING_MODE=1'` runs the same
+   with an environment variable, to compare WebKitGTK's drawing modes.
+4. **The query bench, `crates/gizai-core/examples/bench_queries.rs`** (new): on the `prep_perf` data, without a window,
+   times each hot core function 30 times (the task list with each filter, the project list, the team, the chat list, the
+   usage summary, the big chat's messages, a card's comments and activity, the Memory list and search, and the whole
+   board check, `gizai_core::board::check`, which is also how long it holds the lock) and prints the median and p95 in
+   µs as JSON lines: `cargo run --release -p gizai-core --example bench_queries -- <data dir>`. With `--plan` it prints
+   each query's `EXPLAIN QUERY PLAN` too.
+5. **The bundle report, `scripts/bundle-size.mjs`** (new): after `npm run build`, lists `dist/assets/*` with bytes and
+   gzip bytes (Node's `zlib`), and marks what `dist/index.html` loads at start (its script and `modulepreload` links)
+   apart from the chunks loaded later.
+
+### 7.1 The harness's core, as code
+
+A starting point for P1b, written against `main` at 24535e3; not run in this card (it may not change the app). Four
+pieces:
+
+**The flag** (`src-tauri/src/lib.rs`, in `run()`, next to the other `let builder = …` lines at `:442-465`):
+
+```rust
+// GA-170's benchmark harness: in a perf run (GIZAI_SELFTEST_MODE=perf:…) the page counts its backend calls from the
+// first one (src/lib/perf.ts). The init script runs before any of the page's own scripts.
+let perf_run = std::env::var("GIZAI_SELFTEST_MODE").is_ok_and(|m| m.starts_with("perf:"));
+let builder = if perf_run {
+    builder.plugin(tauri::plugin::Builder::new("gizai-perf").js_init_script("window.__GIZAI_PERF__ = true;").build())
+} else {
+    builder
+};
+```
+
+**The counter** (`src/lib/perf.ts`, new; `src/api.ts` then imports `invoke` and `listen` from it instead of from
+`@tauri-apps/api`, and keeps `Channel` from there):
+
+```ts
+// GA-170's benchmark harness (P1b): in a perf run, counts every backend call and every event the page hears.
+// Outside one, invoke and listen are Tauri's own: the app runs exactly as without this file.
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+
+type Stat = { calls: number; ms: number; bytes: number; errors: number };
+export const perfOn = (window as { __GIZAI_PERF__?: boolean }).__GIZAI_PERF__ === true;
+export const perfCalls = new Map<string, Stat>();
+export const perfEvents = new Map<string, number>();
+const stat = (name: string) => perfCalls.get(name) ?? perfCalls.set(name, { calls: 0, ms: 0, bytes: 0, errors: 0 }).get(name)!;
+
+export const invoke: typeof tauriInvoke = !perfOn ? tauriInvoke : (async (cmd: string, args?: never, options?: never) => {
+  const s = stat(cmd);
+  s.calls += 1;
+  const t0 = performance.now();
+  try {
+    const out = await tauriInvoke(cmd, args, options);
+    s.bytes += out == null ? 0 : JSON.stringify(out).length; // the answer's size as JSON
+    return out;
+  } catch (e) {
+    s.errors += 1;
+    throw e;
+  } finally {
+    s.ms += performance.now() - t0;
+  }
+}) as typeof tauriInvoke;
+
+export const listen: typeof tauriListen = !perfOn ? tauriListen : ((event, handler, options) => {
+  stat("listen").calls += 1;
+  return tauriListen(event, (e) => { perfEvents.set(event, (perfEvents.get(event) ?? 0) + 1); return handler(e); }, options);
+}) as typeof tauriListen;
+
+/** `ms` of frames, doing `step` (a scroll, a keystroke) before each: frames a second and the longest frame, taken as the
+ * Changes probe takes them (src/selftest.ts:2810-2825). */
+export async function perfFrames(ms: number, step?: () => void) {
+  const gaps: number[] = [];
+  let last = performance.now();
+  const end = last + ms;
+  while (performance.now() < end) {
+    step?.();
+    await new Promise((r) => requestAnimationFrame(r));
+    const now = performance.now();
+    gaps.push(now - last);
+    last = now;
+  }
+  const total = gaps.reduce((n, g) => n + g, 0) || 1;
+  return { fps: Math.round((gaps.length * 1000) / total), longestFrameMs: Math.round(Math.max(0, ...gaps)) };
+}
+
+/** The probe's `perf` report: the calls by command (most bytes first), the events heard, and when the page began. */
+export const perfReport = () => ({
+  timeOrigin: performance.timeOrigin,
+  calls: [...perfCalls].map(([cmd, s]) => ({ cmd, ...s, ms: Math.round(s.ms) })).sort((a, b) => b.bytes - a.bytes),
+  events: Object.fromEntries(perfEvents),
+});
+```
+
+**The sampler** (inside `scripts/perf.sh`'s runner, written and started in `cage` as `scripts/shot-cage.sh` writes its
+runner at `:14-27` and starts it at `:29-34`): it notes the launch, starts Gizai, and every 500 ms writes one line per process of the app and everything
+under it (WebKit's web and network processes, agent runs), however deep:
+
+```bash
+tree() { echo "$1"; for c in $(pgrep -P "$1"); do tree "$c"; done; }
+date +%s%3N > "$OUT/launch_ms"
+"$GZ/target/release/gizai" & APP=$!
+while kill -0 "$APP" 2>/dev/null; do
+  now=$(date +%s%3N)
+  for p in $(tree "$APP"); do
+    stat=$(cat "/proc/$p/stat" 2>/dev/null) || continue
+    set -- ${stat##*) }   # the fields after the command's name: $12 is utime, $13 stime (clock ticks)
+    rss=$(grep -m1 '^VmRSS:' "/proc/$p/status" | tr -s ' ' | cut -d' ' -f2)
+    echo "$now $p $(cat "/proc/$p/comm" 2>/dev/null) ${rss:-0} $(( $12 + $13 ))"
+  done >> "$OUT/samples.txt"
+  sleep 0.5
+done
+```
+
+CPU % of a process between two samples is the change in ticks ÷ `getconf CLK_TCK` (100 on Linux) ÷ the seconds between
+them × 100. Start to board is `timeOrigin` + the probe's first-card time − `launch_ms`.
+
+**The report:** a few lines of Python at the end of `perf.sh` (as `scripts/smoke-cage.sh:23-33` reads its report) join
+each run's `perf` report and samples, take the median of the runs, and print one table per scenario:
+
+```
+scenario  start→board ms  longest frame ms  fps  calls  KB back  app RSS MB  web RSS MB  app CPU %  web CPU %
+board     …
+```
+
+**What it can't show** **[I]**: the headless cage draws with wlroots' `gles2` renderer on the same GPU
+(`WLR_RENDERER=gles2`, `WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128`, `scripts/smoke-cage.sh:18`) in a 1280 × 720 output, not
+in Hyprland on your screen, so its numbers are for comparing before and after, not the ones you feel. For your own Gizai,
+the read-only line in section 3 gives its memory and CPU.
+
+## 8. Proposed cards
+
+In order. Each is one pull request for one agent run, starts in **To do** (none needs a screen designed first: they change
+how screens work, not how they look), and measures its gain with P1's harness on `main` and on its branch, both tables in
+the pull request. The expected gains are my estimates **[I]** until P1's baseline is in.
+
+**Order and what can run at the same time.** Cards that change the same lines wait for each other; the others run side
+by side.
+
+- P1a, then P1b.
+- Frontend, after P1b: P2, P4 and P6 at once. P4b after P4 and P2 (it changes `ChatThread.tsx` after P4 and
+  `TasksPage.tsx:100-101` next to P2's `:103-107`); P7 after P4b (both change `ChatThread.tsx`); P9 after P2 and P4b
+  (`Sidebar.tsx`, `EditorPage.tsx`, and `RunPanel.tsx:91`, where P4 moves the clock). So at most three frontend cards
+  at once.
+- Backend, after P1b: P3 first (it changes most commands, `run_events` among them); then P5, P8 and P10 side by side.
+  They change different parts of `src-tauri/src/lib.rs` (`:288-295`, `:544-562`, `:227-276`) and of `runs.rs`, so
+  whichever merges last only brings its branch up to date. P11 after P10 (`runs.rs`, around `start_inner`). P12 after
+  P3 as well (both change `list_tasks` and `get_team`), beside P5, P8 and P10. So at most four backend cards at once.
+
+### P1a. Benchmark data and query bench (backend)
+- **Builds:** `crates/gizai-core/examples/prep_perf.rs` (the data in section 7, part 1) and
+  `crates/gizai-core/examples/bench_queries.rs` (part 4); two markers in the fake CLIs: `FAKE_STREAM` in
+  `crates/gizai-agents/tests/fake-claude.sh` (a run that writes text, tool-use and tool-result events at a set rate, e.g.
+  `FAKE_STREAM 50x20` for 50 a second for 20 s) and `FAKE_CHAT_STREAM` in `fake-claude-chat.py` (a Team Lead answer of
+  about 20 KB, streamed in small pieces).
+- **Acceptance:**
+  - [ ] `prep_perf` makes the data on a copy of the demo data and prints the ids the probe needs on one line;
+    `--years <n>` multiplies the history.
+  - [ ] `bench_queries` prints one JSON line per query (name, runs, median and p95 in µs), the whole board check among
+    them; `--plan` adds each query's `EXPLAIN QUERY PLAN`.
+  - [ ] A test covers each new fake marker; `cargo test --workspace` passes.
+- **Builds on:** nothing. **Gain:** none by itself; it is the measuring stick.
+
+### P1b. Benchmark harness: the probe and `scripts/perf.sh` (frontend)
+- **Builds:** the `perf:<scenario>` probe in `src/selftest.ts` (start, board, chat, memory, runlog, idle, editor, lead),
+  its counter `src/lib/perf.ts` with the perf run's flag in `src-tauri/src/lib.rs` and `src/api.ts` importing from it,
+  `scripts/perf.sh` with its `/proc` sampling and `--compare`, and `scripts/bundle-size.mjs` (section 7, parts 2, 3 and
+  5; the code in 7.1 is the starting point). Fills section 3's second table of this document with today's medians: the
+  baseline. Its one backend line (the flag) is small enough to ride along in this frontend card.
+- **Acceptance:**
+  - [ ] `scripts/perf.sh` runs every scenario five times headless, prints the medians and writes `.devdata/perf/<commit>.json`.
+  - [ ] `scripts/perf.sh --compare a.json b.json` prints both with the change in %.
+  - [ ] `node scripts/bundle-size.mjs` lists each file with bytes and gzip bytes, start files apart.
+  - [ ] In the `start` scenario the counter sees every call from the first one: the sidebar's lists, whose effects React
+    runs before `App`'s `app_info` (`src/components/Sidebar.tsx:42-52`, `src/App.tsx:56-57`), and `app_info` itself.
+  - [ ] Outside a `perf:` mode nothing in the app changes (`invoke` and `listen` are Tauri's own, a unit test checks it);
+    `npm test`, `npm run build` and `scripts/ui-test.sh` pass.
+  - [ ] The baseline table is committed.
+- **Builds on:** P1a. **Gain:** none by itself; its baseline is what every later card's gain is measured against.
+
+### P2. Reload only what a write changed (frontend)
+- **Builds:** `useData` learns which tables a fetch reads (one map in one place, e.g. `src/lib/tables.ts`; a fetch it
+  doesn't know reloads on any write, as today) and reloads only for those (`src/lib/useData.ts:15-20`); notices that arrive
+  within one frame cause one reload; a reload whose answer is the same as the last one keeps the old data, so nothing
+  renders again; the sidebar and the page share one fetch of the same list (the cards, the team, the
+  projects, and on the Inbox the chats: `Sidebar.tsx:42-45`, `:52`, `TasksPage.tsx:103-107`). The tables come from the
+  notices the backend sends today:
+  `settings`, `tasks`, `docs`, `workflow_states`, `actors`, `teams`, `team`, `labels`, `files`, `contacts`, `clients`,
+  `projects`, `comments`, `chat_threads`, `chat_messages`, `runs`, `subscription_limits`, `pending_actions`
+  (sent from `src-tauri/src/commands.rs`, `runs.rs`, `chat.rs`, `tools/mod.rs`, `ask_lead.rs`, `hand.rs`, `memory.rs`,
+  `worktrees.rs`, `pulls.rs`, `limits.rs` and `pending.rs`).
+- **Acceptance:**
+  - [ ] A `settings` notice reloads nothing on the board; a `tasks` notice reloads the card list once, not twice.
+  - [ ] Ten notices within 50 ms reload once.
+  - [ ] A reload that brings back the same list renders nothing again (a test counts renders).
+  - [ ] Unit tests for the table map and the coalescing; `npm test` passes.
+- **Expected gain:** calls per write on the board from 9 to at most 2, on the Inbox from 10 to at most 2, on the Memory
+  graph from 13 to at most 3.
+- **Measure:** P1 `runlog` (a fake run writing): calls per `rows-changed`, and the longest frame; before and after.
+- **Builds on:** P1b.
+
+### P3. No command on the main thread; reads beside writes (backend)
+- **Builds:** the 112 plain `fn` commands (`src-tauri/src/commands.rs`, `terminal.rs`, `lib.rs`, `unsaved.rs`, `tour.rs`)
+  run off the main thread, first the ones that start processes (`chat_clis` and `check_repo`, F4) and the lists F1
+  reloads: `async fn` that runs its body in `tauri::async_runtime::spawn_blocking`, or
+  `#[tauri::command(async)]` for the ones that only read memory. `Db` (`crates/gizai-core/src/db.rs:12-18`) gets a
+  small pool of read-only connections (four) for `read`, so reads go on while the one writer writes (WAL allows it
+  between connections) and while the board check reads (F3). The minute loop's `runs::pull` and `board::tick` run their
+  database work in `spawn_blocking` (`src-tauri/src/lib.rs:565-572`).
+- **Acceptance:**
+  - [ ] No `#[tauri::command]` plain `fn` does database or file work (a test or a lint lists them).
+  - [ ] A test: a read finishes while another thread holds a write transaction open, and while another holds a long
+    read.
+  - [ ] `cargo test --workspace` and `scripts/ui-test.sh` pass.
+- **Expected gain:** the window never waits for SQL, a file or the database lock; reads stop queueing behind an agent's
+  writes.
+- **Measure:** P1 `runlog` and `board` (drag while a fake run writes): the longest frame; `bench_queries` with a writer
+  running: read p95.
+- **Builds on:** P1b.
+
+### P4. Stream without drawing the past again (frontend)
+- **Builds:** `MarkdownView` memoised on its text, with its plugin list and components made once
+  (`src/components/MarkdownView.tsx:26-46`); `MessageGroup` memoised (`src/components/chat/ChatMessage.tsx:75`) and
+  `groupMessages` kept until the messages change (`ChatThread.tsx:233`), so a streamed piece re-renders only the draft;
+  following the bottom once a frame instead of a layout effect per piece (`ChatThread.tsx:153-156`); the run panel's
+  one-second clock in its own small component, and `Stream` memoised (`src/components/RunPanel.tsx:22`, `:90-91`);
+  `mergeEvents` appends without sorting when the next event is the next `seq` (`src/lib/runs.ts:4-8`).
+- **Acceptance:**
+  - [ ] While the fake Team Lead streams, past messages don't render again (a test counts renders).
+  - [ ] While a run is live, the log doesn't render again on the clock's tick.
+  - [ ] `npm test` and `scripts/ui-test.sh` pass.
+- **Expected gain:** per streamed piece, from re-parsing every message's Markdown to parsing only the draft; the longest
+  frame while streaming no longer grows with the chat's length.
+- **Measure:** P1 `lead` (the 1,000-message chat) and `runlog`: frames a second and the longest frame.
+- **Builds on:** P1b; can run beside P5.
+
+### P4b. Typing redraws only what it changes (frontend)
+- **Builds:** the text being typed lives in the box that shows it, not in the page: the chat's text box
+  (`src/components/chat/ChatThread.tsx:134`), a card's title and comment (`src/pages/TaskPage.tsx:113-114`) and the
+  Editor's cursor for the status bar (`src/pages/EditorPage.tsx:311`, and the tab ref at `:670` only when the active tab
+  changes); a Memory note's backlinks and unlinked mentions computed from a title index built once per notes list, not
+  per render (`src/components/memory/NotePane.tsx:211-212`, `src/lib/memory.ts:165`, `:360-361`); the task search writes
+  `localStorage` when typing pauses (`src/pages/TasksPage.tsx:100-101`).
+- **Acceptance:**
+  - [ ] Typing in the chat box, a card's comment or the Editor renders neither the messages, the comments nor the file
+    tree (a test counts renders).
+  - [ ] With `prep_perf`'s 300 notes, editing a note does no work that grows with the square of the notes (a unit test on
+    the index).
+  - [ ] `npm test` and `scripts/ui-test.sh` pass.
+- **Expected gain:** a keystroke costs the text box, not the page: no Markdown parsed per key in a long chat or a card with
+  many comments.
+- **Measure:** P1 `chat` and `memory` (50 characters typed: the longest frame), and an `editor` typing step.
+- **Builds on:** P4 (the memoised `MarkdownView`).
+
+### P5. Batch the run and chat streams (backend)
+- **Builds:** run and chat events go to the window at most once every 50 ms per run or chat, all events since the last
+  send in one message, as the terminal does with 8 ms (`crates/gizai-agents/src/terminal.rs:38`); `run_events` returns only
+  what a panel lacks. `src/api.ts`'s `onRunEvent` and `onChatEvent` unpack the batches, so the components don't change.
+- **Contract (word for word):**
+  - Event `run-events` (replaces `run-event`): `{ runId: string; events: { seq: number; event: RunEvent }[] }`, in `seq`
+    order, at most every 50 ms per run.
+  - Event `chat-events` (replaces `chat-event`): `{ threadId: string; events: ChatEvent[] }`, at most every 50 ms per chat;
+    `delta` events of one block that follow each other are joined into one.
+  - Command `run_events(runId: string, afterSeq: number | null) -> SeqEvent[]`: the events with `seq > afterSeq` (all when
+    `null`), at most the last 500.
+  - `onRunEvent(cb)` and `onChatEvent(cb)` in `src/api.ts` keep their signatures and call `cb` once per event of a batch.
+- **Acceptance:**
+  - [ ] A fake run streaming 200 events a second makes at most 20 `run-events` messages a second, and loses or doubles none.
+  - [ ] `cargo test --workspace`, `npm test` and `scripts/ui-test.sh` pass.
+- **Expected gain:** messages to the window during a run from one per stream event to at most 20 a second; React renders
+  follow (React batches the updates of one message).
+- **Measure:** P1 `runlog` and `lead`: events heard a second, CPU % of the app and its web process.
+- **Builds on:** P1b, and P3 (both change `run_events`, `src-tauri/src/commands.rs:502`, and `src-tauri/src/lib.rs`).
+
+### P6. Load a page when it opens; the self-test only in test runs (frontend)
+- **Builds:** `React.lazy` for the pages that aren't the start page (`src/App.tsx:10-25`), each with a light fallback; the
+  drawers loaded when first asked for (`src/lib/drawers.tsx:3-8`), which takes the Markdown editor and CodeMirror out of
+  the start files (F5); the self-test loaded with `import()` only when `app_info` says it is a test run
+  (`src/App.tsx:27`, used at `:77-167`). A test run is `selftest` or any `selftest_mode` (`src/types.ts:160`): the tour,
+  the update test and the screenshots start Gizai with a mode only (`scripts/tour-capture.sh:94`,
+  `scripts/update-test.sh:74`, `scripts/shot-cage.sh:31`), and their steps run in the self-test's code
+  (`src/App.tsx:76-77`).
+- **Acceptance:**
+  - [ ] `scripts/bundle-size.mjs`: the start files hold no self-test code and no CodeMirror, and are smaller than the
+    baseline's by the agreed amount.
+  - [ ] Every page still opens; `scripts/ui-test.sh` and the tour capture pass.
+- **Expected gain:** the start files lose the self-test (about a fifth of the app's own code) and the pages that aren't the
+  board; the first card shows sooner by their parse and run time.
+- **Measure:** `scripts/bundle-size.mjs` start bytes; P1 `start`: `domContentLoadedEventEnd` and the first card, median of
+  four warm starts.
+- **Builds on:** P1b.
+
+### P7. Draw only what is in sight in long lists (frontend)
+- **Builds:** the chat thread and a run's log, live and finished (`src/components/RunHistory.tsx:97`), drawn with
+  `@tanstack/react-virtual` (as `src/components/DataTable.tsx` already is), with measured heights, keeping the chat at
+  the bottom while you are there. Memory's tree and search are bounded already (F2), so they stay as they are.
+- **Acceptance:**
+  - [ ] The 1,000-message chat has at most about 60 messages in the page at once.
+  - [ ] Opening it takes about as long as a 50-message chat.
+  - [ ] `scripts/ui-test.sh` passes (the chat, Memory and run tests).
+- **Expected gain:** a long chat opens and scrolls like a short one, and uses less of the web process's memory.
+- **Measure:** P1 `chat`: first screen in ms, nodes in the page, the web process's RSS.
+- **Builds on:** P4. **Risk:** the window's own find (Ctrl+F) can't see messages out of sight; the Chat Archive's search
+  still finds them.
+
+### P8. Database: indexes and queries (backend)
+- **Builds:** migration `0018` with the indexes F3 misses:
+  - `CREATE INDEX chat_messages_thread ON chat_messages(thread_id)`, which also gives the messages' order, since a chat
+    is read `ORDER BY m.rowid` and an index keeps its rows' rowids in order (`crates/gizai-core/src/chat.rs:382`);
+  - `CREATE INDEX comments_task ON comments(task_id, created_at)` for `ORDER BY m.created_at, m.id`
+    (`crates/gizai-core/src/comments.rs:10`);
+  - `CREATE INDEX runs_created ON runs(created_at)` for the Usage page and the project's runs
+    (`crates/gizai-core/src/usage.rs:149`, `projects.rs:16-17`), and
+    `CREATE INDEX runs_agent_created ON runs(agent_actor_id, created_at)` for the spend and the last check
+    (`crates/gizai-core/src/runs.rs:335-339`, `crates/gizai-core/src/board.rs:449-451`).
+
+  Neither `comments` nor `chat_messages` has an index in any migration today (`0001_init.sql:285-291`, `:350-359`;
+  0002 to 0017 add none). Then the queries that read more than they need: a card's labels by its id, and a list's
+  labels for the listed cards only (`crates/gizai-core/src/tasks.rs:47-56`); the chat list's card numbers in one query
+  (`chat.rs:165-174`); a card's last change as the newest of three index lookups (`board.rs:419-431`); the desktop
+  notifications' look at the Inbox with `WHERE` clauses instead of whole lists filtered in Rust (`tasks.rs:103-109`,
+  `chat.rs:160-162`, `:307-309`). And
+  `PRAGMA optimize=0x10002` when the database opens and with the daily housekeeping
+  (`crates/gizai-core/src/db.rs:153-168`, `src-tauri/src/lib.rs:544-562`).
+- **Acceptance:**
+  - [ ] A test reads `EXPLAIN QUERY PLAN` for a chat's messages, a card's comments and activity, the usage summary and a
+    card's last change, and finds an index for each: no `SCAN` of `comments`, `chat_messages`, `runs` or `changes`.
+  - [ ] `bench_queries` shows the gain on `prep_perf`; `cargo test --workspace` passes.
+- **Expected gain:** opening a card or a chat, the Usage page and the board check stop reading every comment, message
+  or run ever written, so they no longer slow down as the data grows; the board check holds the lock for less time.
+- **Measure:** `bench_queries` before and after (each query's median and p95, and one line for the whole board check).
+- **Builds on:** P1a and P3. If one run can't hold it all, the indexes and their test go first, the queries second.
+
+### P9. Quiet when nothing happens (frontend)
+- **Builds:** the sidebar's 30-second check of open Editor folders (`src/components/Sidebar.tsx:294`) and the Editor's
+  10-second and 3-second checks (`src/pages/EditorPage.tsx:194`, `:248`, `:390`) run only while the window is in sight
+  and in use, and once when it comes back; the run panel's clock and the Usage page's tick stop when hidden too
+  (`RunPanel.tsx:91`, `UsagePage.tsx:234`); a terminal out of sight keeps its bytes and writes them when shown, if P1 shows
+  that parsing them costs (`src/lib/terminals.ts:346`). First check that `document.hidden` turns true on Hyprland when the
+  window is closed to the tray or on another workspace; else use Tauri's window focus and visibility. The sidebar's
+  30-second check asks each folder only for its uncommitted marks (`editor_git`); how it stands against main
+  (`editor_main`, some 15 to 30 git processes, F4) is asked when a folder opens, on focus and after a fetch
+  (`src/components/Sidebar.tsx:283-297`). A window focus refreshes only when the last refresh is more than 10 s old,
+  and the sidebar and the Editor page share one `editor_main` answer per folder instead of both asking
+  (`Sidebar.tsx:290`, `:295`; `EditorPage.tsx:196`, `:249`); the page's focus refresh of the file tree (`:169-172`,
+  three git processes per open folder) waits for the same 10 s (F7).
+- **Acceptance:**
+  - [ ] With the window hidden, P1's `idle` scenario counts no Editor or git calls.
+  - [ ] With the window shown and folders open, the sidebar's timer makes no `editor_main` call.
+  - [ ] Ten window focus events within 10 s on the Editor page make one refresh: one `editor_git` and one `editor_main`
+    per folder.
+  - [ ] Coming back shows fresh git marks within a second.
+- **Expected gain:** no git processes and no reloads while you aren't looking, and a few git processes a minute instead
+  of dozens per folder while you are; moving the mouse across the window no longer starts git each time.
+- **Measure:** P1 `idle` and `editor`: calls a minute, CPU % at rest, with the window shown and hidden; and an `editor`
+  focus step (the probe sends ten `focus` events): calls counted.
+- **Builds on:** P2 (both change `Sidebar.tsx`).
+
+### P10. Small backend costs (backend)
+- **Builds:** the login PATH read once and kept (refreshed when Settings → Coding CLIs looks again), instead of a login
+  shell per call (`src-tauri/src/runs.rs:785-801`), and with it the Claude Code lookup (`runs.rs:320`), so opening a
+  chat no longer waits for a shell (F4); WebKitGTK's cache model set to document viewer on Linux, kept only if
+  P1 shows less memory and no slower page; the start's phases (lock, database, seed, recovery, housekeeping) timed and
+  written to the log once, so a slow start says where it went (`src-tauri/src/lib.rs:227-276`).
+- **Acceptance:**
+  - [ ] A test: two calls of the PATH lookup start one shell.
+  - [ ] The start's phase times appear in the log; `cargo test --workspace` passes.
+- **Expected gain:** one or two shell starts less per chat page, run, terminal and Editor action, the chat's on the main
+  thread; maybe tens of MB less for the web process **[I]**.
+- **Measure:** P1 `chat` (first screen in ms), `runlog` and `start`; the web process's RSS in `idle`.
+- **Builds on:** P3.
+
+### P11. Start waiting cards side by side (backend)
+- **Builds:** `pull` holds its lock only to choose and claim cards (`src-tauri/src/runs.rs:1616-1651`, the claim in
+  `starting`), and each claimed card's start (fetch, worktree, copy, install) runs in its own task, so one card's install
+  no longer holds the next card or the minute loop's board check (`src-tauri/src/lib.rs:569-570`). The project folder's
+  lock covers the copy out of the project's folder, not the install in the worktree (`runs.rs:748-758`). `start_inner`'s
+  git calls and login shell run in `spawn_blocking` (`runs.rs:838`, `:865`, `:870`, `:908`, `:929`).
+- **Acceptance:**
+  - [ ] A test with two waiting cards whose install takes 5 s each (a fake install command): both agents start within a
+    second of each other, not 5 s apart.
+  - [ ] No card starts twice, and the run limits still hold (a test).
+  - [ ] `cargo test --workspace` and `scripts/ui-test.sh` (the run probe) pass.
+- **Expected gain:** with several cards waiting, each starts when its own preparation is done: for projects that install
+  `node_modules`, the second and third card start minutes sooner **[I]**; the board check runs on time.
+- **Measure:** the test's start times before and after; P1 `runlog` with two waiting cards: time from Ready to each
+  run's first event.
+- **Builds on:** P3, and P10 (it changes `command_path`, right above `start_inner` in `runs.rs`).
+
+### P12. Lists without what the board doesn't show (backend)
+- **Builds:** the window's `list_tasks` answers without each card's acceptance criteria, as it already does without the
+  description (`crates/gizai-core/src/tasks.rs:9`, `:24-25`, `:64`; `src-tauri/src/commands.rs:97`), and its
+  `get_team` without each agent's instructions (`crates/gizai-core/src/team.rs:112`, `:177`; `commands.rs:163-168`),
+  which the agent's page and form read through `get_agent` (`src/pages/AgentPage.tsx:54`,
+  `src/components/AgentForm.tsx:164`; `team.rs:156`). The agents' own tools keep the full rows: they read the same
+  functions (`src-tauri/src/tools/read.rs:41`, `:119`, `:139`; `src-tauri/src/tools/resolve.rs:80`, `:124`), so the lean
+  answer is a separate function or a flag, not a change to `tasks::list` or `team::get`.
+- **Contract (word for word):** in `list_tasks`' answer every `Task.acceptanceMd` is `null`, and `get_task` still fills
+  it; in `get_team`'s answer every `Member.instructionsMd` is `null`, and `get_agent` still fills it. `src/types.ts`
+  doesn't change: both are optional there already (`src/types.ts:39`, `:77`).
+- **Acceptance:**
+  - [ ] A test: `list_tasks` answers without acceptance criteria and `get_team` without instructions; `get_task`,
+    `get_agent` and the agents' `list_tasks` tool still give them.
+  - [ ] The card page, the agent page and the agent form still show them; `cargo test --workspace`, `npm test` and
+    `scripts/ui-test.sh` pass.
+- **Expected gain:** each write on the board brings back the team without its instructions (about 60 KB less with the
+  five default agents: 30 KB, asked twice) and every card without its criteria **[I]**.
+- **Measure:** P1 `board` and `runlog`: the counter's bytes per `rows-changed`, before and after.
+- **Builds on:** P1b, and P3 (both change `list_tasks` and `get_team` in `src-tauri/src/commands.rs`).
+
+## 9. Open questions
+
+1. **A baseline on your machine now, or with P1?** Two things you can run in seconds give today's numbers before any card:
+   the bundle (`source scripts/env.sh && npm run build` in this worktree; `dist/` is ignored by git) and your Gizai's memory
+   (the `ps` line in section 3, once at rest and once while an agent works). *Recommendation:* let P1 take all of it, in the
+   cage, so every later card compares against the same setup; run the `ps` line once if you want a feel for today's memory.
+2. **What should feel faster first?** Staying smooth while agents and the Team Lead work (F1 to F4), the start (F5), or long
+   chats and big boards? *Recommendation:* smooth while agents work: it is paid all day, and its fixes are the smallest.
+3. **Budgets.** Should the harness fail a card that makes things slower, with fixed limits (for example a warm start to the
+   board under 1.5 s, the longest frame under 50 ms while a run streams, at most two calls per write)? *Recommendation:* yes,
+   but set the limits from P1's baseline, not before.
+4. **Long chats.** Load only a chat's last 200 messages, with "Show older"? *Recommendation:* not yet: draw only what is in
+   sight first (P7), and page only if P1 shows that loading 1,000 messages is itself slow.
+5. **The self-test out of the app's start.** It would load only in test runs (`GIZAI_SELFTEST` or `GIZAI_SELFTEST_MODE`
+   set), as a separate file inside the app. *Recommendation:* yes; the UI tests, the tour and the screenshots keep
+   working, and only test runs load it.
+6. **NVIDIA.** This PC draws on an AMD Radeon RX 7800 XT through Mesa (section 3), so the NVIDIA problems in section 5
+   don't touch it, and P1's numbers won't show them. Should Gizai do anything for users with NVIDIA GPUs before 1.0?
+   *Recommendation:* no setting by default (Tauri's guide warns against unconditional overrides); if a user reports a slow
+   or blank window, ask for `WEBKIT_DMABUF_RENDERER_FORCE_SHM=1` or `__NV_DISABLE_EXPLICIT_SYNC=1` as a test, and only
+   then add a launcher setting for NVIDIA machines.
+7. **macOS and Windows.** Measure there too? *Recommendation:* not now: the harness is Linux-only (cage), and the fixes are
+   the same on all three; CI's runners are too noisy for frame numbers.
+8. **History that only grows.** Runs, comments, chat messages and the `changes` log are never deleted (F3). Should Gizai
+   ever thin them out, for example the `changes` rows of cards archived a year ago? *Recommendation:* not now: with
+   P8's indexes their size stops mattering for speed, and `changes` is meant as the log a future sync reads
+   (`crates/gizai-core/src/db.rs:1-2`); look again if `bench_queries --years 3` still shows growth after P8.
+
+## 10. Sources
+
+All read on 14 Oct 2026. P: primary (official docs, source code, release notes, registry data); S: secondary.
+
+**Tauri and wry**
+- P: Calling Rust from the frontend (async commands, returning data): https://v2.tauri.app/develop/calling-rust/
+- P: Calling the frontend from Rust (events and channels): https://v2.tauri.app/develop/calling-frontend/
+- P: Tauri 2.12.1's `setup` (windows first, then the setup closure): https://raw.githubusercontent.com/tauri-apps/tauri/tauri-v2.12.1/crates/tauri/src/app.rs
+- P: The command macro's execution context: https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-macros/src/command/wrapper.rs
+- P: Linux graphics (NVIDIA, DMA-BUF, compositing switches): https://v2.tauri.app/develop/debug/linux-graphics/
+- P: Debugging (the inspector in release builds): https://v2.tauri.app/develop/debug/
+- P: Window config (background throttling per system): https://docs.rs/tauri-utils/latest/tauri_utils/config/struct.WindowConfig.html,
+  and the same text in tauri-utils 2.10.1's `src/config.rs:2234-2249`: https://docs.rs/crate/tauri-utils/2.10.1/source/src/config.rs
+- P: Tauri 2.12.1's crate source, read in the copy Cargo keeps in the main checkout (`.cargo/registry`), the same files as
+  on docs.rs: the plugin builder's `js_init_script` (https://docs.rs/crate/tauri/2.12.1/source/src/plugin.rs), the page's
+  `invoke` (https://docs.rs/crate/tauri/2.12.1/source/scripts/core.js), `ipc` (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc.js)
+  and how a call travels (https://docs.rs/crate/tauri/2.12.1/source/scripts/ipc-protocol.js); wry 0.57.0's WebKitGTK
+  code sets no sandbox, cache model or memory pressure (`rg` in `wry-0.57.0/src/webkitgtk/`), and answers the custom
+  protocol on the main thread (https://docs.rs/crate/wry/0.57.0/source/src/webkitgtk/web_context.rs)
+- P: wry 0.35.0 (`set_memory_usage_level` on Windows): https://v2.tauri.app/release/wry/v0.35.0/
+- S: tauri#3988 "Bad performance on linux": https://github.com/tauri-apps/tauri/issues/3988
+- S: tauri-explorer#1057 (scroll timings on WebKitGTK 2.54.1 with NVIDIA): https://github.com/xnmp/tauri-explorer/issues/1057
+
+**WebKitGTK and WebKit**
+- P: WebKitGTK 2.54 highlights: https://webkitgtk.org/2026/09/16/webkitgtk-2.54-highlights.html
+- P: WebKitGTK 2.54.0 release news: https://webkitgtk.org/releases/webkitgtk-2.54.0.tar.xz.news
+- P: WebKitGTK 2.52 highlights: https://webkitgtk.org/2026/03/18/webkitgtk-2.52-highlights.html
+- P: WebKitGTK 2.50 highlights: https://webkitgtk.org/2025/11/26/webkitgtk-2.50.html
+- P: WebKitGTK 2.48 highlights: https://webkitgtk.org/2025/04/08/webkitgtk-2.48.html
+- P: WebKitGTK 2.46 highlights: https://webkitgtk.org/2024/10/04/webkitgtk-2.46.html
+- P: WebKitGTK 2.44 highlights: https://webkitgtk.org/2024/03/27/webkigit-2.44.html
+- P: WebKitGTK 2.42.0 released (the DMA-BUF renderer): https://webkitgtk.org/2023/09/15/webkitgtk2.42.0-released.html
+- P: `AcceleratedBackingStore.cpp` (`WEBKIT_DISABLE_DMABUF_RENDERER`): https://raw.githubusercontent.com/WebKit/WebKit/main/Source/WebKit/UIProcess/gtk/AcceleratedBackingStore.cpp
+- P: `WebProcessGLib.cpp` (`WEBKIT_SKIA_ENABLE_CPU_RENDERING`): https://raw.githubusercontent.com/WebKit/WebKit/main/Source/WebKit/WebProcess/glib/WebProcessGLib.cpp
+- P: Hardware acceleration policy: https://webkitgtk.org/reference/webkit2gtk/stable/property.Settings.hardware-acceleration-policy.html
+- P: Cache model: https://webkitgtk.org/reference/webkit2gtk/stable/enum.CacheModel.html
+- P: Memory pressure settings: https://webkitgtk.org/reference/webkit2gtk/stable/method.MemoryPressureSettings.set_memory_limit.html
+- P: WebKit's environment variables (last edited 2022): https://trac.webkit.org/wiki/EnvironmentVariables
+- P: Web Inspector Timelines (CPU and memory): https://webkit.org/web-inspector/timelines-tab/
+- P: WebKit's process architecture: https://docs.webkit.org/Deep%20Dive/Architecture/WebKit2.html
+- P: WebKit features in Safari 17.0 (the GPU process on macOS Sonoma): https://webkit.org/blog/14445/webkit-features-in-safari-17-0/
+- P: Arch's `webkit2gtk-4.1` package data: https://archlinux.org/packages/search/json/?name=webkit2gtk-4.1
+
+**WebView2**
+- P: Performance best practices: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/performance
+- P: Process model: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/process-model
+- P: `MemoryUsageTargetLevel`: https://learn.microsoft.com/en-us/dotnet/api/microsoft.web.webview2.core.corewebview2.memoryusagetargetlevel
+
+**React, Vite and Rolldown**
+- P: `lazy`: https://react.dev/reference/react/lazy
+- P: `memo`: https://react.dev/reference/react/memo
+- P: `useDeferredValue`: https://react.dev/reference/react/useDeferredValue
+- P: Optimizing performance, windowing (legacy docs): https://legacy.reactjs.org/docs/optimizing-performance.html
+- P: React Compiler 1.0: https://react.dev/blog/2025/10/07/react-compiler-1
+- P: `StrictMode`: https://react.dev/reference/react/StrictMode
+- P: `Profiler`: https://react.dev/reference/react/Profiler
+- P: Vite 8 migration (`manualChunks`): https://vite.dev/guide/migration
+- P: Vite build guide (`codeSplitting`): https://vite.dev/guide/build
+- P: Vite build options (`build.target`): https://vite.dev/config/build-options
+- P: Rolldown `codeSplitting`: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- P: Rolldown automatic code splitting: https://rolldown.rs/in-depth/automatic-code-splitting
+
+**SQLite**
+- P: Write-ahead logging: https://www.sqlite.org/wal.html
+- P: Isolation: https://www.sqlite.org/isolation.html
+- P: `PRAGMA synchronous`: https://www.sqlite.org/pragma.html#pragma_synchronous
+- P: `PRAGMA optimize`: https://www.sqlite.org/pragma.html#pragma_optimize
+- P: `EXPLAIN QUERY PLAN`: https://www.sqlite.org/eqp.html
+
+**Hyprland and Omarchy**
+- P: Omarchy's default input settings (`follow_mouse = 1`): https://raw.githubusercontent.com/basecamp/omarchy/master/default/hypr/input.lua
+- P: Hyprland's input variables (`follow_mouse`: 1, the window under the pointer gets focus): https://wiki.hypr.land/Configuring/Basics/Variables/#input
+
+**npm**
+- P: `@tanstack/react-virtual` (3.14.19, MIT, 13 Oct 2026): https://registry.npmjs.org/@tanstack/react-virtual/latest
+- P: `react-window` (2.3.4, MIT, 10 Oct 2026): https://registry.npmjs.org/react-window/latest

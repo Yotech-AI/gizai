@@ -657,6 +657,29 @@ async fn a_run_stopped_because_gizai_quits_keeps_no_screenshots_but_its_preview_
 }
 
 #[tokio::test]
+async fn as_gizai_exits_kill_all_ends_a_live_runs_preview_at_once() {
+    let t = setup(Some((49700, 49799)));
+    // a preview that ignores SIGTERM: the run's own end would take 3 s to kill it, kill_all doesn't wait
+    t.project(&t.node_preview("stubborn"), None, None);
+    let task = t.task("FAKE_SHOTS_HANG");
+    let (run_id, done) = gizai_lib::runs::start(&t.st, &task, None, None, "manual").await.unwrap();
+    until("the fake's screenshots", 60, || t.out_of(&run_id).join("shot").is_file()).await;
+    let port = t.got(&run_id).port();
+    let info = t.info(port);
+    assert!(answers(port));
+    // Gizai's last step as it exits (quit::end_agents)
+    let t0 = Instant::now();
+    assert_eq!(gizai_lib::runs::kill_all(&t.st), 1);
+    until("the preview's tree to end", 2, || ["pid", "child"].iter().all(|k| !alive(info[*k].as_i64().unwrap())) && !answers(port)).await;
+    assert!(t0.elapsed() < Duration::from_secs(2), "kill_all ended the preview at once, not after SIGTERM's 3 s: {:?}", t0.elapsed());
+    let s = tokio::time::timeout(Duration::from_secs(30), done).await.expect("ended").unwrap();
+    assert_eq!(s.status, "cancelled", "{s:?}");
+    assert!(t.sets(&task).iter().all(|set| set.shots.is_empty()), "a run Gizai's quitting stopped collects nothing: {:?}", t.sets(&task));
+    preview_gone(&info, port);
+    assert_eq!(names_in(&t.worktree(&run_id).join(".gizai-tmp")), Vec::<String>::new());
+}
+
+#[tokio::test]
 async fn a_preview_that_ignores_sigterm_is_killed_three_seconds_later() {
     let t = setup(Some((49600, 49699)));
     t.project(&t.node_preview("stubborn"), None, None);

@@ -123,6 +123,7 @@ vi.mock("./chat/useChat", async () => {
   const subscribe = (f: () => void) => { h.listeners.add(f); return () => { h.listeners.delete(f); }; };
   return { useChat: () => R.useSyncExternalStore(subscribe, () => h.chat), useChatLive: () => [] };
 });
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: (...a: unknown[]) => { h.calls.push(["openUrl", a]); return Promise.resolve(); } }));
 vi.mock("./MarkdownEditor", () => ({ MarkdownEditor: () => null }));
 vi.mock("../lib/useDropZone", () => ({ useDropZone: () => false }));
 vi.mock("../lib/useLiveRuns", () => ({ useLiveRuns: () => h.live }));
@@ -380,6 +381,34 @@ describe("a streamed answer in a chat of 200 messages (GA-176)", () => {
     s.scrollHeight = 20_800;
     await chat({ draft: "word0 word1 word2 word3 " });
     expect(s.scrollTop).toBe(20_800);
+  });
+
+  it("still opens an earlier answer's links while the answer streams: a web link in the browser, a card's link in Gizai", async () => {
+    // MarkdownView's link and image parts are made once since GA-176; they act as before in an answer that isn't parsed again.
+    const messages = conversation();
+    messages[10] = message(10, "agent", "See [GA-12 - Fix the login](gizai:task/GA-12) and ![a diagram](https://example.com/d.png).");
+    h.chat = { ...h.chat, messages, working: true };
+    await mount(<ChatThread threadId="c1" agent={lead} />);
+    let draft = "";
+    for (const p of pieces(5)) { draft += p; await chat({ draft }); }
+    const answer = (start: string) => byClass(container, "chat-msg").find((n) => n.textContent.startsWith(start))!;
+
+    const link = answer("Answer 20:").all().find((n) => n.nodeName === "A")!;
+    expect(link.getAttribute("href")).toBe("https://example.com/20");
+    expect(link.getAttribute("title")).toBe("https://example.com/20");
+    await click(link);
+    expect(h.calls.filter(([k]) => k === "openUrl")).toEqual([["openUrl", ["https://example.com/20"]]]);
+
+    const chip = byClass(answer("See "), "item-chip")[0];
+    expect(chip.textContent).toBe("GA-12 - Fix the login");
+    expect(chip.getAttribute("href")).toBe("gizai:task/GA-12");
+    await click(chip);
+    // openItem looks the card up by its identifier before it opens its page.
+    expect(h.calls.filter(([k]) => k === "itemId")).toEqual([["itemId", ["task", "GA-12"]]]);
+    expect(h.calls.filter(([k]) => k === "openUrl")).toHaveLength(1);
+    // A remote image shows its alt text, as the content security policy blocks it.
+    expect(answer("See ").textContent).toBe("See GA-12 - Fix the login and [image: a diagram].");
+    expect(parsed(messages[10].bodyMd!)).toBe(1);
   });
 });
 

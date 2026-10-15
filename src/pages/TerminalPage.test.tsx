@@ -5,6 +5,8 @@
 // called as functions and keep their hooks by their place in the tree, effects run after each render. The open terminals
 // come from a fake store that contract CT's fake updates (open, rename, close); the terminal's view, the folder picker and
 // the ⋯ menu are stand-ins that keep their props.
+// GA-177 QA: the folder (read-only while an agent works there) is asked again on the window's focus, at most once every 5
+// seconds (on Omarchy the focus follows the mouse).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import type { EditorFolder, TerminalSession } from "../types";
@@ -69,6 +71,8 @@ const s = vi.hoisted(() => ({
   next: 10,
   /** Why the next terminalOpen fails, or null. */
   fails: null as string | null,
+  /** How often the page asked for the Editor's folders (GA-177). */
+  folderAsks: 0,
 }));
 vi.mock("../lib/terminals", async (orig) => ({
   ...(await orig<object>()),
@@ -94,7 +98,7 @@ vi.mock("../api", async (orig) => {
   for (const k of Object.keys(real)) if (typeof real[k] === "function") out[k] = () => new Promise(() => {});
   return {
     ...out,
-    editorFolders: () => Promise.resolve(s.folders),
+    editorFolders: () => { s.folderAsks++; return Promise.resolve(s.folders); },
     terminalOpen: (folder: string, cols: number, rows: number, name: string | null) => {
       s.calls.push(`open ${folder} ${cols}x${rows} ${name === null ? "null" : `"${name}"`}`);
       if (s.fails) return Promise.reject(s.fails);
@@ -250,7 +254,7 @@ beforeEach(() => {
   for (const [k, inst] of insts) { unmount(inst); insts.delete(k); }
   h.effects.length = 0;
   s.terms = three(); s.loaded = true; s.size = { cols: 132, rows: 38 }; s.folders = [folder(GIZAI), folder(KADE)];
-  s.calls = []; s.shown = []; s.went = []; s.replaced = []; s.copied = []; s.cleared = []; s.next = 10; s.fails = null;
+  s.calls = []; s.shown = []; s.went = []; s.replaced = []; s.copied = []; s.cleared = []; s.next = 10; s.fails = null; s.folderAsks = 0;
 });
 afterEach(() => { root = () => null; render(); vi.useRealTimers(); });
 
@@ -561,5 +565,60 @@ describe("the pages without a terminal (design §3)", () => {
     s.loaded = false;
     await show("t9");
     expect(byClass("empty")).toBeUndefined();
+  });
+});
+
+describe("GA-177: a window focus asks for the folder again, at most once every 5 seconds", () => {
+  const focus = () => { for (const f of [...(heard.get("focus") ?? [])]) f({ type: "focus" }); };
+  async function wait(ms: number) { await vi.advanceTimersByTimeAsync(ms); render(); await settle(); }
+  const CARD = "/home/you/.local/share/gizai/worktrees/GA/GA-118";
+  const card = (readOnly: boolean) => folder(CARD, { kind: "card", taskId: "g118", readOnly, readOnlyWhy: readOnly ? "QA Agent is working on GA-118" : null });
+
+  it("20 focus events within 3 seconds ask once, not 20 times", async () => {
+    await show("t1");
+    expect(s.folderAsks).toBe(1);
+    await wait(1000);
+    for (let i = 0; i < 20; i++) { focus(); await wait(150); }
+    expect(s.folderAsks).toBe(2);
+  });
+
+  it("a focus more than 5 seconds after the last ask asks at once, and + follows the folder; 5 seconds or less after it, nothing", async () => {
+    s.terms = [term("c1", { name: "GA-118", folder: CARD, folderPath: "~/.local/share/gizai/worktrees/GA/GA-118", taskId: "g118" })];
+    s.folders = [card(false)];
+    await show("c1");
+    expect(plus().props["aria-disabled"]).toBeFalsy();
+    focus();
+    await settle();
+    expect(s.folderAsks).toBe(2);
+    // an agent starts on the card
+    s.folders = [card(true)];
+    await wait(5000);
+    focus();
+    await settle();
+    expect(s.folderAsks).toBe(2);
+    expect(plus().props["aria-disabled"]).toBeFalsy();
+    await wait(1);
+    focus();
+    await settle();
+    expect(s.folderAsks).toBe(3);
+    expect(plus().props["aria-disabled"]).toBe(true);
+    expect(plus().props.title).toBe("QA Agent is working on GA-118: a terminal there waits until its run ends.");
+  });
+
+  it("there is no interval: without a focus the folder isn't asked again", async () => {
+    await show("t1");
+    await wait(10 * 60_000);
+    expect(s.folderAsks).toBe(1);
+  });
+
+  it("leaving the page stops listening to the focus", async () => {
+    await show("t1");
+    root = () => null;
+    render();
+    focus();
+    await wait(10_000);
+    focus();
+    expect(heard.get("focus")?.size ?? 0).toBe(0);
+    expect(s.folderAsks).toBe(1);
   });
 });

@@ -1,6 +1,6 @@
 // One speaker's run of messages: your text on the right (with its links to Gizai items as chips, and the files you added),
 // the Team Lead's text and tool calls on the left.
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Check, ChevronRight, CircleAlert, Info } from "lucide-react";
 import { openFile } from "../../api";
 import { LinkedText, MarkdownView } from "../MarkdownView";
@@ -46,7 +46,9 @@ function pretty(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
-export function ToolCard({ m }: { m: ChatMessage }) {
+/** Memoised on its message (GA-176): the group that holds the answer being written redraws with each streamed piece, and its
+ *  tool cards needn't read their input and result again. */
+export const ToolCard = memo(function ToolCard({ m }: { m: ChatMessage }) {
   const [open, setOpen] = useState(false);
   const c = toolCard(m);
   const t = (m.tool ?? {}) as Record<string, unknown>;
@@ -68,11 +70,12 @@ export function ToolCard({ m }: { m: ChatMessage }) {
       )}
     </div>
   );
-}
+});
 
 /** `noteActions`: what a note of Gizai's offers under it (Answer on another CLI after a usage limit). `after`: what shows under
- *  the Team Lead's messages (the calls of its answer that wait for your approval, GA-102). */
-export function MessageGroup({ g, agentRole, live, noteActions, after }: { g: Group; agentRole?: string | null; live?: React.ReactNode;
+ *  the Team Lead's messages (the calls of its answer that wait for your approval, GA-102). Memoised (GA-176): while the Team
+ *  Lead writes, only the group with `live` (the text being written) redraws, not every group above it. */
+export const MessageGroup = memo(function MessageGroup({ g, agentRole, live, noteActions, after }: { g: Group; agentRole?: string | null; live?: React.ReactNode;
   noteActions?: (m: ChatMessage) => React.ReactNode; after?: React.ReactNode }) {
   if (g.side === "system") {
     const m = g.items[0];
@@ -100,4 +103,4 @@ export function MessageGroup({ g, agentRole, live, noteActions, after }: { g: Gr
       </div>
     </div>
   );
-}
+});

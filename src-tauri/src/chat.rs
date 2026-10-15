@@ -37,6 +37,14 @@ pub fn caps(st: &AppState) -> Caps {
     Caps { max_time: Duration::from_secs(s.max_chat_minutes.saturating_mul(60)), max_tool_calls: s.max_chat_tool_calls }
 }
 
+/// Starts Claude Code for an answer of the Team Lead (a chat answer, a board check, its look at an agent's question) in
+/// the slice of the agent runs, under their memory limit (GA-202, Linux; elsewhere as before).
+fn spawn_answer(st: &AppState, args: &ClaudeArgs, cwd: &Path, log_path: &Path, caps: Caps)
+    -> Result<process::RunHandle<ChatEvent>, gizai_agents::AgentError> {
+    let exec = process::Exec { slice: st.run_memory.slice(), ..args.exec() };
+    process::spawn_exec(&exec, cwd, log_path, caps, process::ClaudeLines)
+}
+
 /// How long an answer's token for Gizai's tools lives: its time limit and a quarter of an hour (30 minutes at the default
 /// 15), so the tools work until the limit stops the answer.
 fn token_ttl_ms(caps: Caps) -> i64 {
@@ -1197,7 +1205,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         disable_hooks: true, disable_skills: true, disable_auto_memory: true, effort: agent.effort.clone(), disallowed_tools: mcp_refused,
     };
     let showing = Showing::open(st, &run_id);
-    let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, caps) {
+    let mut handle = match spawn_answer(st, &args, &cwd, &log_path, caps) {
         Ok(h) => h,
         Err(e) => {
             cleanup(&token);
@@ -1464,7 +1472,7 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         cleanup(&token);
         return end("cancelled", Totals::default(), Some(crate::runs::STOPPED_BY_QUIT.into()), None);
     }
-    let mut handle = match process::spawn::<ChatEvent>(&args, &cwd, &log_path, caps) {
+    let mut handle = match spawn_answer(st, &args, &cwd, &log_path, caps) {
         Ok(h) => h,
         Err(e) => {
             cleanup(&token);
@@ -1666,7 +1674,7 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
         cleanup(&token);
         return ("cancelled".into(), Totals::default(), Some(crate::runs::STOPPED_BY_QUIT.into()), String::new());
     }
-    let mut handle = match process::spawn::<ChatEvent>(&args, cwd, log_path, caps) {
+    let mut handle = match spawn_answer(st, &args, cwd, log_path, caps) {
         Ok(h) => h,
         Err(e) => {
             cleanup(&token);

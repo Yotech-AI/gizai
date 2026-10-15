@@ -86,6 +86,8 @@ pub struct RunManager {
     pull_paused: Mutex<HashMap<String, String>>,
     /// One pull of the queue at a time: two runs ending together don't give an agent more cards than it may work on.
     pulling: tokio::sync::Mutex<()>,
+    /// Since when the start check has been waiting for memory, and why (GA-202, `run_memory::wait_reason`).
+    pub(crate) memory_wait: Mutex<Option<(i64, String)>>,
 }
 
 impl RunManager {
@@ -173,6 +175,17 @@ pub struct Settings {
     #[serde(default)]
     pub data_dir: String,
     pub max_concurrent_runs: u32,
+    /// Memory for agent runs (GA-202), in GB: all agent runs together. Half of this computer's memory until someone sets
+    /// it (`run_memory::default_gb`); 2 GB up to the computer's memory. 0 (left out) keeps what was saved.
+    #[serde(default)]
+    pub runs_memory_gb: u32,
+    /// Read-only: this computer's memory in GB (0 when the system doesn't say), for the hint under it.
+    #[serde(default)]
+    pub computer_memory_gb: u32,
+    /// Read-only: whether the system enforces Memory for agent runs (Linux with a systemd user session). Elsewhere Gizai
+    /// only waits for free memory before it starts a run.
+    #[serde(default)]
+    pub runs_memory_enforced: bool,
     #[serde(default)]
     pub agents_paused: bool,
     /// Claude Code stops a run once it has spent this much; None = no limit.
@@ -218,6 +231,9 @@ pub fn get_settings(st: &AppState) -> Settings {
         claude_bin: settings::get(&st.db, "claude_bin").ok().flatten(),
         data_dir: st.data_dir.display().to_string(),
         max_concurrent_runs: settings::get(&st.db, "max_concurrent_runs").ok().flatten().unwrap_or(DEFAULT_MAX_CONCURRENT),
+        runs_memory_gb: crate::run_memory::setting_gb(st),
+        computer_memory_gb: crate::run_memory::computer_gb().unwrap_or(0),
+        runs_memory_enforced: st.run_memory.enforced(),
         agents_paused: settings::get(&st.db, "agents_paused").ok().flatten().unwrap_or(false),
         max_run_usd: settings::get(&st.db, "max_run_usd").ok().flatten(),
         max_run_minutes: settings::get(&st.db, "max_run_minutes").ok().flatten().unwrap_or(DEFAULT_MAX_RUN_MINUTES),
@@ -234,6 +250,9 @@ pub fn get_settings(st: &AppState) -> Settings {
 pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !(1..=20).contains(&s.max_concurrent_runs) {
         return Err("allow between 1 and 20 runs at once".into());
+    }
+    if s.runs_memory_gb != 0 {
+        crate::run_memory::check(s.runs_memory_gb)?;
     }
     if matches!(s.max_run_usd, Some(v) if v <= 0.0) {
         return Err("a spending limit must be more than $0".into());
@@ -268,6 +287,9 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
     settings::set(&st.db, gizai_core::editor::ROOTS, &editor_roots).map_err(|e| e.to_string())?;
+    if s.runs_memory_gb != 0 {
+        crate::run_memory::save(st, s.runs_memory_gb)?;
+    }
     Ok(())
 }
 
@@ -751,10 +773,11 @@ async fn prepare_worktree(st: &AppState, holder: Option<&str>, task: &Task, proj
     // no card copies a half-installed node_modules/.
     let folder = crate::code::folder_lock(st, repo);
     let _folder = folder.lock().await;
-    let (main, dir) = (repo.to_path_buf(), wt.path.clone());
+    let (main, dir, memory) = (repo.to_path_buf(), wt.path.clone(), st.run_memory.clone());
     let done = tokio::task::spawn_blocking(move || {
         let path = command_path();
-        prep::prepare(&main, &dir, &plan, todo.since.as_deref(), Some(path.as_os_str()))
+        // GA-202: in the slice of the agent runs, under their memory limit (Linux)
+        prep::prepare_in(&main, &dir, &plan, todo.since.as_deref(), Some(path.as_os_str()), memory.slice().as_ref())
     }).await.map_err(|e| StartError::Other(e.to_string()))?;
     match done {
         Ok(did) => {
@@ -854,6 +877,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let max = get_settings(st).max_concurrent_runs;
     if st.runs.live.lock().unwrap().len() as u32 >= max {
         return Err(StartError::Wait(format!("{max} runs are already active; wait for one to finish or raise the limit in Settings")));
+    }
+    // GA-202: no new run while the runs use most of their memory limit or the computer has little free.
+    if let Some(why) = crate::run_memory::wait_reason(st) {
+        return Err(StartError::Wait(why));
     }
     let (agent_id, role) = match agent_id {
         Some(a) => { let m = team::agent(&st.db, &a).map_err(|e| e.to_string())?; (m.actor_id, m.role_key) }
@@ -1074,7 +1101,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
         folders, temp_dir, git_config,
     };
-    let exec = agent_cli::task_exec(&spec, &run);
+    // GA-202: the CLI and everything it starts run in the slice of the agent runs, under their memory limit (Linux).
+    let exec = process::Exec { slice: st.run_memory.slice(), ..agent_cli::task_exec(&spec, &run) };
     // The log says which CLI wrote it, so it can be read again after the run (Claude Code's needs no header), then which
     // MCP servers Claude Code signs in to, then Gizai's notes.
     let head: String = (spec.kind != Kind::ClaudeCode).then(|| agent_cli::log_header(spec.kind)).into_iter()
@@ -1134,17 +1162,29 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let dir = wt.path.clone();
     let (run_agent, run_config) = (agent_id.clone(), mcp_config.clone());
     let (seen_log, seen_cli) = (log_path.clone(), cli.id.clone());
+    let agent_name = agent.name.clone();
     let done = tokio::spawn(async move {
         let mut result: Option<RunEvent> = None;
         let mut capped: Option<String> = None;
         let mut exit = String::new();
         let mut tools = 0usize;
         let mut refused: Vec<Refusal> = vec![];
+        // GA-202: the processes Linux ended in this run at the memory limit for agent runs
+        let mut ended_at_limit = 0u64;
         while let Some(ev) = handle.events.recv().await {
             // What Claude Code heard of the account's limits: kept for this run's CLI (the Usage page's Subscription tab),
             // not shown in the Run panel.
             if let RunEvent::Limits { info } = &ev {
                 crate::limits::from_claude(&st2, &rid, info);
+                continue;
+            }
+            // Linux ended a process in the run at the memory limit: the card's activity says so at once, the run's own
+            // note at its end.
+            if let RunEvent::Other { raw_type } = &ev && let Some(n) = raw_type.strip_prefix(process::OOM_KILL) {
+                if ended_at_limit == 0 {
+                    crate::run_memory::ended_on_card(&st2, &tid, &agent_name);
+                }
+                ended_at_limit = n.parse().unwrap_or(ended_at_limit + 1).max(ended_at_limit);
                 continue;
             }
             match &ev {
@@ -1176,6 +1216,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
+        if ended_at_limit > 0 {
+            note_run(&st2, &rid, &crate::run_memory::ended_note(&st2, ended_at_limit));
+        }
         // The run's process group has ended, whatever way (finished, Stop, a limit): its throwaway files go, its MCP
         // config (with its servers' secrets) first.
         if let Some(p) = &run_config {
@@ -1661,6 +1704,10 @@ async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSu
     }
     let _one = st.runs.pulling.lock().await;
     let max = get_settings(st).max_concurrent_runs as usize;
+    // GA-202: while memory is short no card starts; each start checks again (`start_inner`).
+    if crate::run_memory::wait_reason(st).is_some() {
+        return started;
+    }
     for (_, a) in team::all_agents(&st.db).unwrap_or_default() {
         if a.status != "active" {
             continue;

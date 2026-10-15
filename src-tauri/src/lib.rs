@@ -20,6 +20,7 @@ pub mod onboarding;
 pub mod pending;
 pub mod pulls;
 mod quit;
+pub mod run_memory;
 pub mod runs;
 pub mod shell_path;
 pub mod terminal;
@@ -41,6 +42,10 @@ pub struct AppState {
     pub you_id: String,
     pub data_dir: PathBuf,
     pub runs: Arc<runs::RunManager>,
+    /// Memory for agent runs (GA-202, see `run_memory`): the limit and, on Linux, the slice agent processes start in.
+    /// Off until `run_memory::start`, which Gizai's start calls: a test's Gizai keeps its processes outside systemd, and
+    /// its runs don't wait for memory unless the test fakes a reading (`RunsMemory::fake_reading`).
+    pub run_memory: Arc<gizai_agents::run_memory::RunsMemory>,
     /// Where the MCP server for chat turns listens (see `mcp::socket_path`).
     pub mcp_socket: PathBuf,
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
@@ -274,7 +279,8 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let mcp_socket = mcp::socket_path(&dir);
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
-    let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()), mcp_socket,
+    let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()),
+                  run_memory: Arc::new(Default::default()), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
@@ -496,6 +502,9 @@ pub fn run() {
             // Desktop notifications go to the desktop (a test run only writes them to stderr).
             state.desktop = notifications::real(app.handle(), test_run);
             app.manage(state.clone());
+            // Memory for agent runs (GA-202): from now on agent processes start in this Gizai's own slice on Linux, which
+            // Settings → Runs limits; Gizai itself stays outside it.
+            run_memory::start(&state);
             // Memory (GA-85): the notes agents kept in Claude Code's own memory come into Gizai's, each file once. Not in
             // headless test and screenshot runs: they run in your own home folder, with your Claude Code accounts.
             if !test_run {

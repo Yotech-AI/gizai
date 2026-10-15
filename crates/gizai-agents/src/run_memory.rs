@@ -439,8 +439,9 @@ pub struct Reading {
     pub available: Option<u64>,
 }
 
-/// A Gizai's memory limit for its agent runs, and the slice that enforces it (Linux). Nothing is enforced until `enable`,
-/// which Gizai's start does: a test's Gizai keeps its processes outside systemd unless the test enables it.
+/// A Gizai's memory limit for its agent runs, and the slice that enforces it (Linux). Nothing is enforced or read until
+/// `enable`, which Gizai's start does: a test's Gizai keeps its processes outside systemd, and its runs don't wait for
+/// memory, unless the test enables it (or fakes a reading).
 #[derive(Default)]
 pub struct RunsMemory {
     inner: Mutex<Inner>,
@@ -507,11 +508,15 @@ impl RunsMemory {
     }
 
     /// The start check's readings now: what the runs in the slice use (when it is set up) and what the computer has free.
+    /// Nothing until `enable` (or `fake_reading`), so a test's runs never wait for the test machine's memory.
     pub fn reading(&self) -> Reading {
         let slice = {
             let s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(f) = s.fake {
                 return f;
+            }
+            if s.wanted.is_none() {
+                return Reading::default();
             }
             s.made.as_ref().and_then(|m| m.as_ref().ok()).cloned()
         };

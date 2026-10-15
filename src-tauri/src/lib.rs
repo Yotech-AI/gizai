@@ -213,12 +213,21 @@ pub fn backup_data_dir(dir: &std::path::Path, label: &str) -> Result<PathBuf, St
 }
 
 /// Housekeeping (README → Your data): the chat tools' dead tokens, and the run and chat logs in `dir` older than 30 days,
-/// go. When Gizai starts (`open_state`) and once a day while it runs.
+/// go; then old screenshots, as Settings → Agents and runs → Screenshots says, and the blobs no row uses any more
+/// (GA-182). When Gizai starts (`open_state`) and once a day while it runs.
 pub fn housekeeping(db: &Db, dir: &std::path::Path) {
-    match gizai_core::housekeeping::run(db, dir, gizai_core::ids::now_ms()) {
+    let now = gizai_core::ids::now_ms();
+    match gizai_core::housekeeping::run(db, dir, now) {
         Ok(p) if p.logs + p.tokens > 0 => eprintln!("gizai: housekeeping removed {} old logs and {} old tokens", p.logs, p.tokens),
         Ok(_) => {}
         Err(e) => eprintln!("gizai: housekeeping failed: {e}"),
+    }
+    match gizai_core::housekeeping::clear_screenshots(db, dir, now) {
+        Ok(c) if c.sets + c.blobs > 0 => {
+            eprintln!("gizai: housekeeping removed {} old screenshot sets ({} screenshots) and {} unused files", c.sets, c.screenshots, c.blobs)
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("gizai: clearing old screenshots failed: {e}"),
     }
 }
 

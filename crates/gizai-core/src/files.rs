@@ -71,12 +71,27 @@ pub fn add_from_path(db: &Db, actor: &str, data_dir: &Path, owner_type: &str, ow
 /// until `insert` links it to an owner.
 pub fn store(data_dir: &Path, path: &Path) -> Result<Blob> {
     check_path(path)?;
-    let name = name_of(path);
+    let mut src = std::fs::File::open(path)?;
+    store_from(data_dir, &name_of(path), &mut src)
+}
+
+/// `store` for bytes already read, as a file called `name`: a run's screenshot, which Gizai opens and reads once to check
+/// it (`gizai_agents::screenshots::collect`) and never looks up by its path again. At most 1 GB, as `check_path` says.
+pub fn store_bytes(data_dir: &Path, name: &str, bytes: &[u8]) -> Result<Blob> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Error::Invalid(format!("{name} is larger than 1 GB")));
+    }
+    store_from(data_dir, name, &mut &bytes[..])
+}
+
+/// Copies what `src` reads into the blob store, hashing while copying. A blob that is there already (the same content)
+/// stays, and counts as just stored for the blob sweep (`screenshots::sweep_blobs`), which leaves young blobs alone.
+fn store_from(data_dir: &Path, name: &str, src: &mut dyn Read) -> Result<Blob> {
+    let name = name.to_string();
     let dir = data_dir.join("files");
     std::fs::create_dir_all(&dir)?;
     let tmp = dir.join(format!("incoming-{}", ids::new_id()));
     let (sha, size) = {
-        let mut src = std::fs::File::open(path)?;
         let mut out = std::fs::File::create(&tmp)?;
         let mut h = Sha256::new();
         let mut buf = vec![0u8; 1 << 16];
@@ -94,6 +109,7 @@ pub fn store(data_dir: &Path, path: &Path) -> Result<Blob> {
     let blob = blob_path(data_dir, &sha);
     if blob.exists() {
         std::fs::remove_file(&tmp)?;
+        let _ = touch(&blob);
     } else {
         std::fs::create_dir_all(blob.parent().unwrap())?;
         std::fs::rename(&tmp, &blob)?;
@@ -102,6 +118,53 @@ pub fn store(data_dir: &Path, path: &Path) -> Result<Blob> {
         std::fs::set_permissions(&blob, perm)?;
     }
     Ok(Blob { name, sha256: sha, size_bytes: size })
+}
+
+/// Sets a blob's modified time to now, without writing to it (blobs are read-only): on Windows through a handle that may
+/// only change its attributes.
+fn touch(path: &Path) -> std::io::Result<()> {
+    let mut open = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        open.access_mode(0x0100); // FILE_WRITE_ATTRIBUTES
+    }
+    #[cfg(not(windows))]
+    open.read(true);
+    open.open(path)?.set_modified(std::time::SystemTime::now())
+}
+
+/// A run's screenshot, as `insert_evidence` links it to its card (GA-182).
+#[derive(Debug, Clone)]
+pub struct Evidence<'a> {
+    /// The run that saved it.
+    pub run_id: &'a str,
+    /// From the run's captions.json, else made from its name.
+    pub caption: &'a str,
+    /// Its type, from its content: image/png, image/jpeg or image/webp.
+    pub mime: &'a str,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Links a run's screenshot (stored with `store_bytes`) to the card `task_id`, inside a write: `run_id` the run,
+/// `created_by` the agent, its caption, width and height. The card's Attachments leave it out (`list`); its Screenshots
+/// tab shows it (`screenshots::sets`).
+pub fn insert_evidence(w: &Writer, agent: &str, task_id: &str, blob: &Blob, e: &Evidence) -> Result<FileRow> {
+    let c = w.conn();
+    let now = ids::now_ms();
+    let id = ids::new_id();
+    let size = i64::try_from(blob.size_bytes).unwrap_or(i64::MAX);
+    c.execute(
+        "INSERT INTO files(id, created_at, updated_at, created_by, updated_by, org_id, owner_type, owner_id, name, mime, size_bytes, sha256,
+                           uploaded_by_actor_id, run_id, caption, width, height)
+         VALUES (?1, ?2, ?2, ?3, ?3, ?4, 'task', ?5, ?6, ?7, ?8, ?9, ?3, ?10, ?11, ?12, ?13)",
+        rusqlite::params![id, now, agent, util::org_id(c)?, task_id, blob.name, e.mime, size, blob.sha256, e.run_id, e.caption,
+                          e.width, e.height],
+    )?;
+    w.insert("files", &id, serde_json::json!({"name": blob.name, "owner_type": "task", "owner_id": task_id, "size_bytes": size,
+                                               "run_id": e.run_id, "caption": e.caption, "width": e.width, "height": e.height}))?;
+    Ok(FileRow { id, name: blob.name.clone(), mime: Some(e.mime.to_string()), size_bytes: size, sha256: blob.sha256.clone(), created_at: now })
 }
 
 /// Links a stored file to its owner, inside a write (`actor` uploaded it).
@@ -137,12 +200,13 @@ pub(crate) fn of_owner(c: &rusqlite::Connection, owner_type: &str, owner_id: &st
     Ok(st.query_map([owner_type, owner_id], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-/// Newest first.
+/// What people attached, newest first: a card's Attachments. A run's screenshots (files with a run) are left out: they
+/// are on the card's Screenshots tab (`screenshots::sets`).
 pub fn list(db: &Db, owner_type: &str, owner_id: &str) -> Result<Vec<FileRow>> {
     db.read(|c| {
         let mut st = c.prepare(
             "SELECT id, name, mime, size_bytes, sha256, created_at FROM files
-             WHERE owner_type = ?1 AND owner_id = ?2 AND deleted_at IS NULL ORDER BY created_at DESC, name",
+             WHERE owner_type = ?1 AND owner_id = ?2 AND deleted_at IS NULL AND run_id IS NULL ORDER BY created_at DESC, name",
         )?;
         let rows = st.query_map([owner_type, owner_id], row)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

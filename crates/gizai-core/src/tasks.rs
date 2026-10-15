@@ -16,7 +16,7 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
     CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') IN ('asking','answering') FROM runs r
       WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
       ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
-    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person')
+    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person'), t.screenshots
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -36,6 +36,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         run_for_me: crate::runs::commands_of(r.get(29)?),
         with_lead: r.get::<_, Option<i64>>(30)?.unwrap_or(0) != 0,
         by_hand: r.get::<_, i64>(31)? != 0,
+        screenshots: r.get::<_, Option<i64>>(32)?.map(|on| on != 0),
     })
 }
 
@@ -341,6 +342,9 @@ fn update_in(w: &Writer, actor: &str, id: &str, patch: &TaskPatch) -> Result<()>
         }
         if let Some(on) = patch.testing {
             cols.push(("testing", V::Integer(on as i64)));
+        }
+        if let Some(on) = patch.screenshots {
+            cols.push(("screenshots", on.map_or(V::Null, |on| V::Integer(on as i64))));
         }
         if let Some(h) = &patch.hold {
             if !h.is_empty() && !["needs_decision", "stalled", "merge_conflict", "waiting_approval", "rate_limited", "blocked"].contains(&h.as_str()) {

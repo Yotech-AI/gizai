@@ -115,6 +115,10 @@ pub struct CliTools {
     /// Slash commands and skills (Built-in tools), on Claude Code only: its task runs go without `--disable-slash-commands`
     /// and get `SlashCommand` and `Skill`. Never in chat.
     pub slash_commands: bool,
+    /// Take screenshots of what it built (GA-182, under the browser): only with the browser on. None until it is set: the
+    /// role's default (`screenshots_default`), also for agents made before it existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screenshots: Option<bool>,
 }
 
 impl CliTools {
@@ -122,6 +126,25 @@ impl CliTools {
     pub fn web_on(&self) -> bool {
         self.web_search || self.web_fetch
     }
+
+    /// Whether an agent in `role` with these tools takes screenshots of what it built: its own switch, else its role's
+    /// default. Its runs take them only with the browser on, too.
+    pub fn takes_screenshots(&self, role: &str) -> bool {
+        self.screenshots.unwrap_or_else(|| screenshots_default(role))
+    }
+
+    /// These tools with the screenshots switch as an agent in `role` has it (`takes_screenshots`): what the agent form
+    /// shows, never None.
+    pub fn for_role(mut self, role: &str) -> CliTools {
+        self.screenshots = Some(self.takes_screenshots(role));
+        self
+    }
+}
+
+/// Take screenshots of what it built, for an agent that never set it: on for the frontend, design and qa roles, off for
+/// the rest.
+pub fn screenshots_default(role: &str) -> bool {
+    matches!(role, "frontend" | "design" | "qa")
 }
 
 /// The built-in browser in Settings → MCP servers: Chrome DevTools MCP, always hidden (`--headless`) with a throwaway profile
@@ -415,8 +438,13 @@ pub fn valid_tool_name(n: &str) -> bool {
 /// Saves the agent's CLI tools (agent form → Tools → Web and Built-in tools; never the Team Lead). Domains and names are
 /// cleaned; one that can't be used is refused with why.
 pub fn set_cli_tools(db: &Db, actor: &str, agent_id: &str, tools: CliTools) -> Result<CliTools> {
+    // The screenshots switch: left out (a form that doesn't show it) keeps what was set.
+    let screenshots = match tools.screenshots {
+        Some(on) => Some(on),
+        None => agent_cli_tools(db, agent_id)?.screenshots,
+    };
     let mut clean = CliTools { web_search: tools.web_search, web_fetch: tools.web_fetch, insecure_certs: tools.insecure_certs,
-                               slash_commands: tools.slash_commands, ..Default::default() };
+                               slash_commands: tools.slash_commands, screenshots, ..Default::default() };
     for raw in tools.fetch_domains.iter().filter(|d| !d.trim().is_empty()) {
         let d = clean_domain(raw).ok_or_else(|| Error::Invalid(format!("\"{}\" isn't a domain: write it like docs.rs or *.example.com", raw.trim())))?;
         if !clean.fetch_domains.contains(&d) {
@@ -435,7 +463,7 @@ pub fn set_cli_tools(db: &Db, actor: &str, agent_id: &str, tools: CliTools) -> R
     agent_cli(db, agent_id)?;
     let change = serde_json::json!({"web_search": clean.web_search, "web_fetch": clean.web_fetch, "fetch_domains": clean.fetch_domains,
                                     "insecure_certs": clean.insecure_certs, "builtin_tools_on": clean.builtin,
-                                    "slash_commands": clean.slash_commands});
+                                    "slash_commands": clean.slash_commands, "screenshots": clean.screenshots});
     write_extra(db, actor, agent_id, "cli", serde_json::to_value(&clean)?, change)?;
     Ok(clean)
 }

@@ -808,8 +808,12 @@ pub fn tools_view(st: &AppState, agent_id: Option<&str>, cli_id: &str) -> Result
     };
     let builtin = BuiltinSection { tools: tool_catalog::merged(kind, reported.as_deref()), source, can_ask: kind == gizai_agents::cli::Kind::ClaudeCode,
                                    slash: tool_catalog::slash_support(kind).map(str::to_string) };
+    // the screenshots switch as the form shows it: its own, else its role's default (GA-182)
     let saved = match agent_id {
-        Some(a) => Some(core_mcp::agent_cli_tools(&st.db, a).map_err(|e| e.to_string())?),
+        Some(a) => {
+            let role = gizai_core::team::agent(&st.db, a).map(|m| m.role_key).unwrap_or_default();
+            Some(core_mcp::agent_cli_tools(&st.db, a).map_err(|e| e.to_string())?.for_role(&role))
+        }
         None => None,
     };
     Ok(ToolsView { kind: cli.kind, web, browser, builtin, saved })
@@ -835,7 +839,7 @@ pub fn save_cli_tools(st: &AppState, agent_id: &str, tools: core_mcp::CliTools) 
         }
         return Err(format!("{t} can't be switched on for {}: {} gives it through its own settings, or not at all", agent.name, cli.name));
     }
-    core_mcp::set_cli_tools(&st.db, &st.you_id, agent_id, tools).map_err(|e| e.to_string())
+    core_mcp::set_cli_tools(&st.db, &st.you_id, agent_id, tools).map(|t| t.for_role(&agent.role_key)).map_err(|e| e.to_string())
 }
 
 /// Ask Claude Code again: its tools, from a start without a login (a scratch CLAUDE_CONFIG_DIR and HOME in Gizai's data

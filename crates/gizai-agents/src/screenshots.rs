@@ -225,7 +225,8 @@ pub struct Shot {
 pub struct Collected {
     /// How many screenshots were kept.
     pub kept: usize,
-    /// How many entries the folder had, captions.json aside.
+    /// How many screenshots the folder had: files that were meant as one (a PNG, JPEG or WebP by its content, or too
+    /// large to look at). Links, folders and files that aren't an image are left out without counting.
     pub found: usize,
     /// What was left out, each "<name>: <why>": "13-board.png: over the limit of 12 a run".
     pub left_out: Vec<String>,
@@ -244,6 +245,8 @@ impl Collected {
         let word = |n: usize| if n == 1 { "screenshot" } else { "screenshots" };
         let mut s = if self.left_out.is_empty() {
             format!("Gizai kept {} {} on the card.", self.kept, word(self.kept))
+        } else if self.found == 0 {
+            "Gizai kept no screenshots.".to_string()
         } else {
             let limit = self.over_limit.map(|n| format!(" (Settings → Agents and runs → Screenshots allows {n} a run)")).unwrap_or_default();
             format!("Gizai kept {} of {} {}{limit}.", self.kept, self.found, word(self.found))
@@ -291,14 +294,15 @@ pub fn collect(worktree: &Path, rules: &Rules, mut keep: impl FnMut(Shot) -> Res
         None => HashMap::new(),
     };
     for (name, path) in entries.iter().filter(|(n, _)| n != CAPTIONS) {
-        out.found += 1;
         let (format, width, height, bytes) = match read_image(path, rules.max_bytes) {
             Ok(image) => image,
-            Err(why) => {
+            Err(Refused { why, a_screenshot }) => {
+                out.found += usize::from(a_screenshot);
                 out.left_out.push(format!("{name}: {why}"));
                 continue;
             }
         };
+        out.found += 1;
         if out.kept >= rules.per_run {
             out.left_out.push(format!("{name}: over the limit of {} a run", rules.per_run));
             out.over_limit = Some(rules.per_run);
@@ -385,17 +389,25 @@ fn open_no_follow(path: &Path) -> std::io::Result<File> {
     open.open(path)
 }
 
+/// Why `read_image` left a file out, and whether it counts as a screenshot the agent saved (an image, or too large to
+/// look at) or not (a link, a folder, a file that isn't an image).
+struct Refused {
+    why: String,
+    a_screenshot: bool,
+}
+
 /// Reads one screenshot once and checks it: a real file of at most `max_bytes`, a PNG, JPEG or WebP by its content, of
 /// a size `size_problem` accepts.
-fn read_image(path: &Path, max_bytes: u64) -> Result<(Format, u32, u32, Vec<u8>), String> {
+fn read_image(path: &Path, max_bytes: u64) -> Result<(Format, u32, u32, Vec<u8>), Refused> {
     let mb = max_bytes / (1024 * 1024);
-    let bytes = read_once(path, max_bytes, || format!("over the largest screenshot of {mb} MB"))?;
+    let too_big = format!("over the largest screenshot of {mb} MB");
+    let bytes = read_once(path, max_bytes, || too_big.clone()).map_err(|why| Refused { a_screenshot: why == too_big, why })?;
     let (format, width, height) = image_size(&bytes).map_err(|e| match e {
-        NotAnImage::Unknown => "not a PNG, JPEG or WebP image".to_string(),
-        NotAnImage::NoSize => "its image header gives no width and height".to_string(),
+        NotAnImage::Unknown => Refused { why: "not a PNG, JPEG or WebP image".into(), a_screenshot: false },
+        NotAnImage::NoSize => Refused { why: "its image header gives no width and height".into(), a_screenshot: true },
     })?;
     if let Some(why) = size_problem(width, height) {
-        return Err(why);
+        return Err(Refused { why, a_screenshot: true });
     }
     Ok((format, width, height, bytes))
 }

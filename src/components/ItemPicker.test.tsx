@@ -149,3 +149,36 @@ describe("ItemPicker: the rest looks as before", () => {
     expect(shown(html(""))).toEqual(["# Link a", "> Task", "Project", "Client", "Agent", "Person", "Doc"]);
   });
 });
+
+describe("ItemPicker: an exact card ID is the selected row (GA-206)", () => {
+  const BIG = [...BOARD, "Done"];
+  const card = (identifier: string, title: string, stateName: string, stateCategory = "backlog") =>
+    taskItem({ identifier, title, stateName, stateCategory, projectName: "Stapsgewijs" } as Task, BIG);
+  const SDH: PickItem[] = [
+    ...Array.from({ length: 10 }, (_, i) => card(`SDH-${40 + i}`, `Item ${40 + i}`, "Backlog")),
+    card("SDH-4", "Fix the header", "Review", "review"),
+    card("SDH-2", "Release notes", "Done", "done"),
+  ];
+  const render = (query: string, selected = 0) => {
+    const rows = pickRows(query, SDH);
+    return { rows, list: shown(renderToStaticMarkup(<ItemPicker {...props(query, rows, selected)} />)) };
+  };
+
+  it("selects SDH-4 under the Tasks heading for @SDH-4 and @sdh-4", () => {
+    for (const query of ["SDH-4", "sdh-4"]) {
+      expect(render(query).list).toEqual(["# Tasks", "> SDH-4 - Fix the header", "SDH-40 - Item 40", "SDH-41 - Item 41", "SDH-42 - Item 42", "SDH-43 - Item 43"]);
+    }
+  });
+  it("shows Review first for @task.SDH-4 with SDH-4 selected, then Backlog; ↓ passes over the Backlog heading", () => {
+    const { rows, list } = render("task.SDH-4");
+    expect(list.slice(0, 5)).toEqual(["# Review", "> SDH-4 - Fix the header", "# Backlog", "SDH-40 - Item 40", "SDH-41 - Item 41"]);
+    expect(list).toHaveLength(13);
+    expect(itemLink((rows[0] as Extract<PickRow, { type: "item" }>).item)).toBe("[SDH-4 - Fix the header](gizai:task/SDH-4)");
+    expect(render("task.SDH-4", 1).list.slice(0, 4)).toEqual(["# Review", "SDH-4 - Fix the header", "# Backlog", "> SDH-40 - Item 40"]);
+  });
+  it("selects a Done card for its exact ID, under the Done heading with @task.", () => {
+    expect(render("SDH-2").list).toEqual(["# Tasks", "> SDH-2 - Release notes"]);
+    expect(render("task.SDH-2").list).toEqual(["# Done", "> SDH-2 - Release notes"]);
+    expect(render("task.").list.slice(-4)).toEqual(["# Review", "SDH-4 - Fix the header", "# Done", "SDH-2 - Release notes"]);
+  });
+});

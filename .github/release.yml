@@ -1,0 +1,6 @@
+# GitHub's list of merged pull requests in a release's notes (gh release create --generate-notes, docs/RELEASING.md).
+# The bump and release pull requests carry the label release, so they stay out of it.
+changelog:
+  exclude:
+    labels:
+      - release

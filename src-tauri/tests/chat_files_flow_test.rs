@@ -225,3 +225,29 @@ async fn a_link_from_the_picker_reaches_the_team_lead_in_the_message_and_its_tar
     let found = tools::call_in(&t.st, &t.lead, Some(&thread), "get_client", json!({"client": client})).await.unwrap();
     assert_eq!(found["client"]["name"], "Spoorwegmuseum", "{found}");
 }
+
+#[tokio::test]
+async fn the_team_lead_reads_a_projects_files_at_the_paths_get_project_gives_and_its_prompt_says_so() {
+    // GA-207: get_project over MCP, in a chat answer, gives the path of a copy in the Team Lead's folder for each file on
+    // the project, and it reads the file there.
+    let t = setup().await;
+    let p = projects::list(&t.st.db).unwrap().into_iter().find(|p| p.key == "KADE").unwrap().id;
+    let plan = t.file("Adviesplan deel 1.md", "# Adviesplan\n\nhet datamodel");
+    let plan = files::add_from_path(&t.st.db, &t.st.you_id, &t.st.data_dir, "project", &p, Path::new(&plan)).unwrap();
+    let (thread, s) = t.send(None, "FAKE_GET_PROJECT KADE FAKE_READ_FILES What does the Adviesplan say?", vec![]).await;
+    assert_eq!(s.status, "succeeded", "{s:?}");
+    let tool = chat::messages(&t.st.db, &thread).unwrap().into_iter().find(|m| m.role == "tool").expect("a tool call");
+    assert_eq!(tool.tool_name.as_deref(), Some("mcp__gizai__get_project"));
+    let copy = app_chat::lead_file_path(&t.st, &plan);
+    assert!(copy.starts_with(t.st.data_dir.join("lead")) && copy.is_file(), "{}", copy.display());
+    assert_eq!(t.last_answer(&thread), "Read: # Adviesplan\n\nhet datamodel");
+
+    // the system prompt has the card's line, word for word, right after the one on files added to a message
+    let call = &t.calls()[0];
+    let argv: Vec<String> = serde_json::from_value(call["argv"].clone()).unwrap();
+    let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
+    let lines: Vec<&str> = sys.lines().collect();
+    let at = lines.iter().position(|l| l.starts_with("- Files ") && l.contains(" adds to a message are named after it")).expect("the chat files line");
+    assert_eq!(lines[at + 1], "- Files on a project, task or client: get_project, get_task and get_client give each one's path in your folder: read them there.",
+               "{sys}");
+}

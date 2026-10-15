@@ -140,13 +140,13 @@ fn migration_0016_on_a_v070_database_keeps_every_agent_on_its_own_folder_after_a
     let dir = tempfile::tempdir().unwrap();
     let path = v15_db(dir.path());
     let db = Db::open(&path).unwrap();
-    // 0016, and GA-102's 0017 (pending actions) after it in the same step
-    assert_eq!(db::SCHEMA_VERSION, 17);
+    // 0016, and GA-102's 0017 (pending actions) and GA-180's 0018 (indexes) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 18);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (17, 0), "schema 17, foreign keys intact");
+    assert_eq!((v, broken), (18, 0), "schema 18, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v17-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v18-"), "{snaps:?}");
     // the column: optional, empty for every agent
     let (notnull, default, set): (i64, Option<String>, i64) = db.read(|c| Ok((
         c.query_row("SELECT \"notnull\" FROM pragma_table_info('agent_configs') WHERE name = 'shares_memory_with'", [], |r| r.get(0))?,

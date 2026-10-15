@@ -1,8 +1,9 @@
 // GA-21 (and GA-27): the warning under Settings → Runs at once when the active agents' cards at once add up to more,
-// which agents count for it, and the warning by Quit Gizai completely.
+// which agents count for it, and the warning by Quit Gizai completely. GA-202: the hint under Memory for agent runs, and
+// what Save settings refuses there before it asks the backend.
 import { describe, expect, it } from "vitest";
 import type { Member, Team, WorkflowState } from "../types";
-import { cardAgents, quitWarning, runsAtOnceWarning } from "./settings";
+import { cardAgents, quitWarning, runsAtOnceWarning, runsMemoryError, runsMemoryHint } from "./settings";
 
 const member = (actorId: string, name: string, more: Partial<Member> = {}): Member => ({
   actorId, name, kind: "agent", roleKey: "backend", handle: name.toLowerCase().replace(/ /g, "-"), status: "active", isLead: false,
@@ -83,5 +84,32 @@ describe("the warning by Quit Gizai completely", () => {
     expect(quitWarning(3, 0)).toBe(`${base} Now 3 runs will be stopped.`);
     expect(quitWarning(0, 1)).toBe(`${base} Now 1 chat answer will be stopped.`);
     expect(quitWarning(2, 2)).toBe(`${base} Now 2 runs and 2 chat answers will be stopped.`);
+  });
+});
+
+describe("the hint under Memory for agent runs", () => {
+  it("says it is for all agent runs together and how much memory this computer has", () => {
+    expect(runsMemoryHint({ computerMemoryGb: 64, runsMemoryEnforced: true })).toBe("All agent runs together. This computer has 64 GB.");
+    expect(runsMemoryHint({ computerMemoryGb: 16, runsMemoryEnforced: true })).toBe("All agent runs together. This computer has 16 GB.");
+  });
+  it("says that Gizai only waits for free memory where the system doesn't enforce the limit", () => {
+    expect(runsMemoryHint({ computerMemoryGb: 16, runsMemoryEnforced: false }))
+      .toBe("All agent runs together. This computer has 16 GB. On this system Gizai only waits for free memory before it starts a run.");
+  });
+  it("leaves out the computer's memory when the system doesn't say it (0) or the backend doesn't send it", () => {
+    expect(runsMemoryHint({ computerMemoryGb: 0, runsMemoryEnforced: true })).toBe("All agent runs together.");
+    expect(runsMemoryHint({})).toBe("All agent runs together. On this system Gizai only waits for free memory before it starts a run.");
+  });
+});
+
+describe("what Save settings refuses in Memory for agent runs", () => {
+  it("is anything but a whole number of GB from 2 up", () => {
+    for (const gb of [2, 3, 32, 64]) expect(runsMemoryError(gb)).toBeNull();
+    // what the field holds: Number(e.target.value), so an emptied field is 0
+    for (const gb of [0, 1, -4, 2.5, Number(""), Number.NaN]) expect(runsMemoryError(gb)).toBe("Memory for agent runs is a whole number of GB, 2 or more.");
+  });
+  it("leaves the computer's memory as the most to the backend, and says nothing when the backend didn't send the field", () => {
+    expect(runsMemoryError(10_000)).toBeNull();
+    expect(runsMemoryError(undefined)).toBeNull();
   });
 });

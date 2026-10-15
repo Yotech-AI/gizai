@@ -287,6 +287,10 @@ export type FileDiff = {
 };
 export type LiveRun = { runId: string; taskId: string; agentId: string };
 export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurrentRuns: number; agentsPaused: boolean; maxRunUsd?: number | null; maxRunMinutes: number; maxRunToolCalls: number;
+  /** Settings → Runs → Memory for agent runs (GA-202), in GB: all agent runs together, half of the computer's memory
+   *  until set. Read-only next to it: the computer's memory in GB (0 when the system doesn't say), and whether the system
+   *  enforces the limit (Linux with a systemd user session; elsewhere Gizai only waits for free memory before a run). */
+  runsMemoryGb?: number; computerMemoryGb?: number; runsMemoryEnforced?: boolean;
   /** Settings → Runs: the limits of an answer of the Team Lead (also a board check and its look at a question). */
   maxChatMinutes: number; maxChatToolCalls: number;
   /** The GitHub CLI; null = found when needed. */

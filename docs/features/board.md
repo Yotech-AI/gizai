@@ -42,9 +42,11 @@ A start that can't work (Claude Code missing or not logged in, a wrong model, no
 
 Settings → Runs sets how many runs go at once, for all agents together. Pause all agents stops the starts from Auto columns; Run still works by hand.
 
+Memory for agent runs, also in Settings → Runs, is how much memory all agent runs may use together: half of the computer's memory until you set it. On Linux the system holds the runs to it, and Gizai stays outside the limit, so a big build can't take Gizai down ([PLATFORMS.md](../PLATFORMS.md#memory-for-agent-runs)). On every system no run starts while the runs use over 80% of it or the computer has under 2 GB free: the card waits with the reason, like Runs at once, and starts by itself once memory frees up.
+
 ## A worktree for every card
 
-Every card gets its own git worktree and branch, started from main on GitHub or Bitbucket when the project is linked. Worktrees start warm. Per project, a new worktree gets:
+Every card gets its own git worktree and branch, started from main on GitHub or Bitbucket when the project is linked. Main is fetched through your checkout's own remote for that repository (origin first), so your own git settings apply as they do for your own `git fetch`, like an `insteadOf` rule that sends it to an SSH host alias. Worktrees start warm. Per project, a new worktree gets:
 
 - paths copied from your checkout (`cp --reflink=auto`);
 - missing dependencies installed (`composer install`, `npm ci`);

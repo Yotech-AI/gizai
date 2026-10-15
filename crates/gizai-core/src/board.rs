@@ -36,6 +36,9 @@ pub struct Context {
     pub max_concurrent: i64,
     /// The Team Lead: its own comments and changes don't make a finding new.
     pub lead_id: Option<String>,
+    /// GA-202: since when no run starts for want of memory, and why ("Waiting for memory: …", Settings → Runs → Memory for
+    /// agent runs). Meanwhile a free slot isn't a finding; after an hour the wait is.
+    pub memory_wait: Option<(i64, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,7 +61,7 @@ pub struct Finding {
     /// answered | held | waiting | stopped | review
     pub kind: String,
     /// Why, as a code. held: the hold. waiting: no_agents, testing_off, agents_paused, paused, budget, pull_paused,
-    /// stopped_run, free_slot or runs_full. stopped: limit, failed, no_result, stopped (by a person) or quit. review:
+    /// stopped_run, free_slot, runs_full or memory. stopped: limit, failed, no_result, stopped (by a person) or quit. review:
     /// may_merge (the Team Lead may merge it, GA-86).
     pub code: String,
     pub task_id: String,
@@ -333,6 +336,12 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                     if cx.now - full_since > RUNS_FULL_MS {
                         out.push(base("waiting", "runs_full", full_since, agent_of(&id),
                                       format!("\"Runs at once\" (Settings) has been full ({} runs) for over an hour", cx.max_concurrent)));
+                    }
+                } else if let Some((short_since, why)) = &cx.memory_wait {
+                    if cx.now - short_since > RUNS_FULL_MS {
+                        let detail = why.strip_prefix("Waiting for memory: ").unwrap_or(why);
+                        out.push(base("waiting", "memory", *short_since, agent_of(&id),
+                                      format!("Gizai has been waiting for memory for over an hour: {detail}")));
                     }
                 } else {
                     let name = agents.get(&id).map(|a| a.name.clone()).unwrap_or_default();

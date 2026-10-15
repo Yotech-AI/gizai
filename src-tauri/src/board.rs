@@ -14,6 +14,7 @@ pub fn context(st: &AppState, now: i64) -> Context {
     let s = crate::runs::get_settings(st);
     Context {
         now, pull_paused: crate::runs::pull_paused_all(st), agents_paused: s.agents_paused, max_concurrent: s.max_concurrent_runs as i64, lead_id: lead,
+        memory_wait: crate::run_memory::waiting_since(st),
     }
 }
 
@@ -58,6 +59,8 @@ pub fn slots_json(st: &AppState) -> Value {
     }).collect();
     json!({
         "runs_at_once": {"max": s.max_concurrent_runs, "working": live.len(), "free": (s.max_concurrent_runs as usize).saturating_sub(live.len())},
+        // GA-202: why no run starts now for want of memory (Settings → Runs → Memory for agent runs), else null
+        "waiting_for_memory": crate::run_memory::waiting_since(st).map(|(_, why)| why),
         "agents_paused": s.agents_paused,
         "agents": agents,
     })

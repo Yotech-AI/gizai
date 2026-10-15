@@ -27,6 +27,7 @@ pub mod outcome;
 pub mod prepare;
 pub mod process;
 pub mod prompt;
+pub mod run_memory;
 pub mod secrets;
 pub mod stream;
 pub mod terminal;

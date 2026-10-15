@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::os::{self, End};
+use crate::run_memory::{OomWatch, Slice};
 
 /// How long one install or setup command may take.
 pub const COMMAND_LIMIT: Duration = Duration::from_secs(20 * 60);
@@ -105,6 +106,13 @@ const DEPS: [Dep; 2] = [
 /// installed for: a folder whose lock file (else its composer.json or package.json) changed since then is installed
 /// again. `path` is the PATH the commands get (None: Gizai's own).
 pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: Option<&OsStr>) -> Result<Prepared, PrepareFailed> {
+    prepare_in(main, wt, p, since, path, None)
+}
+
+/// `prepare` with every command in a scope of its own in `slice`, the slice of Gizai's agent runs (Linux, GA-202): the
+/// memory limit for agent runs covers them too. None: outside it, as `prepare`.
+pub fn prepare_in(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: Option<&OsStr>, slice: Option<&Slice>)
+    -> Result<Prepared, PrepareFailed> {
     let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
     let mut out = Prepared::default();
     for entry in &p.copy {
@@ -117,7 +125,7 @@ pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: O
             out.skipped.push(entry.clone());
             continue;
         }
-        match copy(&from, &to, path) {
+        match copy(&from, &to, path, slice) {
             Ok(()) => out.copied.push(entry.clone()),
             Err(why) => {
                 // a half copy would pass for a dependency folder that is already there
@@ -136,12 +144,12 @@ pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: O
                 continue;
             }
             let (shown, program, args) = install_command(wt, dep);
-            run(&shown, program, args, wt, path, COMMAND_LIMIT)?;
+            run(&shown, program, args, wt, path, COMMAND_LIMIT, slice)?;
             out.installed.push(shown);
         }
     }
     if let Some(cmd) = p.setup.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-        run(cmd, bash(cmd, path)?, &["-c", cmd], wt, path, COMMAND_LIMIT)?;
+        run(cmd, bash(cmd, path)?, &["-c", cmd], wt, path, COMMAND_LIMIT, slice)?;
         out.setup = true;
     }
     Ok(out)
@@ -167,7 +175,7 @@ pub fn install(dir: &Path, folder: &str, path: Option<&OsStr>) -> Result<(String
         return Err(PrepareFailed { command: format!("installing {folder}/"), why: "isn't something Gizai installs".into(), output: String::new() });
     };
     let (shown, program, args) = install_command(dir, dep);
-    let printed = run(&shown, program, args, dir, path, COMMAND_LIMIT)?;
+    let printed = run(&shown, program, args, dir, path, COMMAND_LIMIT, None)?;
     Ok((shown, printed))
 }
 
@@ -212,14 +220,14 @@ fn lock_changed(wt: &Path, since: &str, dep: &Dep) -> bool {
 }
 
 /// `cp --reflink=auto` (instant on btrfs and XFS, a plain copy elsewhere), keeping modes, times and symlinks.
-fn copy(from: &Path, to: &Path, path: Option<&OsStr>) -> Result<(), String> {
+fn copy(from: &Path, to: &Path, path: Option<&OsStr>, slice: Option<&Slice>) -> Result<(), String> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let (cp, options) = cp_program(path)?;
     let mut args: Vec<&OsStr> = options.iter().map(OsStr::new).collect();
     args.extend([OsStr::new("--"), from.as_os_str(), to.as_os_str()]);
-    run("cp", cp, &args, to.parent().unwrap_or(to), path, COPY_LIMIT).map(|_| ()).map_err(|f| {
+    run("cp", cp, &args, to.parent().unwrap_or(to), path, COPY_LIMIT, slice).map(|_| ()).map_err(|f| {
         let detail = f.output.lines().last().unwrap_or_default().trim().to_string();
         if detail.is_empty() { f.why } else { detail }
     })
@@ -253,12 +261,17 @@ fn cp_program(path: Option<&OsStr>) -> Result<(PathBuf, &'static [&'static str])
 }
 
 /// Runs `program args` in `dir` without prompts and returns the end of its output. After `limit` it is ended, with
-/// everything it started (its own process group, a Job Object on Windows: `os::Tree`).
-fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir: &Path, path: Option<&OsStr>, limit: Duration)
-    -> Result<String, PrepareFailed> {
+/// everything it started (its own process group, a Job Object on Windows: `os::Tree`). With `slice` it starts in a
+/// scope of its own there (`Slice::command`), and a failure says when Linux ended a process in it at the memory limit.
+fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir: &Path, path: Option<&OsStr>, limit: Duration,
+                        slice: Option<&Slice>) -> Result<String, PrepareFailed> {
     let program = program.as_ref();
     let fail = |why: String, output: String| PrepareFailed { command: shown.to_string(), why, output };
-    let mut cmd = os::command(program);
+    // a program that can't be found starts as before, so it fails the usual way
+    let (mut cmd, slice) = match slice.and_then(|s| Some((s.command_for(program, path)?, s))) {
+        Some((c, s)) => (c, Some(s)),
+        None => (os::command(program), None),
+    };
     cmd.args(args).current_dir(dir)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .env("COMPOSER_NO_INTERACTION", "1").env("npm_config_yes", "true").env("npm_config_update_notifier", "false")
@@ -272,6 +285,7 @@ fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir
         }
         _ => fail(format!("couldn't start: {e}"), String::new()),
     })?;
+    let watch = slice.map(|s| OomWatch::start(s, child.id(), |_| {}));
     let output = Arc::new(Mutex::new(Vec::<u8>::new()));
     let pipes: Vec<Box<dyn Read + Send>> = [
         child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>),
@@ -306,17 +320,19 @@ fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir
             }
         }
     };
+    let ended_at_limit = watch.map(OomWatch::finish).unwrap_or(0) > 0;
     // what it left running in the background would hold its output open
     tree.end(End::Kill);
     for r in readers {
         let _ = r.join();
     }
     let text = tail(&String::from_utf8_lossy(&output.lock().unwrap()));
+    let at_limit = if ended_at_limit { ": Linux ended a process in it at the memory limit for agent runs (Settings → Runs)" } else { "" };
     match status {
         Some(s) if s.success() => Ok(text),
         Some(s) => Err(fail(match s.code() {
-            Some(code) => format!("failed (exit code {code})"),
-            None => "was ended by a signal".into(),
+            Some(code) => format!("failed (exit code {code}){at_limit}"),
+            None => format!("was ended by a signal{at_limit}"),
         }, text)),
         None => Err(fail(format!("was stopped after {} minutes", limit.as_secs() / 60), text)),
     }

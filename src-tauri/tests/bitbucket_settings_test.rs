@@ -506,6 +506,35 @@ fn the_repository_check_offers_the_bitbucket_remote_next_to_the_github_one_origi
     assert_eq!(v["github"], Value::Null);
 }
 
+/// GA-203: SDH's checkout. Your own insteadOf rule (in the repository's own config, never the global one) sends origin
+/// git@bitbucket.org:acme/site.git to an SSH host alias of yours, so `git remote -v` shows git@bb-work:acme/site.git:
+/// the Bitbucket link still comes from origin's URL as written, origin first.
+#[test]
+fn the_repository_check_offers_a_bitbucket_remote_your_own_insteadof_rule_sends_to_a_host_alias() {
+    fakes();
+    let tmp = tempfile::tempdir().unwrap();
+    use gizai_lib::git::repo_check;
+
+    let site = tmp.path().join("site");
+    std::fs::create_dir(&site).unwrap();
+    git(&site, &["init", "-q", "-b", "main"]);
+    git(&site, &["remote", "add", "origin", "git@bitbucket.org:acme/site.git"]);
+    git(&site, &["config", "url.git@bb-work:acme/.insteadOf", "git@bitbucket.org:acme/"]);
+    assert_eq!(git(&site, &["remote", "get-url", "origin"]), "git@bb-work:acme/site.git");
+    let config = std::fs::read_to_string(site.join(".git/config")).unwrap();
+    let r = repo_check(&site);
+    assert!(r.is_git);
+    assert_eq!((r.bitbucket.as_deref(), r.github.as_deref()), (Some("https://bitbucket.org/acme/site"), None));
+    assert_eq!(serde_json::to_value(repo_check(&site)).unwrap()["bitbucket"], "https://bitbucket.org/acme/site");
+    assert_eq!(std::fs::read_to_string(site.join(".git/config")).unwrap(), config, "no git config changed");
+
+    // origin first, before an upstream that no rule rewrites; a GitHub remote beside it is offered too
+    git(&site, &["remote", "add", "upstream", "https://bitbucket.org/other/site.git"]);
+    git(&site, &["remote", "add", "github", "git@github.com:acme/site.git"]);
+    let r = repo_check(&site);
+    assert_eq!((r.bitbucket.as_deref(), r.github.as_deref()), (Some("https://bitbucket.org/acme/site"), Some("https://github.com/acme/site")));
+}
+
 // ---- h. the Team Lead's project tools ----
 
 #[tokio::test]

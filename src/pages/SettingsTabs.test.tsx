@@ -298,6 +298,71 @@ describe("Chat answers in Runs (GA-94)", () => {
   });
 });
 
+// GA-202: Memory for agent runs, in Runs right under Runs at once: the backend's value (half of the computer's memory
+// until it is set), a hint with the computer's memory, and where the system doesn't enforce it, that Gizai only waits.
+describe("Memory for agent runs in Runs (GA-202)", () => {
+  const MEM: Settings = { ...SETTINGS, runsMemoryGb: 32, computerMemoryGb: 64, runsMemoryEnforced: true };
+  const runsOf = (html: string) => {
+    const agents = panels(html).find((p) => p.label === "Agents and runs")?.html ?? "";
+    return agents.slice(agents.indexOf("<h3>Runs</h3>"));
+  };
+  const saveButton = (t: ReactNode) =>
+    findAll(t, (p) => p.className === "btn primary" && typeof p.onClick === "function")[0] as { onClick: () => void; children: unknown };
+  it("is right under Runs at once, in GB, with what the backend has (half of the computer's memory until it is set) and the hint", () => {
+    const runs = runsOf(render("agents", MEM));
+    expect(runs).toMatch(/<label for="s-memory">Memory for agent runs<\/label>.*<input id="s-memory" class="input" type="number" min="2" max="64" step="1" value="32"\/><span class="faint">GB<\/span>/);
+    const t = text(runs);
+    expect(t).toContain("Memory for agent runs GB All agent runs together. This computer has 64 GB.");
+    expect(t).not.toContain("only waits for free memory");
+    const at = (s: string) => t.indexOf(s);
+    expect(at("Runs at once")).toBeLessThan(at("Memory for agent runs"));
+    expect(at("Memory for agent runs")).toBeLessThan(at("Spend per run"));
+    // on no other tab
+    for (const p of panels(render("agents", MEM)).filter((p) => p.label !== "Agents and runs")) expect(p.html).not.toContain("s-memory");
+  });
+  it("says that Gizai only waits for free memory where the system doesn't enforce the limit", () => {
+    const t = text(runsOf(render("agents", { ...MEM, computerMemoryGb: 16, runsMemoryGb: 8, runsMemoryEnforced: false })));
+    expect(runsOf(render("agents", { ...MEM, computerMemoryGb: 16, runsMemoryGb: 8, runsMemoryEnforced: false }))).toMatch(/id="s-memory"[^>]*max="16"[^>]*value="8"/);
+    expect(t).toContain("Memory for agent runs GB All agent runs together. This computer has 16 GB. On this system Gizai only waits for free memory before it starts a run.");
+  });
+  it("Save settings saves an edited value with the rest", async () => {
+    const first = tree("agents", MEM);
+    (findAll(first.t, (p) => p.id === "s-memory")[0] as { onChange: (e: unknown) => void }).onChange({ target: { value: "24" } });
+    const edited = first.got[0]?.[0] as Settings;
+    expect(edited).toEqual({ ...MEM, runsMemoryGb: 24 });
+    saveButton(tree("agents", edited).t).onClick();
+    await settle();
+    const saved = calls.filter(([k]) => k === "saveSettings").map(([, a]) => a[0] as Settings);
+    expect(saved).toEqual([{ ...MEM, runsMemoryGb: 24, maxRunUsd: null }]);
+  });
+  it("Save settings refuses an emptied field or less than 2 GB with a message, and doesn't save", async () => {
+    for (const value of ["", "1", "2.5"]) {
+      calls.length = 0;
+      const first = tree("agents", MEM);
+      (findAll(first.t, (p) => p.id === "s-memory")[0] as { onChange: (e: unknown) => void }).onChange({ target: { value } });
+      const edited = first.got[0]?.[0] as Settings;
+      const second = tree("agents", edited);
+      saveButton(second.t).onClick();
+      await settle();
+      expect(calls.filter(([k]) => k === "saveSettings")).toEqual([]);
+      // the page's third state is its message
+      expect(second.got[2]).toEqual([{ ok: false, text: "Memory for agent runs is a whole number of GB, 2 or more." }]);
+    }
+  });
+  it("shows the backend's refusal of more than the computer has", async () => {
+    const edited = { ...MEM, runsMemoryGb: 65 };
+    const r = tree("agents", edited);
+    const refused = "memory for agent runs may be between 2 and 64 GB: this computer has 64 GB";
+    const api = await import("../api");
+    const spy = vi.spyOn(api, "saveSettings").mockRejectedValueOnce(refused);
+    saveButton(r.t).onClick();
+    await settle();
+    expect(spy).toHaveBeenCalledWith({ ...edited, maxRunUsd: null });
+    expect(r.got[2]).toEqual([{ ok: false, text: refused }]);
+    spy.mockRestore();
+  });
+});
+
 /** The checkbox inside the `label.check` whose text is `label`. */
 function checkboxLabelled(t: ReactNode, label: string) {
   const labels = findAll(t, (p) => p.className === "check" && ([] as unknown[]).concat(p.children).includes(label));

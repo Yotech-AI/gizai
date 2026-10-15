@@ -9,7 +9,7 @@ Where each setting lives, how GizAi looks, and what happens when you close its w
 | General | Quit, Updates, the Editor's folders, and Data: where GizAi keeps your data, and the worktrees of finished cards |
 | Appearance | The font, text sizes, theme, density and the mountains |
 | Notifications | A switch for each kind of notification |
-| Agents and runs | Coding CLIs, and Runs: limits, runs at once, Pause all agents, memory and Ask the Team Lead first |
+| Agents and runs | Coding CLIs, and Runs: limits, runs at once, memory for agent runs, Pause all agents, memory and Ask the Team Lead first |
 | MCP servers | The outside services agents can use, and the built-in browser |
 | GitHub and Bitbucket | gh and how pushes go, Check connection, and your Bitbucket login |
 

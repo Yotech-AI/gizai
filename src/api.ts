@@ -12,6 +12,14 @@ export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
 export const tourStill = (name: string) => invoke<void>("tour_still", { name });
 export const tourSteps = (json: unknown) => invoke<void>("tour_steps", { json: JSON.stringify(json) });
 
+// The first start's onboarding (GA-162, GA-164): it waits on a new install until it is finished or skipped.
+export const onboardingPending = () => invoke<boolean>("onboarding_pending");
+/** Saves your name, the team's and the agents' CLI, then starts the Team Lead's welcome chat: resolves with its thread id, or
+ *  null when the Team Lead can't answer (no Claude Code). An empty name or an unknown CLI fails and changes nothing. */
+export const finishOnboarding = (input: T.OnboardingInput) => invoke<string | null>("finish_onboarding", { input });
+/** Skip setup: the onboarding no longer waits; nothing else changes. */
+export const skipOnboarding = () => invoke<void>("skip_onboarding");
+
 // Closing Gizai with unsaved text in an editor (GA-122). The page says when it has some; then closing the window or
 // quitting waits for the page's answer: "asking" (the question shows), "close" (go on closing) or "stay".
 export type CloseAnswer = "asking" | "close" | "stay";

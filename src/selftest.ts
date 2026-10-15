@@ -1232,9 +1232,11 @@ const bandState = () => {
     box: bandBox()?.checked ?? null, hides: bandHides() };
 };
 /** The app's own stylesheet hides the band in a window under 560px high, with more contrast, in forced colours and in print:
- *  the cage can't make Gizai's window lower than its 600px least, so the rule itself is read. */
+ *  the cage can't make Gizai's window lower than its 600px least, so the rule itself is read. The same rule hides the first
+ *  start's onboarding's band (.onb > .band, GA-164), so `.app > .band` is one of its selectors. */
 const bandHides = () => [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } })
-  .filter((r): r is CSSMediaRule => r instanceof CSSMediaRule && [...r.cssRules].some((x) => x instanceof CSSStyleRule && x.selectorText === ".app > .band" && x.style.display === "none"))
+  .filter((r): r is CSSMediaRule => r instanceof CSSMediaRule && [...r.cssRules].some((x) => x instanceof CSSStyleRule
+    && x.selectorText.split(",").map((s) => s.trim()).includes(".app > .band") && x.style.display === "none"))
   .map((r) => r.conditionText.replace(/\s+/g, " "));
 type BandState = ReturnType<typeof bandState>;
 /** Clicks "Show mountains along the bottom" when it isn't `on` yet; what the window shows a moment later. */

@@ -58,7 +58,7 @@ impl ClaudeArgs {
         if self.disable_auto_memory {
             env.push((AUTO_MEMORY_OFF.into(), "1".into()));
         }
-        crate::process::Exec { bin: self.bin.clone(), args: self.argv(), env, stdin: self.prompt.clone() }
+        crate::process::Exec { bin: self.bin.clone(), args: self.argv(), env, stdin: self.prompt.clone(), slice: None }
     }
 
     /// Arguments after the binary. The prompt is not among them: it goes in on stdin (`claude -p` reads it

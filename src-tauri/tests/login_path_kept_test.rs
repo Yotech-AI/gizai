@@ -108,7 +108,16 @@ fn a_burst_of_calls_starts_one_login_shell_and_finding_or_saving_clis_reads_the_
     runs::command_path();
     assert_eq!(counts(), (n + 1, logged + 1), "read again after a minute");
 
-    // 4. Codex installed a moment ago: the kept PATH doesn't have it yet, Find in Settings (find_clis) does.
+    // 4. fresh_command_path reads it on every call, also within the minute, and a command_path after it gets that PATH
+    // without a login shell of its own.
+    let (n, logged) = counts();
+    assert_eq!(runs::fresh_command_path(), first);
+    assert_eq!(runs::fresh_command_path(), first);
+    assert_eq!(counts(), (n + 2, logged + 2), "each fresh read starts a login shell");
+    assert_eq!(runs::command_path(), first);
+    assert_eq!(counts(), (n + 2, logged + 2), "the call after it uses the PATH it read");
+
+    // 5. Codex installed a moment ago: the kept PATH doesn't have it yet, Find in Settings (find_clis) does.
     let later = tmp.path().join("later");
     let codex = install(&later, "codex");
     login_adds(&home, &[&early, &later]);
@@ -123,7 +132,7 @@ fn a_burst_of_calls_starts_one_login_shell_and_finding_or_saving_clis_reads_the_
     assert!(dirs(&runs::command_path()).contains(&later));
     assert_eq!(counts(), (n + 1, logged + 1));
 
-    // 5. Saving Settings → Coding CLIs reads the PATH again: Gemini, saved before it was installed, is found once it is.
+    // 6. Saving Settings → Coding CLIs reads the PATH again: Gemini, saved before it was installed, is found once it is.
     let (n, logged) = counts();
     let saved = add_clis(&st, &[("Gemini", "gemini", "gemini"), ("Claude Code 2", "claude_code", "no-such-claude")]);
     assert_eq!(shown(&saved, "Gemini"), (None, Some("gemini not found")));
@@ -141,7 +150,7 @@ fn a_burst_of_calls_starts_one_login_shell_and_finding_or_saving_clis_reads_the_
     assert_eq!(shown(&gizai_lib::clis::list(&st).unwrap(), "Gemini"), (Some(gemini.as_str()), None));
     assert_eq!(counts(), (n + 2, logged + 2), "the list after it uses the PATH save read");
 
-    // 6. The chat's CLI list, as before: Claude Code first, a CLI that isn't Claude Code with why it can't run the
+    // 7. The chat's CLI list, as before: Claude Code first, a CLI that isn't Claude Code with why it can't run the
     // chat, and a Claude Code whose program is missing as not found. Within the minute it starts no login shell.
     let chat = gizai_lib::chat::clis(&st).unwrap();
     let names: Vec<(&str, Option<&str>)> = chat.iter().map(|c| (c.name.as_str(), c.problem.as_deref())).collect();

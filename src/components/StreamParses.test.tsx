@@ -132,6 +132,7 @@ vi.mock("../lib/useData", () => ({ useData: () => ({ data: h.runs, error: null, 
 const { createRoot } = await import("react-dom/client");
 const { ChatThread } = await import("./chat/ChatThread");
 const { RunPanel } = await import("./RunPanel");
+const { RunHistory } = await import("./RunHistory");
 
 let container: FakeNode;
 let root: ReturnType<typeof createRoot> | null = null;
@@ -447,5 +448,88 @@ describe("a live run's log on the card page (GA-176)", () => {
     await act(async () => { send({ runId: "run2", ...textEvent(211) }); });
     expect(parsed(eventText(211))).toBe(0);
     expect([...h.parses.values()].reduce((a, b) => a + b, 0)).toBe(210);
+  });
+
+  it("stops the clock when the run ends: the live panel goes and no tick is left", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    vi.setSystemTime(T0);
+    h.api.onRunEvent = () => Promise.resolve(() => {});
+    h.api.runEvents = () => Promise.resolve([textEvent(1)]);
+    const running = { id: "run1", agentId: "be", agentName: "Backend Agent", taskId: "t1", trigger: "manual", status: "running", createdAt: T0, startedAt: T0,
+      costUsdMicros: 0, inputTokens: 0, outputTokens: 0, logPath: "" } as Run;
+    h.live = [{ runId: "run1", taskId: "t1", agentId: "be" }];
+    h.runs = [running];
+    await mount(<RunPanel task={task} team={team} />);
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    expect(byClass(container, "run-head")[0].textContent).toContain("3s");
+
+    h.live = [];
+    h.runs = [{ ...running, status: "succeeded", outcome: "qa_pass", endedAt: T0 + 3000 }];
+    await act(async () => { root!.render(<RunPanel task={{ ...task }} team={team} />); });
+    expect(byClass(container, "pulse")).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+// ---- a finished run's output: the same memoised log, filled once its events have loaded ----
+const agentTeam = { ...team, members: [{ actorId: "be", name: "Backend Agent", kind: "agent", status: "active", roleKey: "backend" }] } as unknown as Team;
+const finished = { id: "run9", agentId: "be", agentName: "Backend Agent", taskId: "t1", roleKey: "backend", trigger: "manual", status: "succeeded",
+  outcome: "ready_for_testing", summaryMd: "All done.", createdAt: T0, startedAt: T0, endedAt: T0 + MIN, costUsdMicros: 0, inputTokens: 0,
+  outputTokens: 0, logPath: "" } as Run;
+const output = (): SeqEvent[] => [
+  { seq: 1, event: { kind: "init", session_id: "s1", model: "opus" } },
+  ...Array.from({ length: 5 }, (_, i) => textEvent(i + 2)),
+  { seq: 7, event: { kind: "tool_use", name: "Read", summary: "src/a.ts" } },
+  { seq: 8, event: { kind: "result", is_error: false, subtype: "success", text: "", input_tokens: 0, output_tokens: 0, num_turns: 3 } },
+];
+const outputLines = ["Started · opus", ...Array.from({ length: 5 }, (_, i) => `Step ${i + 2}: read src/a${i + 2}.ts and its docs.`), "Read src/a.ts",
+  "Done · 3 turns", ""];
+
+describe("a finished run's output (GA-176)", () => {
+  it("Show output on the card page fills the log when its events arrive, parses each once, and Hide output closes it", async () => {
+    let load: (e: SeqEvent[]) => void = () => {};
+    h.api.onRunEvent = () => Promise.resolve(() => {});
+    h.api.runEvents = () => new Promise((r) => { load = r; });
+    h.live = [];
+    h.runs = [finished];
+    await mount(<RunPanel task={task} team={agentTeam} />);
+    expect(byClass(container, "run-stream")).toHaveLength(0);
+
+    await click(buttonsNamed(container, "Show output")[0]);
+    const stream = () => byClass(container, "run-stream")[0];
+    expect(h.calls.filter(([k]) => k === "runEvents")).toEqual([["runEvents", ["run9"]]]);
+    expect(stream().textContent).toBe("");
+    // The log was drawn empty first; it still shows the events once they have loaded.
+    await act(async () => { load(output()); });
+    expect(stream().childNodes.map((n) => n.textContent)).toEqual(outputLines);
+    const texts = Array.from({ length: 5 }, (_, i) => eventText(i + 2));
+    expect(texts.map(parsed)).toEqual([1, 1, 1, 1, 1]);
+    expect(parsed("All done.")).toBe(1);
+
+    // The panel redraws (a new copy of the card): nothing is parsed again.
+    await act(async () => { root!.render(<RunPanel task={{ ...task }} team={agentTeam} />); });
+    expect(texts.map(parsed)).toEqual([1, 1, 1, 1, 1]);
+    expect(parsed("All done.")).toBe(1);
+
+    await click(buttonsNamed(container, "Hide output")[0]);
+    expect(byClass(container, "run-stream")).toHaveLength(0);
+  });
+
+  it("Run history's Show the whole output shows every step of the run, and Hide output closes it", async () => {
+    h.api.runEvents = () => Promise.resolve(output());
+    await mount(<RunHistory runs={[{ ...finished, summaryMd: null }]} />);
+    await click(byClass(container, "run-open")[0]);
+    expect(h.calls.filter(([k]) => k === "runEvents")).toEqual([["runEvents", ["run9"]]]);
+    // The last step's text is the agent's last message.
+    expect(byClass(container, "run-last")[0].textContent).toBe("Step 6: read src/a6.ts and its docs.");
+
+    await click(buttonsNamed(container, "Show the whole output (8 steps)")[0]);
+    expect(byClass(container, "run-stream")[0].childNodes.map((n) => n.textContent)).toEqual(outputLines);
+    // Each step parsed once in the log; the last one once more as the last message.
+    expect(Array.from({ length: 5 }, (_, i) => parsed(eventText(i + 2)))).toEqual([1, 1, 1, 1, 2]);
+
+    await click(buttonsNamed(container, "Hide output")[0]);
+    expect(byClass(container, "run-stream")).toHaveLength(0);
   });
 });

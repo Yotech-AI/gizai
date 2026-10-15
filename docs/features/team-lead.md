@@ -9,6 +9,7 @@ The Team Lead manages clients, projects, cards and agents with GizAi's own tools
 - make and change clients, projects, cards and docs, and comment on and move cards;
 - start and continue agents' runs, and add or change agents and columns;
 - attach a file you gave it to a card, project or client;
+- read the files on a client, project or card, in a copy of each in its own folder: text, PDFs and images, not Word or Excel files, and not a file over 100 MB;
 - read and keep notes in [memory](memory.md);
 - update a project's linked folder, after your yes;
 - merge a pull request that QA passed, in a project where you allow it ([The Team Lead may merge](testing.md#the-team-lead-may-merge)).

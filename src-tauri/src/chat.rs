@@ -572,12 +572,13 @@ async fn store_files(st: &AppState, paths: Vec<String>) -> Result<Vec<Blob>, Str
 }
 
 /// The folder in the Team Lead's own folder (its working folder in chat, which its file tools read) where the files you
-/// add to chat messages are copied: `<data>/lead/files/<file id>/<name>`.
+/// add to chat messages are copied, and the files on a client, project or task that its gets list (GA-207):
+/// `<data>/lead/files/<file id>/<name>`.
 pub fn lead_files_dir(st: &AppState) -> PathBuf {
     st.data_dir.join("lead").join("files")
 }
 
-/// Where the Team Lead reads one of the files you added to a message (`lead_files_dir`).
+/// Where the Team Lead reads one of the files you added to a message, or one on a client, project or task (`lead_files_dir`).
 pub fn lead_file_path(st: &AppState, f: &FileRow) -> PathBuf {
     gizai_core::files::copy_path(&lead_files_dir(st), f)
 }
@@ -993,6 +994,7 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
          - After a tool from outside Gizai, a call of yours that acts (runs, agents, columns, attach_file, update_checkout, memory's writes, merge_pull_request) isn't run: Gizai keeps it under your answer for {you} to approve with one click or discard. Say in a sentence what each such call does; don't make it again. A later message starts with what {you} decided, in square brackets.\n\
          - {you} links Gizai items in a message as Markdown links with a gizai: target: [GA-12 - Fix the login](gizai:task/GA-12), [Giz AI](gizai:project/GA), [Name](gizai:client/<id>), and the same for agent, person and doc. After the slash comes the task's identifier, the project's key or the item's id, which the gizai tools take: look the item up when you need it. You may link items the same way in your answers.\n\
          - Files {you} adds to a message are named after it, each with the path of a copy in your folder: read them there. attach_file takes those paths, so you can attach such a file to a task, project or client when {you} asks.\n\
+         - Files on a project, task or client: get_project, get_task and get_client give each one's path in your folder: read them there.\n\
          - When that line says a project's linked folder ({you}'s own checkout, where new cards copy vendor/ and node_modules/ from) is outdated, ask {you} once in this chat, when that project comes up, whether to update it. Say exactly what will happen: any branch switch, how many commits it moves and which installs run. Call update_checkout only after a yes in this chat (switch only when they agreed to the switch, stash only when they agreed to the stash); never update a folder without that yes.\n\
          - Your instructions below also cover task runs; in chat, never write a GIZAI_RESULT line.\n\
          Answer in {you}'s language, short and plain.\n\n\

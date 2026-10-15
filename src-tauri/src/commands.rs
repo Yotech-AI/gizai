@@ -648,9 +648,13 @@ pub fn set_chat_cli(st: State<AppState>, thread_id: String, cli: Option<String>)
 pub async fn answer_chat_on(st: State<'_, AppState>, thread_id: String, cli: String, note_id: String) -> R<()> {
     chat::answer_on(&st, &thread_id, &cli, &note_id, None).await.map(|_| ())
 }
-/// The coding CLIs Runs on lists under the chat's text box, with why one can't run the chat.
+/// The coding CLIs Runs on lists under the chat's text box, with why one can't run the chat. Off the main thread:
+/// finding their programs can start your login shell.
 #[tauri::command]
-pub fn chat_clis(st: State<AppState>) -> R<Vec<chat::ChatCli>> { chat::clis(&st) }
+pub async fn chat_clis(st: State<'_, AppState>) -> R<Vec<chat::ChatCli>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || chat::clis(&st)).await.map_err(|e| e.to_string())?
+}
 #[tauri::command]
 pub fn stop_chat(st: State<AppState>, thread_id: String) { chat::stop(&st, &thread_id) }
 /// Chat answers being written right now, with their text so far.
@@ -681,6 +685,20 @@ pub async fn approve_pending_actions(st: State<'_, AppState>, ids: Vec<String>) 
 /// Discard: nothing runs; the chat gets a note with what was discarded.
 #[tauri::command]
 pub fn discard_pending_action(st: State<AppState>, id: String) -> R<gizai_core::pending::PendingAction> { crate::pending::discard(&st, &id) }
+
+// ---- first start (GA-162) ----
+/// Whether the first start's onboarding waits: true on a new install until it is finished or skipped.
+#[tauri::command]
+pub fn onboarding_pending(st: State<AppState>) -> bool { crate::onboarding::pending(&st) }
+/// Finishes the onboarding: your name, the team's and the agents' coding CLI, then the Team Lead's welcome chat. Returns
+/// that chat's id; None when the Team Lead can't answer.
+#[tauri::command]
+pub async fn finish_onboarding(st: State<'_, AppState>, input: gizai_core::onboarding::OnboardingInput) -> R<Option<String>> {
+    Ok(crate::onboarding::finish(&st, input).await?.map(|(thread_id, _answer)| thread_id))
+}
+/// Skips the onboarding: it no longer waits, and nothing else changes.
+#[tauri::command]
+pub fn skip_onboarding(st: State<AppState>) -> R<()> { crate::onboarding::skip(&st) }
 
 // ---- pull requests on GitHub ----
 /// Open pull request (a card in Review): pushes the card's branch with your git login and opens its pull request with gh.

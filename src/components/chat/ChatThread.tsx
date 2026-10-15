@@ -2,7 +2,7 @@
 // composer. The composer is one box: a Markdown editor without a toolbar (@ links a Gizai item), and under the text a row
 // with + (add files, or link an item; a drop on the Chat page adds files too), the tips, Runs on (the coding CLI the
 // chat's answers run on) and Send, or Stop while the Team Lead answers.
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
 import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
@@ -130,7 +130,7 @@ function Queued({ q, waiting, onError }: { q: QueuedMessage; waiting: boolean; o
 export function ChatThread({ threadId, thread, agent }: { threadId: string | null; thread?: Thread; agent: Member }) {
   const { messages, draft, tool, working, queue, error, setWorking, pending: calls } = useChat(threadId);
   // GA-102: the Team Lead's calls that wait for your approval in this chat, each under the answer that tried it.
-  const waitingCalls = (calls ?? []).filter((a) => a.threadId === threadId);
+  const waitingCalls = useMemo(() => (calls ?? []).filter((a) => a.threadId === threadId), [calls, threadId]);
   const [value, setValue] = useState("");
   // Files added to the message (+ → Add files, or dropped on the Chat page): their paths, until it is sent.
   const [files, setFiles] = useState<string[]>([]);
@@ -216,9 +216,11 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
     </div>
   ) : null;
 
-  // Under a usage-limit note that is the chat's last word: answer on another Claude Code entry instead.
+  // Under a usage-limit note that is the chat's last word: answer on another Claude Code entry instead. The same function
+  // until what it reads changes (GA-176), so a streamed piece doesn't redraw every group: `pending.act` and `fail` do the
+  // same on each render of a thread, so of `pending` only which button is busy counts.
   const lastId = messages[messages.length - 1]?.id;
-  const noteActions = (m: ChatMessage) => {
+  const noteActions = useCallback((m: ChatMessage) => {
     if (m.meta?.kind !== "limit" || m.id !== lastId || working || !threadId) return null;
     const others = (clis ?? []).filter((c) => c.kind === "claude_code" && !c.problem && c.id !== m.meta?.cli);
     if (!clis) return null;
@@ -228,12 +230,14 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
         onClick={() => { pinned.current = true; pending.act(`answer:${c.id}`, () => answerChatOn(threadId, c.id, m.id), fail); }}>
         Answer on {c.name}</BusyButton>
     ));
-  };
+  }, [lastId, working, threadId, clis, pending.busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const groups = groupMessages(messages);
+  // Worked out again only when the messages or the waiting calls change, not for each streamed piece (GA-176).
+  const groups = useMemo(() => groupMessages(messages), [messages]);
   const last = groups[groups.length - 1];
-  const placed = placePending(groups, waitingCalls);
-  const callsUnder = (key: string) => placed.has(key) ? <PendingActions actions={placed.get(key)!} onError={setSendError} /> : undefined;
+  const placed = useMemo(() => placePending(groups, waitingCalls), [groups, waitingCalls]);
+  const under = useMemo(() => new Map([...placed].map(([key, actions]) => [key, <PendingActions actions={actions} onError={setSendError} />])), [placed]);
+  const callsUnder = (key: string) => under.get(key);
   const liveBits = working ? (
     <>
       {draft && <div className="chat-msg agent draft"><MarkdownView md={draft} /><span className="caret" aria-hidden /></div>}

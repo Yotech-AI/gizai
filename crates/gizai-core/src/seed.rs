@@ -1,6 +1,6 @@
 //! First start: the organisation, the user, one team with the seven workflow columns and four labels, and on a new
-//! install (`ensure_seed_with_agents`) five agents ready to work. Each role's starting instructions (`role_template`)
-//! and allowed commands (`role_tools`).
+//! install (`ensure_seed_with_agents`) five agents ready to work and the onboarding waiting (`onboarding`). Each role's
+//! starting instructions (`role_template`) and allowed commands (`role_tools`).
 use crate::clis::Cli;
 use crate::db::{Db, Writer};
 use crate::model::AgentInput;
@@ -48,8 +48,8 @@ pub fn handle_for(name: &str) -> String {
 }
 
 /// Seeds an empty database (the organisation, you, a team with its columns, the labels) without agents; a database
-/// seeded before is left as it is. Tests and the demo data start here; a new install starts with
-/// `ensure_seed_with_agents`.
+/// seeded before is left as it is. Tests and the demo data start here, without the first start's onboarding; a new
+/// install starts with `ensure_seed_with_agents`.
 pub fn ensure_seed(db: &Db, you_name: &str) -> Result<SeedIds> {
     match seeded(db)? {
         Some(ids) => Ok(ids),
@@ -63,8 +63,10 @@ pub fn ensure_seed(db: &Db, you_name: &str) -> Result<SeedIds> {
 ///
 /// `codex` is asked only on that first start, for Codex when Claude Code isn't installed but Codex is. Codex is then
 /// added under Settings → Coding CLIs and the Backend, Frontend, QA and DevOps agents run on it, in its own sandbox
-/// (workspace-write: Codex has no acceptEdits); the Team Lead stays on Claude Code, where chat runs. A database seeded
-/// before gets nothing new.
+/// (workspace-write: Codex has no acceptEdits); the Team Lead stays on Claude Code, where chat runs.
+///
+/// The first start's onboarding waits from then on (`onboarding`, GA-162): it renames you and the team, can move the
+/// agents to another CLI and starts the welcome chat. A database seeded before gets nothing new.
 pub fn ensure_seed_with_agents(db: &Db, you_name: &str, codex: impl FnOnce() -> Option<Cli>) -> Result<SeedIds> {
     if let Some(ids) = seeded(db)? {
         return Ok(ids);
@@ -73,6 +75,7 @@ pub fn ensure_seed_with_agents(db: &Db, you_name: &str, codex: impl FnOnce() -> 
     db.write(None, |w| {
         let ids = seed_in(w, you_name)?;
         add_default_agents(w, &ids, codex)?;
+        crate::onboarding::set_pending_in(w)?;
         Ok(ids)
     })
 }

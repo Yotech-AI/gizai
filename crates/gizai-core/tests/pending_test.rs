@@ -349,7 +349,7 @@ fn v16_db(dir: &std::path::Path) -> std::path::PathBuf {
         include_str!("../migrations/0014_memory.sql"), include_str!("../migrations/0015_lead_merges.sql"),
         include_str!("../migrations/0016_memory_groups.sql"),
     ];
-    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
+    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 2, "two schema steps back (0017, and GA-180's 0018 after it)");
     Migrations::new(all.iter().map(|sql| M::up(sql)).collect()).to_latest(&mut c).unwrap();
     c.pragma_update(None, "foreign_keys", "ON").unwrap();
     c.execute_batch("
@@ -371,12 +371,13 @@ fn migration_0017_on_a_v16_database_adds_pending_actions_after_a_backup_and_ever
     let dir = tempfile::tempdir().unwrap();
     let path = v16_db(dir.path());
     let db = Db::open(&path).unwrap();
-    assert_eq!(db::SCHEMA_VERSION, 17);
+    // 0017, and GA-180's 0018 (indexes) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 18);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (17, 0), "schema 17, foreign keys intact");
+    assert_eq!((v, broken), (18, 0), "schema 18, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v17-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v18-"), "{snaps:?}");
     let old = Connection::open(dir.path().join("backups").join(&snaps[0])).unwrap();
     assert_eq!(old.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 16, "the backup is the schema 16 database");
     // the table, empty, with its index
@@ -420,7 +421,7 @@ fn schema(c: &Connection) -> Vec<(String, String, Option<String>)> {
 }
 
 #[test]
-fn a_v080_database_full_of_work_migrates_to_17_and_keeps_every_row_of_every_table() {
+fn a_v080_database_full_of_work_migrates_to_18_and_keeps_every_row_of_every_table() {
     use gizai_core::{clients, comments, docs, memory, projects, tasks, users};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gizai.db");
@@ -459,9 +460,12 @@ fn a_v080_database_full_of_work_migrates_to_17_and_keeps_every_row_of_every_tabl
     memory::write(&db, &who, "Decisions/Use SQLite", "# Use SQLite\n\nOne file, no server.", None, None).unwrap();
     memory::append(&db, &who, "Decisions/Use SQLite", None, "And backups are a copy.", None).unwrap();
     drop(db);
-    // one step back to the database v0.8.0 leaves (schema 16): 0017 only adds pending_actions and its index
+    // two steps back to the database v0.8.0 leaves (schema 16): 0017 only adds pending_actions and its index, and GA-180's
+    // 0018 only indexes
     let c = Connection::open(&path).unwrap();
-    c.execute_batch("DROP INDEX pending_actions_thread; DROP TABLE pending_actions; PRAGMA user_version = 16;").unwrap();
+    c.execute_batch("DROP INDEX comments_task; DROP INDEX chat_messages_thread; DROP INDEX runs_chat; DROP INDEX tasks_claimed;
+        DROP INDEX runs_active; DROP INDEX runs_agent_created; DROP INDEX runs_created; DROP INDEX tasks_project;
+        DROP INDEX pending_actions_thread; DROP TABLE pending_actions; PRAGMA user_version = 16;").unwrap();
     let other = tempfile::tempdir().unwrap();
     let genuine = v16_db(other.path());
     assert_eq!(schema(&c), schema(&Connection::open(&genuine).unwrap()), "the step back is exactly schema 16 (migrations 0001..0016)");
@@ -478,7 +482,7 @@ fn a_v080_database_full_of_work_migrates_to_17_and_keeps_every_row_of_every_tabl
     let (v, broken, ok): (i64, i64, String) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?,
         c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken, ok.as_str()), (17, 0, "ok"), "schema 17, foreign keys and the file intact");
+    assert_eq!((v, broken, ok.as_str()), (18, 0, "ok"), "schema 18, foreign keys and the file intact");
     let mut after = db.read(|c| Ok(all_rows(c))).unwrap();
     assert_eq!(after.remove("pending_actions"), Some(vec![]), "pending_actions is new and empty");
     assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>(), "no table lost, none added but pending_actions");
@@ -487,7 +491,7 @@ fn a_v080_database_full_of_work_migrates_to_17_and_keeps_every_row_of_every_tabl
     }
     // the backup made before the upgrade is that schema 16 database, with the same rows
     let snaps: Vec<_> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().path()).collect();
-    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v17-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v18-"), "{snaps:?}");
     let old = Connection::open(&snaps[0]).unwrap();
     assert_eq!(old.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 16);
     assert!(all_rows(&old) == before, "the backup holds every row");

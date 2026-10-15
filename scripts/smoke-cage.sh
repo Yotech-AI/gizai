@@ -4,7 +4,8 @@
 # Env: DATA=<data dir> (default .devdata/data), ROUTE=<start route> (ROUTE=board also runs the drag probe),
 # MODE=<extra self-test> (MODE=run drives an agent run on a task route), TIMEOUT=<seconds> (default 40); GZ_HOME and
 # GZ_SHELL give the app another home folder and $SHELL (the terminal test: a scratch home, so a shell in it reads and
-# writes nothing in yours).
+# writes nothing in yours). A new, empty data folder starts without the first start's onboarding
+# (GIZAI_SKIP_ONBOARDING=1); GIZAI_SKIP_ONBOARDING=0 shows it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 GZ=$PWD
@@ -17,6 +18,7 @@ env -i HOME="${GZ_HOME:-$HOME}" ${GZ_SHELL:+SHELL="$GZ_SHELL"} PATH="$PATH" USER
   XDG_RUNTIME_DIR="$DEV/run" \
   WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
   GIZAI_DATA_DIR="$DATA" GIZAI_SELFTEST="$REPORT" GIZAI_ROUTE="$ROUTE" GIZAI_SELFTEST_MODE="$MODE" \
+  GIZAI_SKIP_ONBOARDING="${GIZAI_SKIP_ONBOARDING-1}" \
   XDG_DATA_HOME="$DEV/xdg/data" XDG_CACHE_HOME="$DEV/xdg/cache" XDG_CONFIG_HOME="$DEV/xdg/config" \
   __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
   timeout -k 5 "$TIMEOUT" dbus-run-session -- cage -- "$BIN" > "$DEV/smoke.log" 2>&1

@@ -617,7 +617,9 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert_eq!((version, fks, broken, off), (gizai_core::db::SCHEMA_VERSION, 1, 0, 0), "the current version, foreign keys on and intact, every card tested");
     assert!(tasks::list(&db, &TaskFilter::default()).unwrap().iter().all(|t| t.testing));
     let indexes = db.read(|c| Ok(rows(c, "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='runs' AND name NOT LIKE 'sqlite_%' ORDER BY name"))).unwrap();
-    assert_eq!(indexes, [[Some("runs_agent_period".to_string())], [Some("runs_task".to_string())]]);
+    // the two the rebuilt runs table gets again (0007, 0008), and GA-180's four (0018)
+    let names: Vec<Option<String>> = indexes.into_iter().flatten().collect();
+    assert_eq!(names, ["runs_active", "runs_agent_created", "runs_agent_period", "runs_chat", "runs_created", "runs_task"].map(|n| Some(n.to_string())));
     // foreign keys still refuse a card in a column that isn't there
     let bad = db.read(|c| Ok(c.execute("UPDATE tasks SET state_id='nope' WHERE identifier='KADE-1'", [])?));
     assert!(bad.is_err(), "foreign keys are enforced again");

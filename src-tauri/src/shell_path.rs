@@ -4,7 +4,8 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// macOS: adds the folders your login shell puts on PATH to Gizai's own PATH, once, before anything else starts.
-/// Elsewhere it does nothing (Linux adds them per command in `runs::command_path`; Windows apps get the full PATH).
+/// Elsewhere it does nothing (Linux adds them per command in `runs::command_path`, read at most once a minute; Windows
+/// apps get the full PATH).
 pub fn adopt_login_path() {
     #[cfg(target_os = "macos")]
     {
@@ -17,9 +18,8 @@ pub fn adopt_login_path() {
     }
 }
 
-/// Gizai's own PATH, followed by the folders of `login` it doesn't have yet.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn with_login_path(own: OsString, login: &str) -> OsString {
+/// Gizai's own PATH, followed by the folders of `login` it doesn't have yet (also Linux's `runs::command_path`).
+pub(crate) fn with_login_path(own: OsString, login: &str) -> OsString {
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&own).collect();
     for d in std::env::split_paths(login) {
         if !d.as_os_str().is_empty() && !dirs.contains(&d) {

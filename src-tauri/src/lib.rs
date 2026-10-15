@@ -273,11 +273,12 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
         if let (Some(pid), Some(wt)) = (r.pid, r.worktree_path.as_deref()) {
             gizai_agents::process::end_orphan_group(pid as u32, std::path::Path::new(wt));
         }
-        // and its preview (GA-182), which works in the same worktree in a process group of its own
+        // and its preview (GA-182), which works in the same worktree, or a folder inside it (`cd web && …`), in a
+        // process group of its own
         if let (Some(wt), Ok(Some(note))) = (r.worktree_path.as_deref(), gizai_core::screenshots::run_note(&db, &r.id))
             && let Some(pid) = note.preview_pid
         {
-            gizai_agents::process::end_orphan_group(pid, std::path::Path::new(wt));
+            gizai_agents::process::end_orphan_group_within(pid, std::path::Path::new(wt));
         }
         if let (Some(_), Some(wt)) = (&r.task_id, r.worktree_path.as_deref()) {
             runs::record_head(&db, &r.id, std::path::Path::new(wt));

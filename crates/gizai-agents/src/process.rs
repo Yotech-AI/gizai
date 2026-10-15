@@ -118,6 +118,16 @@ pub struct RunHandle<E = RunEvent> {
 /// else. Linux reads that in /proc, macOS asks the kernel (`getpgid`, `proc_pidinfo`). Returns whether it signalled.
 /// Windows: always false, as nothing is left there: the previous Gizai's Job Objects ended its agents when it exited.
 pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
+    end_orphan(pid, expected_cwd, false)
+}
+
+/// As `end_orphan_group`, for a group whose leader may have changed folder inside the worktree: a run's preview (GA-182),
+/// whose Preview command may start with `cd web && …`. `pid` must work in `worktree` or in a folder inside it.
+pub fn end_orphan_group_within(pid: u32, worktree: &Path) -> bool {
+    end_orphan(pid, worktree, true)
+}
+
+fn end_orphan(pid: u32, expected_cwd: &Path, or_inside: bool) -> bool {
     if pid <= 1 {
         return false;
     }
@@ -125,7 +135,7 @@ pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
     {
         let Some(cwd) = group_leader_cwd(pid) else { return false };
         match (cwd.canonicalize(), expected_cwd.canonicalize()) {
-            (Ok(a), Ok(b)) if a == b => {}
+            (Ok(a), Ok(b)) if a == b || (or_inside && a.starts_with(&b)) => {}
             _ => return false,
         }
         Tree::led_by(pid).end(End::Terminate);
@@ -133,7 +143,7 @@ pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
     }
     #[cfg(windows)]
     {
-        let _ = expected_cwd;
+        let _ = (expected_cwd, or_inside);
         false
     }
 }

@@ -129,6 +129,11 @@ pub struct Slice {
     /// systemd-run and systemctl, found on Gizai's PATH when the slice was set up.
     systemd_run: PathBuf,
     systemctl: PathBuf,
+    /// systemd-run gets --expand-environment=no (systemd 254 and newer): without it, it turns `$$` into `$` and
+    /// `$VARIABLE` and `${VARIABLE}` into a value from Gizai's environment in every argument before the program starts,
+    /// while outside the slice the program gets them as they are. Older systemd doesn't know the switch, and doesn't
+    /// expand a scope's arguments either.
+    keep_args: bool,
     /// The scopes get OOMPolicy=continue (systemd 253 and newer): when Linux ends a process at the limit, the rest of its
     /// run goes on. Older systemd has no OOM policy for scopes and lets them run on anyway.
     oom_continue: bool,
@@ -153,10 +158,18 @@ impl Slice {
             if std::env::var_os("XDG_RUNTIME_DIR").is_none_or(|d| d.is_empty()) {
                 return Err("there is no systemd user session (XDG_RUNTIME_DIR isn't set)".into());
             }
-            let mut slice = Slice { name: name.to_string(), dir: PathBuf::new(), systemd_run, systemctl, oom_continue: true };
+            let mut slice = Slice { name: name.to_string(), dir: PathBuf::new(), systemd_run, systemctl, keep_args: true,
+                                    oom_continue: true };
             slice.set_properties(max)?;
+            // systemd older than 254 refuses --expand-environment as an unknown option (and expands nothing in a scope);
+            // only then is it left out, so a systemd that expands always gets it
+            let mut probed = slice.probe();
+            if probed.as_ref().is_err_and(|why| why.contains("expand-environment")) {
+                slice.keep_args = false;
+                probed = slice.probe();
+            }
             // systemd 253 and newer take an OOM policy for a scope; older ones refuse the property
-            let cgroup = match slice.probe() {
+            let cgroup = match probed {
                 Ok(c) => c,
                 Err(_) => {
                     slice.oom_continue = false;
@@ -206,10 +219,13 @@ impl Slice {
 
     /// A Command that starts `program` in a scope of its own in this slice: `systemd-run --user --scope`, which runs it
     /// in the same process once the scope is made, so its pid, process group, priority, environment, folder and open
-    /// files stay as they are. Add the program's arguments to it.
+    /// files stay as they are, and its arguments reach it unchanged, `$` included. Add the program's arguments to it.
     pub fn command(&self, program: &OsStr) -> Command {
         let mut cmd = os::command(&self.systemd_run);
         cmd.args(["--user", "--scope", "--collect", "--quiet"]).arg(format!("--slice={}", self.name));
+        if self.keep_args {
+            cmd.arg("--expand-environment=no");
+        }
         if self.oom_continue {
             cmd.args(["-p", "OOMPolicy=continue"]);
         }

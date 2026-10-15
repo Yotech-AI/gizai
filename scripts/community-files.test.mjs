@@ -1,5 +1,6 @@
-// Tests for the repository's community files and one name in the docs (GA-201): the issue forms in
-// .github/ISSUE_TEMPLATE keep the rules of GitHub's issue forms check (docs.github.com, "Syntax for issue forms",
+// Tests for the repository's community files and one name in the docs (GA-201): the README's first screen, word for
+// word where it counts; the issue forms in .github/ISSUE_TEMPLATE keep the rules of GitHub's issue forms check
+// (docs.github.com, "Syntax for issue forms",
 // "Syntax for GitHub's form schema" and "Common validation errors when creating issue forms"), read with the YAML parser
 // the Editor already has (@codemirror/lang-yaml), as GA has no other; CONTRIBUTING.md, SECURITY.md, the pull request
 // template and release.yml exist, and their links reach real files and headings; docs/RELEASING.md labels the bump and
@@ -250,6 +251,52 @@ describe("the issue forms in .github/ISSUE_TEMPLATE", () => {
       expect(link.url).toMatch(/^https:\/\//);
     }
     expect(config.contact_links.map((l) => l.url)).toEqual([`${REPO}/discussions/categories/q-a`, `${REPO}/security/policy`, "https://gizai.app/docs"]);
+  });
+});
+
+describe("the README's first screen (the research's section 3.3)", () => {
+  const readme = read("README.md");
+  const lines = readme.split("\n");
+  const section = (title) => readme.split(`\n## ${title}\n`)[1].split("\n## ")[0];
+
+  it("under the logo: the headline, who it's for, and the links with the Website first", () => {
+    expect(lines.slice(8, 15)).toEqual([
+      '<div align="center">',
+      "",
+      "**Your agents build it. You review.**",
+      "",
+      "A free, open-source desktop app where a team of AI coding agents works through your board in parallel, on Claude Code,",
+      "Codex CLI or Gemini CLI. Made for freelancers and software companies with several clients and projects.",
+      "",
+    ]);
+    expect(lines[15]).toBe(`[Website](https://gizai.app) · [Install](#install) · [Docs](#documentation) · [Releases](${REPO}/releases) · [Licence](LICENSE)`);
+  });
+
+  it("What it is, Made for work with several clients and The team come before Features, and Install after", () => {
+    const headings = lines.filter((l) => l.startsWith("## ")).slice(0, 5);
+    expect(headings).toEqual(["## What it is", "## Made for work with several clients", "## The team", "## Features", "## Install"]);
+    expect(section("What it is")).toMatch(/^\nGizAi is an Agentic Development Application \(ADA\)\. You write the cards;/);
+    expect(section("Made for work with several clients").match(/^- \*\*[^*]+\*\*/gm)).toEqual([
+      "- **Clients, projects and cards in one app.**", "- **Memory kept apart per client.**", "- **Several accounts per CLI.**",
+    ]);
+    const team = section("The team");
+    expect(team).toMatch(/A new install starts with five agents\./);
+    for (const agent of ["**Team Lead:**", "**Backend and Frontend Agents**", "**QA Agent**", "**DevOps Agent**", "**Design Agent**", "**R&D Agent**"]) expect(team).toContain(agent);
+  });
+
+  it("Features keeps its eight lines, each with its Read more, and the third names Codex CLI and Gemini CLI", () => {
+    const features = section("Features").split("\n").filter((l) => l.startsWith("- **"));
+    expect(features).toHaveLength(8);
+    for (const f of features) expect(f).toMatch(/\[Read more\]\(docs\/features\/[a-z-]+\.md\)$/);
+    expect(features[2]).toMatch(/^- \*\*Bring your own CLI\.\*\* .*like Claude Code, Codex CLI or Gemini CLI,/);
+  });
+
+  it("its last line says GizAi is independent of Anthropic, OpenAI and Google, and names their trademarks", () => {
+    expect(readme.trimEnd().split("\n").at(-1)).toBe(
+      "GizAi is an independent open-source project by YoTech, not affiliated with or endorsed by Anthropic, OpenAI or Google. " +
+        "It runs Claude Code, Codex CLI and Gemini CLI with your own accounts, and never sells AI usage. " +
+        "Claude Code is a trademark of Anthropic, Codex of OpenAI, and Gemini of Google LLC.",
+    );
   });
 });
 

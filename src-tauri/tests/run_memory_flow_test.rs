@@ -355,6 +355,38 @@ async fn in_the_slice_the_team_leads_instructions_with_dollar_signs_reach_claude
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
+async fn in_the_slice_a_cards_text_with_dollar_signs_reaches_a_cli_that_takes_the_prompt_as_an_argument_as_written() {
+    // Must stay the same: another coding CLI (OpenCode, for example) gets the prompt, with the card's text, as an
+    // argument ({prompt}); in the slice it reaches it as written, `$` and `%` included, as outside it.
+    const FAKE_CLI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/gizai-agents/tests/fake-cli.sh");
+    let a = app();
+    let Some(slice) = own_slice(&a.st, 2 * GB) else { return };
+    let text = "Run `php artisan test --filter=${TEST}` in $HOME/app; a card under $$5 is small, cost: $5; 100% done, %h %u stay.";
+    let task = a.card(text);
+    let cgroups = a.tmp.path().join("cli-cgroups");
+    let bin = wrapper(a.tmp.path(), "opencode.sh", &format!("cat /proc/self/cgroup >> '{}'", cgroups.display()), FAKE_CLI);
+    let mut list = gizai_core::clis::list(&a.st.db).unwrap();
+    // FAKE_TEMP=1: the fake writes the whole prompt it got to stderr
+    list.push(gizai_core::clis::Cli { name: "OpenCode".into(), kind: "other".into(), command: bin,
+        env: vec!["FAKE_KIND=other".into(), "FAKE_TEMP=1".into()], args: "run {prompt}".into(), ..Default::default() });
+    let cli = gizai_lib::clis::save(&a.st, list).unwrap().into_iter().find(|c| c.cli.name == "OpenCode").unwrap().cli.id;
+    let backend = a.backend();
+    let m = gizai_core::team::agent(&a.st.db, &backend).unwrap();
+    gizai_core::team::update_agent(&a.st.db, &a.st.you_id, &backend, AgentInput { name: m.name, role_key: m.role_key, adapter: cli,
+        ..Default::default() }).unwrap();
+
+    let summary = runs::run_once(&a.st, &task, None, None).await.unwrap();
+    assert_eq!(summary.status, "succeeded", "{summary:?}");
+    let at = cgroups_in(&cgroups);
+    assert!(at.len() == 1 && in_a_scope_of(&at[0], &slice.0), "the CLI ran in the slice: {at:?}");
+    let run = gizai_core::runs::get(&a.st.db, &summary.run_id).unwrap();
+    let err = std::fs::read_to_string(Path::new(&run.log_path).with_extension("stderr.log")).unwrap();
+    assert!(err.contains("argv: run ") && err.contains("prompt chars: 0"), "the prompt came as an argument: {err}");
+    assert!(err.contains(text), "the card's text as written: {err}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
 async fn the_slices_memory_max_is_the_setting_and_memory_high_90_percent_and_saving_a_new_value_changes_both_without_a_restart() {
     use gizai_agents::run_memory::limits_for;
     let tmp = tempfile::tempdir().unwrap();

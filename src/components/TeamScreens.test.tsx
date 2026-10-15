@@ -263,7 +263,7 @@ describe("the agent form", () => {
 describe("the board's column notes", () => {
   it("follow the columns: the agents of an Auto column, Manual, or your review", () => {
     const task = { id: "t1", identifier: "GA-1", projectId: "p1", title: "A card", descriptionMd: "", stateId: "todo", stateName: "To do", stateCategory: "ready",
-      priority: 0, labels: [], bounceCount: 0, failCount: 0, sortKey: "a0", testing: true, createdAt: 0, updatedAt: 0, byHand: false } as Task;
+      priority: 0, labels: [], bounceCount: 0, failCount: 0, sortKey: "a0", testing: true, createdAt: 0, updatedAt: 0, byHand: false, screenshots: null } as Task;
     const html = renderToStaticMarkup(<Board tasks={[task]} states={states} members={members} onMove={() => {}} onOpen={() => {}} />);
     const col = (name: string) => html.slice(html.indexOf(`data-col="${name}"`), html.indexOf("data-col=", html.indexOf(`data-col="${name}"`) + 1));
     expect(col("To do")).toContain('<div class="col-note">Auto: Backend Agent 2 and Frontend Agent 2</div>');

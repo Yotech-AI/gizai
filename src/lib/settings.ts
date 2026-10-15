@@ -1,5 +1,6 @@
-// Settings: the warning under "Runs at once" (was GA-27), and the warning by Quit Gizai completely (GA-21).
-import type { Team } from "../types";
+// Settings: the warning under "Runs at once" (was GA-27), the hint under "Memory for agent runs" (GA-202), and the
+// warning by Quit Gizai completely (GA-21).
+import type { Settings, Team } from "../types";
 
 /** An agent that takes cards, with its cards at once. */
 export type CardAgent = { name: string; cardsAtOnce: number };
@@ -30,6 +31,22 @@ export function runsAtOnceWarning(runsAtOnce: number, agents: CardAgent[]): stri
     ? `Set Runs at once to ${total}, or lower an agent's Cards at once on the Team page.`
     : "Runs at once goes up to 20, so lower some agents' Cards at once on the Team page.";
   return `Your active agents can work on ${total} cards at once together (${each}), but Runs at once is ${runsAtOnce}, so some of them can't use all their slots. ${fix}`;
+}
+
+/** The hint under "Memory for agent runs": all agent runs together, and how much memory the computer has. Where the
+ *  system doesn't enforce the limit (macOS, Windows, Linux without a systemd user session) it says that Gizai only waits
+ *  for free memory before it starts a run. */
+export function runsMemoryHint(s: Pick<Settings, "computerMemoryGb" | "runsMemoryEnforced">): string {
+  const has = s.computerMemoryGb ? ` This computer has ${s.computerMemoryGb} GB.` : "";
+  const only = s.runsMemoryEnforced ? "" : " On this system Gizai only waits for free memory before it starts a run.";
+  return `All agent runs together.${has}${only}`;
+}
+
+/** Why "Memory for agent runs" can't be saved as it is, or null: a whole number of GB, 2 or more (the backend checks
+ *  the computer's memory as the most). Null too when the backend didn't send the field. */
+export function runsMemoryError(gb: number | undefined): string | null {
+  if (gb === undefined || (Number.isInteger(gb) && gb >= 2)) return null;
+  return "Memory for agent runs is a whole number of GB, 2 or more.";
 }
 
 /** The warning by Quit Gizai completely: what stops, and how many runs and chat answers it stops when some are at work. */

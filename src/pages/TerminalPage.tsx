@@ -13,6 +13,7 @@ import { editorFolders } from "../api";
 import type { EditorFolder, TerminalSession } from "../types";
 import { go, href, type Route } from "../router";
 import { modKey } from "../lib/keys";
+import { onWindowFocus } from "../lib/windowFocus";
 import {
   asksToClose, clearTerminal, closeQuestion, endedSay, folderNameOf, nextAfterClose, sentence, stepTerminal, useTerminalSize, useTerminals,
   useTerminalsLoaded,
@@ -99,8 +100,8 @@ function OneTerminal({ id, youId }: { id: string; youId: string }) {
     let alive = true;
     const load = () => { editorFolders().then((fs) => { if (alive) setFolder(fs.find((f) => f.id === folderId) ?? null); }).catch(() => {}); };
     load();
-    window.addEventListener("focus", load);
-    return () => { alive = false; window.removeEventListener("focus", load); };
+    const stop = onWindowFocus(load);
+    return () => { alive = false; stop(); };
   }, [folderId]);
   const newOff = folder?.readOnly ? `${folder.readOnlyWhy ?? "An agent is working on it"}: a terminal there waits until its run ends.` : null;
 

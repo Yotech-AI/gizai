@@ -6,6 +6,8 @@
 // its data (useData, the team, the live runs, the drawers) is handed in, and contract C3 is a fake.
 // GA-151 QA: a card's row keeps its identifier whole and its title on one line (the ellipsis class), and its tooltip starts
 // with the full title; a by-hand row's tooltip, a row whose card isn't known and the folder rows stay as they were.
+// GA-177 QA: the rows are asked again every 30 seconds (not while the window is hidden) and on the window's focus, but a
+// focus 5 seconds or less after the last ask asks nothing (on Omarchy the focus follows the mouse).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import type { EditorFolder, EditorUpdated, FolderGit, FolderMain, Task } from "../types";
@@ -69,6 +71,8 @@ const NOW = Date.UTC(2026, 9, 12, 12, 0, 0);
 const mains = new Map<string, FolderMain>();
 const gits = new Map<string, FolderGit>();
 const listeners: ((e: EditorUpdated) => void)[] = [];
+/** What the sidebar asked contract C3 for: "folders", "git <id>", "main <id>" (GA-177). */
+const asked: string[] = [];
 const main = (more: Partial<FolderMain> = {}): FolderMain => ({
   mainLabel: "origin/main", fetchedAt: NOW - 2 * 60_000, fetchError: null, branch: "main", onDefault: true, behind: 3, ahead: 0, uncommitted: 0,
   canUpdate: true, updateSays: "move main 3 commits to 319bf0b and run npm ci", updating: false, ...more,
@@ -83,10 +87,10 @@ vi.mock("../api", async (orig) => {
   return {
     ...out,
     listProjects: as("projects"), listTasks: as("tasks"), getTeam: as("team"), memoryNotes: as("notes"), listChatThreads: as("threads"),
-    editorFolders: () => Promise.resolve(FOLDERS),
+    editorFolders: () => { asked.push("folders"); return Promise.resolve(FOLDERS); },
     editorApps: () => Promise.resolve([]),
-    editorGit: (id: string) => Promise.resolve(gits.get(id) ?? { branch: "main", files: {}, uncommitted: 0 }),
-    editorMain: (id: string) => (mains.has(id) ? Promise.resolve(mains.get(id)!) : Promise.reject("no such folder")),
+    editorGit: (id: string) => { asked.push(`git ${id}`); return Promise.resolve(gits.get(id) ?? { branch: "main", files: {}, uncommitted: 0 }); },
+    editorMain: (id: string) => { asked.push(`main ${id}`); return mains.has(id) ? Promise.resolve(mains.get(id)!) : Promise.reject("no such folder"); },
     onEditorUpdated: (cb: (e: EditorUpdated) => void) => { listeners.push(cb); return Promise.resolve(() => { listeners.splice(listeners.indexOf(cb), 1); }); },
   };
 });
@@ -189,7 +193,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   for (const [k, inst] of insts) { unmount(inst); insts.delete(k); }
   h.effects.length = 0;
-  store.clear(); mains.clear(); gits.clear(); listeners.length = 0;
+  store.clear(); mains.clear(); gits.clear(); listeners.length = 0; asked.length = 0; doc.hidden = false;
   state.data = { projects: [], tasks: [], threads: [], notes: [], team: { id: "t1", name: "Software", members: [], states: [], labels: [] } };
   store.set("gizai.editor.opened", JSON.stringify([KADE, API, CARD]));
   mains.set(KADE, main());
@@ -382,5 +386,70 @@ describe("the sidebar's section headings: the + and the caret in the middle of t
       .filter((l) => /\.nav-label[^{]*button[^{]*\{/.test(l) && !l.startsWith(".nav-label button {") && !l.startsWith(".nav-label button:hover {"));
     expect(others).toEqual([]);
     expect(rule(componentsCss, ".nav-label button:hover")).toEqual(["background: var(--hover)", "color: var(--text)"]);
+  });
+});
+
+describe("GA-177: the Editor rows are asked again every 30 seconds and on a focus, at most once every 5 seconds", () => {
+  const focus = () => win.dispatchEvent(new Event("focus"));
+  async function wait(ms: number) { await vi.advanceTimersByTimeAsync(ms); render(); await settle(); }
+  /** One ask of the rows: the folders, and git's status and main's standing for each opened folder. */
+  const ONE = ["folders", `git ${KADE}`, `main ${KADE}`, `git ${API}`, `main ${API}`, `git ${CARD}`, `main ${CARD}`];
+  const since = (n: number) => asked.slice(n);
+
+  it("20 focus events within 3 seconds ask for the rows once, not 20 times", async () => {
+    await show();
+    expect(asked).toEqual(ONE);
+    await wait(1000);
+    const n = asked.length;
+    for (let i = 0; i < 20; i++) { focus(); await wait(150); }
+    expect(since(n)).toEqual(ONE);
+  });
+
+  it("a focus more than 5 seconds after the last ask asks at once; 5 seconds or less after it, nothing", async () => {
+    await show();
+    await wait(1000);
+    focus();
+    await settle();
+    let n = asked.length;
+    await wait(5000);
+    focus();
+    await settle();
+    expect(since(n)).toEqual([]);
+    n = asked.length;
+    await wait(1);
+    focus();
+    await settle();
+    expect(since(n)).toEqual(ONE);
+  });
+
+  it("asks every 30 seconds whatever the focus did; a focus 5 seconds or less after that ask does nothing", async () => {
+    await show();
+    await wait(28_000);
+    focus(); // 28 s: asks
+    await settle();
+    let n = asked.length;
+    await wait(2000); // 30 s: the 30-second ask, though the focus was 2 s ago
+    expect(since(n)).toEqual(ONE);
+    n = asked.length;
+    await wait(4000);
+    focus(); // 34 s: 4 s after the 30-second ask
+    await settle();
+    expect(since(n)).toEqual([]);
+    await wait(25_999);
+    expect(since(n)).toEqual([]);
+    await wait(1); // 60 s
+    expect(since(n)).toEqual(ONE);
+  });
+
+  it("the 30-second ask skips while the window is hidden; the first focus after it asks at once", async () => {
+    await show();
+    const n = asked.length;
+    doc.hidden = true;
+    await wait(5 * 60_000);
+    expect(since(n)).toEqual([]);
+    doc.hidden = false;
+    focus();
+    await settle();
+    expect(since(n)).toEqual(ONE);
   });
 });

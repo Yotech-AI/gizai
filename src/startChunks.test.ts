@@ -79,6 +79,13 @@ describe("the start (npm run build)", () => {
     expect(start.has(chunkOf("src/components/memory/GraphCanvas.tsx")!.fileName)).toBe(false);
   });
 
+  // GA-178 QA: splitting the drawers was out of scope, so Ctrl+K's palette and every drawer open as before, with no file to load
+  it("keeps the sidebar, the command palette, the close guard and every drawer in it", () => {
+    for (const part of ["src/components/Sidebar.tsx", "src/components/CommandPalette.tsx", "src/components/CloseGuard.tsx", "src/lib/drawers.tsx",
+      "src/components/NewTaskDrawer.tsx", "src/components/ProjectForm.tsx", "src/components/ClientForm.tsx", "src/components/PersonDrawer.tsx",
+      "src/components/AgentForm.tsx", "src/components/DocDrawer.tsx", "src/router.ts"]) expect(startModules.some((id) => isModule(id, part)), part).toBe(true);
+  });
+
   it("is at most three files, smaller than before GA-178", () => {
     expect(start.size).toBeLessThanOrEqual(3);
     const bytes = [...start].reduce((n, f) => n + new TextEncoder().encode(byFile.get(f)!.code).length, 0);

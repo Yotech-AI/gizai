@@ -120,6 +120,20 @@ function pageArea(tree: ReactElement): { suspense: Area; page: ReactElement } {
   expect(suspense, "a Suspense in the page area").not.toBeNull();
   return { suspense: suspense!, page: suspense!.props.children };
 }
+/** Each named element of the tree (a component by its name, a tag by itself): whether it sits inside the page area's Suspense. */
+function placed(tree: ReactElement): Map<string, boolean> {
+  const at = new Map<string, boolean>();
+  const walk = (n: ReactNode, inside: boolean) => {
+    if (!n || typeof n !== "object") return;
+    if (Array.isArray(n)) { n.forEach((c) => walk(c, inside)); return; }
+    const el = n as ReactElement<{ children?: ReactNode }>;
+    const name = el.type === Suspense ? "Suspense" : typeof el.type === "function" ? el.type.name : typeof el.type === "string" ? el.type : "";
+    if (name) at.set(name, inside);
+    walk(el.props?.children, inside || el.type === Suspense);
+  };
+  walk(tree, false);
+  return at;
+}
 type Lazy = { $$typeof: symbol; _payload: unknown; _init: (p: unknown) => (...a: unknown[]) => unknown };
 const LAZY = Symbol.for("react.lazy");
 /** The component a lazy page resolves to (React's lazy holds its loader in _payload and resolves with _init). */
@@ -237,6 +251,17 @@ describe("the page area", () => {
     expect((page.type as { $$typeof?: symbol }).$$typeof).toBe(LAZY);
     expect(await resolveLazy(page.type)).toBe(name);
     expect(page.props).toMatchObject(props);
+  });
+
+  // GA-178 QA: a page whose code is still loading suspends only the page area; the drawers (DrawerHost renders them beside
+  // the app), the sidebar, Ctrl+K's command palette and the close guard stay on screen and work as before.
+  it.each(["#/board", "#/task/t1", "#/memory/graph", "#/settings"])("leaves the drawers, the sidebar, the command palette and the close guard outside it on '%s'", async (hash) => {
+    const tree = await start({}, hash);
+    expect((tree.type as { name?: string }).name).toBe("DrawerHost");
+    const at = placed(tree);
+    expect(at.get("Suspense")).toBe(false);
+    expect(at.get("main")).toBe(false);
+    for (const name of ["Band", "Sidebar", "CommandPalette", "CloseGuard"]) expect(at.get(name), name).toBe(false);
   });
 });
 

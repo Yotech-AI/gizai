@@ -648,9 +648,13 @@ pub fn set_chat_cli(st: State<AppState>, thread_id: String, cli: Option<String>)
 pub async fn answer_chat_on(st: State<'_, AppState>, thread_id: String, cli: String, note_id: String) -> R<()> {
     chat::answer_on(&st, &thread_id, &cli, &note_id, None).await.map(|_| ())
 }
-/// The coding CLIs Runs on lists under the chat's text box, with why one can't run the chat.
+/// The coding CLIs Runs on lists under the chat's text box, with why one can't run the chat. Off the main thread:
+/// finding their programs can start your login shell.
 #[tauri::command]
-pub fn chat_clis(st: State<AppState>) -> R<Vec<chat::ChatCli>> { chat::clis(&st) }
+pub async fn chat_clis(st: State<'_, AppState>) -> R<Vec<chat::ChatCli>> {
+    let st = st.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || chat::clis(&st)).await.map_err(|e| e.to_string())?
+}
 #[tauri::command]
 pub fn stop_chat(st: State<AppState>, thread_id: String) { chat::stop(&st, &thread_id) }
 /// Chat answers being written right now, with their text so far.

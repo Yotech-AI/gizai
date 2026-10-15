@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use gizai_agents::cli::{self as agent_cli, Kind, RunFolder, TaskRun};
@@ -778,26 +778,67 @@ async fn prepare_worktree(st: &AppState, holder: Option<&str>, task: &Task, proj
     }
 }
 
+/// How long `command_path` keeps your login shell's PATH (Linux): a burst of calls (a chat page, a run's start, the
+/// Editor's apps) starts one login shell.
+pub const LOGIN_PATH_TTL: Duration = Duration::from_secs(60);
+
+/// Your login shell's PATH and when it was read (Linux), kept for `LOGIN_PATH_TTL`.
+static LOGIN_PATH: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+
+/// The login shells `login_path` started (Linux).
+static LOGIN_SHELLS: AtomicUsize = AtomicUsize::new(0);
+
 /// The PATH for the commands that prepare a worktree (and the coding CLIs Settings finds and runs start): on Linux
 /// Gizai's own, then the folders your login shell adds (started from the app launcher, Gizai often lacks ~/.local/bin,
-/// mise or nvm). On macOS and Windows Gizai's own: macOS took your login shell's at start (`shell_path`), and a Windows
-/// app gets the full PATH.
-pub(crate) fn command_path() -> std::ffi::OsString {
+/// mise or nvm), as read in the last minute (`LOGIN_PATH_TTL`). On macOS and Windows Gizai's own: macOS took your login
+/// shell's at start (`shell_path`), and a Windows app gets the full PATH.
+pub fn command_path() -> std::ffi::OsString {
+    path_with_login(false)
+}
+
+/// `command_path` with your login shell's PATH read now, for what looks for a program installed a moment ago (Settings →
+/// Coding CLIs finding the CLIs and saving them); the calls after it get this PATH.
+pub fn fresh_command_path() -> std::ffi::OsString {
+    path_with_login(true)
+}
+
+fn path_with_login(fresh: bool) -> std::ffi::OsString {
     let own = std::env::var_os("PATH").unwrap_or_default();
     if cfg!(any(windows, target_os = "macos")) {
         return own;
     }
-    let login = std::process::Command::new("bash").args(["-lc", "printf '\\n%s' \"$PATH\""]).stdin(std::process::Stdio::null()).output().ok()
+    crate::shell_path::with_login_path(own, &login_path(fresh))
+}
+
+/// Your login shell's PATH (Linux): the one read less than `LOGIN_PATH_TTL` ago, else (or when `fresh`) read now with
+/// `bash -lc`. One read at a time: a call while another reads waits for it, and gets what it read.
+fn login_path(fresh: bool) -> String {
+    let mut kept = LOGIN_PATH.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, path)) = kept.as_ref() && !fresh && at.elapsed() < LOGIN_PATH_TTL {
+        return path.clone();
+    }
+    let at = Instant::now();
+    LOGIN_SHELLS.fetch_add(1, Ordering::SeqCst);
+    let path = std::process::Command::new("bash").args(["-lc", "printf '\\n%s' \"$PATH\""]).stdin(std::process::Stdio::null()).output().ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().last().map(str::to_string))
         .unwrap_or_default();
-    let mut dirs: Vec<PathBuf> = std::env::split_paths(&own).collect();
-    for d in std::env::split_paths(&login) {
-        if !d.as_os_str().is_empty() && !dirs.contains(&d) {
-            dirs.push(d);
-        }
-    }
-    std::env::join_paths(dirs).unwrap_or(own)
+    *kept = Some((at, path.clone()));
+    path
+}
+
+/// For tests: how many login shells `command_path` and `fresh_command_path` started in this process (Linux; none on
+/// macOS and Windows).
+#[doc(hidden)]
+pub fn login_shells() -> usize {
+    LOGIN_SHELLS.load(Ordering::SeqCst)
+}
+
+/// For tests: the kept login PATH as if it was read `by` earlier, so a test needn't wait a minute for it to go stale.
+#[doc(hidden)]
+pub fn age_login_path(by: Duration) {
+    let mut kept = LOGIN_PATH.lock().unwrap_or_else(|e| e.into_inner());
+    *kept = kept.take().and_then(|(at, path)| Some((at.checked_sub(by)?, path)));
 }
 
 async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str, resume: Option<Resume>)

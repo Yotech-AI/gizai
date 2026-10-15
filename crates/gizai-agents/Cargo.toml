@@ -20,9 +20,10 @@ keyring = { version = "3", features = ["sync-secret-service", "crypto-rust", "ap
 # February 2025, and a later fix would come as a git dependency or a copy (docs/research/terminal.md §3.2 Q1).
 portable-pty = "=0.9.0"
 
-# Job Objects (an agent's whole process tree) and finding programs on Windows (see src/os.rs).
+# Job Objects (an agent's whole process tree) and finding programs on Windows (see src/os.rs), and the computer's memory
+# (src/run_memory.rs).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

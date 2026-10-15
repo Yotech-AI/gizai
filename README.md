@@ -8,9 +8,12 @@
 
 <div align="center">
 
-**A desktop app where a team of AI agents works through your board.**
+**Your agents build it. You review.**
 
-[Install](#install) · [Docs](#documentation) · [Releases](https://github.com/Yotech-AI/gizai/releases) · [Licence](LICENSE)
+A free, open-source desktop app where a team of AI coding agents works through your board in parallel, on Claude Code,
+Codex CLI or Gemini CLI. Made for freelancers and software companies with several clients and projects.
+
+[Website](https://gizai.app) · [Install](#install) · [Docs](#documentation) · [Releases](https://github.com/Yotech-AI/gizai/releases) · [Licence](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/tour/tour-dark.gif">
@@ -22,13 +25,37 @@
 
 ## What it is
 
-GizAi is an Agentic Development Application (ADA): a team of AI agents builds your software through your board, while you review and decide. Each card gets its own git worktree, an agent builds it, a QA agent tests it, and it lands in your Review. Everything runs on your own computer, with your own git repositories, logins and coding CLIs.
+GizAi is an Agentic Development Application (ADA). You write the cards; agents build them side by side, each card in
+its own git worktree and branch; a QA agent tests the card and opens its pull request; and you review and merge.
+Everything runs on your own computer, with your own git repositories, logins and coding CLIs.
+
+## Made for work with several clients
+
+- **Clients, projects and cards in one app.** Clients with their contacts, projects with their own repository and docs,
+  and every card on one board.
+- **Memory kept apart per client.** Agents keep notes as they work, and a note about one client or project never
+  reaches a run for another.
+- **Several accounts per CLI.** Add a second Claude Code or Codex CLI account, see the usage limits of each, and move
+  an agent or a chat to another account.
+
+## The team
+
+A new install starts with five agents. Each runs on the CLI you pick, with its own model, instructions and tools:
+
+- **Team Lead:** you chat with it (its chat runs on Claude Code). It turns requests into cards, starts agents and
+  answers their questions before they reach you.
+- **Backend and Frontend Agents** build the cards in To do.
+- **QA Agent** tests the cards, adds missing tests and opens the pull requests.
+- **DevOps Agent** releases what you merged, when you ask.
+
+Add a **Design Agent** for a Design column, or agents with roles and instructions of your own, like an **R&D Agent**
+that researches a feature before it's built.
 
 ## Features
 
 - **The board decides who works.** Each column holds the agents that work its cards, so cards move from builder to tester to you by themselves. [Read more](docs/features/board.md)
 - **A Team Lead you talk to.** Ask the Team Lead in chat to plan work, make cards or start agents, and Approve with one click (or Approve all) the steps that wait for your OK. [Read more](docs/features/team-lead.md)
-- **Bring your own CLI.** Each agent runs on the coding CLI you pick, like Claude Code, Codex or Gemini, on your own machine with your own logins and accounts. [Read more](docs/features/cli.md)
+- **Bring your own CLI.** Each agent runs on the coding CLI you pick, like Claude Code, Codex CLI or Gemini CLI, on your own machine with your own logins and accounts. [Read more](docs/features/cli.md)
 - **Tested before you see it.** A QA agent tests a card before it reaches your Review, and opens its pull request on GitHub. [Read more](docs/features/testing.md)
 - **The Editor and Terminal, built in.** Open a project or a card's worktree, see its git status and edit it, with your own shell in a panel under the code or on its own page. [Read more](docs/features/editor-and-terminal.md)
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
@@ -113,4 +140,4 @@ GizAi is open source under the [Apache License 2.0](LICENSE); see also [NOTICE](
 
 The whole app is free, with the agents, the Team Lead's chat, the Editor and the terminals; the plan for paid features is hosted services only, like an encrypted backup and sync ([docs/PAID-FEATURES.md](docs/PAID-FEATURES.md)).
 
-GizAi is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.
+GizAi is an independent open-source project by YoTech, not affiliated with or endorsed by Anthropic, OpenAI or Google. It runs Claude Code, Codex CLI and Gemini CLI with your own accounts, and never sells AI usage. Claude Code is a trademark of Anthropic, Codex of OpenAI, and Gemini of Google LLC.

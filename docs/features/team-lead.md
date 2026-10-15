@@ -15,6 +15,8 @@ The Team Lead manages clients, projects, cards and agents with GizAi's own tools
 
 Its chat runs on Claude Code ([Bring your own CLI](cli.md)).
 
+On a new install, the first start ends in a welcome chat: the Team Lead welcomes you, says in a few lines what it and the team can do, and asks whether you'd like help setting up agents, clients, projects, tasks or anything else ([First start](../install.md#first-start)).
+
 ## The chat
 
 - **Runs on**, under the text box, moves one chat to another Claude Code account (Settings → Coding CLIs), for example when one is near its weekly limit. The new account gets the conversation handed over, and the chat notes the switch. An answer that hits a usage limit offers Answer on another account.

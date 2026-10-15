@@ -127,6 +127,19 @@ GizAi isn't signed yet: there is no Apple Developer account or Windows certifica
 
 After an update, macOS may ask once whether GizAi may use what it saved in your keychain: choose Always Allow.
 
+## First start
+
+The first time GizAi opens, it walks you through four steps:
+
+1. your name and your team's name;
+2. which coding CLIs to use: it lists the ones it finds installed. The Backend, Frontend, QA and DevOps Agents run on the one you pick; the Team Lead stays on Claude Code, where its chat runs;
+3. importing MCP servers from Claude Code, if you want;
+4. the Team Lead's chat, when Claude Code is installed: it welcomes you and asks whether you'd like help setting up agents, clients, projects, tasks or anything else.
+
+You can skip it. GizAi is set up already: you (named after your login), My company, My team, and five agents (the Team Lead, Backend, Frontend, QA and DevOps) on Claude Code, or on Codex when only Codex is installed. Change them later on the Team page and in Settings.
+
+`GIZAI_SKIP_ONBOARDING=1` starts GizAi as if you skipped it: for scripts and tests on a new data folder.
+
 ## Updates
 
 GizAi asks GitHub for the latest release 20 seconds after it starts, then every six hours. When a newer one is out, **Update to X.Y.Z** shows above Company in the sidebar. Click it and GizAi:

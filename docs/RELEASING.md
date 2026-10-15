@@ -160,11 +160,12 @@ Never test against the Gizai Jeffrey uses: not `./install.sh`, not `~/.local/lib
 
    ```sh
    HOME="$T/home" XDG_DATA_HOME="$T/home/.local/share" GIZAI_DATA_DIR="$T/data" \
-     GIZAI_REPO="$T/fake-repo" GIZAI_RELEASES_URL="file://$T/latest.json" \
+     GIZAI_REPO="$T/fake-repo" GIZAI_RELEASES_URL="file://$T/latest.json" GIZAI_SKIP_ONBOARDING=1 \
      "$T/home/.local/lib/gizai/gizai"
    ```
 
    - Gizai installs an update into the prefix it runs from: here `$T/home/.local`. The installer's desktop entry and icons go to `$T/home/.local/share`.
+   - `$T/data` is new, so `GIZAI_SKIP_ONBOARDING=1` skips the first start's onboarding ([docs/install.md](install.md#first-start)).
    - Keep `HOME` and `XDG_DATA_HOME` in the scratch folder anyway: other tools write there too.
    - A Gizai that runs from `target/release` never installs; it says why in Settings → Updates.
 

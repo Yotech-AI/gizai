@@ -1,5 +1,5 @@
-import { Fragment } from "react";
-import Markdown from "react-markdown";
+import { Fragment, memo } from "react";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { viewUrl } from "../lib/markdown";
@@ -21,26 +21,29 @@ export function ItemChip({ kind, itemKey, children }: { kind: ItemKind; itemKey:
   );
 }
 
+const PLUGINS = [remarkGfm];
+const COMPONENTS: Components = {
+  a: ({ href, children }) => {
+    const item = parseItemUrl(href);
+    if (item) return <ItemChip kind={item.kind} itemKey={item.key}>{children}</ItemChip>;
+    return (
+      <a href={href || undefined} title={href || undefined}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (href) openUrl(href).catch(() => {}); }}>{children}</a>
+    );
+  },
+  // Remote images are blocked by the content security policy; show the alt text instead.
+  img: ({ alt }) => <span className="faint">[image{alt ? `: ${alt}` : ""}]</span>,
+};
+
 /** Renders Markdown (GFM). Raw HTML is never rendered; links are http(s)/mailto, which open in the system browser, or gizai:
- *  links to items, which show as chips and open in Gizai. */
-export function MarkdownView({ md }: { md: string }) {
+ *  links to items, which show as chips and open in Gizai. Memoised on its text (GA-176): when the screen around it redraws
+ *  (a streamed piece of the chat's answer, a live run's clock), the same text isn't parsed again. */
+export const MarkdownView = memo(function MarkdownView({ md }: { md: string }) {
   return (
     <div className="prose">
-      <Markdown remarkPlugins={[remarkGfm]} skipHtml urlTransform={viewUrl}
-        components={{
-          a: ({ href, children }) => {
-            const item = parseItemUrl(href);
-            if (item) return <ItemChip kind={item.kind} itemKey={item.key}>{children}</ItemChip>;
-            return (
-              <a href={href || undefined} title={href || undefined}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (href) openUrl(href).catch(() => {}); }}>{children}</a>
-            );
-          },
-          // Remote images are blocked by the content security policy; show the alt text instead.
-          img: ({ alt }) => <span className="faint">[image{alt ? `: ${alt}` : ""}]</span>,
-        }}>
+      <Markdown remarkPlugins={PLUGINS} skipHtml urlTransform={viewUrl} components={COMPONENTS}>
         {md}
       </Markdown>
     </div>
   );
-}
+});

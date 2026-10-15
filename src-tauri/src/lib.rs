@@ -16,6 +16,7 @@ pub mod mcp;
 pub mod mcp_servers;
 pub mod memory;
 pub mod notifications;
+pub mod onboarding;
 pub mod pending;
 pub mod pulls;
 mod quit;
@@ -218,7 +219,8 @@ pub fn housekeeping(db: &Db, dir: &std::path::Path) {
 
 /// Opens (and on first start seeds) the database in `dir`. Runs a previous Gizai left behind are marked interrupted.
 /// A first start is a new install: it gets the five default agents, on Codex when only Codex is installed
-/// (`gizai_core::seed::ensure_seed_with_agents`).
+/// (`gizai_core::seed::ensure_seed_with_agents`), and the onboarding waits (`onboarding`), unless
+/// GIZAI_SKIP_ONBOARDING=1.
 pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -> Result<AppState, String> {
     open_data(dir, notify, true)
 }
@@ -233,6 +235,8 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     } else {
         gizai_core::seed::ensure_seed(&db, &display_name())
     }.map_err(|e| e.to_string())?;
+    // A script on a new, empty data folder (GIZAI_SKIP_ONBOARDING=1) starts as if the onboarding was skipped.
+    onboarding::skip_at_start(&db);
     // Memory (GA-96): a group of agents sharing one folder whose owner was removed goes on with its next agent.
     if let Err(e) = gizai_core::memory::ensure_groups(&db, &seed.you_id) {
         eprintln!("gizai: handing shared memory folders on failed: {e}");
@@ -608,6 +612,7 @@ pub fn run() {
             commands::dismiss_chat, commands::chat_queue, commands::edit_queued_chat, commands::remove_queued_chat, commands::send_chat_queue,
             commands::check_files, commands::item_id,
             commands::set_chat_cli, commands::answer_chat_on, commands::chat_clis,
+            commands::onboarding_pending, commands::finish_onboarding, commands::skip_onboarding,
             commands::pending_actions, commands::approve_pending_action, commands::approve_pending_actions, commands::discard_pending_action,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             changes::card_changes, changes::card_file_diff, changes::run_changes,

@@ -23,7 +23,10 @@ vi.mock("react", async (orig) => {
   const useEffect = ((effect: EffectCallback, deps?: DependencyList) => (fake.on ? undefined : R.useEffect(effect, deps))) as typeof R.useEffect;
   const useLayoutEffect = ((effect: EffectCallback, deps?: DependencyList) => (fake.on ? undefined : R.useLayoutEffect(effect, deps))) as typeof R.useLayoutEffect;
   const useRef = ((init: unknown) => (fake.on ? { current: init } : R.useRef(init))) as typeof R.useRef;
-  const hooks = { useState, useEffect, useLayoutEffect, useRef };
+  // GA-176: ChatThread keeps its groups and note actions between renders; called as a function, each is simply made.
+  const useMemo = ((make: () => unknown, deps: DependencyList) => (fake.on ? make() : R.useMemo(make, deps))) as typeof R.useMemo;
+  const useCallback = ((f: unknown, deps: DependencyList) => (fake.on ? f : R.useCallback(f as () => void, deps))) as typeof R.useCallback;
+  const hooks = { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback };
   return { ...R, ...hooks, default: { ...R, ...hooks } };
 });
 vi.mock("./useChat", () => ({

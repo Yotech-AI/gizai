@@ -46,7 +46,15 @@ Replace `X.Y.Z` with the new version.
    git grep -n 'X.Y.Z' -- Cargo.toml package.json src-tauri/tauri.conf.json Cargo.lock package-lock.json
    ```
 
-   Commit it as `Bump version to X.Y.Z`, push the branch, and open its pull request into `main`. A pull request that changes nothing but the version skips the build and the tests, so its checks pass within a minute or two: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which the bump starts as it changes `src-tauri/tauri.conf.json`. Merge it as soon as they report:
+   Commit it as `Bump version to X.Y.Z`, push the branch, and open its pull request into `main` with the label `release`:
+
+   ```sh
+   gh pr create --base main --title "Bump version to X.Y.Z" --body "GizAi's version, in its five files." --label release
+   ```
+
+   The label keeps the bump and the release's pull request (step 2) out of the release's list of changes (`.github/release.yml`). gh refuses to open a pull request with a label the repository doesn't have: until Jeffrey has made `release` (by hand, once), open both without `--label release` and say so on the card.
+
+   A pull request that changes nothing but the version skips the build and the tests, so its checks pass within a minute or two: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which the bump starts as it changes `src-tauri/tauri.conf.json`. Merge it as soon as they report:
 
    ```sh
    gh pr view <number> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.name): \(.status) \(.conclusion)"'
@@ -61,20 +69,24 @@ Replace `X.Y.Z` with the new version.
 2. **Merge `main` into `production`** with a pull request and a merge commit (never squash or rebase). This pull request is the release's full check: CI and Install build, test and install exactly what goes to production, on Linux, macOS and Windows. Wait for all of it before you merge:
 
    ```sh
-   gh pr create --base production --head main --title "Release vX.Y.Z" --body "What's in it, in a few lines."
+   gh pr create --base production --head main --title "Release vX.Y.Z" --body "What's in it, in a few lines." --label release
    gh pr view <number> --json statusCheckRollup --jq '.statusCheckRollup[] | "\(.name): \(.status) \(.conclusion)"'
    gh pr merge <number> --merge
    ```
 
    That's five checks, about 12 minutes: `ubuntu-24.04`, `macos-14` and `windows-latest` from CI, and `install on macos-14` and `install on windows-latest` from Install, which runs as the release changes `src-tauri/tauri.conf.json`. Each must say `COMPLETED SUCCESS`. A check that is still `IN_PROGRESS` needs a few more minutes (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
 
-3. **Create the release** on `production`, with notes made from the merged pull requests:
+3. **Create the release** on `production`, with the release card's notes ([Release notes](#release-notes)) above GitHub's list of the merged pull requests:
 
    ```sh
-   gh release create vX.Y.Z --target production --title "vX.Y.Z" --generate-notes
+   gh release create vX.Y.Z --target production --title "vX.Y.Z" --notes-file <notes.md> --generate-notes --discussion-category "Announcements"
    ```
 
-   Don't add `--draft` or `--prerelease`. GizAi reads GitHub's "latest release", which skips both. Its notes show in Settings → Updates under "What's new".
+   - `<notes.md>` is a file with the card's notes that isn't in git: in a GizAi run, put it in the card's temp folder (`$TMPDIR`, which git leaves out). Never commit it.
+   - `--generate-notes` adds GitHub's list of the merged pull requests under the notes, without the ones labelled `release` (`.github/release.yml`).
+   - `--discussion-category "Announcements"` also posts the release in the repository's Discussions, under Announcements. It only works once Jeffrey has turned Discussions on (by hand, with that category): until `gh repo view --json hasDiscussionsEnabled --jq .hasDiscussionsEnabled` says `true`, leave `--discussion-category "Announcements"` out.
+
+   Don't add `--draft` or `--prerelease`. GizAi reads GitHub's "latest release", which skips both. Its notes show in Settings → Updates under "What's new in X.Y.Z".
 
 4. **Check it:**
 
@@ -91,6 +103,41 @@ If `git push` asks for a username (the remote is an https address and git has no
 ```sh
 git -c url.git@github.com:.insteadOf=https://github.com/ push -u origin HEAD
 ```
+
+## Release notes
+
+A release's notes say what's new for the people who use GizAi. They show on the release's page, in Discussions → Announcements, and in Settings → Updates under "What's new in X.Y.Z", which shows their first 20,000 characters: so the notes come first, and GitHub's list after them.
+
+**The format,** in this order:
+
+1. **A share line:** one sentence with GizAi, the version and what matters most in it, which reads well on its own when someone shares the release.
+2. **What's new:** at most six bullets, each starting with a few words in bold, about what changed for the person using GizAi. Fixes go together in a last bullet, **Fixed:**.
+3. **Update:** one line on how to update.
+4. **All changes:** a heading, with GitHub's list of the merged pull requests under it, which `--generate-notes` adds.
+
+**A sample,** written from v0.11.0's pull requests:
+
+```markdown
+GizAi 0.11.0 installs with one line on Linux, macOS and Windows, and is now open source under the Apache License 2.0.
+
+## What's new
+
+- **Install with one line.** `curl -fsSL https://gizai.app/install.sh | sh` on Linux and macOS, or `irm https://gizai.app/install.ps1 | iex` in PowerShell on Windows 11. Run it again to update.
+- **Apache-2.0.** GizAi's licence is now the Apache License 2.0. Releases before it stay under MIT.
+- **The Team Lead can update a linked folder with uncommitted changes:** after your yes, it puts them in git's stash first.
+- **The chat says when an answer is done** after your last Approve or Discard.
+- **Fixed:** long card titles no longer run over the rows in the folder picker and the sidebar's Editor list, a folder you open again keeps its place, and the sidebar's + and caret are centred.
+
+**Update:** press Update to 0.11.0 above Company in the sidebar, or Settings → Updates → Check now.
+
+## All changes
+```
+
+**Who writes them:**
+
+1. **The Team Lead drafts** the share line and "What's new" in the release card's description, from the cards in Done since the last release. It knows the board and writes for people.
+2. **Jeffrey edits them, or leaves them as they are, and starts the DevOps Agent.** Starting it is his OK to release, as always.
+3. **The DevOps Agent** copies the notes from the card into `<notes.md>` (step 3), outside the repository's files, adds the format's Update line and All changes heading when they're missing, and publishes. When the card has no "What's new", it writes one from the merged pull requests and stops with `needs_decision`, so no notes go out unread.
 
 ## Never
 

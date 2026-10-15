@@ -176,9 +176,9 @@ pub struct Settings {
     pub data_dir: String,
     pub max_concurrent_runs: u32,
     /// Memory for agent runs (GA-202), in GB: all agent runs together. Half of this computer's memory until someone sets
-    /// it (`run_memory::default_gb`); 2 GB up to the computer's memory. 0 (left out) keeps what was saved.
+    /// it (`run_memory::default_gb`); 2 GB up to the computer's memory. None (left out) keeps what was saved.
     #[serde(default)]
-    pub runs_memory_gb: u32,
+    pub runs_memory_gb: Option<u32>,
     /// Read-only: this computer's memory in GB (0 when the system doesn't say), for the hint under it.
     #[serde(default)]
     pub computer_memory_gb: u32,
@@ -231,7 +231,7 @@ pub fn get_settings(st: &AppState) -> Settings {
         claude_bin: settings::get(&st.db, "claude_bin").ok().flatten(),
         data_dir: st.data_dir.display().to_string(),
         max_concurrent_runs: settings::get(&st.db, "max_concurrent_runs").ok().flatten().unwrap_or(DEFAULT_MAX_CONCURRENT),
-        runs_memory_gb: crate::run_memory::setting_gb(st),
+        runs_memory_gb: Some(crate::run_memory::setting_gb(st)),
         computer_memory_gb: crate::run_memory::computer_gb().unwrap_or(0),
         runs_memory_enforced: st.run_memory.enforced(),
         agents_paused: settings::get(&st.db, "agents_paused").ok().flatten().unwrap_or(false),
@@ -251,8 +251,8 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     if !(1..=20).contains(&s.max_concurrent_runs) {
         return Err("allow between 1 and 20 runs at once".into());
     }
-    if s.runs_memory_gb != 0 {
-        crate::run_memory::check(s.runs_memory_gb)?;
+    if let Some(gb) = s.runs_memory_gb {
+        crate::run_memory::check(gb)?;
     }
     if matches!(s.max_run_usd, Some(v) if v <= 0.0) {
         return Err("a spending limit must be more than $0".into());
@@ -287,8 +287,8 @@ pub fn save_settings(st: &AppState, s: &Settings) -> Result<(), String> {
     crate::github::save_push_over(st, &s.push_over)?;
     crate::notifications::save_switches(&st.db, &s.notifications)?;
     settings::set(&st.db, gizai_core::editor::ROOTS, &editor_roots).map_err(|e| e.to_string())?;
-    if s.runs_memory_gb != 0 {
-        crate::run_memory::save(st, s.runs_memory_gb)?;
+    if let Some(gb) = s.runs_memory_gb {
+        crate::run_memory::save(st, gb)?;
     }
     Ok(())
 }

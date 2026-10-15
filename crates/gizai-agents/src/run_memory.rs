@@ -1,8 +1,9 @@
 //! Memory for agent runs (GA-202, docs/PLATFORMS.md): one limit for all of a Gizai's agent runs together, Settings →
 //! Runs. On Linux with a systemd user session every run, chat answer, board check and worktree preparation starts in a
 //! scope of its own inside one slice per data folder (`slice_name`), whose MemoryMax is the limit and MemoryHigh 90% of
-//! it: the runs are slowed down first, and only at the limit does Linux end a process, one inside the slice, never
-//! Gizai. On every system the start check reads what the runs use and what the computer has free (`Reading`).
+//! it, without swap: the runs are slowed down first, and only at the limit does Linux end a process, one inside the
+//! slice, never Gizai. On every system the start check reads what the runs use and what the computer has free
+//! (`Reading`).
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -134,12 +135,16 @@ pub struct Slice {
 }
 
 impl Slice {
-    /// Sets the slice `name` up for agent runs with a limit of `max` bytes: its MemoryMax and MemoryHigh (90%) through
-    /// your user's systemd (`systemctl --user set-property --runtime`, which lasts until you log out; Gizai sets them
-    /// at each start), then a first scope in it (`systemd-run --user --scope`) that says where the slice's cgroup is,
-    /// and the kernel's memory.max there. Err says why it can't be: no systemd (another init system, a container), no
-    /// user session, no cgroup v2, the memory controller off. Linux only; elsewhere always Err.
+    /// Sets the slice `name` up for agent runs with a limit of `max` bytes: its MemoryMax, MemoryHigh (90%) and no swap
+    /// through your user's systemd (`systemctl --user set-property --runtime`, which lasts until you log out; Gizai sets
+    /// them at each start), then a first scope in it (`systemd-run --user --scope`) that says where the slice's cgroup
+    /// is, and the kernel's memory.max there. Err says why it can't be: no systemd (another init system, a container), no
+    /// user session, no cgroup v2, the memory controller off, or `GIZAI_RUNS_SLICE=off` (a test of Gizai without it).
+    /// Linux only; elsewhere always Err.
     pub fn set_up(name: &str, max: u64) -> Result<Slice, String> {
+        if std::env::var_os("GIZAI_RUNS_SLICE").is_some_and(|v| v == "off") {
+            return Err("GIZAI_RUNS_SLICE is off".into());
+        }
         #[cfg(target_os = "linux")]
         {
             let path = std::env::var_os("PATH").unwrap_or_default();
@@ -180,6 +185,7 @@ impl Slice {
     }
 
     /// A new limit of `max` bytes: MemoryMax and MemoryHigh (90%) change together, at once, for the runs at work too.
+    /// Lowering it below what the runs use now makes Linux reclaim at once, and end a process when it can't.
     pub fn set_limit(&self, max: u64) -> Result<(), String> {
         self.set_properties(max)?;
         self.check(max)
@@ -227,12 +233,14 @@ impl Slice {
         quick(os::command(&self.systemctl).args(["--user", "revert", &self.name])).map(|_| ())
     }
 
-    /// MemoryMax and MemoryHigh, in one call.
+    /// MemoryMax and MemoryHigh, in one call, and no swap (MemorySwapMax=0): with swap the runs would go on past the limit
+    /// in it (zram's compressed pages still take memory, outside the slice), instead of being held to it.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn set_properties(&self, max: u64) -> Result<(), String> {
         let (max, high) = limits_for(max);
         let mut cmd = os::command(&self.systemctl);
-        cmd.args(["--user", "set-property", "--runtime", &self.name, &format!("MemoryMax={max}"), &format!("MemoryHigh={high}")]);
+        cmd.args(["--user", "set-property", "--runtime", &self.name, &format!("MemoryMax={max}"), &format!("MemoryHigh={high}"),
+                  "MemorySwapMax=0"]);
         quick(&mut cmd).map(|_| ()).map_err(|e| format!("systemctl --user set-property {} failed: {e}", self.name))
     }
 
@@ -309,7 +317,7 @@ fn quick(cmd: &mut Command) -> Result<Vec<u8>, String> {
 
 /// Watches the scope a process started in through `Slice::command` for processes Linux ended at the slice's limit: the
 /// `oom_kill` count in the scope's memory.events, which the kernel raises for each process it ends there. `on_kill`
-/// hears each rise with the count so far, as it happens (inotify; a look every 250 ms without it). Elsewhere it watches
+/// hears each rise with the count so far, as it happens (inotify; a look every 100 ms without it). Elsewhere it watches
 /// nothing.
 pub struct OomWatch {
     stop: Arc<AtomicBool>,
@@ -334,7 +342,7 @@ impl OomWatch {
     }
 
     /// Stops watching after a last look, and returns how many processes Linux ended in the scope (0 when it never
-    /// found the scope). Blocks for at most 250 ms.
+    /// found the scope). Blocks for at most 100 ms.
     pub fn finish(mut self) -> u64 {
         self.stop.store(true, Ordering::SeqCst);
         self.thread.take().and_then(|t| t.join().ok()).unwrap_or(0)
@@ -379,8 +387,8 @@ fn watch(slice: &Slice, pid: u32, stop: &AtomicBool, mut on_kill: impl FnMut(u64
             break;
         }
         match &changes {
-            Some(c) => c.wait(Duration::from_millis(250)),
-            None => std::thread::sleep(Duration::from_millis(250)),
+            Some(c) => c.wait(Duration::from_millis(100)),
+            None => std::thread::sleep(Duration::from_millis(100)),
         }
     }
     seen

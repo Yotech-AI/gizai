@@ -12,7 +12,9 @@ CREATE INDEX IF NOT EXISTS comments_task ON comments(task_id, created_at, id);
 -- created_at in it, every chat would need a sort).
 CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id);
 
--- A chat's runs (its answers), in order. Card runs and board checks have no chat and stay out.
+-- A chat's runs (its answers), in order. No query reads runs by chat yet (the app follows a chat's answer in memory, and
+-- a message carries its run's id): this one is ready for the first that does. Card runs and board checks have no chat
+-- and stay out.
 CREATE INDEX IF NOT EXISTS runs_chat ON runs(chat_thread_id, created_at) WHERE chat_thread_id IS NOT NULL;
 
 -- The card a run claimed, freed when the run ends (runs::release_claim). Only claimed cards are in it.
@@ -30,7 +32,7 @@ CREATE INDEX IF NOT EXISTS runs_agent_created ON runs(agent_actor_id, created_at
 -- Runs by time: the Usage page's period.
 CREATE INDEX IF NOT EXISTS runs_created ON runs(created_at);
 
--- A project's cards: the project list's counts (the board and the sidebar) and its runs this month, and a release under
--- way (the board check). deleted_at is a column, not a WHERE: the counts read live cards from the index alone, and the
--- runs this month count archived cards' runs too.
+-- A project's cards: the project list's counts (the board and the sidebar) and its runs this month, a release under way
+-- (the board check), and an agent's list_tasks for one project. deleted_at is a column, not a WHERE: the counts read
+-- live cards from the index alone, and the runs this month count archived cards' runs too.
 CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, deleted_at, state_category);

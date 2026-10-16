@@ -762,13 +762,18 @@ impl RunsMemory {
         made.as_ref()?.as_ref().ok().cloned()
     }
 
-    /// The slice, once `slice` has set it up; never sets it up, nor waits for a set-up under way (Gizai quitting: nothing
-    /// has started in a slice that isn't set up yet).
+    /// The slice, once `slice` has set it up. Never sets it up, and waits at most a moment for a set-up under way (Gizai
+    /// quitting: nothing has started in a slice that isn't set up yet).
     pub fn made(&self) -> Option<Slice> {
-        let made = match self.made.try_lock() {
-            Ok(m) => m,
-            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return None,
+        use std::sync::TryLockError;
+        let until = Instant::now() + Duration::from_millis(200);
+        let made = loop {
+            match self.made.try_lock() {
+                Ok(m) => break m,
+                Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+                Err(TryLockError::WouldBlock) if Instant::now() < until => std::thread::sleep(Duration::from_millis(5)),
+                Err(TryLockError::WouldBlock) => return None,
+            }
         };
         made.as_ref()?.as_ref().ok().cloned()
     }

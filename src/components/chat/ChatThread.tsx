@@ -253,8 +253,11 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
   // to have. The list starts below what comes before it in the column (its padding, an error).
   const list = useRef<HTMLDivElement>(null);
   const [above, setAbove] = useState(0);
+  // the same functions until the groups change, so a streamed piece doesn't make the list work out every group's place
+  const keyOf = useCallback((i: number) => groups[i]!.key, [groups]);
+  const sizeOf = useCallback((i: number) => groupHeight(groups[i]!), [groups]);
   const virt = useVirtualizer({
-    count: groups.length, getScrollElement: () => scroller.current, getItemKey: (i) => groups[i]!.key, estimateSize: (i) => groupHeight(groups[i]!),
+    count: groups.length, getScrollElement: () => scroller.current, getItemKey: keyOf, estimateSize: sizeOf,
     overscan: 6, scrollMargin: above,
     // it opens at its end (the virtualizer scrolls there as the chat shows); before the chat is measured, about a screen
     // and a half of groups

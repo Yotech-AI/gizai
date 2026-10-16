@@ -4227,8 +4227,12 @@ async function editorOrderProbe(part: "a" | "b") {
 // ---- GA-188: the benchmark harness's probe (docs/research/performance.md §7; scripts/perf.sh) ----
 
 /** One scenario's result: its numbers (flat, each a number: scripts/perf.sh takes the median of each over its runs), when
- *  the page began (`timeOrigin`, ms since 1970: perf.sh measures from its launch to it) and what else it saw. */
-export type PerfResult = { scenario: string; ok: boolean; errors: string[]; timeOrigin: number; numbers: Record<string, number>; detail: Record<string, unknown> };
+ *  the page began (`timeOrigin`, ms since 1970: perf.sh measures from its launch to it), the windows it measured in (ms
+ *  since 1970: perf.sh takes the processes' CPU in each from its samples) and what else it saw. */
+export type PerfResult = {
+  scenario: string; ok: boolean; errors: string[]; timeOrigin: number; numbers: Record<string, number>;
+  windows: Record<string, [number, number]>; detail: Record<string, unknown>;
+};
 type PerfIds = Record<string, string | undefined>;
 
 const ms = (n: number | undefined) => (n === undefined ? -1 : Math.round(n));
@@ -4251,11 +4255,18 @@ const scrolling = (box: HTMLElement, time: number, step = 60) => {
 /** The calls and events from `from` until now, as numbers named `<name>_…`. */
 function counted(o: PerfResult, name: string, from: number, to = performance.now()) {
   const c = perfCount(from, to);
+  o.windows[name] = [Math.round(o.timeOrigin + from), Math.round(o.timeOrigin + to)];
   o.numbers[`${name}_calls`] = c.calls;
   o.numbers[`${name}_kb`] = kib(c.bytes);
   o.numbers[`${name}_events`] = c.heard;
   o.detail[name] = { calls: c.commands, events: c.events };
   return c;
+}
+
+/** Before a scenario opens its page: the start's own work done (the sidebar drawn, then a second). */
+async function perfSettle() {
+  await waitFor(() => (perfFirst.sidebar !== undefined ? true : null), 20000);
+  await sleep(1000);
 }
 
 /** `start` (the default route): when the page's file came and its first script ran, app_info answered, the sidebar and
@@ -4283,6 +4294,7 @@ async function perfBoard(o: PerfResult) {
   if (!(await shown(() => perfFirst.board !== undefined, 20000))) throw new Error("the board's columns were not all drawn");
   o.numbers.columns_drawn_ms = ms(perfFirst.board);
   const per: { column: string; fps: number; longestFrameMs: number }[] = [];
+  const scrolled = performance.now();
   for (const col of document.querySelectorAll<HTMLElement>(".board .col:not(.rail)")) {
     const body = col.querySelector<HTMLElement>(".col-body");
     if (!body || body.scrollHeight <= body.clientHeight + 1) continue;
@@ -4293,6 +4305,7 @@ async function perfBoard(o: PerfResult) {
     per.push({ column: col.dataset.col ?? "", fps: f.fps, longestFrameMs: f.longestFrameMs });
   }
   o.detail.columns = per;
+  o.windows.scroll = [Math.round(o.timeOrigin + scrolled), Math.round(o.timeOrigin + performance.now())];
   o.numbers.scroll_fps = per.length ? Math.min(...per.map((p) => p.fps)) : -1;
   o.numbers.scroll_longest_frame_ms = per.length ? Math.max(...per.map((p) => p.longestFrameMs)) : -1;
   await sleep(500);
@@ -4319,6 +4332,7 @@ async function perfBoard(o: PerfResult) {
  *  50 characters typed in the text box, one a frame (longest frame). */
 async function perfChat(o: PerfResult, ids: PerfIds) {
   if (!ids.chat) throw new Error("no chat id (prep_perf's chat=)");
+  await perfSettle();
   const t0 = performance.now();
   location.hash = `#/chat/${encodeURIComponent(ids.chat)}`;
   if (!(await shown(() => !!document.querySelector(".chat-scroll .chat-row"), 20000))) throw new Error("the chat drew no messages");
@@ -4348,6 +4362,7 @@ async function perfChat(o: PerfResult, ids: PerfIds) {
  *  the last key to the hits); #/memory/graph: the graph probe's load, frames a second while it lays out, settle and a
  *  frame's work. */
 async function perfMemory(o: PerfResult) {
+  await perfSettle();
   const t0 = performance.now();
   location.hash = "#/memory";
   if (!(await shown(() => !!document.querySelector(".mem-tree [role=treeitem]"), 20000))) throw new Error("the Memory tree was not drawn");
@@ -4384,6 +4399,7 @@ async function perfMemory(o: PerfResult) {
  *  events while it is live. */
 async function perfRunlog(o: PerfResult, ids: PerfIds) {
   if (!ids.card || !ids.run) throw new Error("no card or run id (prep_perf's card= and run=)");
+  await perfSettle();
   location.hash = `#/task/${encodeURIComponent(ids.card)}`;
   const tab = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".tabs .tab")].find((b) => b.textContent?.startsWith("Runs")), 20000);
   if (!tab) throw new Error("no Runs tab on the card");
@@ -4440,6 +4456,7 @@ async function perfIdle(o: PerfResult) {
  *  (ms); the calls in a minute while it sits open. */
 async function perfEditor(o: PerfResult, ids: PerfIds) {
   if (!ids.folder || ids.folder === "-") throw new Error("no Editor folder (prep_perf's folder=, made with --editor)");
+  await perfSettle();
   const t0 = performance.now();
   location.hash = `#/editor/${encodeURIComponent(ids.folder)}`;
   if (!(await shown(() => !!document.querySelector(".ed-tree [role=treeitem]"), 30000))) throw new Error("the Editor's tree was not drawn");
@@ -4463,6 +4480,7 @@ async function perfEditor(o: PerfResult, ids: PerfIds) {
  *  (FAKE_CHAT_STREAM): frames a second and the longest frame while it streams, and the calls and events meanwhile. */
 async function perfLead(o: PerfResult, ids: PerfIds) {
   if (!ids.chat) throw new Error("no chat id (prep_perf's chat=)");
+  await perfSettle();
   location.hash = `#/chat/${encodeURIComponent(ids.chat)}`;
   const c = await waitFor(() => { const box = composer(); return box && !document.querySelector(".composer-box .stop-btn") ? box : null; }, 20000);
   if (!c) throw new Error("no text box that sends");
@@ -4496,7 +4514,7 @@ export const PERF_SCENARIO_NAMES = Object.keys(PERF_SCENARIOS);
 export async function perfProbe(spec: string): Promise<PerfResult> {
   const [scenario = "", ...rest] = spec.trim().split(/\s+/);
   const ids: PerfIds = Object.fromEntries(rest.map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]));
-  const o: PerfResult = { scenario, ok: false, errors: [], timeOrigin: performance.timeOrigin, numbers: {}, detail: {} };
+  const o: PerfResult = { scenario, ok: false, errors: [], timeOrigin: performance.timeOrigin, numbers: {}, windows: {}, detail: {} };
   if (!perfOn) o.errors.push("the counter is off: the backend's perf flag (window.__GIZAI_PERF__) was not set");
   const run = PERF_SCENARIOS[scenario];
   if (!run) o.errors.push(`no scenario "${scenario}" (${PERF_SCENARIO_NAMES.join(", ")})`);

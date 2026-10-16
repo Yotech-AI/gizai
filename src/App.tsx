@@ -91,7 +91,7 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
         }
         document.body.dataset.ready = "1";
         if (i.selftest) {
-          const { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, teamProbe, terminalProbe, usageProbe } = await import("./selftest");
+          const { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, screenshotsProbe, teamProbe, terminalProbe, usageProbe } = await import("./selftest");
           // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the
           // probe types in the editor and reports; the script quits Gizai from outside, so the page doesn't.
           if (i.selftest_mode?.startsWith("close-save:")) {
@@ -116,10 +116,15 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
           let run: Awaited<ReturnType<typeof runProbe>> | undefined;
           // GA-112: GIZAI_SELFTEST_MODE=changes-a:<ids> or changes-b:<ids> (prep_changes' cards) on a task route
           let changes: Awaited<ReturnType<typeof changesProbe>> | undefined;
+          // GA-185: GIZAI_SELFTEST_MODE=screenshots:<ids> (prep_screenshots' card and runs) on route task/<card>/screenshots
+          let screenshots: Awaited<ReturnType<typeof screenshotsProbe>> | undefined;
           if (i.start_route?.startsWith("task/") && /^changes-[ab]:/.test(i.selftest_mode ?? "")) {
             const [kind, list = ""] = i.selftest_mode!.split(":");
             changes = await changesProbe(kind === "changes-a" ? "a" : "b", list.trim().split(/\s+/));
             if (!changes.ok) errors.push(`changes probe: ${JSON.stringify(changes)}`);
+          } else if (i.start_route?.startsWith("task/") && i.selftest_mode?.startsWith("screenshots:")) {
+            screenshots = await screenshotsProbe(i.selftest_mode.slice(12).trim().split(/\s+/));
+            if (!screenshots.ok) errors.push(`screenshots probe: ${JSON.stringify(screenshots)}`);
           } else if (i.start_route?.startsWith("task/") && i.selftest_mode === "run") {
             run = await runProbe(i.start_route.slice(5), {
               getTask,
@@ -178,7 +183,7 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
             terminal = await terminalProbe(i.selftest_mode.slice(9));
             if (!terminal.ok) errors.push(`terminal probe: ${JSON.stringify(terminal)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes, terminal });
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes, screenshots, terminal });
           await exitApp(0);
         }
       })
@@ -224,7 +229,7 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
             {route.page === "chat" || route.page === "chats" ? <ChatPage id={route.id} archive={route.page === "chats"} />
               : route.page === "inbox" ? <TasksPage key="inbox" inboxFor={info?.you_id ?? ""} onNewTask={newTask} />
               : route.page === "tasks" || route.page === "board" ? <TasksPage key={route.page} initialView={route.page === "board" ? "board" : undefined} onNewTask={newTask} />
-              : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} view={route.view === "changes" ? "changes" : "card"} run={route.run} youId={info?.you_id ?? ""} />
+              : route.page === "task" && route.id ? <TaskPage key={route.id} id={route.id} view={route.view === "changes" || route.view === "screenshots" ? route.view : "card"} run={route.run} youId={info?.you_id ?? ""} />
               : route.page === "doc" && route.id ? <DocPage key={route.id} id={route.id} />
               : route.page === "agent" && route.id ? <AgentPage key={route.id} id={route.id} />
               : route.page === "team" ? <TeamPage />

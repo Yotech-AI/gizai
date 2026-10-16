@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "browser": "vite --mode browser --host 127.0.0.1 --strictPort",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "tauri": "tauri"

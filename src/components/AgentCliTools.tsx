@@ -102,7 +102,7 @@ export function AgentCliToolsFields({ agentId, cliId, allowedTools, value, onCha
           </li>
         </ul>
       </Field>
-      <Field label="Browser" wide warn={view.browser.disabled ?? null}
+      <Field id="agent-browser" label="Browser" wide warn={view.browser.disabled ?? null}
         hint="Chrome DevTools: a hidden Chrome with a throwaway profile, never on your screen and never your own browser, profile or logins. Every click is a tool call, and the cap per run is in Settings → Runs. Suggested for QA, Frontend and Design agents, never switched on by Gizai.">
         <ul className="mcp-agent" aria-label="Browser">
           <li className={`ma-server${bOn ? " on" : ""}`}>
@@ -121,6 +121,12 @@ export function AgentCliToolsFields({ agentId, cliId, allowedTools, value, onCha
               <label className="check"><input type="checkbox" aria-label="Accept self-signed certificates" checked={value.insecureCerts}
                 onChange={(e) => onChange({ ...value, insecureCerts: e.target.checked })} /> Accept self-signed certificates, for local .test sites (off: such a page doesn't load)</label>
             )}
+            {/* GA-185: only with the browser on; with it off, off and dimmed */}
+            <div className={`ct-shots${bOn ? "" : " off"}`}>
+              <label className="check"><input id="agent-screenshots" type="checkbox" aria-label="Take screenshots of what it built" aria-describedby="agent-screenshots-hint"
+                checked={bOn && value.screenshots} disabled={!bOn} onChange={(e) => onChange({ ...value, screenshots: e.target.checked })} /> Take screenshots of what it built</label>
+              <span id="agent-screenshots-hint" className="hint">On by default for Frontend, Design and QA agents, off for the rest; only with the browser on. At the end of a run that changed a screen, it saves screenshots of it for the card’s Screenshots tab, at the project’s sizes (its form → Preview).</span>
+            </div>
             {bOn && view.browser.tools.length > 0 && (
               <McpToolList tools={view.browser.tools} isOn={(name) => !off.includes(name)} onSwitch={(name, v) => onMcp(switchTool(mcp, BROWSER, name, v))} />
             )}

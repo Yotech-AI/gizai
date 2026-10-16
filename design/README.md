@@ -150,7 +150,8 @@ Gizai's own (StatusIcon), drawn on a 16px grid. Map concepts consistently:
 | Filters, sort, group | `list-filter`, `arrow-up-down`, `layers` |
 | Run / pause / stop | `play`, `pause`, `square` |
 | Attachments, docs | `paperclip`, `file-text` |
-| Branch, terminal | `git-branch`, `terminal` |
+| Screenshots, compare | `images`, `columns-2` |
+| Branch, commit, terminal | `git-branch`, `git-commit-horizontal`, `terminal` |
 | Agent roles | lead `crown`, frontend `monitor`, backend `server`, design `palette`, QA `flask-conical`, DevOps `container`, other `bot` |
 
 No emoji, no illustrations. Gizai has no logo yet: the name is set in plain type.

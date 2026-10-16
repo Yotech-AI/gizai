@@ -112,8 +112,15 @@ fn blocked(st: &AppState, agent: &team::Member) -> Option<String> {
 }
 
 /// One beat: when the Team Lead's check is on, not paused after failures and its interval has passed, Gizai looks at the
-/// board, and new findings start one check run. Returns its handle when one started.
+/// board, and new findings start one check run. Returns its handle when one started. The look at the board reads the
+/// database (and finding the CLI can start your login shell), so it runs on a thread that may wait, not on the async
+/// runtime's (GA-191).
 pub async fn tick(st: &AppState, now: i64) -> Option<tokio::task::JoinHandle<CheckSummary>> {
+    let st = st.clone();
+    tokio::task::spawn_blocking(move || tick_now(&st, now)).await.ok().flatten()
+}
+
+fn tick_now(st: &AppState, now: i64) -> Option<tokio::task::JoinHandle<CheckSummary>> {
     let agent = team::chat_agent(&st.db).ok().flatten()?;
     let every = agent.board_check_minutes.filter(|m| *m > 0)? * 60_000;
     if agent.board_check_paused.is_some() || matches!(agent.board_checked_at, Some(last) if now - last < every) {

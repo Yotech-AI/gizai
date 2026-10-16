@@ -1767,16 +1767,19 @@ pub fn pull(st: &AppState) -> std::pin::Pin<Box<dyn std::future::Future<Output =
 
 async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSummary>)> {
     let mut started = vec![];
-    if get_settings(st).agents_paused || is_closing(st) {
+    if blocking(st, |st| get_settings(st).agents_paused).await.unwrap_or(true) || is_closing(st) {
         return started;
     }
     let _one = st.runs.pulling.lock().await;
-    let max = get_settings(st).max_concurrent_runs as usize;
     // GA-202: while memory is short no card starts; each start checks again (`start_inner`).
-    if crate::run_memory::wait_reason(st).is_some() {
-        return started;
-    }
-    for (_, a) in team::all_agents(&st.db).unwrap_or_default() {
+    let Some((max, agents)) = blocking(st, |st| {
+        let max = get_settings(st).max_concurrent_runs as usize;
+        if crate::run_memory::wait_reason(st).is_some() {
+            return None;
+        }
+        Some((max, team::all_agents(&st.db).unwrap_or_default()))
+    }).await.flatten() else { return started };
+    for (_, a) in agents {
         if a.status != "active" {
             continue;
         }
@@ -1784,19 +1787,8 @@ async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSu
         // The pause is asked before each start: a card this pull started may have failed already, and a failing CLI
         // must not run through the queue.
         for _ in 0..a.max_runs.max(1) {
-            if !takes_cards(st, &a.actor_id) {
-                break;
-            }
-            let (mine, all) = {
-                let live = st.runs.live.lock().unwrap();
-                (live.values().filter(|l| l.agent_id == a.actor_id).count() as i64, live.len())
-            };
-            if mine >= a.max_runs.max(1) || all >= max {
-                break;
-            }
-            // Read again each time: the cards this pull started are claimed now, and others may have moved or been held.
-            let busy = |t: &String| st.runs.live.lock().unwrap().values().any(|l| &l.task_id == t) || st.runs.starting.lock().unwrap().contains(t);
-            let Some(task) = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default().into_iter().find(|t| !busy(t)) else { break };
+            let (agent, slots) = (a.actor_id.clone(), a.max_runs.max(1));
+            let Some(task) = blocking(st, move |st| next_card(st, &agent, slots, max)).await.flatten() else { break };
             match start_background(st, &task, &a.actor_id, "assigned", None).await {
                 Some(done) => started.push((task, done)),
                 None => break,
@@ -1804,4 +1796,29 @@ async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSu
         }
     }
     started
+}
+
+/// The agent's best waiting card nobody works on, when it may take one now: it takes cards (`takes_cards`), has fewer
+/// than its `slots` cards at once and "Runs at once" (`max`) has room. Read again each time: the cards a pull started
+/// are claimed now, and others may have moved or been held.
+fn next_card(st: &AppState, agent_id: &str, slots: i64, max: usize) -> Option<String> {
+    if !takes_cards(st, agent_id) {
+        return None;
+    }
+    let (mine, all) = {
+        let live = st.runs.live.lock().unwrap();
+        (live.values().filter(|l| l.agent_id == agent_id).count() as i64, live.len())
+    };
+    if mine >= slots || all >= max {
+        return None;
+    }
+    let busy = |t: &String| st.runs.live.lock().unwrap().values().any(|l| &l.task_id == t) || st.runs.starting.lock().unwrap().contains(t);
+    workflow::waiting_for(&st.db, agent_id).unwrap_or_default().into_iter().find(|t| !busy(t))
+}
+
+/// `f` with the state on a thread that may wait (for the database, /proc, git or a shell), not on the async runtime's
+/// threads, which every async command and event also needs (GA-191). None when `f` panicked.
+async fn blocking<T: Send + 'static>(st: &AppState, f: impl FnOnce(&AppState) -> T + Send + 'static) -> Option<T> {
+    let st = st.clone();
+    tokio::task::spawn_blocking(move || f(&st)).await.ok()
 }

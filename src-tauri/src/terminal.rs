@@ -58,9 +58,10 @@ fn changed(st: &AppState) -> Changed {
 
 // ---- the commands, word for word as contract CT names them ----
 
+/// Memory only: on the async runtime.
 #[tauri::command]
-pub fn terminal_list(st: State<'_, AppState>) -> Vec<TerminalSession> {
-    st.terminals.list()
+pub async fn terminal_list(st: State<'_, AppState>) -> R<Vec<TerminalSession>> {
+    Ok(st.terminals.list())
 }
 
 #[tauri::command]
@@ -69,10 +70,17 @@ pub async fn terminal_open(st: State<'_, AppState>, folder: String, cols: u16, r
     tauri::async_runtime::spawn_blocking(move || open(&st, &folder, cols, rows, name.as_deref())).await.map_err(|e| e.to_string())?
 }
 
+/// Memory only (the terminal's own thread sends the output): on the async runtime.
 #[tauri::command]
-pub fn terminal_attach(st: State<'_, AppState>, id: String, output: tauri::ipc::Channel<tauri::ipc::Response>) -> Result<(), String> {
+pub async fn terminal_attach(st: State<'_, AppState>, id: String, output: tauri::ipc::Channel<tauri::ipc::Response>) -> Result<(), String> {
     attach(&st, &id, Box::new(move |bytes| output.send(tauri::ipc::Response::new(bytes)).is_ok()))
 }
+
+// `terminal_input`, `terminal_resize` and `terminal_ack` stay on the main thread (GA-191): there they run one after the
+// other in the order the page sends them, so typed keys, sizes and acknowledgements reach the terminal in that order,
+// which async commands don't keep. Each does no database or file work and returns at once: the keys go to the terminal's
+// own thread, which writes them as the shell reads, a size is one call to the system (on Windows also the terminal's
+// thread), and an acknowledgement is a count in memory.
 
 #[tauri::command]
 pub fn terminal_input(st: State<'_, AppState>, id: String, data: String, binary: bool) -> Result<(), String> {
@@ -89,8 +97,9 @@ pub fn terminal_ack(st: State<'_, AppState>, id: String, bytes: u32) -> Result<(
     st.terminals.ack(&id, bytes)
 }
 
+/// Memory only: on the async runtime.
 #[tauri::command]
-pub fn terminal_rename(st: State<'_, AppState>, id: String, name: String) -> Result<TerminalSession, String> {
+pub async fn terminal_rename(st: State<'_, AppState>, id: String, name: String) -> Result<TerminalSession, String> {
     st.terminals.rename(&id, &name)
 }
 

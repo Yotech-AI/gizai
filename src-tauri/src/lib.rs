@@ -94,9 +94,10 @@ pub struct AppInfo {
     pub data_label: Option<String>,
 }
 
+/// Memory only: on the async runtime.
 #[tauri::command]
-fn app_info(st: tauri::State<AppState>) -> AppInfo {
-    AppInfo {
+async fn app_info(st: tauri::State<'_, AppState>) -> Result<AppInfo, String> {
+    Ok(AppInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         data_dir: st.data_dir.display().to_string(),
         selftest: std::env::var("GIZAI_SELFTEST").is_ok(),
@@ -104,19 +105,23 @@ fn app_info(st: tauri::State<AppState>) -> AppInfo {
         start_route: std::env::var("GIZAI_ROUTE").ok().filter(|r| !r.is_empty()),
         selftest_mode: std::env::var("GIZAI_SELFTEST_MODE").ok().filter(|m| !m.is_empty()),
         data_label: data_label(&st.data_dir),
-    }
+    })
 }
 
-/// Writes the UI's self-test report (used by scripts/smoke-cage.sh). No-op unless GIZAI_SELFTEST is set.
+/// Writes the UI's self-test report (used by scripts/smoke-cage.sh). No-op unless GIZAI_SELFTEST is set. The file is
+/// written off the main thread.
 #[tauri::command]
-fn selftest_report(json: String) -> Result<(), String> {
+async fn selftest_report(json: String) -> Result<(), String> {
     match std::env::var("GIZAI_SELFTEST") {
-        Ok(path) => std::fs::write(path, json).map_err(|e| e.to_string()),
+        Ok(path) => tauri::async_runtime::spawn_blocking(move || std::fs::write(path, json)).await.map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string()),
         Err(_) => Ok(()),
     }
 }
 
 /// The page quits Gizai (Settings' Quit Gizai completely, a self-test's end): it has no unsaved text to save first.
+/// On the main thread, in order with `unsaved`'s commands: quitting goes after the page's last word on unsaved text. It
+/// does no database or file work: ending the app happens in `run`'s exit.
 #[tauri::command]
 fn exit_app(app: AppHandle, code: i32) {
     unsaved::settle();

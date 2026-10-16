@@ -1,6 +1,6 @@
 import type { DayStat, LeadAnswer, Run, RunOutcome, SeqEvent } from "../types";
 
-/** History from run_events plus live run-event messages: one copy per seq, oldest first, newest `cap` kept. */
+/** History from run_events plus live run-events messages: one copy per seq, oldest first, newest `cap` kept. */
 export function mergeEvents(a: SeqEvent[], b: SeqEvent[], cap = 500): SeqEvent[] {
   const bySeq = new Map<number, SeqEvent>();
   for (const e of [...a, ...b]) if (!bySeq.has(e.seq)) bySeq.set(e.seq, e);

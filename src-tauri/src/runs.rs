@@ -39,9 +39,11 @@ pub use gizai_core::seed::DEFAULT_TOOLS;
 pub enum Note {
     RowsChanged(&'static str),
     RunsChanged,
-    Event { run_id: String, seq: u64, event: RunEvent },
-    /// Something happened in a chat turn (text written, a tool called, a message saved).
-    Chat { thread_id: String, event: crate::chat::ChatUiEvent },
+    /// A run's events since its last message, in `seq` order: at most one message every 50 ms per run (`stream`).
+    RunEvents { run_id: String, events: Vec<SeqEvent> },
+    /// What happened in a chat turn since its last message (text written, a tool called, a message saved): at most one
+    /// message every 50 ms per chat, pieces of text one after the other joined (`stream`).
+    ChatEvents { thread_id: String, events: Vec<crate::chat::ChatUiEvent> },
     /// A chat turn started or ended.
     ChatChanged,
     /// The release check or an update moved on (see `update`).
@@ -448,12 +450,26 @@ pub fn live(st: &AppState) -> Vec<LiveRun> {
         .collect()
 }
 
-/// The run's events: from memory while it is live, else re-read from its log. When housekeeping removed the log (the
-/// run ended more than 30 days ago), a note says so.
+/// The run's events: from memory while it is live (its last `BUFFER`), else re-read from its log. When housekeeping
+/// removed the log (the run ended more than 30 days ago), a note says so.
 pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
-    if let Some(l) = st.runs.live.lock().unwrap().get(run_id) {
-        return l.events.clone();
+    let live = st.runs.live.lock().unwrap().get(run_id).map(|l| l.events.clone());
+    live.unwrap_or_else(|| logged_events(st, run_id))
+}
+
+/// The window's `run_events` (GA-191): the run's events numbered after `after_seq` (all of them for None), at most the
+/// last `BUFFER`, so a page that has a run's events up to a number asks only for the rest.
+pub fn events_after(st: &AppState, run_id: &str, after_seq: Option<u64>) -> Vec<SeqEvent> {
+    let mut events = events_for(st, run_id);
+    if let Some(a) = after_seq {
+        events.retain(|e| e.seq > a);
     }
+    let cut = events.len().saturating_sub(BUFFER);
+    events.split_off(cut)
+}
+
+/// A run's events as its log has them (a run that isn't live), numbered from 0.
+fn logged_events(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
     let events = match std::fs::read_to_string(&run.log_path) {
         // The limits Claude Code reported are for the Usage page, not the Run panel.
@@ -1259,16 +1275,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                 RunEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type.clone(),
                 _ => {}
             }
-            let seq = {
-                let mut live = st2.runs.live.lock().unwrap();
-                let Some(l) = live.get_mut(&rid) else { continue };
-                let seq = l.next_seq;
-                l.next_seq += 1;
-                l.events.push(SeqEvent { seq, event: ev.clone() });
-                if l.events.len() > BUFFER { l.events.remove(0); }
-                seq
-            };
-            (st2.notify)(Note::Event { run_id: rid.clone(), seq, event: ev });
+            push_event(&st2, &rid, ev);
         }
         let capped = capped.map(|c| if c.ends_with(":time") {
             format!("stopped at the time limit of {} minutes per run (Settings → Runs)", limits.minutes)
@@ -1665,17 +1672,21 @@ fn note_run(st: &AppState, run_id: &str, text: &str) {
             eprintln!("gizai: couldn't add a note to the log of run {run_id}: {e}");
         }
     }
-    let event = RunEvent::Note { text: text.to_string() };
-    let seq = {
-        let mut live = st.runs.live.lock().unwrap();
-        let Some(l) = live.get_mut(run_id) else { return };
-        let seq = l.next_seq;
-        l.next_seq += 1;
-        l.events.push(SeqEvent { seq, event: event.clone() });
-        if l.events.len() > BUFFER { l.events.remove(0); }
-        seq
-    };
-    (st.notify)(Note::Event { run_id: run_id.to_string(), seq, event });
+    push_event(st, run_id, RunEvent::Note { text: text.to_string() });
+}
+
+/// The live run's next event: numbered, kept for the Run panel (its last `BUFFER`) and queued for the window (`stream`),
+/// all under the live runs' lock, so the window gets them in `seq` order. Nothing when the run isn't live.
+fn push_event(st: &AppState, run_id: &str, event: RunEvent) {
+    let mut live = st.runs.live.lock().unwrap();
+    let Some(l) = live.get_mut(run_id) else { return };
+    let seq = l.next_seq;
+    l.next_seq += 1;
+    l.events.push(SeqEvent { seq, event: event.clone() });
+    if l.events.len() > BUFFER {
+        l.events.remove(0);
+    }
+    crate::stream::run_event(st, run_id, SeqEvent { seq, event });
 }
 
 /// Gizai's nudge (GA-54): a run that ended normally without its GIZAI_RESULT line (succeeded, `no_result`) is continued

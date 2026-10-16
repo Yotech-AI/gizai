@@ -24,6 +24,7 @@ pub mod run_memory;
 pub mod runs;
 pub mod screenshots;
 pub mod shell_path;
+pub mod stream;
 pub mod terminal;
 pub mod tools;
 mod tour;
@@ -72,6 +73,8 @@ pub struct AppState {
     pub tokens: Arc<gizai_agents::oauth::TokenStore>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
     pub notify: Arc<dyn Fn(runs::Note) + Send + Sync>,
+    /// Run and chat events waiting for their batch to the window (see `stream`).
+    pub streams: Arc<stream::Streams>,
     /// Shows desktop notifications and says whether the window is out of sight (see `notifications`). Shows nothing
     /// until `run` sets the real one; tests set their own.
     pub desktop: notifications::Desktop,
@@ -307,7 +310,7 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
                   desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()),
-                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()) };
+                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()), streams: Arc::new(stream::Streams::default()) };
     // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
     // failed, so it never runs twice, and its chat says so.
     pending::at_start(&st);
@@ -325,11 +328,15 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
         let _ = match note {
             runs::Note::RowsChanged(table) => app.emit("rows-changed", serde_json::json!({ "table": table })),
             runs::Note::RunsChanged => app.emit("runs-changed", ()),
-            runs::Note::Event { run_id, seq, event } => app.emit("run-event", serde_json::json!({ "runId": run_id, "seq": seq, "event": event })),
-            runs::Note::Chat { thread_id, event } => {
-                let mut v = serde_json::to_value(&event).unwrap_or_default();
-                v["threadId"] = serde_json::Value::String(thread_id);
-                app.emit("chat-event", v)
+            runs::Note::RunEvents { run_id, events } => app.emit("run-events", serde_json::json!({ "runId": run_id, "events": events })),
+            // each event names its chat too, as the page's ChatEvent has it
+            runs::Note::ChatEvents { thread_id, events } => {
+                let events: Vec<serde_json::Value> = events.iter().map(|event| {
+                    let mut v = serde_json::to_value(event).unwrap_or_default();
+                    v["threadId"] = serde_json::Value::String(thread_id.clone());
+                    v
+                }).collect();
+                app.emit("chat-events", serde_json::json!({ "threadId": thread_id, "events": events }))
             }
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
             runs::Note::UpdateChanged => app.emit("update-changed", ()),

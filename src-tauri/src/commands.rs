@@ -554,9 +554,10 @@ pub async fn stop_run(st: State<'_, AppState>, run_id: String) -> R<()> {
 pub async fn list_runs(st: State<'_, AppState>, task_id: String) -> R<Vec<Run>> {
     off(&st, move |st| gizai_core::runs::list_for_task(&st.db, &task_id).map_err(e)).await
 }
+/// The run's events after `after_seq` (all of them for null), at most the last 500 (GA-191).
 #[tauri::command]
-pub async fn run_events(st: State<'_, AppState>, run_id: String) -> R<Vec<runs::SeqEvent>> {
-    off(&st, move |st| Ok(runs::events_for(st, &run_id))).await
+pub async fn run_events(st: State<'_, AppState>, run_id: String, after_seq: Option<u64>) -> R<Vec<runs::SeqEvent>> {
+    off(&st, move |st| Ok(runs::events_after(st, &run_id, after_seq))).await
 }
 /// The commits a finished run made, oldest first (the Runs tab).
 #[tauri::command]

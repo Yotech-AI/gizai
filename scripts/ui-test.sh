@@ -46,9 +46,10 @@
 #     see-through), in light too; "Show mountains along the bottom" turns them off and on at once, and leaves them off for the
 #     second start, where they are still off and Reset to defaults turns them on. Then a second start: Geist, light, compact and
 #     the sizes are still there, and Reset to defaults brings everything back (so later starts begin at the defaults).
-# 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note and the
-#     Backend Agent with its own folder's. Decisions/Use SQLite reads with its wikilinks (one to a heading, by an alias), a
-#     dashed one to a note that doesn't exist, an embedded note and KADE-1 as a card chip; the panel has its outgoing links,
+# 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note (8) and the
+#     Backend Agent with its own folder's (2: its Notes and, since GA-172, Agents/Backend Agent/KADE, its note for project
+#     KADE with the line it learned in a run on KADE-1). Decisions/Use SQLite reads with its wikilinks (one to a heading,
+#     by an alias), a dashed one to a note that doesn't exist, an embedded note and KADE-1 as a card chip; the panel has its outgoing links,
 #     outline, properties and tags. Resting on a link previews the note (or offers to make it), which closes when the
 #     mouse leaves the link and stays while it moves into the preview; clicking it opens Deploy
 #     steps, with a linked and an unlinked mention, which Link makes a link. Search by tag: and by words with path:,

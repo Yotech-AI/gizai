@@ -29,6 +29,40 @@ function usePref<T>(k: string, fallback: T): [T, (v: T) => void] {
   return [v, (n: T) => { setV(n); writePref(k, n); }];
 }
 
+/** How long typing in the search pauses before the filter is written on this device. */
+export const KEEP_AFTER_MS = 400;
+
+function writeFilter(f: Filter) {
+  writePref("gizai-task-filter", { ...f, projectId: undefined, text: undefined });
+  try { if (f.projectId) localStorage.setItem("gizai-task-project", f.projectId); else localStorage.removeItem("gizai-task-project"); } catch { /* ignore */ }
+}
+
+/** The filter, kept on this device (its search text only while the page shows). Typing in the search writes it once the
+ *  typing pauses, not per keystroke (GA-190); a pick in Filters writes it at once, and leaving the page writes what
+ *  still waits. */
+function useKeptFilter(): [Filter, (f: Filter) => void] {
+  const [filter, setFilterState] = useState<Filter>(() => ({ ...readPref<Filter>("gizai-task-filter", {}), projectId: (() => { try { return localStorage.getItem("gizai-task-project"); } catch { return null; } })() }));
+  const shown = useRef(filter);
+  const waiting = useRef<{ f: Filter; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const flush = useCallback(() => {
+    const w = waiting.current;
+    if (!w) return;
+    clearTimeout(w.timer);
+    waiting.current = null;
+    writeFilter(w.f);
+  }, []);
+  useEffect(() => flush, [flush]);
+  const setFilter = useCallback((f: Filter) => {
+    const typed = JSON.stringify({ ...f, text: undefined }) === JSON.stringify({ ...shown.current, text: undefined });
+    shown.current = f;
+    setFilterState(f);
+    if (waiting.current) clearTimeout(waiting.current.timer);
+    waiting.current = { f, timer: setTimeout(flush, KEEP_AFTER_MS) };
+    if (!typed) flush();
+  }, [flush]);
+  return [filter, setFilter];
+}
+
 /** The top of the Inbox: the chats that wait for you (the Team Lead's questions and approvals, and chats with calls of the Team
  *  Lead's that wait for your approval). A click opens the chat; × dismisses a Team Lead chat. A chat with calls that wait stays
  *  until you approved or discarded each, in the chat. */
@@ -94,15 +128,10 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const view: View = inbox ? "list" : pickedView;
   const [sort, setSort] = usePref<SortBy>("gizai-task-sort", "updated");
   const [group, setGroup] = usePref<GroupBy>("gizai-task-group", "status");
-  const [filter, setFilterState] = useState<Filter>(() => ({ ...readPref<Filter>("gizai-task-filter", {}), projectId: (() => { try { return localStorage.getItem("gizai-task-project"); } catch { return null; } })() }));
-  const setFilter = (f: Filter) => {
-    setFilterState(f);
-    writePref("gizai-task-filter", { ...f, projectId: undefined, text: undefined });
-    try { if (f.projectId) localStorage.setItem("gizai-task-project", f.projectId); else localStorage.removeItem("gizai-task-project"); } catch { /* ignore */ }
-  };
+  const [filter, setFilter] = useKeptFilter();
   const { data: team, error: teamErr } = useData(() => getTeam());
-  const { data: projects } = useData(() => listProjects());
-  const { data: people } = useData(() => listUsers());
+  const { data: projects } = useData(() => listProjects(), [], { counts: false });
+  const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: fetched, error } = useData(() => listTasks({}));
   const { data: threads, reload: reloadThreads } = useData(() => (inbox ? listChatThreads() : Promise.resolve([] as ChatThread[])), [inbox]);
   const chats = useMemo(() => (inbox ? waitingChats(threads ?? []) : []), [inbox, threads]);

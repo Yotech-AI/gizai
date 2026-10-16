@@ -81,6 +81,50 @@ function EditableMarkdown({ label, value, placeholder, hint, onSave, readOnly }:
   );
 }
 
+/** The card's title. What you type stays in this box, so a keystroke redraws only it (GA-190); Enter or leaving the box
+ *  saves it, Escape puts the saved title back, and an empty title isn't saved. */
+function TitleInput({ title, readOnly, onSave }: { title: string; readOnly: boolean; onSave: (t: string) => void }) {
+  const [value, setValue] = useState(title);
+  useEffect(() => setValue(title), [title]);
+  const cancelled = useRef(false);
+  const save = () => {
+    if (cancelled.current) { cancelled.current = false; return; }
+    if (readOnly) return;
+    const t = value.trim();
+    if (!t) { setValue(title); return; }
+    if (t !== title) onSave(t);
+  };
+  return (
+    <input className="title-input" aria-label="Title" value={value} readOnly={readOnly} onChange={(e) => setValue(e.target.value)} onBlur={save}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancelled.current = true; setValue(title); e.currentTarget.blur(); } }} />
+  );
+}
+
+/** Comments being written, by card: one stays while another tab of the card shows, or another page. */
+const drafts = new Map<string, string>();
+
+/** A new comment. Its text stays in this box, so a keystroke redraws only it (GA-190). Comment or Ctrl+Enter posts it;
+ *  once posted the box is empty again. */
+function CommentComposer({ taskId, onPost }: { taskId: string; onPost: (md: string) => Promise<boolean> }) {
+  const [first] = useState(() => drafts.get(taskId) ?? "");
+  const [text, setText] = useState(first);
+  const [round, setRound] = useState(0);
+  const write = (md: string) => { if (md) drafts.set(taskId, md); else drafts.delete(taskId); setText(md); };
+  const post = async (md: string) => {
+    if (!md.trim()) return;
+    if (await onPost(md)) { drafts.delete(taskId); setText(""); setRound((n) => n + 1); }
+  };
+  return (
+    <div className="composer" style={{ marginTop: 14 }}>
+      <MarkdownEditor key={round} value={round ? "" : first} onChange={write} onSave={post} ariaLabel="New comment" minHeight={72} hint={`${modKey()}+Enter posts`}
+        placeholder="Write a comment. @ links a task, project, client or agent." />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+        <button className="btn primary" disabled={!text.trim()} onClick={() => post(text)}>Comment</button>
+      </div>
+    </div>
+  );
+}
+
 /** A card's changes (its files and counts, without their diffs): when the page opens, and again when a run starts or
  *  ends. */
 function useCardChanges(id: string) {
@@ -103,16 +147,13 @@ function useCardChanges(id: string) {
 export function TaskPage({ id, view = "card", run, youId }: { id: string; view?: "card" | "changes"; run?: string; youId?: string }) {
   const { data: task, error } = useData(() => getTask(id), [id]);
   const { data: team } = useData(() => getTeam());
-  const { data: people } = useData(() => listUsers());
+  const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: comments } = useData(() => listComments(id), [id]);
   const { data: activity } = useData(() => taskActivity(id), [id]);
   const { data: runs } = useData(() => listRuns(id), [id]);
   const liveRun = useLiveRuns().find((r) => r.taskId === id);
   const live = !!liveRun;
   const [tab, setTab] = useState<"comments" | "activity" | "runs">("comments");
-  const [title, setTitle] = useState("");
-  const [draft, setDraft] = useState("");
-  const [composerKey, setComposerKey] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [props, setPropsState] = useState(() => readPref("gizai-props") !== "closed");
   const setProps = (on: boolean) => { setPropsState(on); writePref("gizai-props", on ? "open" : "closed"); };
@@ -125,7 +166,6 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
   useEffect(() => { if (view === "changes") setPropsOnChanges(false); }, [view, run]);
   const thread = useRef<HTMLDivElement>(null);
   const [readReason, setReadReason] = useState(0);
-  useEffect(() => { if (task) setTitle(task.title); }, [task?.title]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -182,18 +222,11 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
   // A merge moves the card to the team's Deploy column (merged, not deployed yet), else to Done.
   const columns = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
   const mergeTo = (columns.find((s) => s.category === "deploy") ?? columns.find((s) => s.category === "done"))?.name;
-  const saveTitle = () => {
-    if (archived) return;
-    const t = title.trim();
-    if (!t) { setTitle(task.title); return; }
-    if (t !== task.title) updateTask(id, { title: t }).catch(fail);
-  };
   const showProps = onChanges ? propsOnChanges : props;
   const openProps = (on: boolean) => (onChanges ? setPropsOnChanges(on) : setProps(on));
   const label = tabLabel(changes.data);
   const post = async (md: string) => {
-    if (!md.trim()) return;
-    try { await addComment(id, md); setDraft(""); setComposerKey((k) => k + 1); } catch (e) { fail(e); }
+    try { await addComment(id, md); return true; } catch (e) { fail(e); return false; }
   };
 
   return (
@@ -243,8 +276,7 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
                 <span className="grow">Archived {relTime(task.archivedAt!)}{task.archivedBy ? ` by ${task.archivedBy}` : ""}. It is read-only: Restore puts it back at the bottom of {task.stateName}.</span>
               </div>
             )}
-            <input className="title-input" aria-label="Title" value={title} readOnly={archived} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setTitle(task.title); (e.target as HTMLInputElement).blur(); } }} />
+            <TitleInput title={task.title} readOnly={archived} onSave={(t) => updateTask(id, { title: t }).catch(fail)} />
             <EditableMarkdown label="Description" value={task.descriptionMd} readOnly={archived}
               placeholder="Describe the task. Markdown works: headings, bold, checklists. @ links a task, project, client or agent."
               onSave={(md) => updateTask(id, { descriptionMd: md }).catch(fail)} />
@@ -276,13 +308,7 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
                   </div>
                 ))}
                 {comments && comments.length === 0 && <p className="faint">No comments yet.</p>}
-                {!archived && <div className="composer" style={{ marginTop: 14 }}>
-                  <MarkdownEditor key={composerKey} value="" onChange={setDraft} onSave={post} ariaLabel="New comment" minHeight={72} hint={`${modKey()}+Enter posts`}
-                    placeholder="Write a comment. @ links a task, project, client or agent." />
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                    <button className="btn primary" disabled={!draft.trim()} onClick={() => post(draft)}>Comment</button>
-                  </div>
-                </div>}
+                {!archived && <CommentComposer key={id} taskId={id} onPost={post} />}
               </div>
             )}
             {tab === "activity" && (

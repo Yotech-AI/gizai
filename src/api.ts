@@ -1,9 +1,13 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { shared } from "./lib/share";
 import type * as T from "./types";
+
+// Every call: in a screen's data hook, a read another hook has on its way with the same arguments is shared (GA-190).
+const invoke = <R>(cmd: string, args?: Record<string, unknown>): Promise<R> => shared(cmd, args, () => tauriInvoke<R>(cmd, args));
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const selftestReport = (json: unknown) => invoke<void>("selftest_report", { json: JSON.stringify(json) });

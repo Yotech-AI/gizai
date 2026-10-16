@@ -40,7 +40,7 @@ function Item({ to, icon: I, label, active, meta }: { to: Route; icon: LucideIco
 }
 
 export function Sidebar({ route, youId, onSearch, onNewTask, dataLabel, dataDir }: Props) {
-  const projects = useData(() => listProjects());
+  const projects = useData(() => listProjects(), [], { counts: false });
   const allTasks = useData(() => listTasks());
   const [teamId] = useCurrentTeam();
   const team = useData(() => getTeam(teamId), [teamId]);

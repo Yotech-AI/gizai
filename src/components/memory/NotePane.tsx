@@ -2,7 +2,7 @@
 // saving and conflict handling: useDocEditor; switching to Read saves, leaving the editor doesn't), and on the right the
 // panel with collapsible sections: backlinks (linked and unlinked mentions, with Link), outgoing links (also those that
 // find no note yet), the outline, the properties as a small form, the tags (a click filters the tree) and the history.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BookOpen, ChevronDown, ChevronRight, FileText, Hash, Link2, Pencil, Plus, X } from "lucide-react";
 import { docVersionBody, docVersions, renameDoc, saveDoc } from "../../api";
 import { useData } from "../../lib/useData";
@@ -10,8 +10,8 @@ import { useDocEditor } from "../../lib/useDocEditor";
 import { relTime } from "../../lib/format";
 import { modKey } from "../../lib/keys";
 import {
-  backlinks, folderOf, linkedNote, linkMention, LIST_PROPERTIES, NOTE_TYPES, outgoing, outline, properties, resolve, setProperty, tagCounts,
-  tags, titleOf, titleProblem, unlinkedMentions, withoutFrontmatter, type Mention,
+  backlinksIn, folderOf, linkedNote, linkMention, LIST_PROPERTIES, NOTE_TYPES, outgoing, outline, properties, noteIndex, resolveIn, setProperty, tagCounts,
+  tags, titleOf, titleProblem, unlinkedMentionsIn, withoutFrontmatter, type Mention, type NoteIndex,
 } from "../../lib/memory";
 import { MarkdownEditor, type EditorHandle, type WikiSupport } from "../MarkdownEditor";
 import { MarkdownView } from "../MarkdownView";
@@ -57,6 +57,9 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
     currentVersion: base ?? doc.currentVersion, updatedAt: doc.updatedAt, updatedBy: listed?.updatedBy ?? null, chars: text.length,
   } : null;
   const all = note ? [...notes.filter((n) => n.id !== id), note] : notes;
+  // Built once per notes list (GA-190): typing changes the open note's text, never where a note is, so its backlinks,
+  // unlinked mentions and which links find a note come from this index instead of every note's title on each keystroke.
+  const index = useMemo(() => noteIndex(all), [notes, note?.path, !note]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const show = (h: string) => {
     if (mode === "edit") { const at = outline(text ?? "").find((x) => x.text.toLowerCase() === h.toLowerCase()); if (at) editor.current?.goto(at.pos); return; }
@@ -92,7 +95,7 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
   const last = versions?.[0];
   const wiki: WikiSupport = {
     notes: all, current: note,
-    finds: (t) => resolve(all, t, folderOf(note.path)) >= 0,
+    finds: (t) => resolveIn(index, t, folderOf(note.path)) >= 0,
     open: (l) => { const n = l.target ? linkedNote(all, l.target, note) : note; if (n) { if (n.id === id && l.heading) show(l.heading); else links.open(n, l.heading); } else links.create(l, note); },
     hover: (l, at) => links.hover(l, note, at),
   };
@@ -137,8 +140,8 @@ export function NotePane({ id, notes, scopeNotes, links, tagFilter, onTag, editi
       </div>
       {panel && (
         <aside className="mem-side" aria-label="About this note">
-          <Backlinks note={note} notes={all} links={links} onError={(e) => ed.setErr(e)} />
-          <Outgoing note={note} notes={all} links={links} />
+          <Backlinks note={note} notes={all} index={index} links={links} onError={(e) => ed.setErr(e)} />
+          <Outgoing note={note} notes={all} index={index} links={links} />
           <Section id="outline" title="Outline" count={outline(text).length}>
             {outline(text).length === 0 ? <p className="faint">No headings.</p> : outline(text).map((h, i) => (
               <button key={i} className="mem-row" style={{ paddingLeft: 8 + (h.level - 1) * 12 }} onClick={() => show(h.text)}>
@@ -207,9 +210,9 @@ function MentionLine({ m }: { m: Mention }) {
   return <span className="mem-context">{line.length > 160 ? `${line.slice(0, 160)}…` : line}</span>;
 }
 
-function Backlinks({ note, notes, links, onError }: { note: MemoryNote; notes: MemoryNote[]; links: NoteLinks; onError: (e: string) => void }) {
-  const linked = backlinks(notes, note);
-  const unlinked = unlinkedMentions(notes, note);
+function Backlinks({ note, notes, index, links, onError }: { note: MemoryNote; notes: MemoryNote[]; index: NoteIndex<MemoryNote>; links: NoteLinks; onError: (e: string) => void }) {
+  const linked = useMemo(() => backlinksIn(index, note), [index, note.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const unlinked = useMemo(() => unlinkedMentionsIn(index, note), [index, note.id, note.path]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState<string | null>(null);
   const link = async (m: Mention) => {
     const key = `${m.note.id}:${m.start}`;
@@ -243,8 +246,8 @@ function Backlinks({ note, notes, links, onError }: { note: MemoryNote; notes: M
   );
 }
 
-function Outgoing({ note, notes, links }: { note: MemoryNote; notes: MemoryNote[]; links: NoteLinks }) {
-  const out = outgoing(note.bodyMd, notes, note).filter((o) => o.note?.id !== note.id);
+function Outgoing({ note, notes, index, links }: { note: MemoryNote; notes: MemoryNote[]; index: NoteIndex<MemoryNote>; links: NoteLinks }) {
+  const out = outgoing(note.bodyMd, notes, note, index).filter((o) => o.note?.id !== note.id);
   return (
     <Section id="outgoing" title="Outgoing links" count={out.length}>
       {out.length === 0 && <p className="faint">This note links to no note.</p>}

@@ -2,7 +2,7 @@
 // composer. The composer is one box: a Markdown editor without a toolbar (@ links a Gizai item), and under the text a row
 // with + (add files, or link an item; a drop on the Chat page adds files too), the tips, Runs on (the coding CLI the
 // chat's answers run on) and Send, or Stop while the Team Lead answers.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
 import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
@@ -25,13 +25,21 @@ import { useChat } from "./useChat";
 /** Stop, Send now and Answer on <CLI>: each spins from its click until the chat shows what it did. */
 type ChatButtons = Pending<"stop" | "send" | `answer:${string}`>;
 
+/** What the thread asks of the composer's text: it reads it to send, puts a suggestion in, and empties it once sent. */
+type ComposerText = { text: () => string; set: (text: string) => void; clear: () => void };
+
 /** The text box on top; under it, in the same box, + on the left, the tips, `picker` (Runs on), and Send (Stop while the
- *  Team Lead answers) on the right. */
-function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor, picker }: {
-  value: string; setValue: (v: string) => void; files: string[]; onAddFiles: (paths: string[]) => void; onRemoveFile: (path: string) => void;
+ *  Team Lead answers) on the right. The text being typed is the composer's own state, so a keystroke redraws the composer
+ *  and not the thread (GA-190); the thread reaches it through `box`. */
+function Composer({ box, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor, picker }: {
+  box: React.Ref<ComposerText>; files: string[]; onAddFiles: (paths: string[]) => void; onRemoveFile: (path: string) => void;
   onSend: (text?: string) => void; onStop: () => void; working: boolean; disabled: boolean; busy: boolean; pending: ChatButtons;
   editor: React.MutableRefObject<EditorHandle | null>; picker: ReactNode;
 }) {
+  const [value, setValue] = useState("");
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  useImperativeHandle(box, () => ({ text: () => valueRef.current, set: setValue, clear: () => { setValue(""); editor.current?.clear(); } }), [editor]);
   useEffect(() => { if (!disabled) editor.current?.focus(); }, [disabled, editor]);
   const ready = !!value.trim() || files.length > 0;
   // A click in the box around the text (its edges, the tips) puts the cursor in the text, as in one big text field.
@@ -131,7 +139,7 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
   const { messages, draft, tool, working, queue, error, setWorking, pending: calls } = useChat(threadId);
   // GA-102: the Team Lead's calls that wait for your approval in this chat, each under the answer that tried it.
   const waitingCalls = useMemo(() => (calls ?? []).filter((a) => a.threadId === threadId), [calls, threadId]);
-  const [value, setValue] = useState("");
+  const box = useRef<ComposerText>(null);
   // Files added to the message (+ → Add files, or dropped on the Chat page): their paths, until it is sent.
   const [files, setFiles] = useState<string[]>([]);
   const [fileNote, setFileNote] = useState<string | null>(null);
@@ -183,14 +191,13 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
 
   // `typed`: the text as Enter saw it.
   const send = async (typed?: string) => {
-    const text = (typed ?? value).trim();
+    const text = (typed ?? box.current?.text() ?? "").trim();
     if ((!text && files.length === 0) || busy) return;
     setBusy(true);
     setSendError(null);
     try {
       const id = await sendChat(threadId, text, threadId ? null : newCli, files);
-      setValue("");
-      editor.current?.clear();
+      box.current?.clear();
       setFiles([]);
       setFileNote(null);
       if (!working) setWorking(true);
@@ -257,7 +264,7 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
               <h2>Ask {agent.name}</h2>
               <p className="muted">It can add clients, projects and tasks, set up agents, write docs and read your inbox. It looks things up before it changes them, and links what it made.</p>
               <div className="suggestions">
-                {SUGGESTIONS.map((s) => <button key={s.label} className="btn" onClick={() => setValue(s.text)}>{s.label}</button>)}
+                {SUGGESTIONS.map((s) => <button key={s.label} className="btn" onClick={() => box.current?.set(s.text)}>{s.label}</button>)}
               </div>
             </div>
           )}
@@ -281,7 +288,7 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
             <div className="chat-banner warn" role="alert"><span>{fileNote}</span>
               <button className="btn ghost sm icon-only" aria-label="Close" title="Close" onClick={() => setFileNote(null)}><X className="icon sm" /></button></div>
           )}
-          <Composer value={value} setValue={setValue} files={files} onAddFiles={addFiles} onRemoveFile={(p) => setFiles((f) => f.filter((x) => x !== p))}
+          <Composer box={box} files={files} onAddFiles={addFiles} onRemoveFile={(p) => setFiles((f) => f.filter((x) => x !== p))}
             onSend={send} onStop={() => { if (threadId) pending.act("stop", () => stopChat(threadId), fail); }}
             working={working} disabled={paused} busy={busy} pending={pending} editor={editor}
             picker={<RunsOn value={runsOn} clis={clis} disabled={working} onChange={pickCli} />} />

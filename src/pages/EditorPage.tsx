@@ -13,7 +13,7 @@
 // The terminal panel (GA-137, TF2; components/editor/TerminalPanel.tsx): the Terminal button between Fetch and Open in,
 // the panel between the code and the status bar; Ctrl+` shows or hides it, Ctrl+Shift+` starts a terminal in it. While a
 // terminal has the focus, the Editor's own keys leave it alone.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { CircleCheck, FileCode, FolderCode, Lock, PanelLeft, PanelLeftClose, Search, TriangleAlert, X } from "lucide-react";
 import type { EditorState, Text } from "@codemirror/state";
@@ -21,7 +21,7 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 import { gotoLine, openSearchPanel } from "@codemirror/search";
 import {
   editorCreate, editorDelete, editorFetch, editorFolders, editorGit, editorList, editorMain, editorRead, editorRename, editorUpdate, editorVersions,
-  editorWrite, getTask, onEditorUpdated, onRowsChanged, openInApp,
+  editorWrite, getTask, onEditorUpdated, openInApp,
 } from "../api";
 import type { DirEntry, EditorFolder, EditorUpdated, FolderGit, FolderMain, OpenedFile, SearchHit, Task } from "../types";
 import { go, href } from "../router";
@@ -43,6 +43,8 @@ import { fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../l
 import { TerminalButton, TerminalPanel, useTerminalPanel } from "../components/editor/TerminalPanel";
 import { panelKey, terminalOff } from "../lib/terminalPanel";
 import { FOCUS_GAP, onWindowFocus } from "../lib/windowFocus";
+import { onWrites } from "../lib/useData";
+import { tablesOf } from "../lib/tables";
 
 export function EditorPage({ id, youId }: { id?: string; youId: string }) {
   return id ? <FolderEditor key={id} folderId={id} youId={youId} /> : <NoFolder />;
@@ -104,7 +106,8 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
   const [search, setSearch] = useState<SearchState>({ query: "", caseSensitive: false, wholeWord: false, regex: false });
   const [searchFocus, setSearchFocus] = useState(0);
   const [goto, setGoto] = useState(false);
-  const [cursor, setCursor] = useState({ line: 1, col: 1, sel: 0 });
+  // the cursor lives outside the page's state: an edit or a cursor move redraws only what shows it (GA-190)
+  const [cursor] = useState(cursorStore);
   const [banner, setBanner] = useState<string | null>(null);
   const [closing, setClosing] = useState<{ path: string; x: number; y: number } | null>(null);
   const [, setTick] = useState(0);
@@ -125,6 +128,8 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
 
   const id = folderId;
   const patch = useCallback((path: string, p: Partial<Tab>) => setTabs((ts) => ts.map((t) => (t.path === path ? { ...t, ...p } : t))), []);
+  // the open tab scrolls into sight when it becomes the open one, not on every render of the page (GA-190)
+  const activeTabEl = useCallback((el: HTMLDivElement | null) => { el?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, []);
 
   // ---- the folder, and the card whose worktree it is ----
   const loadFolder = useCallback(() => editorFolders().then((list) => {
@@ -136,16 +141,16 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     );
   }).catch((e) => setFolderError(String(e))), [id]);
   useEffect(() => { void loadFolder(); rememberFolder(id); }, [id, loadFolder]);
-  // The card, again with every write the backend reports (Hand over, QA sending it back, a move on the board).
+  // The card, again after each write to what it shows (Hand over, QA sending it back, a move on the board; GA-190).
   const taskId = folder?.taskId ?? null;
   useEffect(() => {
     if (!taskId) return;
     let alive = true;
-    let un: (() => void) | undefined;
     const load = () => { getTask(taskId).then((t) => { if (alive) setTask(t); }).catch(() => { if (alive) setTask(null); }); };
     load();
-    onRowsChanged(() => { if (alive) load(); }).then((f) => (alive ? (un = f) : f())).catch(() => {});
-    return () => { alive = false; un?.(); };
+    const shows = tablesOf(["get_task"]);
+    const stop = onWrites((changed) => { if (alive && (!shows || [...changed].some((t) => shows.has(t)))) load(); });
+    return () => { alive = false; stop(); };
   }, [taskId]);
 
   // A card's worktree is yours when it is pinned to you (done by hand); another's is read-only until Edit anyway.
@@ -305,7 +310,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
   const cursorFrom = (s: EditorState) => {
     const head = s.selection.main.head;
     const line = s.doc.lineAt(head);
-    setCursor({ line: line.number, col: head - line.from + 1, sel: s.selection.ranges.reduce((n, r) => n + (r.to - r.from), 0) });
+    cursor.set({ line: line.number, col: head - line.from + 1, sel: s.selection.ranges.reduce((n, r) => n + (r.to - r.from), 0) });
   };
   const activeTab = tabs.find((t) => t.path === active);
   const activeState = active ? states.current.get(active) : undefined;
@@ -578,7 +583,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
         <div className="actions" style={{ marginLeft: "auto" }}>
           {hasMain(main) && <FetchButton title={fetchTitle(main)} busy={fetching} off={starting || main.updating} onClick={fetchMain} />}
           {folder && <TerminalButton p={term} />}
-          {folder && <OpenInMenu folder={id} name={name} path={t?.path ?? null} line={t ? cursor.line : null} fail={setBanner} />}
+          {folder && <OpenInAtCursor cursor={cursor} folder={id} name={name} path={t?.path ?? null} fail={setBanner} />}
         </div>
       </div>
       {banner && <div className="error-banner" role="alert" style={{ margin: 0 }}>{banner}<button className="btn ghost sm icon-only" aria-label="Dismiss" style={{ marginLeft: 8 }} onClick={() => setBanner(null)}><X className="icon" /></button></div>}
@@ -664,7 +669,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
                       (e.currentTarget.parentElement?.querySelector(`[data-path="${CSS.escape(next ?? "")}"]`) as HTMLElement | null)?.focus();
                     }
                   }}
-                  ref={(el) => { if (el && x.path === active) el.scrollIntoView({ block: "nearest", inline: "nearest" }); }}>
+                  ref={x.path === active ? activeTabEl : undefined}>
                   {ro && <Lock className="ro" aria-label="Read-only" />}
                   <span className="name">{n?.name ?? nameOf(x.path)}</span>
                   {n?.dir && <span className="dir">{n.dir}</span>}
@@ -678,7 +683,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
 
           {t && <FileBar t={t} name={nameOf(t.path)} locked={locked} folderBar={agentAtWork || notMine} ignoredIn={ignoredIn} size={entry?.size ?? null}
             reload={() => reload(t.path, false)} keepMine={() => keepMine(t.path)} save={() => save(t.path)}
-            cancel={() => patch(t.path, { disk: "kept" })} closeTab={() => close(t.path)} openIn={<OpenInMenu folder={id} name={nameOf(t.path)} path={t.path} line={cursor.line} fail={setBanner} />} />}
+            cancel={() => patch(t.path, { disk: "kept" })} closeTab={() => close(t.path)} openIn={<OpenInAtCursor cursor={cursor} folder={id} name={nameOf(t.path)} path={t.path} fail={setBanner} />} />}
 
           {/* with the terminal panel the code keeps its least height (terminal.css) */}
           <div className="ed-code" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: term.visible ? undefined : 0, position: "relative" }}>
@@ -703,7 +708,7 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
               <span className="path" title={t.path}>{t.path}</span>
               {entry?.ignored && !ignoredIn ? <span className="item">Ignored by git</span> : mark ? <span className={`item git ${mark}`}>{MARK_WORD[mark]}</span> : null}
               <span className="grow" />
-              {activeState && <button className="item" title={`Go to line (${modKey()}+Alt+G)`} onClick={() => { if (view.current) gotoLine(view.current); }}>{cursorLabel(cursor.line, cursor.col, cursor.sel)}</button>}
+              {activeState && <CursorItem cursor={cursor} onClick={() => { if (view.current) gotoLine(view.current); }} />}
               {file?.text != null && <span className="item" title="Line endings, kept as the file has them">{endingsLabel(file.crlf, file.bom)}</span>}
               {file?.text != null && <span className="item">{languageName(t.path)}</span>}
               {t.saving ? <span className="item">Saving…</span>
@@ -745,6 +750,33 @@ const ownLock = (file: OpenedFile | null | undefined) => !!file?.readOnly && (Ob
 
 /** The open file's bar, under the tabs: changed or deleted on disk, Keep mine and its second Ctrl+S, couldn't save, and
  *  read-only. At most one: the first that applies. */
+type Cursor = { line: number; col: number; sel: number };
+type CursorStore = { get: () => Cursor; set: (c: Cursor) => void; subscribe: (f: () => void) => () => void };
+
+/** The open file's cursor, for the status bar and Open in. */
+function cursorStore(): CursorStore {
+  let now: Cursor = { line: 1, col: 1, sel: 0 };
+  const subs = new Set<() => void>();
+  return {
+    get: () => now,
+    set: (c) => { if (c.line === now.line && c.col === now.col && c.sel === now.sel) return; now = c; subs.forEach((f) => f()); },
+    subscribe: (f) => { subs.add(f); return () => { subs.delete(f); }; },
+  };
+}
+const useCursor = (s: CursorStore) => useSyncExternalStore(s.subscribe, s.get, s.get);
+
+/** The status bar's line and column (and how much is selected); a click asks for a line to go to. */
+function CursorItem({ cursor, onClick }: { cursor: CursorStore; onClick: () => void }) {
+  const c = useCursor(cursor);
+  return <button className="item" title={`Go to line (${modKey()}+Alt+G)`} onClick={onClick}>{cursorLabel(c.line, c.col, c.sel)}</button>;
+}
+
+/** Open in, at the cursor's line when a file is open. */
+function OpenInAtCursor({ cursor, folder, name, path, fail }: { cursor: CursorStore; folder: string; name: string; path: string | null; fail: (e: string) => void }) {
+  const c = useCursor(cursor);
+  return <OpenInMenu folder={folder} name={name} path={path} line={path ? c.line : null} fail={fail} />;
+}
+
 function FileBar({ t, name, locked, folderBar, ignoredIn, size, reload, keepMine, save, cancel, closeTab, openIn }: {
   t: Tab; name: string; locked: boolean; folderBar: boolean; ignoredIn: string | null; size: number | null;
   reload: () => void; keepMine: () => void; save: () => void; cancel: () => void; closeTab: () => void; openIn: React.ReactNode;

@@ -63,7 +63,9 @@ const frontend = agent("fe", "Frontend Agent", "frontend", { status: "paused" })
 const qa = agent("qa", "QA Agent", "qa");
 const you: Member = { ...agent("u1", "Jeffrey", "owner"), kind: "user" };
 const project = (id: string, name: string, color: string): Project =>
-  ({ id, name, color, status: "active", number: "1", key: id.toUpperCase(), defaultBranch: "main", openTasks: 0, doneTasks: 0, updatedAt: 1, aiCostUsdMicros: 0, aiUnknownCostRuns: 0, worktreeCopy: [], worktreeInstall: false });
+  ({ id, name, color, status: "active", number: "1", key: id.toUpperCase(), defaultBranch: "main", openTasks: 0, doneTasks: 0, updatedAt: 1, aiCostUsdMicros: 0, aiUnknownCostRuns: 0, worktreeCopy: [], worktreeInstall: false,
+    screenshots: { on: true, sizes: [{ name: "Desktop", width: 1280, height: 800 }, { name: "Mobile", width: 390, height: 844 }], bothThemes: false,
+    fullPage: false }, previewCommand: null, previewStartSecs: 120 });
 const note = (id: string, path: string, scope: "shared" | "agent", ownerId?: string): MemoryNote =>
   ({ id, path, scope, ownerId, bodyMd: "", currentVersion: 1, updatedAt: 1, chars: 0 });
 const run = (agentId: string, n: number): LiveRun => ({ runId: `r-${agentId}-${n}`, taskId: `t-${n}`, agentId });

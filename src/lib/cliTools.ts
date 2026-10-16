@@ -1,14 +1,15 @@
-import type { AgentServer, CliKind, CliTools } from "../types";
+import type { AgentServer, CliKind, CliTools, CliToolsSave } from "../types";
 import { switchServer } from "./mcp";
 
 /** The built-in browser's id (`BROWSER` in crates/gizai-core/src/mcp_servers.rs): an agent's switch for it is an MCP switch. */
 export const BROWSER = "chrome-devtools";
 
-export const NO_CLI_TOOLS: CliTools = { webSearch: false, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [], slashCommands: false };
+export const NO_CLI_TOOLS: CliTools = { webSearch: false, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [], slashCommands: false,
+  screenshots: false };
 
 export const cliToolsFrom = (t?: CliTools | null): CliTools => ({
   webSearch: !!t?.webSearch, webFetch: !!t?.webFetch, fetchDomains: [...(t?.fetchDomains ?? [])], insecureCerts: !!t?.insecureCerts, builtin: [...(t?.builtin ?? [])],
-  slashCommands: !!t?.slashCommands,
+  slashCommands: !!t?.slashCommands, screenshots: !!t?.screenshots,
 });
 
 /** Domains as typed (one per line, or separated by commas or spaces), each once. */
@@ -18,14 +19,22 @@ export function parseDomains(text: string): string[] {
   return out;
 }
 
-/** What a CLI of `kind` keeps of the switches when an agent moves to it (and what is saved for it). */
+/** What a CLI of `kind` keeps of the switches when an agent moves to it (and what is saved for it). Take screenshots goes
+ *  with the browser, which waits on another CLI: it is kept. */
 export function fitCliTools(t: CliTools, kind: CliKind): CliTools {
   switch (kind) {
     case "claude_code": return t;
     case "codex": return { ...t, webFetch: false, fetchDomains: [], builtin: [], slashCommands: false };
     case "gemini": return { ...t, webSearch: false, fetchDomains: [], builtin: [], slashCommands: false };
-    default: return { ...NO_CLI_TOOLS };
+    default: return { ...NO_CLI_TOOLS, screenshots: t.screenshots };
   }
+}
+
+/** What saving `t` sends: the fetch domains only with fetching on, and Take screenshots only when it changed from `was`,
+ *  so an agent that never set it keeps its role's default (left out, the saved switch stays). */
+export function cliToolsToSave(t: CliTools, was: CliTools): CliToolsSave {
+  const { screenshots, ...rest } = t;
+  return { ...rest, fetchDomains: t.webFetch ? t.fetchDomains : [], ...(screenshots !== was.screenshots ? { screenshots } : {}) };
 }
 
 export function sameCliTools(a: CliTools, b: CliTools): boolean {

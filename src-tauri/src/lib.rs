@@ -22,6 +22,7 @@ pub mod pulls;
 mod quit;
 pub mod run_memory;
 pub mod runs;
+pub mod screenshots;
 pub mod shell_path;
 pub mod terminal;
 pub mod tools;
@@ -213,12 +214,21 @@ pub fn backup_data_dir(dir: &std::path::Path, label: &str) -> Result<PathBuf, St
 }
 
 /// Housekeeping (README → Your data): the chat tools' dead tokens, and the run and chat logs in `dir` older than 30 days,
-/// go. When Gizai starts (`open_state`) and once a day while it runs.
+/// go; then old screenshots, as Settings → Agents and runs → Screenshots says, and the blobs no row uses any more
+/// (GA-182). When Gizai starts (`open_state`) and once a day while it runs.
 pub fn housekeeping(db: &Db, dir: &std::path::Path) {
-    match gizai_core::housekeeping::run(db, dir, gizai_core::ids::now_ms()) {
+    let now = gizai_core::ids::now_ms();
+    match gizai_core::housekeeping::run(db, dir, now) {
         Ok(p) if p.logs + p.tokens > 0 => eprintln!("gizai: housekeeping removed {} old logs and {} old tokens", p.logs, p.tokens),
         Ok(_) => {}
         Err(e) => eprintln!("gizai: housekeeping failed: {e}"),
+    }
+    match gizai_core::housekeeping::clear_screenshots(db, dir, now) {
+        Ok(c) if c.sets + c.blobs > 0 => {
+            eprintln!("gizai: housekeeping removed {} old screenshot sets ({} screenshots) and {} unused files", c.sets, c.screenshots, c.blobs)
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("gizai: clearing old screenshots failed: {e}"),
     }
 }
 
@@ -262,6 +272,13 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     for r in gizai_core::runs::active(&db).unwrap_or_default() {
         if let (Some(pid), Some(wt)) = (r.pid, r.worktree_path.as_deref()) {
             gizai_agents::process::end_orphan_group(pid as u32, std::path::Path::new(wt));
+        }
+        // and its preview (GA-182), which works in the same worktree, or a folder inside it (`cd web && …`), in a
+        // process group of its own
+        if let (Some(wt), Ok(Some(note))) = (r.worktree_path.as_deref(), gizai_core::screenshots::run_note(&db, &r.id))
+            && let Some(pid) = note.preview_pid
+        {
+            gizai_agents::process::end_orphan_group_within(pid, std::path::Path::new(wt));
         }
         if let (Some(_), Some(wt)) = (&r.task_id, r.worktree_path.as_deref()) {
             runs::record_head(&db, &r.id, std::path::Path::new(wt));
@@ -625,6 +642,7 @@ pub fn run() {
             commands::pending_actions, commands::approve_pending_action, commands::approve_pending_actions, commands::discard_pending_action,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             changes::card_changes, changes::card_file_diff, changes::run_changes,
+            screenshots::list_screenshots, screenshots::screenshot_bytes,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
             commands::list_old_worktrees, commands::remove_old_worktrees, commands::remove_old_worktree_anyway,

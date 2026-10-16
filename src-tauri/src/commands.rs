@@ -890,12 +890,13 @@ pub async fn agent_cli_tools(st: State<'_, AppState>, agent_id: Option<String>, 
     blocking(move || crate::mcp_servers::tools_view(&st, agent_id.as_deref(), &cli_id)).await
 }
 
-/// Saves the agent's Web and Built-in tool switches. Only you: no Team Lead tool calls this.
+/// Saves the agent's Web and Built-in tool switches, and its Take screenshots of what it built (GA-182). Only you: no Team
+/// Lead tool calls this.
 #[tauri::command]
-pub async fn save_agent_cli_tools(app: AppHandle, st: State<'_, AppState>, agent_id: String, tools: gizai_core::mcp_servers::CliTools)
-    -> R<gizai_core::mcp_servers::CliTools> {
+pub async fn save_agent_cli_tools(app: AppHandle, st: State<'_, AppState>, agent_id: String, tools: crate::mcp_servers::CliToolsInput)
+    -> R<crate::mcp_servers::SavedCliTools> {
     let st = st.inner().clone();
-    let out = blocking(move || crate::mcp_servers::save_cli_tools(&st, &agent_id, tools)).await?;
+    let out = blocking(move || crate::mcp_servers::save_cli_tools_input(&st, &agent_id, tools)).await?;
     changed(&app, "team");
     Ok(out)
 }

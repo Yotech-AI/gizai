@@ -147,7 +147,7 @@ export const mcpSignOut = (id: string) => invoke<T.McpServerView>("mcp_sign_out"
 export const agentMcp = (agentId: string) => invoke<T.AgentMcpView>("agent_mcp", { agentId });
 export const saveAgentMcp = (agentId: string, tools: T.AgentTools) => invoke<T.AgentMcpView>("save_agent_mcp", { agentId, tools });
 export const agentCliTools = (agentId: string | null, cliId: string) => invoke<T.ToolsView>("agent_cli_tools", { agentId, cliId });
-export const saveAgentCliTools = (agentId: string, tools: T.CliTools) => invoke<T.CliTools>("save_agent_cli_tools", { agentId, tools });
+export const saveAgentCliTools = (agentId: string, tools: T.CliToolsSave) => invoke<T.CliTools>("save_agent_cli_tools", { agentId, tools });
 /** Ask Claude Code again: its tools, from a start without a login (nothing spent, nothing written in ~/.claude). */
 export const askCliTools = (cliId: string) => invoke<string[]>("ask_cli_tools", { cliId });
 export const browserEntry = () => invoke<T.BrowserView>("browser_entry");
@@ -198,6 +198,14 @@ export const cardFileDiff = (taskId: string, path: string, oldPath: string | nul
   invoke<T.FileDiff>("card_file_diff", { taskId, path, oldPath, from, to });
 /** The changes one run committed: from the commit it started at to the one it ended at. */
 export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes", { runId });
+
+// ---- Screenshots (GA-182, contract CS) ----
+/** The card's screenshot sets, newest run first: every run of the card that got the Screenshots section, also one that
+ *  saved none (its `shots` is empty), with what it left out and why its preview didn't start. They arrive when a run ends,
+ *  before "runs-changed": reload on onRunsChanged. */
+export const listScreenshots = (taskId: string) => invoke<T.ScreenshotSet[]>("list_screenshots", { taskId });
+/** One screenshot's bytes (PNG, JPEG or WebP), for a blob: URL. Any id that isn't a run's screenshot is refused. */
+export const screenshotBytes = (fileId: string) => invoke<ArrayBuffer>("screenshot_bytes", { fileId });
 
 /** Pushes a Review card's branch and opens its pull request: with gh on GitHub, through Bitbucket's API on Bitbucket (keeps an open one). */
 export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });

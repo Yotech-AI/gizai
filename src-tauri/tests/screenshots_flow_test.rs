@@ -122,7 +122,9 @@ fn notes(st: &AppState, run_id: &str) -> Vec<String> {
     gizai_lib::runs::events_for(st, run_id).into_iter().filter_map(|e| match e.event { RunEvent::Note { text } => Some(text), _ => None }).collect()
 }
 
-/// Whether the process `pid` still runs: one that has ended but waits to be reaped (a zombie) has ended.
+/// Whether the process `pid` still runs: one that has ended but waits to be reaped (a zombie) has ended. On macOS too: a
+/// preview's program (the bash Gizai started, or what it exec'd) can stay a zombie of this test process there, as its
+/// group stops counting a process that is exiting before it can be waited for, and kill(pid, 0) answers yes for a zombie.
 fn alive(pid: i64) -> bool {
     // SAFETY: kill with signal 0 only asks whether the process exists.
     if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
@@ -135,9 +137,11 @@ fn alive(pid: i64) -> bool {
             Err(_) => false,
         }
     }
+    // macOS, which has no /proc: the same from `ps` (nothing when the process is gone)
     #[cfg(not(target_os = "linux"))]
     {
-        true
+        let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().expect("ps runs");
+        String::from_utf8_lossy(&out.stdout).trim().chars().next().is_some_and(|st| st != 'Z')
     }
 }
 
@@ -562,8 +566,9 @@ async fn three_runs_at_once_each_get_a_block_of_ports_of_their_own() {
     );
     let started = [a.unwrap(), b.unwrap(), c.unwrap()];
     let ids: Vec<String> = started.iter().map(|(id, _)| id.clone()).collect();
-    // all three live at once, each held at the gate
-    until("the three fakes", 60, || ids.iter().all(|id| t.out_of(id).join("env").is_file())).await;
+    // all three live at once, each held at the gate, once each fake has written what it got: it writes `shot` after
+    // `answered` and `answer` (its GET to the preview), so `env` alone could leave `answer` still empty
+    until("the three fakes", 60, || ids.iter().all(|id| t.out_of(id).join("shot").is_file())).await;
     let got: Vec<Got> = ids.iter().map(|id| t.got(id)).collect();
     let mut ports: Vec<u16> = got.iter().map(Got::port).collect();
     for g in &got {

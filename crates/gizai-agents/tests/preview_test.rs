@@ -293,38 +293,3 @@ fn log_tail_gives_the_last_ten_lines_without_colours_or_empty_lines() {
     let want: Vec<String> = (6..=15).map(|n| format!("line {n}")).collect();
     assert_eq!(preview::log_tail(&wt), want.join("\n"));
 }
-
-// GA-209, TEMPORARY (removed again in the next commit): what `stop` leaves of the program it started (bash exec'ing
-// sleep, as in the never-answering previews), twenty times. On macOS it fails on purpose, to show in CI's log how many
-// were left a zombie of this test process; on Linux it checks that none was.
-#[tokio::test]
-async fn ga209_temporary_what_stop_leaves_of_the_program_it_started() {
-    let (tmp, wt) = worktree();
-    let mut seen = vec![];
-    for i in 0..20 {
-        let pid_file = tmp.path().join(format!("sleep{i}.pid"));
-        let p = start(&format!("echo $$ > {pid_file:?}; exec sleep 600"), &wt, port(49_800));
-        let t0 = Instant::now();
-        let pid: i64 = loop {
-            if let Ok(s) = fs::read_to_string(&pid_file) && let Ok(n) = s.trim().parse() {
-                break n;
-            }
-            assert!(t0.elapsed() < Duration::from_secs(10), "no pid file");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        };
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        p.stop().await;
-        let ps = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().expect("ps runs");
-        let state = String::from_utf8_lossy(&ps.stdout).trim().to_string();
-        // SAFETY: signal 0 only checks that the process (or group) exists; nothing is sent.
-        let (one, group) = unsafe { (libc::kill(pid as i32, 0), libc::kill(-(pid as i32), 0)) };
-        seen.push(format!("{pid}: ps stat '{state}', kill(pid, 0) = {one}, kill(-pid, 0) = {group}"));
-    }
-    let zombies = seen.iter().filter(|s| s.contains("stat 'Z")).count();
-    let report = format!("GA-209 (temporary): {zombies} of 20 stopped previews left their program a zombie of this test process: {seen:#?}");
-    eprintln!("{report}");
-    #[cfg(target_os = "macos")]
-    panic!("{report}");
-    #[cfg(not(target_os = "macos"))]
-    assert_eq!(zombies, 0, "{report}");
-}

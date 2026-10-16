@@ -6,6 +6,14 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import fixturesUrl from "./fixtures.json?url";
 import { answer, loadFixtures, type Fixtures } from "./mock";
 
+// The blob: URLs alive now (the screenshots' pictures), for the console: gizaiBlobUrls() lists them, so you can see each
+// one freed when its picture leaves the screen.
+const live = new Set<string>();
+const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL);
+URL.createObjectURL = (o: Blob | MediaSource) => { const url = create(o); live.add(url); return url; };
+URL.revokeObjectURL = (url: string) => { live.delete(url); revoke(url); };
+Object.assign(window, { gizaiBlobUrls: () => [...live] });
+
 const fixtures = (await fetch(fixturesUrl).then((r) => r.json())) as Fixtures;
 loadFixtures(fixtures);
 mockWindows("main");

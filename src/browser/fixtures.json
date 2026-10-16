@@ -3,7 +3,7 @@
   "commands": {
     "agent_cli_tools": {
       "$answers": {
-        "01a143f4-2882-760b-92ad-0364ca1c5f5b": {
+        "01a143f7-88af-733a-a1af-c827e3f76cd0": {
           "browser": {
             "disabled": null,
             "lastRun": null,
@@ -173,11 +173,11 @@
             "search": null
           }
         },
-        "01a143f4-2883-7194-8f4b-d78fe854527b": {
+        "01a143f7-88b0-7057-9f8d-39995f79b3cf": {
           "browser": {
             "disabled": null,
             "lastRun": {
-              "at": 1792130637052,
+              "at": 1792130858282,
               "status": "connected"
             },
             "needs": {
@@ -346,7 +346,7 @@
             "search": null
           }
         },
-        "01a143f4-2884-7300-9b0b-6ddb3460204a": {
+        "01a143f7-88b1-71ee-9059-d4ffe02925d8": {
           "browser": {
             "disabled": null,
             "lastRun": null,
@@ -516,11 +516,11 @@
             "search": null
           }
         },
-        "01a143f4-2885-762f-ac7c-e8935fdeb1ca": {
+        "01a143f7-88b2-747d-b38c-c245c3356561": {
           "browser": {
             "disabled": null,
             "lastRun": {
-              "at": 1792134237052,
+              "at": 1792134458281,
               "status": "connected"
             },
             "needs": {
@@ -856,22 +856,22 @@
     },
     "agent_mcp": {
       "$answers": {
-        "01a143f4-2882-760b-92ad-0364ca1c5f5b": {
+        "01a143f7-88af-733a-a1af-c827e3f76cd0": {
           "disabled": null,
           "servers": [],
           "warning": null
         },
-        "01a143f4-2883-7194-8f4b-d78fe854527b": {
+        "01a143f7-88b0-7057-9f8d-39995f79b3cf": {
           "disabled": null,
           "servers": [],
           "warning": null
         },
-        "01a143f4-2884-7300-9b0b-6ddb3460204a": {
+        "01a143f7-88b1-71ee-9059-d4ffe02925d8": {
           "disabled": null,
           "servers": [],
           "warning": null
         },
-        "01a143f4-2885-762f-ac7c-e8935fdeb1ca": {
+        "01a143f7-88b2-747d-b38c-c245c3356561": {
           "disabled": null,
           "servers": [],
           "warning": null
@@ -881,23 +881,23 @@
     },
     "agent_runs": {
       "$answers": {
-        "01a143f4-2882-760b-92ad-0364ca1c5f5b": [],
-        "01a143f4-2883-7194-8f4b-d78fe854527b": [
+        "01a143f7-88af-733a-a1af-c827e3f76cd0": [],
+        "01a143f7-88b0-7057-9f8d-39995f79b3cf": [
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 1120000,
-            "createdAt": 1792128537052,
-            "endedAt": 1792130637052,
+            "createdAt": 1792128758281,
+            "endedAt": 1792130858282,
             "error": null,
             "headSha": "1e61cc6cec9c837273e862b59872200e5ab1283d",
-            "id": "01a143f4-28bd-7775-8e9f-21b81f4b1ad4",
+            "id": "01a143f7-88ee-7651-b956-c5ea73229f2e",
             "inputTokens": 2600000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28bd-7775-8e9f-21b7a49d94c3.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88ee-7651-b956-c5e9287a8056.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "ready_for_testing",
@@ -907,29 +907,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-28bd-7775-8e9f-21b7a49d94c3",
-            "startedAt": 1792128577052,
+            "sessionId": "01a143f7-88ee-7651-b956-c5e9287a8056",
+            "startedAt": 1792128798281,
             "status": "succeeded",
             "summaryMd": "Fixed QA's failure 1: on a phone the filters open below the header, so the menu stays reachable. The slider follows the light theme now too.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "assigned",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "f3acf735f14e28407b95f41f7f72afaf40b4046f",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 1960000,
-            "createdAt": 1792037037052,
-            "endedAt": 1792039437052,
+            "createdAt": 1792037258281,
+            "endedAt": 1792039658281,
             "error": null,
             "headSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
-            "id": "01a143f4-289e-755d-b22f-5229bc794e49",
+            "id": "01a143f7-88cb-721c-94aa-f57efa671a9f",
             "inputTokens": 4100000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-289e-755d-b22f-5228072a705d.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88cb-721c-94aa-f57d7a1e708a.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "ready_for_testing",
@@ -939,29 +939,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-289e-755d-b22f-5228072a705d",
-            "startedAt": 1792037077052,
+            "sessionId": "01a143f7-88cb-721c-94aa-f57d7a1e708a",
+            "startedAt": 1792037298281,
             "status": "succeeded",
             "summaryMd": "Added the price slider above the product list: two thumbs in steps of € 10, prices with BTW. The list filters as you drag, and a range without bikes says to widen it. On a phone the filters fold under one Filters button.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "manual",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "72d243bb88528975da724c5a4948e2e100523572",
             "branch": "gizai/kade-2-rate-limit-the-public-tracking-endpoint",
             "costUsdMicros": 950000,
-            "createdAt": 1792033437052,
-            "endedAt": 1792035237052,
+            "createdAt": 1792033658281,
+            "endedAt": 1792035458281,
             "error": null,
             "headSha": "59fc5571a7540fd8d6383408d1fd3e4c3993cd43",
-            "id": "01a143f4-28ef-71f7-a26d-faa02869ea1d",
+            "id": "01a143f7-8921-7332-86b3-3787946dc79b",
             "inputTokens": 2200000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28ef-71f7-a26d-fa9f0de4f76e.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-8921-7332-86b3-378650bc7a66.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "ready_for_testing",
@@ -971,29 +971,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-28ef-71f7-a26d-fa9f0de4f76e",
-            "startedAt": 1792033477052,
+            "sessionId": "01a143f7-8921-7332-86b3-378650bc7a66",
+            "startedAt": 1792033698281,
             "status": "succeeded",
             "summaryMd": "The tracking page now says when to try again after too many lookups (HTTP 429): \"Too many lookups. Try again in 60 seconds.\" Checked on desktop and on a phone.",
-            "taskId": "01a143f4-264a-7214-984a-eb2b5360a4c0",
+            "taskId": "01a143f7-86c7-7619-9bbd-7eb86d32c5f5",
             "trigger": "assigned",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/KADE/KADE-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "57160fb0cd06b89b241ca50651a8930cae93cacd",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 2840000,
-            "createdAt": 1791961737052,
-            "endedAt": 1791967197052,
+            "createdAt": 1791961958281,
+            "endedAt": 1791967418282,
             "error": "stopped at the time limit of 90 minutes per run (Settings → Runs)",
             "headSha": "f3acf735f14e28407b95f41f7f72afaf40b4046f",
-            "id": "01a143f4-289a-755b-a9a8-19a2f6906764",
+            "id": "01a143f7-88c6-77f4-86d8-9a128f361f59",
             "inputTokens": 6900000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-289a-755b-a9a8-19a11457ad8b.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88c6-77f4-86d8-9a11389b0a21.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "error",
@@ -1003,29 +1003,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-289a-755b-a9a8-19a11457ad8b",
-            "startedAt": 1791961777052,
+            "sessionId": "01a143f7-88c6-77f4-86d8-9a11389b0a21",
+            "startedAt": 1791961998281,
             "status": "timed_out",
             "summaryMd": null,
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "nudge",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "ba0c5a2ff43cc21b6e56207a1afedadd1e871779",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 620000,
-            "createdAt": 1791957837052,
-            "endedAt": 1791959337052,
+            "createdAt": 1791958058281,
+            "endedAt": 1791959558281,
             "error": null,
             "headSha": "57160fb0cd06b89b241ca50651a8930cae93cacd",
-            "id": "01a143f4-2891-710d-af80-4d943c28f580",
+            "id": "01a143f7-88be-7676-a942-df9d2cf2094e",
             "inputTokens": 1480000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-2891-710d-af80-4d93dba01e00.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88be-7676-a942-df9c7935865c.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "needs_decision",
@@ -1035,32 +1035,32 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-2891-710d-af80-4d93dba01e00",
-            "startedAt": 1791957877052,
+            "sessionId": "01a143f7-88be-7676-a942-df9c7935865c",
+            "startedAt": 1791958098281,
             "status": "succeeded",
             "summaryMd": "Should the price slider show prices with BTW or without? The product list shows them with 21% BTW, but the filter API stores them without. I made the filter read both; no screen changed yet, the slider waits for your answer.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "assigned",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           }
         ],
-        "01a143f4-2884-7300-9b0b-6ddb3460204a": [],
-        "01a143f4-2885-762f-ac7c-e8935fdeb1ca": [
+        "01a143f7-88b1-71ee-9059-d4ffe02925d8": [],
+        "01a143f7-88b2-747d-b38c-c245c3356561": [
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "agentId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "agentName": "QA Agent",
             "baseSha": "1e61cc6cec9c837273e862b59872200e5ab1283d",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 740000,
-            "createdAt": 1792132437052,
-            "endedAt": 1792134237052,
+            "createdAt": 1792132658281,
+            "endedAt": 1792134458281,
             "error": null,
             "headSha": "1e61cc6cec9c837273e862b59872200e5ab1283d",
-            "id": "01a143f4-28d8-726c-bd61-d3d118f792a2",
+            "id": "01a143f7-890a-72c2-be14-29779c190c3b",
             "inputTokens": 1700000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28d7-72f9-9127-76e75ccfa9e9.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-890a-72c2-be14-2976a285dffb.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "qa_pass",
@@ -1070,29 +1070,29 @@
             "refused": [],
             "roleKey": "qa",
             "runForMe": [],
-            "sessionId": "01a143f4-28d7-72f9-9127-76e75ccfa9e9",
-            "startedAt": 1792132477052,
+            "sessionId": "01a143f7-890a-72c2-be14-2976a285dffb",
+            "startedAt": 1792132698281,
             "status": "succeeded",
             "summaryMd": "QA passed. All four criteria hold on desktop and phone: the slider filters the list as you drag (AC 1), prices show with BTW in steps of € 10 (AC 2), an empty range says what to try (AC 3), and the menu stays reachable with the filters open (AC 4). Opened pull request #41.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "routed",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "agentId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "agentName": "QA Agent",
             "baseSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 880000,
-            "createdAt": 1792047837052,
-            "endedAt": 1792049937052,
+            "createdAt": 1792048058281,
+            "endedAt": 1792050158281,
             "error": null,
             "headSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
-            "id": "01a143f4-28b4-7603-8414-80f6007dbe9c",
+            "id": "01a143f7-88e5-7509-b47e-20cdd4ec9afb",
             "inputTokens": 2050000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28b4-7603-8414-80f5e4778bc9.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88e5-7509-b47e-20cc64f46107.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "qa_fail",
@@ -1102,11 +1102,11 @@
             "refused": [],
             "roleKey": "qa",
             "runForMe": [],
-            "sessionId": "01a143f4-28b4-7603-8414-80f5e4778bc9",
-            "startedAt": 1792047877052,
+            "sessionId": "01a143f7-88e5-7509-b47e-20cc64f46107",
+            "startedAt": 1792048098281,
             "status": "succeeded",
             "summaryMd": "QA failed: AC 4 fails on a phone.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "routed",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           }
@@ -1116,7 +1116,7 @@
     },
     "agent_stats": {
       "$answers": {
-        "01a143f4-2882-760b-92ad-0364ca1c5f5b": [
+        "01a143f7-88af-733a-a1af-c827e3f76cd0": [
           {
             "dayStart": 1790985600000,
             "failed": 0,
@@ -1202,7 +1202,7 @@
             "succeeded": 0
           }
         ],
-        "01a143f4-2883-7194-8f4b-d78fe854527b": [
+        "01a143f7-88b0-7057-9f8d-39995f79b3cf": [
           {
             "dayStart": 1790985600000,
             "failed": 0,
@@ -1288,7 +1288,7 @@
             "succeeded": 1
           }
         ],
-        "01a143f4-2884-7300-9b0b-6ddb3460204a": [
+        "01a143f7-88b1-71ee-9059-d4ffe02925d8": [
           {
             "dayStart": 1790985600000,
             "failed": 0,
@@ -1374,7 +1374,7 @@
             "succeeded": 0
           }
         ],
-        "01a143f4-2885-762f-ac7c-e8935fdeb1ca": [
+        "01a143f7-88b2-747d-b38c-c245c3356561": [
           {
             "dayStart": 1790985600000,
             "failed": 0,
@@ -1470,7 +1470,7 @@
       "selftest_mode": null,
       "start_route": null,
       "version": "0.12.0",
-      "you_id": "01a143f4-2645-740a-a1b4-fe98424bcc0e"
+      "you_id": "01a143f7-86c4-7175-b5c4-175dbfcf64f2"
     },
     "ask_lead_enabled": true,
     "bitbucket_status": {
@@ -1504,7 +1504,7 @@
     },
     "card_changes": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": {
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": {
           "additions": 0,
           "baseLabel": "main",
           "deletions": 0,
@@ -1514,7 +1514,7 @@
           "source": "none",
           "to": null
         },
-        "01a143f4-264a-7214-984a-eb2f93021f05": {
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": {
           "additions": 0,
           "baseLabel": "main",
           "deletions": 0,
@@ -1524,7 +1524,7 @@
           "source": "none",
           "to": null
         },
-        "01a143f4-264b-77cf-b801-75101248b7fc": {
+        "01a143f7-86c9-7666-a0fc-b930004415bf": {
           "additions": 0,
           "baseLabel": "main",
           "deletions": 0,
@@ -1534,7 +1534,7 @@
           "source": "none",
           "to": null
         },
-        "01a143f4-264c-7326-8e23-1c69f753f54a": {
+        "01a143f7-86c9-7666-a0fc-b932c25622be": {
           "additions": 0,
           "baseLabel": "origin/main",
           "deletions": 0,
@@ -1544,7 +1544,7 @@
           "source": "none",
           "to": null
         },
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": {
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": {
           "additions": 30,
           "baseLabel": "origin/main",
           "deletions": 3,
@@ -1573,7 +1573,7 @@
           "source": "branch",
           "to": "1e61cc6cec9c837273e862b59872200e5ab1283d"
         },
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": {
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": {
           "additions": 0,
           "baseLabel": "origin/main",
           "deletions": 0,
@@ -1583,7 +1583,7 @@
           "source": "none",
           "to": null
         },
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": {
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": {
           "additions": 0,
           "baseLabel": "origin/main",
           "deletions": 0,
@@ -1593,7 +1593,7 @@
           "source": "none",
           "to": null
         },
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": {
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": {
           "additions": 0,
           "baseLabel": "origin/main",
           "deletions": 0,
@@ -1680,7 +1680,7 @@
       "$by": "path"
     },
     "chat_agent": {
-      "actorId": "01a143f4-2882-760b-92ad-0364ca1c5f5b",
+      "actorId": "01a143f7-88af-733a-a1af-c827e3f76cd0",
       "adapter": "claude_code",
       "allowedTools": [
         "Bash(git status:*)",
@@ -1821,8 +1821,8 @@
     ],
     "get_agent": {
       "$answers": {
-        "01a143f4-2882-760b-92ad-0364ca1c5f5b": {
-          "actorId": "01a143f4-2882-760b-92ad-0364ca1c5f5b",
+        "01a143f7-88af-733a-a1af-c827e3f76cd0": {
+          "actorId": "01a143f7-88af-733a-a1af-c827e3f76cd0",
           "adapter": "claude_code",
           "allowedTools": [
             "Bash(git status:*)",
@@ -1891,8 +1891,8 @@
           "useMemory": true,
           "wakeup": "manual"
         },
-        "01a143f4-2883-7194-8f4b-d78fe854527b": {
-          "actorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+        "01a143f7-88b0-7057-9f8d-39995f79b3cf": {
+          "actorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
           "adapter": "claude_code",
           "allowedTools": [
             "Bash(git status:*)",
@@ -1978,8 +1978,8 @@
           "useMemory": true,
           "wakeup": "manual"
         },
-        "01a143f4-2884-7300-9b0b-6ddb3460204a": {
-          "actorId": "01a143f4-2884-7300-9b0b-6ddb3460204a",
+        "01a143f7-88b1-71ee-9059-d4ffe02925d8": {
+          "actorId": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
           "adapter": "claude_code",
           "allowedTools": [
             "Bash(git status:*)",
@@ -2059,8 +2059,8 @@
           "useMemory": true,
           "wakeup": "manual"
         },
-        "01a143f4-2885-762f-ac7c-e8935fdeb1ca": {
-          "actorId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+        "01a143f7-88b2-747d-b38c-c245c3356561": {
+          "actorId": "01a143f7-88b2-747d-b38c-c245c3356561",
           "adapter": "claude_code",
           "allowedTools": [
             "Bash(git status:*)",
@@ -2155,14 +2155,14 @@
     },
     "get_client": {
       "$answers": {
-        "01a143f4-2647-7280-869a-3bc3a60755f0": {
+        "01a143f7-86c5-7623-8685-1f07356419e3": {
           "city": "Amsterdam",
           "cocNumber": "34098812",
           "country": "NL",
           "currency": "EUR",
           "email": null,
           "iban": null,
-          "id": "01a143f4-2647-7280-869a-3bc3a60755f0",
+          "id": "01a143f7-86c5-7623-8685-1f07356419e3",
           "kind": "company",
           "legalName": null,
           "mainContact": "Marloes Visser",
@@ -2175,18 +2175,18 @@
           "projects": 1,
           "status": "active",
           "street": null,
-          "updatedAt": 1791709437042,
+          "updatedAt": 1791709658271,
           "vatNumber": "NL004512378B01",
           "website": null
         },
-        "01a143f4-2647-7280-869a-3bc5f55ec801": {
+        "01a143f7-86c5-7623-8685-1f09e8dd8ae6": {
           "city": "Utrecht",
           "cocNumber": "68873310",
           "country": "NL",
           "currency": "EUR",
           "email": null,
           "iban": null,
-          "id": "01a143f4-2647-7280-869a-3bc5f55ec801",
+          "id": "01a143f7-86c5-7623-8685-1f09e8dd8ae6",
           "kind": "company",
           "legalName": null,
           "mainContact": null,
@@ -2199,18 +2199,18 @@
           "projects": 1,
           "status": "active",
           "street": null,
-          "updatedAt": 1791709437042,
+          "updatedAt": 1791709658271,
           "vatNumber": "NL857712093B01",
           "website": null
         },
-        "01a143f4-2647-7280-869a-3bc74350cd32": {
+        "01a143f7-86c5-7623-8685-1f0be7595a9a": {
           "city": "Haarlem",
           "cocNumber": null,
           "country": "NL",
           "currency": "EUR",
           "email": null,
           "iban": null,
-          "id": "01a143f4-2647-7280-869a-3bc74350cd32",
+          "id": "01a143f7-86c5-7623-8685-1f0be7595a9a",
           "kind": "company",
           "legalName": null,
           "mainContact": null,
@@ -2223,7 +2223,7 @@
           "projects": 0,
           "status": "lead",
           "street": null,
-          "updatedAt": 1791709437042,
+          "updatedAt": 1791709658271,
           "vatNumber": null,
           "website": null
         }
@@ -2232,18 +2232,18 @@
     },
     "get_project": {
       "$answers": {
-        "01a143f4-2648-71df-aee2-9ddcd5e9abde": {
+        "01a143f7-86c6-7728-bd6e-959f6703611f": {
           "aiCostUsdMicros": 950000,
           "aiUnknownCostRuns": 0,
           "budgetAmountMinor": null,
           "budgetHours": null,
-          "clientId": "01a143f4-2647-7280-869a-3bc3a60755f0",
+          "clientId": "01a143f7-86c5-7623-8685-1f07356419e3",
           "clientName": "Kade Logistics B.V.",
           "color": "#e8c547",
           "defaultBranch": "main",
           "doneTasks": 0,
           "goalMd": "Give Kade's office one place for shipments, invoices and drivers.",
-          "id": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+          "id": "01a143f7-86c6-7728-bd6e-959f6703611f",
           "key": "KADE",
           "leadMayMerge": false,
           "name": "Kade portal",
@@ -2271,24 +2271,24 @@
             ]
           },
           "status": "active",
-          "teamId": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
-          "updatedAt": 1791709437043,
+          "teamId": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
+          "updatedAt": 1791709658271,
           "worktreeCopy": [],
           "worktreeInstall": true,
           "worktreeSetup": null
         },
-        "01a143f4-2648-71df-aee2-9ddeccdfc37b": {
+        "01a143f7-86c6-7728-bd6e-95a1dff09af6": {
           "aiCostUsdMicros": 8160000,
           "aiUnknownCostRuns": 0,
           "budgetAmountMinor": null,
           "budgetHours": null,
-          "clientId": "01a143f4-2647-7280-869a-3bc5f55ec801",
+          "clientId": "01a143f7-86c5-7623-8685-1f09e8dd8ae6",
           "clientName": "De Groene Fiets",
           "color": "#4fc1a6",
           "defaultBranch": "main",
           "doneTasks": 1,
           "goalMd": null,
-          "id": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+          "id": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
           "key": "GFW",
           "leadMayMerge": false,
           "name": "Groene Fiets webshop",
@@ -2316,8 +2316,8 @@
             ]
           },
           "status": "active",
-          "teamId": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
-          "updatedAt": 1791795837052,
+          "teamId": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
+          "updatedAt": 1791796058281,
           "worktreeCopy": [],
           "worktreeInstall": true,
           "worktreeSetup": null
@@ -2358,7 +2358,7 @@
     },
     "get_task": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": {
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
@@ -2368,23 +2368,23 @@
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1791709437044,
+          "createdAt": 1791709658272,
           "descriptionMd": "## Context\n\nExport invoices as CSV from the portal.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-2649-7302-9a35-ee9ae3f86947",
+          "id": "01a143f7-86c6-7728-bd6e-95a3f2fcf296",
           "identifier": "KADE-1",
           "labels": [
             {
               "color": "#f29a4a",
-              "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+              "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
               "name": "backend"
             },
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             }
           ],
@@ -2392,20 +2392,20 @@
           "prUrl": null,
           "priority": 2,
           "projectColor": "#e8c547",
-          "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+          "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
           "projectName": "Kade portal",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a0",
           "stateCategory": "in_progress",
-          "stateId": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+          "stateId": "01a143f7-86c4-7175-b5c4-1764fd718e54",
           "stateName": "In progress",
           "testing": true,
           "title": "Export invoices as CSV from the portal",
-          "updatedAt": 1791709437044,
+          "updatedAt": 1791709658273,
           "withLead": false
         },
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": {
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
@@ -2415,18 +2415,18 @@
           "bounceCount": 0,
           "branch": "gizai/kade-2-rate-limit-the-public-tracking-endpoint",
           "byHand": false,
-          "createdAt": 1791709437045,
+          "createdAt": 1791709658273,
           "descriptionMd": "## Context\n\nRate limit the public tracking endpoint.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264a-7214-984a-eb2b5360a4c0",
+          "id": "01a143f7-86c7-7619-9bbd-7eb86d32c5f5",
           "identifier": "KADE-2",
           "labels": [
             {
               "color": "#f29a4a",
-              "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+              "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
               "name": "backend"
             }
           ],
@@ -2434,41 +2434,41 @@
           "prUrl": null,
           "priority": 3,
           "projectColor": "#e8c547",
-          "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+          "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
           "projectName": "Kade portal",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a0",
           "stateCategory": "testing",
-          "stateId": "01a143f4-2645-740a-a1b4-fea0db15b304",
+          "stateId": "01a143f7-86c4-7175-b5c4-1765920882fa",
           "stateName": "Testing",
           "testing": true,
           "title": "Rate limit the public tracking endpoint",
-          "updatedAt": 1792035237063,
+          "updatedAt": 1792035458292,
           "withLead": false
         },
-        "01a143f4-264a-7214-984a-eb2f93021f05": {
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
-          "assigneeId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+          "assigneeId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
           "assigneeKind": "person",
           "assigneeName": "Jeffrey",
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1791709437045,
+          "createdAt": 1791709658274,
           "descriptionMd": "## Context\n\nFilament table: remember column order per user.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264a-7214-984a-eb2f93021f05",
+          "id": "01a143f7-86c8-7676-ab66-c317f1f31b53",
           "identifier": "KADE-3",
           "labels": [
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             }
           ],
@@ -2476,20 +2476,20 @@
           "prUrl": "https://github.com/kade-logistics/portal/pull/17",
           "priority": 3,
           "projectColor": "#e8c547",
-          "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+          "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
           "projectName": "Kade portal",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a1",
           "stateCategory": "review",
-          "stateId": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+          "stateId": "01a143f7-86c4-7175-b5c4-176674e3ec22",
           "stateName": "Review",
           "testing": true,
           "title": "Filament table: remember column order per user",
-          "updatedAt": 1792053237052,
+          "updatedAt": 1792053458282,
           "withLead": false
         },
-        "01a143f4-264b-77cf-b801-75101248b7fc": {
+        "01a143f7-86c9-7666-a0fc-b930004415bf": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
@@ -2499,59 +2499,59 @@
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1791709437046,
+          "createdAt": 1791709658275,
           "descriptionMd": "## Context\n\nDriver app: offline queue, one-page spec.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264b-77cf-b801-75101248b7fc",
+          "id": "01a143f7-86c9-7666-a0fc-b930004415bf",
           "identifier": "KADE-4",
           "labels": [],
           "prState": null,
           "prUrl": null,
           "priority": 4,
           "projectColor": "#e8c547",
-          "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+          "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
           "projectName": "Kade portal",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a1",
           "stateCategory": "backlog",
-          "stateId": "01a143f4-2645-740a-a1b4-fe9dd8d252ef",
+          "stateId": "01a143f7-86c4-7175-b5c4-1762d3c3f6db",
           "stateName": "Backlog",
           "testing": true,
           "title": "Driver app: offline queue, one-page spec",
-          "updatedAt": 1791709437046,
+          "updatedAt": 1791709658275,
           "withLead": false
         },
-        "01a143f4-264c-7326-8e23-1c69f753f54a": {
+        "01a143f7-86c9-7666-a0fc-b932c25622be": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
-          "assigneeId": "01a143f4-2884-7300-9b0b-6ddb3460204a",
+          "assigneeId": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
           "assigneeKind": "agent",
           "assigneeName": "Backend Agent",
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1791709437047,
+          "createdAt": 1791709658276,
           "descriptionMd": "## Context\n\nMollie webhook: retry failed payment updates.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264c-7326-8e23-1c69f753f54a",
+          "id": "01a143f7-86c9-7666-a0fc-b932c25622be",
           "identifier": "GFW-1",
           "labels": [
             {
               "color": "#f29a4a",
-              "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+              "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
               "name": "backend"
             },
             {
               "color": "#f2706b",
-              "id": "01a143f4-2646-7400-93f7-8c2beb22c1f6",
+              "id": "01a143f7-86c4-7175-b5c4-177608935973",
               "name": "bug"
             }
           ],
@@ -2559,41 +2559,41 @@
           "prUrl": null,
           "priority": 1,
           "projectColor": "#4fc1a6",
-          "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+          "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
           "projectName": "Groene Fiets webshop",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a1",
           "stateCategory": "in_progress",
-          "stateId": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+          "stateId": "01a143f7-86c4-7175-b5c4-1764fd718e54",
           "stateName": "In progress",
           "testing": true,
           "title": "Mollie webhook: retry failed payment updates",
-          "updatedAt": 1791860637053,
+          "updatedAt": 1791860858281,
           "withLead": false
         },
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": {
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": {
           "acceptanceMd": "- [ ] AC 1: the slider filters the product list as you drag\n- [ ] AC 2: prices show with 21% BTW, in steps of € 10\n- [ ] AC 3: a range without bikes says what to try\n- [ ] AC 4: on a phone the filters fold, and the menu stays reachable",
           "archivedAt": null,
           "archivedBy": null,
-          "assigneeId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+          "assigneeId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
           "assigneeKind": "person",
           "assigneeName": "Jeffrey",
           "bounceCount": 0,
           "branch": "gizai/gfw-2-product-filters-price-range-slider",
           "byHand": false,
-          "createdAt": 1791709437047,
+          "createdAt": 1791709658276,
           "descriptionMd": "## Context\n\nProduct filters: price range slider.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+          "id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
           "identifier": "GFW-2",
           "labels": [
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             }
           ],
@@ -2601,20 +2601,20 @@
           "prUrl": "https://github.com/groene-fiets/webshop/pull/41",
           "priority": 4,
           "projectColor": "#4fc1a6",
-          "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+          "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
           "projectName": "Groene Fiets webshop",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a0",
           "stateCategory": "review",
-          "stateId": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+          "stateId": "01a143f7-86c4-7175-b5c4-176674e3ec22",
           "stateName": "Review",
           "testing": true,
           "title": "Product filters: price range slider",
-          "updatedAt": 1792134297052,
+          "updatedAt": 1792134518281,
           "withLead": false
         },
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": {
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
@@ -2624,18 +2624,18 @@
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1791709437048,
+          "createdAt": 1791709658277,
           "descriptionMd": "## Context\n\nPostcode and house number lookup on checkout.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264d-7175-b4fa-71bcbe6d2a63",
+          "id": "01a143f7-86cb-703e-aea7-b6b7e43b3069",
           "identifier": "GFW-3",
           "labels": [
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             }
           ],
@@ -2643,20 +2643,20 @@
           "prUrl": null,
           "priority": 3,
           "projectColor": "#4fc1a6",
-          "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+          "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
           "projectName": "Groene Fiets webshop",
           "runForMe": [],
           "screenshots": false,
           "sortKey": "a1",
           "stateCategory": "ready",
-          "stateId": "01a143f4-2645-740a-a1b4-fe9e2aab0c7a",
+          "stateId": "01a143f7-86c4-7175-b5c4-176342e70377",
           "stateName": "To do",
           "testing": true,
           "title": "Postcode and house number lookup on checkout",
-          "updatedAt": 1792051437052,
+          "updatedAt": 1792051658281,
           "withLead": false
         },
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": {
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
@@ -2666,18 +2666,18 @@
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1791709437049,
+          "createdAt": 1791709658278,
           "descriptionMd": "## Context\n\nBTW 9% for the books category.\n\n- [ ] first step\n- [x] agreed with the client",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-264e-758b-bfbc-206bf1d5227c",
+          "id": "01a143f7-86cc-7241-b4b6-011999b9d5c1",
           "identifier": "GFW-4",
           "labels": [
             {
               "color": "#f29a4a",
-              "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+              "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
               "name": "backend"
             }
           ],
@@ -2685,41 +2685,41 @@
           "prUrl": null,
           "priority": 0,
           "projectColor": "#4fc1a6",
-          "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+          "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
           "projectName": "Groene Fiets webshop",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a0",
           "stateCategory": "done",
-          "stateId": "01a143f4-2645-740a-a1b4-fea37bd80659",
+          "stateId": "01a143f7-86c4-7175-b5c4-176867bd8076",
           "stateName": "Done",
           "testing": true,
           "title": "BTW 9% for the books category",
-          "updatedAt": 1791709437049,
+          "updatedAt": 1791709658278,
           "withLead": false
         },
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": {
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": {
           "acceptanceMd": null,
           "archivedAt": null,
           "archivedBy": null,
-          "assigneeId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+          "assigneeId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
           "assigneeKind": "agent",
           "assigneeName": "Frontend Agent",
           "bounceCount": 0,
           "branch": null,
           "byHand": false,
-          "createdAt": 1792138437052,
+          "createdAt": 1792138658281,
           "descriptionMd": "## Context\n\nCustomers want to keep a bike for later and find it again on their next visit, also without an account.\n\n- [ ] a heart on each product card\n- [ ] a Wishlist page in the menu",
           "failCount": 0,
           "hold": null,
           "holdAt": null,
           "holdReason": null,
-          "id": "01a143f4-2902-71f7-a91d-8b5404e1a0a5",
+          "id": "01a143f7-8935-7654-b8f8-af8e5cd05286",
           "identifier": "GFW-5",
           "labels": [
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             }
           ],
@@ -2727,17 +2727,17 @@
           "prUrl": null,
           "priority": 3,
           "projectColor": "#4fc1a6",
-          "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+          "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
           "projectName": "Groene Fiets webshop",
           "runForMe": [],
           "screenshots": null,
           "sortKey": "a2",
           "stateCategory": "ready",
-          "stateId": "01a143f4-2645-740a-a1b4-fe9e2aab0c7a",
+          "stateId": "01a143f7-86c4-7175-b5c4-176342e70377",
           "stateName": "To do",
           "testing": true,
           "title": "Wishlist: save a bike for later",
-          "updatedAt": 1792138437053,
+          "updatedAt": 1792138658281,
           "withLead": false
         }
       },
@@ -2745,7 +2745,7 @@
     },
     "get_team": {
       "$answers": {
-        "01a143f4-2645-740a-a1b4-fe9abe2b0ed5": {
+        "01a143f7-86c4-7175-b5c4-175ffc33e77a": {
           "branches": [
             {
               "key": "design",
@@ -2784,32 +2784,32 @@
               ]
             }
           ],
-          "id": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
+          "id": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
           "labels": [
             {
               "color": "#f29a4a",
-              "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+              "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
               "name": "backend"
             },
             {
               "color": "#f2706b",
-              "id": "01a143f4-2646-7400-93f7-8c2beb22c1f6",
+              "id": "01a143f7-86c4-7175-b5c4-177608935973",
               "name": "bug"
             },
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             },
             {
               "color": "#a98bfa",
-              "id": "01a143f4-2646-7400-93f7-8c29e5038dfe",
+              "id": "01a143f7-86c4-7175-b5c4-1774f3d37339",
               "name": "qa"
             }
           ],
           "members": [
             {
-              "actorId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+              "actorId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
               "adapter": null,
               "allowedTools": [],
               "boardCheckMinutes": null,
@@ -2849,7 +2849,7 @@
               "wakeup": null
             },
             {
-              "actorId": "01a143f4-2884-7300-9b0b-6ddb3460204a",
+              "actorId": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -2930,7 +2930,7 @@
               "wakeup": "manual"
             },
             {
-              "actorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+              "actorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3017,7 +3017,7 @@
               "wakeup": "manual"
             },
             {
-              "actorId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+              "actorId": "01a143f7-88b2-747d-b38c-c245c3356561",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3108,7 +3108,7 @@
               "wakeup": "manual"
             },
             {
-              "actorId": "01a143f4-2882-760b-92ad-0364ca1c5f5b",
+              "actorId": "01a143f7-88af-733a-a1af-c827e3f76cd0",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3185,7 +3185,7 @@
               "auto": false,
               "category": "backlog",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fe9dd8d252ef",
+              "id": "01a143f7-86c4-7175-b5c4-1762d3c3f6db",
               "name": "Backlog",
               "nextStateId": null,
               "sortKey": "a0",
@@ -3193,42 +3193,42 @@
             },
             {
               "agentIds": [
-                "01a143f4-2883-7194-8f4b-d78fe854527b",
-                "01a143f4-2884-7300-9b0b-6ddb3460204a"
+                "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+                "01a143f7-88b1-71ee-9059-d4ffe02925d8"
               ],
               "auto": true,
               "category": "ready",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fe9e2aab0c7a",
+              "id": "01a143f7-86c4-7175-b5c4-176342e70377",
               "name": "To do",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-1764fd718e54",
               "sortKey": "a1",
               "wipLimit": null
             },
             {
               "agentIds": [
-                "01a143f4-2883-7194-8f4b-d78fe854527b",
-                "01a143f4-2884-7300-9b0b-6ddb3460204a"
+                "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+                "01a143f7-88b1-71ee-9059-d4ffe02925d8"
               ],
               "auto": true,
               "category": "in_progress",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+              "id": "01a143f7-86c4-7175-b5c4-1764fd718e54",
               "name": "In progress",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea0db15b304",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-1765920882fa",
               "sortKey": "a2",
               "wipLimit": null
             },
             {
               "agentIds": [
-                "01a143f4-2885-762f-ac7c-e8935fdeb1ca"
+                "01a143f7-88b2-747d-b38c-c245c3356561"
               ],
               "auto": true,
               "category": "testing",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea0db15b304",
+              "id": "01a143f7-86c4-7175-b5c4-1765920882fa",
               "name": "Testing",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-176674e3ec22",
               "sortKey": "a3",
               "wipLimit": null
             },
@@ -3237,9 +3237,9 @@
               "auto": false,
               "category": "review",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+              "id": "01a143f7-86c4-7175-b5c4-176674e3ec22",
               "name": "Review",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea2ca0fd2ed",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-1767b89c87bf",
               "sortKey": "a4",
               "wipLimit": null
             },
@@ -3248,9 +3248,9 @@
               "auto": false,
               "category": "deploy",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea2ca0fd2ed",
+              "id": "01a143f7-86c4-7175-b5c4-1767b89c87bf",
               "name": "Deploy",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea37bd80659",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-176867bd8076",
               "sortKey": "a5",
               "wipLimit": null
             },
@@ -3259,7 +3259,7 @@
               "auto": false,
               "category": "done",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea37bd80659",
+              "id": "01a143f7-86c4-7175-b5c4-176867bd8076",
               "name": "Done",
               "nextStateId": null,
               "sortKey": "a6",
@@ -3306,32 +3306,32 @@
               ]
             }
           ],
-          "id": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
+          "id": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
           "labels": [
             {
               "color": "#f29a4a",
-              "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+              "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
               "name": "backend"
             },
             {
               "color": "#f2706b",
-              "id": "01a143f4-2646-7400-93f7-8c2beb22c1f6",
+              "id": "01a143f7-86c4-7175-b5c4-177608935973",
               "name": "bug"
             },
             {
               "color": "#7b9bff",
-              "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+              "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
               "name": "frontend"
             },
             {
               "color": "#a98bfa",
-              "id": "01a143f4-2646-7400-93f7-8c29e5038dfe",
+              "id": "01a143f7-86c4-7175-b5c4-1774f3d37339",
               "name": "qa"
             }
           ],
           "members": [
             {
-              "actorId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+              "actorId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
               "adapter": null,
               "allowedTools": [],
               "boardCheckMinutes": null,
@@ -3371,7 +3371,7 @@
               "wakeup": null
             },
             {
-              "actorId": "01a143f4-2884-7300-9b0b-6ddb3460204a",
+              "actorId": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3452,7 +3452,7 @@
               "wakeup": "manual"
             },
             {
-              "actorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+              "actorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3539,7 +3539,7 @@
               "wakeup": "manual"
             },
             {
-              "actorId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+              "actorId": "01a143f7-88b2-747d-b38c-c245c3356561",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3630,7 +3630,7 @@
               "wakeup": "manual"
             },
             {
-              "actorId": "01a143f4-2882-760b-92ad-0364ca1c5f5b",
+              "actorId": "01a143f7-88af-733a-a1af-c827e3f76cd0",
               "adapter": "claude_code",
               "allowedTools": [
                 "Bash(git status:*)",
@@ -3707,7 +3707,7 @@
               "auto": false,
               "category": "backlog",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fe9dd8d252ef",
+              "id": "01a143f7-86c4-7175-b5c4-1762d3c3f6db",
               "name": "Backlog",
               "nextStateId": null,
               "sortKey": "a0",
@@ -3715,42 +3715,42 @@
             },
             {
               "agentIds": [
-                "01a143f4-2883-7194-8f4b-d78fe854527b",
-                "01a143f4-2884-7300-9b0b-6ddb3460204a"
+                "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+                "01a143f7-88b1-71ee-9059-d4ffe02925d8"
               ],
               "auto": true,
               "category": "ready",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fe9e2aab0c7a",
+              "id": "01a143f7-86c4-7175-b5c4-176342e70377",
               "name": "To do",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-1764fd718e54",
               "sortKey": "a1",
               "wipLimit": null
             },
             {
               "agentIds": [
-                "01a143f4-2883-7194-8f4b-d78fe854527b",
-                "01a143f4-2884-7300-9b0b-6ddb3460204a"
+                "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+                "01a143f7-88b1-71ee-9059-d4ffe02925d8"
               ],
               "auto": true,
               "category": "in_progress",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+              "id": "01a143f7-86c4-7175-b5c4-1764fd718e54",
               "name": "In progress",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea0db15b304",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-1765920882fa",
               "sortKey": "a2",
               "wipLimit": null
             },
             {
               "agentIds": [
-                "01a143f4-2885-762f-ac7c-e8935fdeb1ca"
+                "01a143f7-88b2-747d-b38c-c245c3356561"
               ],
               "auto": true,
               "category": "testing",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea0db15b304",
+              "id": "01a143f7-86c4-7175-b5c4-1765920882fa",
               "name": "Testing",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-176674e3ec22",
               "sortKey": "a3",
               "wipLimit": null
             },
@@ -3759,9 +3759,9 @@
               "auto": false,
               "category": "review",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+              "id": "01a143f7-86c4-7175-b5c4-176674e3ec22",
               "name": "Review",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea2ca0fd2ed",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-1767b89c87bf",
               "sortKey": "a4",
               "wipLimit": null
             },
@@ -3770,9 +3770,9 @@
               "auto": false,
               "category": "deploy",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea2ca0fd2ed",
+              "id": "01a143f7-86c4-7175-b5c4-1767b89c87bf",
               "name": "Deploy",
-              "nextStateId": "01a143f4-2645-740a-a1b4-fea37bd80659",
+              "nextStateId": "01a143f7-86c4-7175-b5c4-176867bd8076",
               "sortKey": "a5",
               "wipLimit": null
             },
@@ -3781,7 +3781,7 @@
               "auto": false,
               "category": "done",
               "color": null,
-              "id": "01a143f4-2645-740a-a1b4-fea37bd80659",
+              "id": "01a143f7-86c4-7175-b5c4-176867bd8076",
               "name": "Done",
               "nextStateId": null,
               "sortKey": "a6",
@@ -3810,7 +3810,7 @@
         "currency": "EUR",
         "email": null,
         "iban": null,
-        "id": "01a143f4-2647-7280-869a-3bc74350cd32",
+        "id": "01a143f7-86c5-7623-8685-1f0be7595a9a",
         "kind": "company",
         "legalName": null,
         "mainContact": null,
@@ -3823,7 +3823,7 @@
         "projects": 0,
         "status": "lead",
         "street": null,
-        "updatedAt": 1791709437042,
+        "updatedAt": 1791709658271,
         "vatNumber": null,
         "website": null
       },
@@ -3834,7 +3834,7 @@
         "currency": "EUR",
         "email": null,
         "iban": null,
-        "id": "01a143f4-2647-7280-869a-3bc5f55ec801",
+        "id": "01a143f7-86c5-7623-8685-1f09e8dd8ae6",
         "kind": "company",
         "legalName": null,
         "mainContact": null,
@@ -3847,7 +3847,7 @@
         "projects": 1,
         "status": "active",
         "street": null,
-        "updatedAt": 1791709437042,
+        "updatedAt": 1791709658271,
         "vatNumber": "NL857712093B01",
         "website": null
       },
@@ -3858,7 +3858,7 @@
         "currency": "EUR",
         "email": null,
         "iban": null,
-        "id": "01a143f4-2647-7280-869a-3bc3a60755f0",
+        "id": "01a143f7-86c5-7623-8685-1f07356419e3",
         "kind": "company",
         "legalName": null,
         "mainContact": "Marloes Visser",
@@ -3871,7 +3871,7 @@
         "projects": 1,
         "status": "active",
         "street": null,
-        "updatedAt": 1791709437042,
+        "updatedAt": 1791709658271,
         "vatNumber": "NL004512378B01",
         "website": null
       }
@@ -3890,146 +3890,146 @@
     ],
     "list_comments": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": [
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": [
           {
-            "authorId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+            "authorId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
             "authorKind": "person",
             "authorName": "Jeffrey",
             "bodyMd": "Use Filament's exporter. Sample file from Marloes is attached.",
-            "createdAt": 1791709437044,
-            "id": "01a143f4-2649-7302-9a35-ee9e5ea516b6",
+            "createdAt": 1791709658273,
+            "id": "01a143f7-86c7-7619-9bbd-7eb6186dd32f",
             "runId": null
           }
         ],
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": [
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": [
           {
-            "authorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "authorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "authorKind": "agent",
             "authorName": "Frontend Agent",
             "bodyMd": "The tracking page now says when to try again after too many lookups (HTTP 429): \"Too many lookups. Try again in 60 seconds.\" Checked on desktop and on a phone.",
-            "createdAt": 1792035237063,
-            "id": "01a143f4-28fc-76e6-aff0-9021907bc4a2",
-            "runId": "01a143f4-28ef-71f7-a26d-faa02869ea1d"
+            "createdAt": 1792035458292,
+            "id": "01a143f7-892e-74ac-92b4-2d1d667bc69b",
+            "runId": "01a143f7-8921-7332-86b3-3787946dc79b"
           }
         ],
-        "01a143f4-264a-7214-984a-eb2f93021f05": [],
-        "01a143f4-264b-77cf-b801-75101248b7fc": [],
-        "01a143f4-264c-7326-8e23-1c69f753f54a": [],
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": [
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": [],
+        "01a143f7-86c9-7666-a0fc-b930004415bf": [],
+        "01a143f7-86c9-7666-a0fc-b932c25622be": [],
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": [
           {
-            "authorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "authorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "authorKind": "agent",
             "authorName": "Frontend Agent",
             "bodyMd": "Should the price slider show prices with BTW or without? The product list shows them with 21% BTW, but the filter API stores them without. I made the filter read both; no screen changed yet, the slider waits for your answer.",
-            "createdAt": 1791959337052,
-            "id": "01a143f4-2894-707d-b349-3045e8a90db2",
-            "runId": "01a143f4-2891-710d-af80-4d943c28f580"
+            "createdAt": 1791959558281,
+            "id": "01a143f7-88c0-7491-a4f8-157d20243dbc",
+            "runId": "01a143f7-88be-7676-a942-df9d2cf2094e"
           },
           {
-            "authorId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+            "authorId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
             "authorKind": "person",
             "authorName": "Jeffrey",
             "bodyMd": "With BTW, as the shop shows them everywhere. Steps of € 10 are fine.",
-            "createdAt": 1791961437052,
-            "id": "01a143f4-2898-763e-8804-f09f3832e9df",
+            "createdAt": 1791961658281,
+            "id": "01a143f7-88c4-74e6-ab4d-790d882cee9b",
             "runId": null
           },
           {
-            "authorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "authorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "authorKind": "agent",
             "authorName": "Frontend Agent",
             "bodyMd": "Added the price slider above the product list: two thumbs in steps of € 10, prices with BTW. The list filters as you drag, and a range without bikes says to widen it. On a phone the filters fold under one Filters button.",
-            "createdAt": 1792039437070,
-            "id": "01a143f4-28b2-70c1-b3cd-a9e128b13d65",
-            "runId": "01a143f4-289e-755d-b22f-5229bc794e49"
+            "createdAt": 1792039658303,
+            "id": "01a143f7-88e3-7681-aa4f-80a86dab504d",
+            "runId": "01a143f7-88cb-721c-94aa-f57efa671a9f"
           },
           {
-            "authorId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "authorId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "authorKind": "agent",
             "authorName": "QA Agent",
             "bodyMd": "QA failed: AC 4 fails on a phone.\n\n1. On a phone (390 × 844) the open filters cover the menu: the slider's panel sits on top of the header, so the menu button can't be tapped.",
-            "createdAt": 1792049937056,
-            "id": "01a143f4-28ba-71c9-a7cc-6ac60cf36a20",
-            "runId": "01a143f4-28b4-7603-8414-80f6007dbe9c"
+            "createdAt": 1792050158285,
+            "id": "01a143f7-88ec-76ae-8f32-1ea32f87b41a",
+            "runId": "01a143f7-88e5-7509-b47e-20cdd4ec9afb"
           },
           {
-            "authorId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "authorId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "authorKind": "agent",
             "authorName": "Frontend Agent",
             "bodyMd": "Fixed QA's failure 1: on a phone the filters open below the header, so the menu stays reachable. The slider follows the light theme now too.",
-            "createdAt": 1792130637074,
-            "id": "01a143f4-28d5-76e0-9fa2-046e82b33a9d",
-            "runId": "01a143f4-28bd-7775-8e9f-21b81f4b1ad4"
+            "createdAt": 1792130858305,
+            "id": "01a143f7-8908-74f9-86da-8aa81addaf15",
+            "runId": "01a143f7-88ee-7651-b956-c5ea73229f2e"
           },
           {
-            "authorId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "authorId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "authorKind": "agent",
             "authorName": "QA Agent",
             "bodyMd": "QA passed. All four criteria hold on desktop and phone: the slider filters the list as you drag (AC 1), prices show with BTW in steps of € 10 (AC 2), an empty range says what to try (AC 3), and the menu stays reachable with the filters open (AC 4). Opened pull request #41.",
-            "createdAt": 1792134237067,
-            "id": "01a143f4-28e9-75fc-ae3d-de54aa1a0016",
-            "runId": "01a143f4-28d8-726c-bd61-d3d118f792a2"
+            "createdAt": 1792134458296,
+            "id": "01a143f7-891b-71e9-ada8-1116b14a57fc",
+            "runId": "01a143f7-890a-72c2-be14-29779c190c3b"
           }
         ],
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": [],
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": [],
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": []
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": [],
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": [],
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": []
       },
       "$by": "taskId"
     },
     "list_docs": {
       "$answers": {
-        "01a143f4-2648-71df-aee2-9ddcd5e9abde": [
+        "01a143f7-86c6-7728-bd6e-959f6703611f": [
           {
             "bodyMd": "",
             "currentVersion": 1,
-            "id": "01a143f4-264f-757d-80c8-479b4c0b0827",
+            "id": "01a143f7-86cd-71cf-85b9-254ff5c172e1",
             "kind": "doc",
             "path": null,
-            "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+            "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
             "title": "Meeting notes 2026-10-02",
-            "updatedAt": 1791709437050
+            "updatedAt": 1791709658279
           },
           {
             "bodyMd": "",
             "currentVersion": 3,
-            "id": "01a143f4-264e-758b-bfbc-206f1251c6ff",
+            "id": "01a143f7-86cc-7241-b4b6-011d7172af6b",
             "kind": "doc",
             "path": null,
-            "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+            "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
             "title": "Requirements",
-            "updatedAt": 1791709437050
+            "updatedAt": 1791709658279
           }
         ],
-        "01a143f4-2648-71df-aee2-9ddeccdfc37b": []
+        "01a143f7-86c6-7728-bd6e-95a1dff09af6": []
       },
       "$by": "projectId"
     },
     "list_files": {
       "$answers": {
-        "01a143f4-2647-7280-869a-3bc3a60755f0": [],
-        "01a143f4-2647-7280-869a-3bc5f55ec801": [],
-        "01a143f4-2647-7280-869a-3bc74350cd32": [],
-        "01a143f4-2648-71df-aee2-9ddcd5e9abde": [
+        "01a143f7-86c5-7623-8685-1f07356419e3": [],
+        "01a143f7-86c5-7623-8685-1f09e8dd8ae6": [],
+        "01a143f7-86c5-7623-8685-1f0be7595a9a": [],
+        "01a143f7-86c6-7728-bd6e-959f6703611f": [
           {
-            "createdAt": 1791709437052,
-            "id": "01a143f4-2651-7021-b5a0-16100747d4f2",
+            "createdAt": 1791709658281,
+            "id": "01a143f7-86cf-74e1-9ef2-5ab40621292e",
             "mime": "text/csv",
             "name": "invoices-sample.csv",
             "sha256": "6f0740fe719b5394b7e49ac1e12aacc114ead03da137e6a48539bb2f98739fb2",
             "sizeBytes": 48
           }
         ],
-        "01a143f4-2648-71df-aee2-9ddeccdfc37b": [],
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": [],
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": [],
-        "01a143f4-264a-7214-984a-eb2f93021f05": [],
-        "01a143f4-264b-77cf-b801-75101248b7fc": [],
-        "01a143f4-264c-7326-8e23-1c69f753f54a": [],
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": [],
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": [],
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": [],
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": []
+        "01a143f7-86c6-7728-bd6e-95a1dff09af6": [],
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": [],
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": [],
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": [],
+        "01a143f7-86c9-7666-a0fc-b930004415bf": [],
+        "01a143f7-86c9-7666-a0fc-b932c25622be": [],
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": [],
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": [],
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": [],
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": []
       },
       "$by": "ownerId"
     },
@@ -4037,25 +4037,25 @@
       {
         "cards": 4,
         "color": "#f29a4a",
-        "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+        "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
         "name": "backend"
       },
       {
         "cards": 1,
         "color": "#f2706b",
-        "id": "01a143f4-2646-7400-93f7-8c2beb22c1f6",
+        "id": "01a143f7-86c4-7175-b5c4-177608935973",
         "name": "bug"
       },
       {
         "cards": 5,
         "color": "#7b9bff",
-        "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+        "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
         "name": "frontend"
       },
       {
         "cards": 0,
         "color": "#a98bfa",
-        "id": "01a143f4-2646-7400-93f7-8c29e5038dfe",
+        "id": "01a143f7-86c4-7175-b5c4-1774f3d37339",
         "name": "qa"
       }
     ],
@@ -4067,13 +4067,13 @@
         "aiUnknownCostRuns": 0,
         "budgetAmountMinor": null,
         "budgetHours": null,
-        "clientId": "01a143f4-2647-7280-869a-3bc5f55ec801",
+        "clientId": "01a143f7-86c5-7623-8685-1f09e8dd8ae6",
         "clientName": "De Groene Fiets",
         "color": "#4fc1a6",
         "defaultBranch": "main",
         "doneTasks": 1,
         "goalMd": null,
-        "id": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+        "id": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
         "key": "GFW",
         "leadMayMerge": false,
         "name": "Groene Fiets webshop",
@@ -4101,8 +4101,8 @@
           ]
         },
         "status": "active",
-        "teamId": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
-        "updatedAt": 1791795837052,
+        "teamId": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
+        "updatedAt": 1791796058281,
         "worktreeCopy": [],
         "worktreeInstall": true,
         "worktreeSetup": null
@@ -4112,13 +4112,13 @@
         "aiUnknownCostRuns": 0,
         "budgetAmountMinor": null,
         "budgetHours": null,
-        "clientId": "01a143f4-2647-7280-869a-3bc3a60755f0",
+        "clientId": "01a143f7-86c5-7623-8685-1f07356419e3",
         "clientName": "Kade Logistics B.V.",
         "color": "#e8c547",
         "defaultBranch": "main",
         "doneTasks": 0,
         "goalMd": "Give Kade's office one place for shipments, invoices and drivers.",
-        "id": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+        "id": "01a143f7-86c6-7728-bd6e-959f6703611f",
         "key": "KADE",
         "leadMayMerge": false,
         "name": "Kade portal",
@@ -4146,8 +4146,8 @@
           ]
         },
         "status": "active",
-        "teamId": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
-        "updatedAt": 1791709437043,
+        "teamId": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
+        "updatedAt": 1791709658271,
         "worktreeCopy": [],
         "worktreeInstall": true,
         "worktreeSetup": null
@@ -4155,23 +4155,23 @@
     ],
     "list_runs": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": [],
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": [
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": [],
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": [
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "72d243bb88528975da724c5a4948e2e100523572",
             "branch": "gizai/kade-2-rate-limit-the-public-tracking-endpoint",
             "costUsdMicros": 950000,
-            "createdAt": 1792033437052,
-            "endedAt": 1792035237052,
+            "createdAt": 1792033658281,
+            "endedAt": 1792035458281,
             "error": null,
             "headSha": "59fc5571a7540fd8d6383408d1fd3e4c3993cd43",
-            "id": "01a143f4-28ef-71f7-a26d-faa02869ea1d",
+            "id": "01a143f7-8921-7332-86b3-3787946dc79b",
             "inputTokens": 2200000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28ef-71f7-a26d-fa9f0de4f76e.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-8921-7332-86b3-378650bc7a66.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "ready_for_testing",
@@ -4181,34 +4181,34 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-28ef-71f7-a26d-fa9f0de4f76e",
-            "startedAt": 1792033477052,
+            "sessionId": "01a143f7-8921-7332-86b3-378650bc7a66",
+            "startedAt": 1792033698281,
             "status": "succeeded",
             "summaryMd": "The tracking page now says when to try again after too many lookups (HTTP 429): \"Too many lookups. Try again in 60 seconds.\" Checked on desktop and on a phone.",
-            "taskId": "01a143f4-264a-7214-984a-eb2b5360a4c0",
+            "taskId": "01a143f7-86c7-7619-9bbd-7eb86d32c5f5",
             "trigger": "assigned",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/KADE/KADE-2"
           }
         ],
-        "01a143f4-264a-7214-984a-eb2f93021f05": [],
-        "01a143f4-264b-77cf-b801-75101248b7fc": [],
-        "01a143f4-264c-7326-8e23-1c69f753f54a": [],
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": [
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": [],
+        "01a143f7-86c9-7666-a0fc-b930004415bf": [],
+        "01a143f7-86c9-7666-a0fc-b932c25622be": [],
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": [
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "agentId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "agentName": "QA Agent",
             "baseSha": "1e61cc6cec9c837273e862b59872200e5ab1283d",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 740000,
-            "createdAt": 1792132437052,
-            "endedAt": 1792134237052,
+            "createdAt": 1792132658281,
+            "endedAt": 1792134458281,
             "error": null,
             "headSha": "1e61cc6cec9c837273e862b59872200e5ab1283d",
-            "id": "01a143f4-28d8-726c-bd61-d3d118f792a2",
+            "id": "01a143f7-890a-72c2-be14-29779c190c3b",
             "inputTokens": 1700000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28d7-72f9-9127-76e75ccfa9e9.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-890a-72c2-be14-2976a285dffb.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "qa_pass",
@@ -4218,29 +4218,29 @@
             "refused": [],
             "roleKey": "qa",
             "runForMe": [],
-            "sessionId": "01a143f4-28d7-72f9-9127-76e75ccfa9e9",
-            "startedAt": 1792132477052,
+            "sessionId": "01a143f7-890a-72c2-be14-2976a285dffb",
+            "startedAt": 1792132698281,
             "status": "succeeded",
             "summaryMd": "QA passed. All four criteria hold on desktop and phone: the slider filters the list as you drag (AC 1), prices show with BTW in steps of € 10 (AC 2), an empty range says what to try (AC 3), and the menu stays reachable with the filters open (AC 4). Opened pull request #41.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "routed",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 1120000,
-            "createdAt": 1792128537052,
-            "endedAt": 1792130637052,
+            "createdAt": 1792128758281,
+            "endedAt": 1792130858282,
             "error": null,
             "headSha": "1e61cc6cec9c837273e862b59872200e5ab1283d",
-            "id": "01a143f4-28bd-7775-8e9f-21b81f4b1ad4",
+            "id": "01a143f7-88ee-7651-b956-c5ea73229f2e",
             "inputTokens": 2600000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28bd-7775-8e9f-21b7a49d94c3.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88ee-7651-b956-c5e9287a8056.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "ready_for_testing",
@@ -4250,29 +4250,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-28bd-7775-8e9f-21b7a49d94c3",
-            "startedAt": 1792128577052,
+            "sessionId": "01a143f7-88ee-7651-b956-c5e9287a8056",
+            "startedAt": 1792128798281,
             "status": "succeeded",
             "summaryMd": "Fixed QA's failure 1: on a phone the filters open below the header, so the menu stays reachable. The slider follows the light theme now too.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "assigned",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "agentId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "agentName": "QA Agent",
             "baseSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 880000,
-            "createdAt": 1792047837052,
-            "endedAt": 1792049937052,
+            "createdAt": 1792048058281,
+            "endedAt": 1792050158281,
             "error": null,
             "headSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
-            "id": "01a143f4-28b4-7603-8414-80f6007dbe9c",
+            "id": "01a143f7-88e5-7509-b47e-20cdd4ec9afb",
             "inputTokens": 2050000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-28b4-7603-8414-80f5e4778bc9.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88e5-7509-b47e-20cc64f46107.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "qa_fail",
@@ -4282,29 +4282,29 @@
             "refused": [],
             "roleKey": "qa",
             "runForMe": [],
-            "sessionId": "01a143f4-28b4-7603-8414-80f5e4778bc9",
-            "startedAt": 1792047877052,
+            "sessionId": "01a143f7-88e5-7509-b47e-20cc64f46107",
+            "startedAt": 1792048098281,
             "status": "succeeded",
             "summaryMd": "QA failed: AC 4 fails on a phone.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "routed",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "f3acf735f14e28407b95f41f7f72afaf40b4046f",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 1960000,
-            "createdAt": 1792037037052,
-            "endedAt": 1792039437052,
+            "createdAt": 1792037258281,
+            "endedAt": 1792039658281,
             "error": null,
             "headSha": "408ad6a51929c411aebbd3d4701e1aad92637998",
-            "id": "01a143f4-289e-755d-b22f-5229bc794e49",
+            "id": "01a143f7-88cb-721c-94aa-f57efa671a9f",
             "inputTokens": 4100000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-289e-755d-b22f-5228072a705d.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88cb-721c-94aa-f57d7a1e708a.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "ready_for_testing",
@@ -4314,29 +4314,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-289e-755d-b22f-5228072a705d",
-            "startedAt": 1792037077052,
+            "sessionId": "01a143f7-88cb-721c-94aa-f57d7a1e708a",
+            "startedAt": 1792037298281,
             "status": "succeeded",
             "summaryMd": "Added the price slider above the product list: two thumbs in steps of € 10, prices with BTW. The list filters as you drag, and a range without bikes says to widen it. On a phone the filters fold under one Filters button.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "manual",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "57160fb0cd06b89b241ca50651a8930cae93cacd",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 2840000,
-            "createdAt": 1791961737052,
-            "endedAt": 1791967197052,
+            "createdAt": 1791961958281,
+            "endedAt": 1791967418282,
             "error": "stopped at the time limit of 90 minutes per run (Settings → Runs)",
             "headSha": "f3acf735f14e28407b95f41f7f72afaf40b4046f",
-            "id": "01a143f4-289a-755b-a9a8-19a2f6906764",
+            "id": "01a143f7-88c6-77f4-86d8-9a128f361f59",
             "inputTokens": 6900000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-289a-755b-a9a8-19a11457ad8b.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88c6-77f4-86d8-9a11389b0a21.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "error",
@@ -4346,29 +4346,29 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-289a-755b-a9a8-19a11457ad8b",
-            "startedAt": 1791961777052,
+            "sessionId": "01a143f7-88c6-77f4-86d8-9a11389b0a21",
+            "startedAt": 1791961998281,
             "status": "timed_out",
             "summaryMd": null,
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "nudge",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           },
           {
             "adapter": "claude_code",
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "baseSha": "ba0c5a2ff43cc21b6e56207a1afedadd1e871779",
             "branch": "gizai/gfw-2-product-filters-price-range-slider",
             "costUsdMicros": 620000,
-            "createdAt": 1791957837052,
-            "endedAt": 1791959337052,
+            "createdAt": 1791958058281,
+            "endedAt": 1791959558281,
             "error": null,
             "headSha": "57160fb0cd06b89b241ca50651a8930cae93cacd",
-            "id": "01a143f4-2891-710d-af80-4d943c28f580",
+            "id": "01a143f7-88be-7676-a942-df9d2cf2094e",
             "inputTokens": 1480000,
             "lead": null,
-            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f4-2891-710d-af80-4d93dba01e00.jsonl",
+            "logPath": "/home/you/.local/share/gizai-browser/runs/01a143f7-88be-7676-a942-df9c7935865c.jsonl",
             "memory": [],
             "nudged": false,
             "outcome": "needs_decision",
@@ -4378,39 +4378,39 @@
             "refused": [],
             "roleKey": "frontend",
             "runForMe": [],
-            "sessionId": "01a143f4-2891-710d-af80-4d93dba01e00",
-            "startedAt": 1791957877052,
+            "sessionId": "01a143f7-88be-7676-a942-df9c7935865c",
+            "startedAt": 1791958098281,
             "status": "succeeded",
             "summaryMd": "Should the price slider show prices with BTW or without? The product list shows them with 21% BTW, but the filter API stores them without. I made the filter read both; no screen changed yet, the slider waits for your answer.",
-            "taskId": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+            "taskId": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
             "trigger": "assigned",
             "worktreePath": "/home/you/.local/share/gizai-browser/worktrees/GFW/GFW-2"
           }
         ],
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": [],
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": [],
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": []
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": [],
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": [],
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": []
       },
       "$by": "taskId"
     },
     "list_screenshots": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": [],
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": [
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": [],
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": [
           {
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "commit": "59fc5571a7540fd8d6383408d1fd3e4c3993cd43",
-            "endedAt": 1792035237052,
+            "endedAt": 1792035458281,
             "leftOut": [],
             "outcome": "ready_for_testing",
             "preview": null,
             "role": "frontend",
-            "runId": "01a143f4-28ef-71f7-a26d-faa02869ea1d",
+            "runId": "01a143f7-8921-7332-86b3-3787946dc79b",
             "shots": [
               {
                 "caption": "The tracking page after too many lookups: try again in 60 seconds",
-                "fileId": "01a143f4-28f7-71d4-9cfb-45fedd5183e5",
+                "fileId": "01a143f7-892a-7118-b1f1-72d0cda4bd53",
                 "height": 800,
                 "name": "01-tracking-too-many-desktop-dark.png",
                 "sha256": "c97fcdc01af04632ee5ab295392ba9fbb3d3260a1747cdefe864955f45ab7971",
@@ -4419,7 +4419,7 @@
               },
               {
                 "caption": "The same message on a phone",
-                "fileId": "01a143f4-28fb-7352-aae0-60fa27ef66c0",
+                "fileId": "01a143f7-892e-74ac-92b4-2d1b9c53e27f",
                 "height": 844,
                 "name": "02-tracking-too-many-mobile-dark.png",
                 "sha256": "a79cc2851bd4aeb0d04ff6bc995c232cd55ac162e88fb606427655d72451741c",
@@ -4430,24 +4430,24 @@
             "status": "succeeded"
           }
         ],
-        "01a143f4-264a-7214-984a-eb2f93021f05": [],
-        "01a143f4-264b-77cf-b801-75101248b7fc": [],
-        "01a143f4-264c-7326-8e23-1c69f753f54a": [],
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": [
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": [],
+        "01a143f7-86c9-7666-a0fc-b930004415bf": [],
+        "01a143f7-86c9-7666-a0fc-b932c25622be": [],
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": [
           {
-            "agentId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "agentId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "agentName": "QA Agent",
             "commit": "1e61cc6cec9c837273e862b59872200e5ab1283d",
-            "endedAt": 1792134237052,
+            "endedAt": 1792134458281,
             "leftOut": [],
             "outcome": "qa_pass",
             "preview": null,
             "role": "qa",
-            "runId": "01a143f4-28d8-726c-bd61-d3d118f792a2",
+            "runId": "01a143f7-890a-72c2-be14-29779c190c3b",
             "shots": [
               {
                 "caption": "AC 1: the slider filters the list as you drag",
-                "fileId": "01a143f4-28e1-7660-b7d0-cf266e4a25af",
+                "fileId": "01a143f7-8914-77ea-b508-a8f1cbec9feb",
                 "height": 800,
                 "name": "01-ac1-slider-filters-desktop-dark.png",
                 "sha256": "12ea84fce8ac93356c9c978092cd604f7589c538439e0d4b54ede1071404d43b",
@@ -4456,7 +4456,7 @@
               },
               {
                 "caption": "AC 3: a range without bikes says what to try",
-                "fileId": "01a143f4-28e8-7414-9b07-20788dae4ec1",
+                "fileId": "01a143f7-891b-71e9-ada8-1114200ce1b1",
                 "height": 800,
                 "name": "02-ac3-no-bikes-desktop-dark.png",
                 "sha256": "1fc7363397355c521379c6472884990032a355e6be1deeb935026fee8970409a",
@@ -4467,19 +4467,19 @@
             "status": "succeeded"
           },
           {
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "commit": "1e61cc6cec9c837273e862b59872200e5ab1283d",
-            "endedAt": 1792130637052,
+            "endedAt": 1792130858282,
             "leftOut": [],
             "outcome": "ready_for_testing",
             "preview": null,
             "role": "frontend",
-            "runId": "01a143f4-28bd-7775-8e9f-21b81f4b1ad4",
+            "runId": "01a143f7-88ee-7651-b956-c5ea73229f2e",
             "shots": [
               {
                 "caption": "Product list with the price slider below the menu",
-                "fileId": "01a143f4-28c5-7542-8cdc-bddf004651ff",
+                "fileId": "01a143f7-88f7-7232-b2d1-51814a069d7f",
                 "height": 800,
                 "name": "01-product-list-desktop-dark.png",
                 "sha256": "812d60e2d906c7978743d37dd866e343dc346ae9af52afb43f66061be2b6dc54",
@@ -4488,7 +4488,7 @@
               },
               {
                 "caption": "Slider dragged to € 400 to € 900: 12 bikes left",
-                "fileId": "01a143f4-28cb-7213-9285-365e4d5c2f49",
+                "fileId": "01a143f7-88fd-73c2-9fb1-6eff2835b42e",
                 "height": 800,
                 "name": "02-slider-dragged-desktop-dark.png",
                 "sha256": "8c154f689360792a57f16ae927086a1ab664f2a4766393fcbecda566432209e6",
@@ -4497,7 +4497,7 @@
               },
               {
                 "caption": "Product list on a phone, the filters folded",
-                "fileId": "01a143f4-28cf-77dd-bf0b-d1b4026afbe7",
+                "fileId": "01a143f7-8901-7631-89d6-0e3334d1f8f6",
                 "height": 844,
                 "name": "03-product-list-mobile-dark.png",
                 "sha256": "f24aa9711f13eee00727bcfd3e1c3aa845486d958e2d1ef98d7f315904842ba9",
@@ -4506,7 +4506,7 @@
               },
               {
                 "caption": "Product list with the price slider, light",
-                "fileId": "01a143f4-28d5-76e0-9fa2-046c4c4fbb80",
+                "fileId": "01a143f7-8907-7666-a6ee-32b47e1ea323",
                 "height": 800,
                 "name": "04-product-list-desktop-light.png",
                 "sha256": "81c7f774ae5624178c9297505455dd6902786c71e19d23e093f2710c7add5624",
@@ -4517,19 +4517,19 @@
             "status": "succeeded"
           },
           {
-            "agentId": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
+            "agentId": "01a143f7-88b2-747d-b38c-c245c3356561",
             "agentName": "QA Agent",
             "commit": "408ad6a51929c411aebbd3d4701e1aad92637998",
-            "endedAt": 1792049937052,
+            "endedAt": 1792050158281,
             "leftOut": [],
             "outcome": "qa_fail",
             "preview": null,
             "role": "qa",
-            "runId": "01a143f4-28b4-7603-8414-80f6007dbe9c",
+            "runId": "01a143f7-88e5-7509-b47e-20cdd4ec9afb",
             "shots": [
               {
                 "caption": "Failure 1: the slider covers the menu",
-                "fileId": "01a143f4-28ba-71c9-a7cc-6ac49e0b9875",
+                "fileId": "01a143f7-88ec-76ae-8f32-1ea13656847a",
                 "height": 844,
                 "name": "01-fail-slider-covers-menu-mobile-dark.png",
                 "sha256": "2c0f0cd89a591552af4569e2c3957584a1b8c9f7e6192da71d71df8b56e2cebc",
@@ -4540,10 +4540,10 @@
             "status": "succeeded"
           },
           {
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "commit": "408ad6a51929c411aebbd3d4701e1aad92637998",
-            "endedAt": 1792039437052,
+            "endedAt": 1792039658281,
             "leftOut": [
               "notes.txt: not a PNG, JPEG or WebP image",
               "05-product-list-full-desktop-dark.png: over 16,384 pixels high"
@@ -4551,11 +4551,11 @@
             "outcome": "ready_for_testing",
             "preview": null,
             "role": "frontend",
-            "runId": "01a143f4-289e-755d-b22f-5229bc794e49",
+            "runId": "01a143f7-88cb-721c-94aa-f57efa671a9f",
             "shots": [
               {
                 "caption": "Product list with the price slider",
-                "fileId": "01a143f4-28a7-70d0-9d66-bf0d81e9dc2f",
+                "fileId": "01a143f7-88d4-734d-84b0-176e9e936945",
                 "height": 800,
                 "name": "01-product-list-desktop-dark.png",
                 "sha256": "72ae139da22ccdbc761d34b7173965c48a0efc9a8763c56d0f90bf4680f62b8c",
@@ -4564,7 +4564,7 @@
               },
               {
                 "caption": "Slider dragged to € 400 to € 900: 12 bikes",
-                "fileId": "01a143f4-28ad-708f-8235-ea18ce1a6505",
+                "fileId": "01a143f7-88db-73c9-8b49-2c218a759ba6",
                 "height": 800,
                 "name": "02-slider-dragged-desktop-dark.png",
                 "sha256": "a76985c3edb6922f398ce5d7d3c098acb3d312ee10f86bf473d5b58425fdc518",
@@ -4573,46 +4573,55 @@
               },
               {
                 "caption": "Product list on a phone, the filters folded",
-                "fileId": "01a143f4-28b1-7795-b713-61a1d9c2c1f4",
+                "fileId": "01a143f7-88df-7747-bfd3-6b69fbab5594",
                 "height": 844,
                 "name": "03-product-list-mobile-dark.png",
                 "sha256": "f24aa9711f13eee00727bcfd3e1c3aa845486d958e2d1ef98d7f315904842ba9",
                 "sizeBytes": 75486,
+                "width": 390
+              },
+              {
+                "caption": "The filters open on a phone",
+                "fileId": "01a143f7-88e3-7681-aa4f-80a65784083a",
+                "height": 844,
+                "name": "04-filters-open-mobile-dark.png",
+                "sha256": "a04c2d33c02a3d929c5216e922e3adaf5491f6d71f6bee7f4fe148e6a234f52b",
+                "sizeBytes": 66289,
                 "width": 390
               }
             ],
             "status": "succeeded"
           },
           {
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "commit": "f3acf735f14e28407b95f41f7f72afaf40b4046f",
-            "endedAt": 1791967197052,
+            "endedAt": 1791967418282,
             "leftOut": [],
             "outcome": null,
             "preview": "It didn't answer on port 47130 in 120 s",
             "role": "frontend",
-            "runId": "01a143f4-289a-755b-a9a8-19a2f6906764",
+            "runId": "01a143f7-88c6-77f4-86d8-9a128f361f59",
             "shots": [],
             "status": "timed_out"
           },
           {
-            "agentId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+            "agentId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
             "agentName": "Frontend Agent",
             "commit": "57160fb0cd06b89b241ca50651a8930cae93cacd",
-            "endedAt": 1791959337052,
+            "endedAt": 1791959558281,
             "leftOut": [],
             "outcome": "needs_decision",
             "preview": null,
             "role": "frontend",
-            "runId": "01a143f4-2891-710d-af80-4d943c28f580",
+            "runId": "01a143f7-88be-7676-a942-df9d2cf2094e",
             "shots": [],
             "status": "succeeded"
           }
         ],
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": [],
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": [],
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": []
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": [],
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": [],
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": []
       },
       "$by": "taskId"
     },
@@ -4627,30 +4636,30 @@
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1791709437046,
+        "createdAt": 1791709658275,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264b-77cf-b801-75101248b7fc",
+        "id": "01a143f7-86c9-7666-a0fc-b930004415bf",
         "identifier": "KADE-4",
         "labels": [],
         "prState": null,
         "prUrl": null,
         "priority": 4,
         "projectColor": "#e8c547",
-        "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+        "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
         "projectName": "Kade portal",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a1",
         "stateCategory": "backlog",
-        "stateId": "01a143f4-2645-740a-a1b4-fe9dd8d252ef",
+        "stateId": "01a143f7-86c4-7175-b5c4-1762d3c3f6db",
         "stateName": "Backlog",
         "testing": true,
         "title": "Driver app: offline queue, one-page spec",
-        "updatedAt": 1791709437046,
+        "updatedAt": 1791709658275,
         "withLead": false
       },
       {
@@ -4663,18 +4672,18 @@
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1791709437048,
+        "createdAt": 1791709658277,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264d-7175-b4fa-71bcbe6d2a63",
+        "id": "01a143f7-86cb-703e-aea7-b6b7e43b3069",
         "identifier": "GFW-3",
         "labels": [
           {
             "color": "#7b9bff",
-            "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+            "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
             "name": "frontend"
           }
         ],
@@ -4682,41 +4691,41 @@
         "prUrl": null,
         "priority": 3,
         "projectColor": "#4fc1a6",
-        "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+        "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
         "projectName": "Groene Fiets webshop",
         "runForMe": [],
         "screenshots": false,
         "sortKey": "a1",
         "stateCategory": "ready",
-        "stateId": "01a143f4-2645-740a-a1b4-fe9e2aab0c7a",
+        "stateId": "01a143f7-86c4-7175-b5c4-176342e70377",
         "stateName": "To do",
         "testing": true,
         "title": "Postcode and house number lookup on checkout",
-        "updatedAt": 1792051437052,
+        "updatedAt": 1792051658281,
         "withLead": false
       },
       {
         "acceptanceMd": null,
         "archivedAt": null,
         "archivedBy": null,
-        "assigneeId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+        "assigneeId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
         "assigneeKind": "agent",
         "assigneeName": "Frontend Agent",
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1792138437052,
+        "createdAt": 1792138658281,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-2902-71f7-a91d-8b5404e1a0a5",
+        "id": "01a143f7-8935-7654-b8f8-af8e5cd05286",
         "identifier": "GFW-5",
         "labels": [
           {
             "color": "#7b9bff",
-            "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+            "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
             "name": "frontend"
           }
         ],
@@ -4724,17 +4733,17 @@
         "prUrl": null,
         "priority": 3,
         "projectColor": "#4fc1a6",
-        "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+        "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
         "projectName": "Groene Fiets webshop",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a2",
         "stateCategory": "ready",
-        "stateId": "01a143f4-2645-740a-a1b4-fe9e2aab0c7a",
+        "stateId": "01a143f7-86c4-7175-b5c4-176342e70377",
         "stateName": "To do",
         "testing": true,
         "title": "Wishlist: save a bike for later",
-        "updatedAt": 1792138437053,
+        "updatedAt": 1792138658281,
         "withLead": false
       },
       {
@@ -4747,23 +4756,23 @@
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1791709437044,
+        "createdAt": 1791709658272,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-2649-7302-9a35-ee9ae3f86947",
+        "id": "01a143f7-86c6-7728-bd6e-95a3f2fcf296",
         "identifier": "KADE-1",
         "labels": [
           {
             "color": "#f29a4a",
-            "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+            "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
             "name": "backend"
           },
           {
             "color": "#7b9bff",
-            "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+            "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
             "name": "frontend"
           }
         ],
@@ -4771,46 +4780,46 @@
         "prUrl": null,
         "priority": 2,
         "projectColor": "#e8c547",
-        "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+        "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
         "projectName": "Kade portal",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a0",
         "stateCategory": "in_progress",
-        "stateId": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+        "stateId": "01a143f7-86c4-7175-b5c4-1764fd718e54",
         "stateName": "In progress",
         "testing": true,
         "title": "Export invoices as CSV from the portal",
-        "updatedAt": 1791709437044,
+        "updatedAt": 1791709658273,
         "withLead": false
       },
       {
         "acceptanceMd": null,
         "archivedAt": null,
         "archivedBy": null,
-        "assigneeId": "01a143f4-2884-7300-9b0b-6ddb3460204a",
+        "assigneeId": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
         "assigneeKind": "agent",
         "assigneeName": "Backend Agent",
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1791709437047,
+        "createdAt": 1791709658276,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264c-7326-8e23-1c69f753f54a",
+        "id": "01a143f7-86c9-7666-a0fc-b932c25622be",
         "identifier": "GFW-1",
         "labels": [
           {
             "color": "#f29a4a",
-            "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+            "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
             "name": "backend"
           },
           {
             "color": "#f2706b",
-            "id": "01a143f4-2646-7400-93f7-8c2beb22c1f6",
+            "id": "01a143f7-86c4-7175-b5c4-177608935973",
             "name": "bug"
           }
         ],
@@ -4818,17 +4827,17 @@
         "prUrl": null,
         "priority": 1,
         "projectColor": "#4fc1a6",
-        "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+        "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
         "projectName": "Groene Fiets webshop",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a1",
         "stateCategory": "in_progress",
-        "stateId": "01a143f4-2645-740a-a1b4-fe9f0e73ad4a",
+        "stateId": "01a143f7-86c4-7175-b5c4-1764fd718e54",
         "stateName": "In progress",
         "testing": true,
         "title": "Mollie webhook: retry failed payment updates",
-        "updatedAt": 1791860637053,
+        "updatedAt": 1791860858281,
         "withLead": false
       },
       {
@@ -4841,18 +4850,18 @@
         "bounceCount": 0,
         "branch": "gizai/kade-2-rate-limit-the-public-tracking-endpoint",
         "byHand": false,
-        "createdAt": 1791709437045,
+        "createdAt": 1791709658273,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264a-7214-984a-eb2b5360a4c0",
+        "id": "01a143f7-86c7-7619-9bbd-7eb86d32c5f5",
         "identifier": "KADE-2",
         "labels": [
           {
             "color": "#f29a4a",
-            "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+            "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
             "name": "backend"
           }
         ],
@@ -4860,41 +4869,41 @@
         "prUrl": null,
         "priority": 3,
         "projectColor": "#e8c547",
-        "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+        "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
         "projectName": "Kade portal",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a0",
         "stateCategory": "testing",
-        "stateId": "01a143f4-2645-740a-a1b4-fea0db15b304",
+        "stateId": "01a143f7-86c4-7175-b5c4-1765920882fa",
         "stateName": "Testing",
         "testing": true,
         "title": "Rate limit the public tracking endpoint",
-        "updatedAt": 1792035237063,
+        "updatedAt": 1792035458292,
         "withLead": false
       },
       {
         "acceptanceMd": "- [ ] AC 1: the slider filters the product list as you drag\n- [ ] AC 2: prices show with 21% BTW, in steps of € 10\n- [ ] AC 3: a range without bikes says what to try\n- [ ] AC 4: on a phone the filters fold, and the menu stays reachable",
         "archivedAt": null,
         "archivedBy": null,
-        "assigneeId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+        "assigneeId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
         "assigneeKind": "person",
         "assigneeName": "Jeffrey",
         "bounceCount": 0,
         "branch": "gizai/gfw-2-product-filters-price-range-slider",
         "byHand": false,
-        "createdAt": 1791709437047,
+        "createdAt": 1791709658276,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264c-7326-8e23-1c6d4b459b14",
+        "id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40",
         "identifier": "GFW-2",
         "labels": [
           {
             "color": "#7b9bff",
-            "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+            "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
             "name": "frontend"
           }
         ],
@@ -4902,41 +4911,41 @@
         "prUrl": "https://github.com/groene-fiets/webshop/pull/41",
         "priority": 4,
         "projectColor": "#4fc1a6",
-        "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+        "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
         "projectName": "Groene Fiets webshop",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a0",
         "stateCategory": "review",
-        "stateId": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+        "stateId": "01a143f7-86c4-7175-b5c4-176674e3ec22",
         "stateName": "Review",
         "testing": true,
         "title": "Product filters: price range slider",
-        "updatedAt": 1792134297052,
+        "updatedAt": 1792134518281,
         "withLead": false
       },
       {
         "acceptanceMd": null,
         "archivedAt": null,
         "archivedBy": null,
-        "assigneeId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+        "assigneeId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
         "assigneeKind": "person",
         "assigneeName": "Jeffrey",
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1791709437045,
+        "createdAt": 1791709658274,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264a-7214-984a-eb2f93021f05",
+        "id": "01a143f7-86c8-7676-ab66-c317f1f31b53",
         "identifier": "KADE-3",
         "labels": [
           {
             "color": "#7b9bff",
-            "id": "01a143f4-2646-7400-93f7-8c256b6d0004",
+            "id": "01a143f7-86c4-7175-b5c4-17700f602fb3",
             "name": "frontend"
           }
         ],
@@ -4944,17 +4953,17 @@
         "prUrl": "https://github.com/kade-logistics/portal/pull/17",
         "priority": 3,
         "projectColor": "#e8c547",
-        "projectId": "01a143f4-2648-71df-aee2-9ddcd5e9abde",
+        "projectId": "01a143f7-86c6-7728-bd6e-959f6703611f",
         "projectName": "Kade portal",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a1",
         "stateCategory": "review",
-        "stateId": "01a143f4-2645-740a-a1b4-fea17e2a670a",
+        "stateId": "01a143f7-86c4-7175-b5c4-176674e3ec22",
         "stateName": "Review",
         "testing": true,
         "title": "Filament table: remember column order per user",
-        "updatedAt": 1792053237052,
+        "updatedAt": 1792053458282,
         "withLead": false
       },
       {
@@ -4967,18 +4976,18 @@
         "bounceCount": 0,
         "branch": null,
         "byHand": false,
-        "createdAt": 1791709437049,
+        "createdAt": 1791709658278,
         "descriptionMd": "",
         "failCount": 0,
         "hold": null,
         "holdAt": null,
         "holdReason": null,
-        "id": "01a143f4-264e-758b-bfbc-206bf1d5227c",
+        "id": "01a143f7-86cc-7241-b4b6-011999b9d5c1",
         "identifier": "GFW-4",
         "labels": [
           {
             "color": "#f29a4a",
-            "id": "01a143f4-2646-7400-93f7-8c27457a79bc",
+            "id": "01a143f7-86c4-7175-b5c4-1772653b8642",
             "name": "backend"
           }
         ],
@@ -4986,23 +4995,23 @@
         "prUrl": null,
         "priority": 0,
         "projectColor": "#4fc1a6",
-        "projectId": "01a143f4-2648-71df-aee2-9ddeccdfc37b",
+        "projectId": "01a143f7-86c6-7728-bd6e-95a1dff09af6",
         "projectName": "Groene Fiets webshop",
         "runForMe": [],
         "screenshots": null,
         "sortKey": "a0",
         "stateCategory": "done",
-        "stateId": "01a143f4-2645-740a-a1b4-fea37bd80659",
+        "stateId": "01a143f7-86c4-7175-b5c4-176867bd8076",
         "stateName": "Done",
         "testing": true,
         "title": "BTW 9% for the books category",
-        "updatedAt": 1791709437049,
+        "updatedAt": 1791709658278,
         "withLead": false
       }
     ],
     "list_teams": [
       {
-        "id": "01a143f4-2645-740a-a1b4-fe9abe2b0ed5",
+        "id": "01a143f7-86c4-7175-b5c4-175ffc33e77a",
         "name": "My team"
       }
     ],
@@ -5010,7 +5019,7 @@
       {
         "email": null,
         "handle": "jeffrey",
-        "id": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+        "id": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
         "name": "Jeffrey",
         "openTasks": 2,
         "title": null
@@ -5018,7 +5027,7 @@
       {
         "email": "sanne@studio.example",
         "handle": "sanne-bakker",
-        "id": "01a143f4-2647-7280-869a-3bc146dc0bfb",
+        "id": "01a143f7-86c5-7623-8685-1f05bf583c68",
         "name": "Sanne Bakker",
         "openTasks": 0,
         "title": null
@@ -5352,19 +5361,19 @@
     },
     "run_commits": {
       "$answers": {
-        "01a143f4-2891-710d-af80-4d943c28f580": [
+        "01a143f7-88be-7676-a942-df9d2cf2094e": [
           {
             "sha": "57160fb0cd06b89b241ca50651a8930cae93cacd",
             "subject": "Products: the price range for the filter, with BTW"
           }
         ],
-        "01a143f4-289a-755b-a9a8-19a2f6906764": [
+        "01a143f7-88c6-77f4-86d8-9a128f361f59": [
           {
             "sha": "f3acf735f14e28407b95f41f7f72afaf40b4046f",
             "subject": "PriceSlider: two thumbs in steps of € 10"
           }
         ],
-        "01a143f4-289e-755d-b22f-5229bc794e49": [
+        "01a143f7-88cb-721c-94aa-f57efa671a9f": [
           {
             "sha": "0931a975761ef67a5b7bb2861d0ec3058286029c",
             "subject": "Products: filter the list by the slider's range"
@@ -5374,8 +5383,8 @@
             "subject": "PriceSlider: the dark theme and the phone layout"
           }
         ],
-        "01a143f4-28b4-7603-8414-80f6007dbe9c": [],
-        "01a143f4-28bd-7775-8e9f-21b81f4b1ad4": [
+        "01a143f7-88e5-7509-b47e-20cdd4ec9afb": [],
+        "01a143f7-88ee-7651-b956-c5ea73229f2e": [
           {
             "sha": "b13cb13dbaf5527108dd870246e297a18cb294dc",
             "subject": "PriceSlider: below the header on a phone (QA failure 1)"
@@ -5385,8 +5394,8 @@
             "subject": "PriceSlider: the light theme's colours"
           }
         ],
-        "01a143f4-28d8-726c-bd61-d3d118f792a2": [],
-        "01a143f4-28ef-71f7-a26d-faa02869ea1d": [
+        "01a143f7-890a-72c2-be14-29779c190c3b": [],
+        "01a143f7-8921-7332-86b3-3787946dc79b": [
           {
             "sha": "59fc5571a7540fd8d6383408d1fd3e4c3993cd43",
             "subject": "Tracking: say when to try again after too many lookups"
@@ -5397,24 +5406,24 @@
     },
     "suggest_agent": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": "01a143f4-2883-7194-8f4b-d78fe854527b",
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": "01a143f4-2885-762f-ac7c-e8935fdeb1ca",
-        "01a143f4-264a-7214-984a-eb2f93021f05": null,
-        "01a143f4-264b-77cf-b801-75101248b7fc": "01a143f4-2883-7194-8f4b-d78fe854527b",
-        "01a143f4-264c-7326-8e23-1c69f753f54a": "01a143f4-2884-7300-9b0b-6ddb3460204a",
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": null,
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": "01a143f4-2883-7194-8f4b-d78fe854527b",
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": null,
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": "01a143f4-2883-7194-8f4b-d78fe854527b"
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": "01a143f7-88b2-747d-b38c-c245c3356561",
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": null,
+        "01a143f7-86c9-7666-a0fc-b930004415bf": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+        "01a143f7-86c9-7666-a0fc-b932c25622be": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": null,
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": null,
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": "01a143f7-88b0-7057-9f8d-39995f79b3cf"
       },
       "$by": "taskId"
     },
     "task_activity": {
       "$answers": {
-        "01a143f4-2649-7302-9a35-ee9ae3f86947": [
+        "01a143f7-86c6-7728-bd6e-95a3f2fcf296": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437044,
+            "at": 1791709658273,
             "diff": {
               "identifier": "KADE-1",
               "title": "Export invoices as CSV from the portal"
@@ -5424,7 +5433,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437044,
+            "at": 1791709658273,
             "diff": {
               "labels": [
                 "backend",
@@ -5436,7 +5445,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437044,
+            "at": 1791709658273,
             "diff": {
               "column": [
                 "Backlog",
@@ -5448,19 +5457,19 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437044,
+            "at": 1791709658273,
             "diff": {
               "chars": 62,
-              "task_id": "01a143f4-2649-7302-9a35-ee9ae3f86947"
+              "task_id": "01a143f7-86c6-7728-bd6e-95a3f2fcf296"
             },
             "op": "insert",
             "table": "comments"
           }
         ],
-        "01a143f4-264a-7214-984a-eb2b5360a4c0": [
+        "01a143f7-86c7-7619-9bbd-7eb86d32c5f5": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437045,
+            "at": 1791709658274,
             "diff": {
               "identifier": "KADE-2",
               "title": "Rate limit the public tracking endpoint"
@@ -5470,7 +5479,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437045,
+            "at": 1791709658274,
             "diff": {
               "labels": [
                 "backend"
@@ -5481,7 +5490,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437045,
+            "at": 1791709658274,
             "diff": {
               "column": [
                 "Backlog",
@@ -5493,19 +5502,19 @@
           },
           {
             "actorName": "Frontend Agent",
-            "at": 1792035237063,
+            "at": 1792035458292,
             "diff": {
               "chars": 159,
-              "task_id": "01a143f4-264a-7214-984a-eb2b5360a4c0"
+              "task_id": "01a143f7-86c7-7619-9bbd-7eb86d32c5f5"
             },
             "op": "insert",
             "table": "comments"
           }
         ],
-        "01a143f4-264a-7214-984a-eb2f93021f05": [
+        "01a143f7-86c8-7676-ab66-c317f1f31b53": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437045,
+            "at": 1791709658274,
             "diff": {
               "identifier": "KADE-3",
               "title": "Filament table: remember column order per user"
@@ -5515,7 +5524,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437046,
+            "at": 1791709658274,
             "diff": {
               "labels": [
                 "frontend"
@@ -5526,7 +5535,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437046,
+            "at": 1791709658275,
             "diff": {
               "column": [
                 "Backlog",
@@ -5538,7 +5547,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1792053237052,
+            "at": 1792053458281,
             "diff": {
               "column": [
                 "To do",
@@ -5550,10 +5559,10 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1792053237052,
+            "at": 1792053458281,
             "diff": {
               "acceptanceMd": null,
-              "assigneeId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+              "assigneeId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
               "descriptionMd": null,
               "dueOn": null,
               "hold": null,
@@ -5567,7 +5576,7 @@
           },
           {
             "actorName": null,
-            "at": 1792053237052,
+            "at": 1792053458282,
             "diff": {
               "prState": "open",
               "pullRequest": "https://github.com/kade-logistics/portal/pull/17"
@@ -5576,10 +5585,10 @@
             "table": "tasks"
           }
         ],
-        "01a143f4-264b-77cf-b801-75101248b7fc": [
+        "01a143f7-86c9-7666-a0fc-b930004415bf": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437046,
+            "at": 1791709658275,
             "diff": {
               "identifier": "KADE-4",
               "title": "Driver app: offline queue, one-page spec"
@@ -5588,10 +5597,10 @@
             "table": "tasks"
           }
         ],
-        "01a143f4-264c-7326-8e23-1c69f753f54a": [
+        "01a143f7-86c9-7666-a0fc-b932c25622be": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437047,
+            "at": 1791709658276,
             "diff": {
               "identifier": "GFW-1",
               "title": "Mollie webhook: retry failed payment updates"
@@ -5601,7 +5610,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437047,
+            "at": 1791709658276,
             "diff": {
               "labels": [
                 "backend",
@@ -5613,7 +5622,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437047,
+            "at": 1791709658276,
             "diff": {
               "column": [
                 "Backlog",
@@ -5625,10 +5634,10 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791860637053,
+            "at": 1791860858281,
             "diff": {
               "acceptanceMd": null,
-              "assigneeId": "01a143f4-2884-7300-9b0b-6ddb3460204a",
+              "assigneeId": "01a143f7-88b1-71ee-9059-d4ffe02925d8",
               "descriptionMd": null,
               "dueOn": null,
               "hold": null,
@@ -5641,10 +5650,10 @@
             "table": "tasks"
           }
         ],
-        "01a143f4-264c-7326-8e23-1c6d4b459b14": [
+        "01a143f7-86ca-72ae-9352-5bc4fc13aa40": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437047,
+            "at": 1791709658276,
             "diff": {
               "identifier": "GFW-2",
               "title": "Product filters: price range slider"
@@ -5654,7 +5663,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437047,
+            "at": 1791709658276,
             "diff": {
               "labels": [
                 "frontend"
@@ -5665,7 +5674,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437048,
+            "at": 1791709658277,
             "diff": {
               "column": [
                 "Backlog",
@@ -5677,10 +5686,10 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791882237053,
+            "at": 1791882458281,
             "diff": {
               "acceptanceMd": "- [ ] AC 1: the slider filters the product list as you drag\n- [ ] AC 2: prices show with 21% BTW, in steps of € 10\n- [ ] AC 3: a range without bikes says what to try\n- [ ] AC 4: on a phone the filters fold, and the menu stays reachable",
-              "assigneeId": "01a143f4-2883-7194-8f4b-d78fe854527b",
+              "assigneeId": "01a143f7-88b0-7057-9f8d-39995f79b3cf",
               "descriptionMd": null,
               "dueOn": null,
               "hold": null,
@@ -5694,17 +5703,17 @@
           },
           {
             "actorName": "Frontend Agent",
-            "at": 1791959337052,
+            "at": 1791959558281,
             "diff": {
               "chars": 224,
-              "task_id": "01a143f4-264c-7326-8e23-1c6d4b459b14"
+              "task_id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40"
             },
             "op": "insert",
             "table": "comments"
           },
           {
             "actorName": "Frontend Agent",
-            "at": 1791959339052,
+            "at": 1791959560281,
             "diff": {
               "acceptanceMd": null,
               "assigneeId": null,
@@ -5721,17 +5730,17 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791961437052,
+            "at": 1791961658281,
             "diff": {
               "chars": 68,
-              "task_id": "01a143f4-264c-7326-8e23-1c6d4b459b14"
+              "task_id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40"
             },
             "op": "insert",
             "table": "comments"
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791961437052,
+            "at": 1791961658282,
             "diff": {
               "acceptanceMd": null,
               "assigneeId": null,
@@ -5748,50 +5757,50 @@
           },
           {
             "actorName": "Frontend Agent",
-            "at": 1792039437070,
+            "at": 1792039658303,
             "diff": {
               "chars": 220,
-              "task_id": "01a143f4-264c-7326-8e23-1c6d4b459b14"
+              "task_id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40"
             },
             "op": "insert",
             "table": "comments"
           },
           {
             "actorName": "QA Agent",
-            "at": 1792049937057,
+            "at": 1792050158285,
             "diff": {
               "chars": 175,
-              "task_id": "01a143f4-264c-7326-8e23-1c6d4b459b14"
+              "task_id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40"
             },
             "op": "insert",
             "table": "comments"
           },
           {
             "actorName": "Frontend Agent",
-            "at": 1792130637074,
+            "at": 1792130858305,
             "diff": {
               "chars": 140,
-              "task_id": "01a143f4-264c-7326-8e23-1c6d4b459b14"
+              "task_id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40"
             },
             "op": "insert",
             "table": "comments"
           },
           {
             "actorName": "QA Agent",
-            "at": 1792134237067,
+            "at": 1792134458296,
             "diff": {
               "chars": 273,
-              "task_id": "01a143f4-264c-7326-8e23-1c6d4b459b14"
+              "task_id": "01a143f7-86ca-72ae-9352-5bc4fc13aa40"
             },
             "op": "insert",
             "table": "comments"
           },
           {
             "actorName": "QA Agent",
-            "at": 1792134238052,
+            "at": 1792134459281,
             "diff": {
               "acceptanceMd": null,
-              "assigneeId": "01a143f4-2645-740a-a1b4-fe98424bcc0e",
+              "assigneeId": "01a143f7-86c4-7175-b5c4-175dbfcf64f2",
               "descriptionMd": null,
               "dueOn": null,
               "hold": null,
@@ -5805,7 +5814,7 @@
           },
           {
             "actorName": null,
-            "at": 1792134297052,
+            "at": 1792134518281,
             "diff": {
               "prState": "open",
               "pullRequest": "https://github.com/groene-fiets/webshop/pull/41"
@@ -5814,10 +5823,10 @@
             "table": "tasks"
           }
         ],
-        "01a143f4-264d-7175-b4fa-71bcbe6d2a63": [
+        "01a143f7-86cb-703e-aea7-b6b7e43b3069": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437048,
+            "at": 1791709658277,
             "diff": {
               "identifier": "GFW-3",
               "title": "Postcode and house number lookup on checkout"
@@ -5827,7 +5836,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437048,
+            "at": 1791709658277,
             "diff": {
               "labels": [
                 "frontend"
@@ -5838,7 +5847,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437048,
+            "at": 1791709658277,
             "diff": {
               "column": [
                 "Backlog",
@@ -5850,7 +5859,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1792051437052,
+            "at": 1792051658281,
             "diff": {
               "acceptanceMd": null,
               "assigneeId": null,
@@ -5867,10 +5876,10 @@
             "table": "tasks"
           }
         ],
-        "01a143f4-264e-758b-bfbc-206bf1d5227c": [
+        "01a143f7-86cc-7241-b4b6-011999b9d5c1": [
           {
             "actorName": "Jeffrey",
-            "at": 1791709437049,
+            "at": 1791709658278,
             "diff": {
               "identifier": "GFW-4",
               "title": "BTW 9% for the books category"
@@ -5880,7 +5889,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437049,
+            "at": 1791709658278,
             "diff": {
               "labels": [
                 "backend"
@@ -5891,7 +5900,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1791709437049,
+            "at": 1791709658278,
             "diff": {
               "column": [
                 "Backlog",
@@ -5902,10 +5911,10 @@
             "table": "tasks"
           }
         ],
-        "01a143f4-2902-71f7-a91d-8b5404e1a0a5": [
+        "01a143f7-8935-7654-b8f8-af8e5cd05286": [
           {
             "actorName": "Jeffrey",
-            "at": 1792138437052,
+            "at": 1792138658281,
             "diff": {
               "identifier": "GFW-5",
               "title": "Wishlist: save a bike for later"
@@ -5915,7 +5924,7 @@
           },
           {
             "actorName": "Jeffrey",
-            "at": 1792138437053,
+            "at": 1792138658281,
             "diff": {
               "labels": [
                 "frontend"
@@ -5933,7 +5942,7 @@
       "autoCheck": true,
       "available": null,
       "cannotInstall": null,
-      "checkedAt": 1792134237052,
+      "checkedAt": 1792134458281,
       "checking": false,
       "current": "0.12.0",
       "installTo": "/home/you/.local",
@@ -5951,5 +5960,5 @@
       "repo": "https://github.com/Yotech-AI/gizai.git"
     }
   },
-  "writtenAt": 1792141437052
+  "writtenAt": 1792141658281
 }

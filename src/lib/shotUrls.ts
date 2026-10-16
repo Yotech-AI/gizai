@@ -34,7 +34,7 @@ export function releaseShot(fileId: string) {
   if (e.url) URL.revokeObjectURL(e.url);
 }
 
-/** How many pictures have a blob: URL now (the self-test and the browser mode's console check it). */
+/** How many pictures have a blob: URL now (for a test; the browser mode's console has gizaiBlobUrls()). */
 export const shotUrlCount = () => [...entries.values()].filter((e) => e.url).length;
 
 /** A picture's blob: URL while the component shows it (`show`: e.g. once it scrolled into view); freed when it goes. */

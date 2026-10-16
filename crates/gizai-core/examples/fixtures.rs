@@ -5,8 +5,8 @@
 //! - Groene Fiets webshop linked to GitHub, with a Preview command and the default screenshot sizes; Kade portal has no
 //!   Preview command;
 //! - GFW-2 in Review: the Frontend Agent's card with pull request #41 and six runs' screenshot sets (no screen changed, a
-//!   preview that didn't start, files left out, QA's failure and pass, a picture unchanged between two runs), assigned
-//!   to you after QA's pass, so the Inbox has it;
+//!   preview that didn't start, files left out, QA's failure and pass, a picture unchanged between two runs, one not
+//!   taken again), assigned to you after QA's pass, so the Inbox has it;
 //! - KADE-2 in Testing with one set; KADE-3 in Review with a pull request and no screenshots; the empty tab's cases: KADE-1
 //!   (no preview), GFW-1 (the Backend Agent's: no browser), GFW-3 (its own switch off), GFW-5 (no run yet).
 //!
@@ -413,6 +413,8 @@ fn main() {
             desktop("01-product-list-desktop-dark.png", "Product list with the price slider", "gfw2-r3-01"),
             desktop("02-slider-dragged-desktop-dark.png", "Slider dragged to € 400 to € 900: 12 bikes", "gfw2-r3-02"),
             phone("03-product-list-mobile-dark.png", "Product list on a phone, the filters folded", "gfw2-03-phone"),
+            // the newest set hasn't this one: "Not taken this time" under it
+            phone("04-filters-open-mobile-dark.png", "The filters open on a phone", "gfw2-r3-04"),
         ],
         left_out: vec!["notes.txt: not a PNG, JPEG or WebP image", "05-product-list-full-desktop-dark.png: over 16,384 pixels high"],
         ..base("fe", "frontend", "manual", now - DAY - 5 * HOUR, 40)

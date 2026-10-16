@@ -96,15 +96,17 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
   const [stage, box] = useSize<HTMLDivElement>();
   const dialog = useRef<HTMLDivElement>(null);
   const compared = useMemo(() => compare(sets, set), [sets, set]);
-  const shot = set.shots[i];
-  const pairing = compared?.pairing.get(shot.fileId);
-  const before = compared?.pair.get(shot.fileId) ?? null;
+  // a run's set that lost pictures under the view (cleared) keeps it on one it still has
+  const shot = set.shots[Math.min(i, set.shots.length - 1)] as Screenshot | undefined;
+  useEffect(() => { if (!shot) onClose(); }, [shot, onClose]);
+  const pairing = shot ? compared?.pairing.get(shot.fileId) : undefined;
+  const before = (shot && compared?.pair.get(shot.fileId)) || null;
   const n = set.shots.length;
   const answer = answerOf(set);
   const commit = shortCommit(set.commit);
   const comparing = cmp !== null && !!before;
   useEffect(() => { dialog.current?.focus(); }, []);
-  // In Compare, ← and → go to the set's next pair; without one left, Compare goes back to one picture.
+  // In Compare, ← and → go to the set's next pair (a picture the run before has too).
   const pairs = set.shots.map((s, k) => (compared?.pair.has(s.fileId) ? k : -1)).filter((k) => k >= 0);
   const go = (d: 1 | -1) => {
     setErr(null);
@@ -133,11 +135,11 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
     else if (e.key.toLowerCase() === "c") { e.preventDefault(); toggleCompare(); }
     e.stopPropagation(); // the page's own keys (], t, n) wait until it is closed
   };
-  const open = () => { setErr(null); openFile(shot.fileId).catch((e) => setErr(String(e))); };
+  const open = () => { if (!shot) return; setErr(null); openFile(shot.fileId).catch((e) => setErr(String(e))); };
   // 100%: drag to look around
   const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const panDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (zoom !== "full" || comparing || e.button !== 0) return;
+    if (zoom !== "full" || comparing || e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
     const el = e.currentTarget;
     pan.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
     el.setPointerCapture?.(e.pointerId);
@@ -150,6 +152,7 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
   };
   const inner = { w: Math.max(0, box.w - 160), h: Math.max(0, box.h - 64) }; // room for Previous and Next
   const side = { w: Math.max(0, (box.w - 160 - 24) / 2), h: Math.max(0, box.h - 120) };
+  if (!shot) return null;
   const compareTitle = !compared ? "The run before has no pictures to compare with"
     : pairing === "new" ? `New in this run: the run before has no ${shot.name}` : "Compare with the run before (C)";
   return (
@@ -181,8 +184,7 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
           <button type="button" className="btn ghost sm icon-only" aria-label="Close" title="Close (Esc)" onClick={onClose}><X className="icon" /></button>
         </div>
         {err && <div className="error-banner" role="alert">{err}</div>}
-        <div className={`sv-stage${zoom === "full" && !comparing ? " full" : ""}`} ref={stage} onPointerDown={panDown} onPointerMove={panMove}
-          onPointerUp={() => { pan.current = null; }}>
+        <div className="sv-stage" ref={stage}>
           {comparing && before && pairing === "unchanged" ? (
             <div className="sv-center"><Picture shot={shot} size={fit(shot, inner)} /></div>
           ) : comparing && before && cmp === "side" ? (
@@ -198,7 +200,9 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
           ) : comparing && before ? (
             <div className="sv-center"><Slider before={before} shot={shot} box={inner} setWhen={when(set.endedAt)} beforeWhen={when(compared!.before.endedAt)} /></div>
           ) : zoom === "full" ? (
-            <div className="sv-full"><Picture shot={shot} /></div>
+            <div className="sv-scroll" onPointerDown={panDown} onPointerMove={panMove} onPointerUp={() => { pan.current = null; }}>
+              <div className="sv-full"><Picture shot={shot} /></div>
+            </div>
           ) : (
             <div className="sv-center"><Picture shot={shot} size={fit(shot, inner)} /></div>
           )}

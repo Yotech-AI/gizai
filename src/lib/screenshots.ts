@@ -69,7 +69,7 @@ export const PAIRING_TEXT: Record<Pairing, string> = { changed: "Changed", uncha
 
 /** The run before a set, for Compare: the newest older set of the same agent (else of the same role) with pictures. */
 export function runBefore(sets: ScreenshotSet[], set: ScreenshotSet): ScreenshotSet | null {
-  const older = sets.slice(sets.indexOf(set) + 1).filter((s) => s.shots.length > 0);
+  const older = sets.slice(sets.findIndex((s) => s.runId === set.runId) + 1).filter((s) => s.shots.length > 0 && s.runId !== set.runId);
   return older.find((s) => s.agentId === set.agentId) ?? (set.role ? older.find((s) => s.role === set.role) : undefined) ?? null;
 }
 

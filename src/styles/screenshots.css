@@ -67,10 +67,11 @@
 .sv-head .grow { flex: 1; }
 .sv-head .btn[aria-pressed="true"] { background: var(--selected); }
 .sv-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--side); }
-.sv-stage.full { overflow: auto; cursor: grab; }
-.sv-stage.full:active { cursor: grabbing; }
+/* 100%: a scroller of its own under Previous and Next, so they stay put; drag or scroll to look around */
+.sv-scroll { position: absolute; inset: 0; display: flex; overflow: auto; cursor: grab; }
+.sv-scroll:active { cursor: grabbing; }
 .sv-center { position: absolute; inset: 0; display: grid; place-items: center; }
-.sv-full { display: inline-block; padding: 24px 80px; }
+.sv-full { margin: auto; padding: 24px 80px; }
 .sv-pic { display: block; user-select: none; }
 .sv-ph { display: grid; place-items: center; background: var(--raised); color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-sm); }
 .sv-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; margin-top: -20px; border: 1px solid var(--line-2); border-radius: 50%;

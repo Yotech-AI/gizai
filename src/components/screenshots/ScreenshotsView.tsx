@@ -162,7 +162,7 @@ export function ScreenshotsView({ task, sets, error, runId, project, agent, onSh
         )}
         {older && rest.map(block)}
       </div>
-      {view && <ShotViewer sets={all} set={view.set} start={view.index} onClose={close} />}
+      {view && <ShotViewer sets={all} set={all.find((s) => s.runId === view.set.runId) ?? view.set} start={view.index} onClose={close} />}
     </div>
   );
 }

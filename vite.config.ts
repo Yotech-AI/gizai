@@ -7,12 +7,12 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**"] } },
   // Desktop app: local files, so a large chunk costs nothing over the network; what counts is the code a start parses.
-  // GA-178: the pages but the board and the self-test load when first needed (App.tsx). What a start needs stays in two
-  // files instead of many small ones: CodeMirror's part (the drawers' Markdown editor) and the rest.
+  // GA-178: the pages but the board and the self-test load when first needed (App.tsx); GA-190: the drawers too
+  // (lib/drawers.tsx), and with them the Markdown editor and CodeMirror. What a start needs stays in one file instead of
+  // many small ones.
   build: {
     target: "safari16", outDir: "dist", chunkSizeWarningLimit: 2000,
     rolldownOptions: { output: { codeSplitting: { groups: [
-      { name: "codemirror", tags: ["$initial"], test: /node_modules[\\/](@codemirror|@lezer|@marijn|style-mod|w3c-keyname|crelt)[\\/]/, priority: 2 },
       { name: "index", tags: ["$initial"], priority: 1 },
     ] } } },
   },

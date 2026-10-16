@@ -12,7 +12,7 @@ use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::os::{self, End, Tree};
-use crate::run_memory::Slice;
+use crate::run_memory::{Leftover, Scope, Slice};
 
 /// The preview's folder in a run's temp folder: its log, and room for a throwaway database (`GIZAI_PREVIEW_DIR`).
 pub const DIR: &str = "preview";
@@ -86,6 +86,8 @@ pub fn answers(port: u16) -> bool {
 pub struct Preview {
     child: Option<Child>,
     tree: Tree,
+    /// Linux, in the slice of the agent runs: its scope, where what it starts in a group of its own runs too (GA-211).
+    scope: Option<Scope>,
     /// The port it was given (`GIZAI_PREVIEW_PORT`).
     pub port: u16,
     /// Its output: `<worktree>/.gizai-tmp/preview/preview.log`.
@@ -103,9 +105,9 @@ pub fn start(command: &str, worktree: &Path, port: u16, path: Option<&OsStr>, sl
     let err = out.try_clone().map_err(|e| format!("couldn't write its log {}: {e}", log.display()))?;
     let own = std::env::var_os("PATH").unwrap_or_default();
     let bash = os::git_bash(path.unwrap_or(&own)).ok_or("it runs in Git Bash, and Git for Windows isn't installed")?;
-    let mut cmd = match slice.and_then(|s| s.command_for(bash.as_os_str(), path)) {
-        Some(c) => c,
-        None => os::command(&bash),
+    let (mut cmd, scope) = match slice.and_then(|s| s.scoped_for(bash.as_os_str(), path)) {
+        Some((c, scope)) => (c, Some(scope)),
+        None => (os::command(&bash), None),
     };
     cmd.arg("-c").arg(command).current_dir(worktree)
         .stdin(Stdio::null()).stdout(Stdio::from(out)).stderr(Stdio::from(err))
@@ -117,7 +119,7 @@ pub fn start(command: &str, worktree: &Path, port: u16, path: Option<&OsStr>, sl
         cmd.env("PATH", p);
     }
     let (child, tree) = os::spawn_tree(&mut cmd, false).map_err(|e| format!("couldn't start: {e}"))?;
-    Ok(Preview { child: Some(child), tree, port, log })
+    Ok(Preview { child: Some(child), tree, scope, port, log })
 }
 
 impl Preview {
@@ -167,8 +169,11 @@ impl Preview {
     }
 
     /// Ends its whole tree: SIGTERM, then SIGKILL to what still runs after `END_GRACE` (on Windows its Job Object ends
-    /// everything at once), and waits until nothing of it runs (a few seconds at most).
-    pub async fn stop(mut self) {
+    /// everything at once), and waits until nothing of it runs (a few seconds at most). Then, in the slice of the agent
+    /// runs, what it left in its scope in a group of its own (a server it started with `setsid`) ends the same way
+    /// (GA-211): returns those processes, each once.
+    pub async fn stop(mut self) -> Vec<Leftover> {
+        let group = self.pid();
         self.tree.end(End::Terminate);
         let t0 = Instant::now();
         while self.running() && t0.elapsed() < END_GRACE {
@@ -184,14 +189,22 @@ impl Preview {
         if let Some(mut c) = self.child.take() {
             let _ = c.try_wait();
         }
+        match self.scope.take() {
+            Some(scope) => tokio::task::spawn_blocking(move || scope.end_leftovers(Some(group))).await.unwrap_or_default(),
+            None => vec![],
+        }
     }
 }
 
 impl Drop for Preview {
-    /// Not stopped (a start that went wrong after it started): killed at once, and waited for on a thread of its own.
+    /// Not stopped (a start that went wrong after it started): killed at once, with what it left in its scope, and waited
+    /// for on a thread of its own.
     fn drop(&mut self) {
         if let Some(mut c) = self.child.take() {
             self.tree.end(End::Kill);
+            if let Some(s) = &self.scope {
+                s.kill();
+            }
             std::thread::spawn(move || {
                 let _ = c.wait();
             });

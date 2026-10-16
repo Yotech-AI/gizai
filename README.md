@@ -126,7 +126,11 @@ source scripts/env.sh
 cargo test --workspace && npm test
 scripts/ui-test.sh        # UI tests in a headless compositor, never on your desktop
 scripts/tour-capture.sh --out <folder>   # the product tour's stills, in dark and light (default .devdata/tour/capture)
+scripts/perf.sh [scenario …]             # the benchmark: medians in .devdata/perf/<commit>.json; --compare a.json b.json
+node scripts/bundle-size.mjs             # after npm run build: each file's bytes and gzip bytes, the start files apart
 ```
+
+A performance card runs `scripts/perf.sh` on `main` and on its branch, on the same machine with nothing else running, and puts `scripts/perf.sh --compare` of the two in its pull request (`docs/research/performance.md` §7 says what each scenario measures). For the database alone: `cargo run --release -p gizai-core --example bench_queries -- <data dir>` on `prep_perf`'s data.
 
 The capture makes the product tour's stills: GizAi with made-up data in a headless compositor, scene by scene, in dark and light, with a `scenes.json` of what each step clicked. The tour video and the two GIFs above (`docs/tour/tour-dark.gif` and `tour-light.gif`) are made from those stills in the website's repository, which holds the tour's Remotion project.
 

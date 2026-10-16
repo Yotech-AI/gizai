@@ -186,6 +186,9 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
     } catch (e) { setTasks(before); setToast({ text: `Couldn't archive ${t.identifier}: ${e}` }); }
   }, []);
 
+  // the same function on each render, so the board's memoised cards that didn't change don't draw again (GA-190)
+  const openCard = useCallback((id: string) => go({ page: "task", id }), []);
+
   const project = projects?.find((p) => p.id === filter.projectId);
   const nFilters = filterCount(filter);
   const agents = (team?.members ?? []).filter((m) => m.kind === "agent");
@@ -247,7 +250,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       ) : (
         <div className="board-wrap">
           {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
-          {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={(id) => go({ page: "task", id })} onAdd={(sid) => onNewTask(sid)}
+          {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={openCard} onAdd={(sid) => onNewTask(sid)}
             onArchive={onArchive} working={working} members={team.members} />}
         </div>
       )}

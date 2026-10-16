@@ -105,6 +105,8 @@ for s in $SCENARIOS; do
     if [ "$s" = runlog ]; then
       rm -rf "$REPO" && git init -q -b main "$REPO" && git -C "$REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
     fi
+    # what the copy and the run before left for the disk is written first, so the start doesn't wait for it
+    sync; sleep 1
     printf '%s run %s of %s … ' "$s" "$n" "$RUNS"
     # shellcheck disable=SC2086 # WEBKIT_ENV is a list of NAME=value words
     env -i HOME="$HOMEDIR" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$RT" \

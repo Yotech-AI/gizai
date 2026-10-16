@@ -4243,10 +4243,13 @@ async function shown(drawn: () => boolean, timeout: number) {
   if (ok) await nextFrame();
   return !!ok;
 }
-/** Scrolls `box` by `step` px a frame for `time` ms, back and forth between its ends: frames a second and the longest frame. */
-const scrolling = (box: HTMLElement, time: number, step = 60) => {
+/** Scrolls the box `at` finds (again each frame: React may draw it anew) by `step` px a frame for `time` ms, back and
+ *  forth between its ends: frames a second and the longest frame. */
+const scrolling = (at: () => HTMLElement | null, time: number, step = 60) => {
   let dir = step;
   return perfFrames(time, () => {
+    const box = at();
+    if (!box) return;
     if (dir > 0 && box.scrollTop + box.clientHeight >= box.scrollHeight - 1) dir = -step;
     else if (dir < 0 && box.scrollTop <= 0) dir = step;
     box.scrollTop += dir;
@@ -4294,17 +4297,25 @@ async function perfBoard(o: PerfResult) {
   if (!(await shown(() => perfFirst.board !== undefined, 20000))) throw new Error("the board's columns were not all drawn");
   o.numbers.columns_drawn_ms = ms(perfFirst.board);
   const per: { column: string; fps: number; longestFrameMs: number }[] = [];
+  const skipped: string[] = [];
   const scrolled = performance.now();
-  for (const col of document.querySelectorAll<HTMLElement>(".board .col:not(.rail)")) {
-    const body = col.querySelector<HTMLElement>(".col-body");
-    if (!body || body.scrollHeight <= body.clientHeight + 1) continue;
-    body.scrollTop = 0;
+  const names = [...document.querySelectorAll<HTMLElement>(".board .col:not(.rail)")].map((c) => c.dataset.col ?? "");
+  for (const name of names) {
+    const body = () => document.querySelector<HTMLElement>(`.board .col[data-col="${CSS.escape(name)}"] .col-body`);
+    const b = body();
+    if (!b || b.scrollHeight <= b.clientHeight + 1) {
+      skipped.push(b ? `${name}: ${b.querySelectorAll(".card").length} cards in ${b.scrollHeight} of ${b.clientHeight} px` : `${name}: gone`);
+      continue;
+    }
+    b.scrollTop = 0;
     await nextFrame();
     const f = await scrolling(body, 3000);
-    body.scrollTop = 0;
-    per.push({ column: col.dataset.col ?? "", fps: f.fps, longestFrameMs: f.longestFrameMs });
+    const after = body();
+    if (after) after.scrollTop = 0;
+    per.push({ column: name, fps: f.fps, longestFrameMs: f.longestFrameMs });
   }
   o.detail.columns = per;
+  if (skipped.length) o.detail.not_scrolled = skipped;
   o.windows.scroll = [Math.round(o.timeOrigin + scrolled), Math.round(o.timeOrigin + performance.now())];
   o.numbers.scroll_fps = per.length ? Math.min(...per.map((p) => p.fps)) : -1;
   o.numbers.scroll_longest_frame_ms = per.length ? Math.max(...per.map((p) => p.longestFrameMs)) : -1;
@@ -4421,7 +4432,7 @@ async function perfRunlog(o: PerfResult, ids: PerfIds) {
   o.numbers.log_drawn_ms = ms(performance.now() - t1);
   const stream = row.querySelector<HTMLElement>(".run-stream")!;
   o.numbers.log_rows_in_page = stream.querySelectorAll("[data-index]").length;
-  const f = await scrolling(stream, 3000, 200);
+  const f = await scrolling(() => stream, 3000, 200);
   o.numbers.scroll_fps = f.fps;
   o.numbers.scroll_longest_frame_ms = f.longestFrameMs;
   all.click(); // Hide output: the live run's log is what is measured next

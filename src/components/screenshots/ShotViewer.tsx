@@ -148,7 +148,7 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
     e.currentTarget.scrollLeft = p.left - (e.clientX - p.x);
     e.currentTarget.scrollTop = p.top - (e.clientY - p.y);
   };
-  const inner = { w: Math.max(0, box.w - 160), h: Math.max(0, box.h - 48) }; // room for Previous and Next
+  const inner = { w: Math.max(0, box.w - 160), h: Math.max(0, box.h - 64) }; // room for Previous and Next
   const side = { w: Math.max(0, (box.w - 160 - 24) / 2), h: Math.max(0, box.h - 120) };
   const compareTitle = !compared ? "The run before has no pictures to compare with"
     : pairing === "new" ? `New in this run: the run before has no ${shot.name}` : "Compare with the run before (C)";

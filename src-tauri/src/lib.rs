@@ -496,6 +496,14 @@ pub fn run() {
             app.exit(0);
         }
     });
+    // The benchmark harness (GA-188, scripts/perf.sh): in a perf run (GIZAI_SELFTEST_MODE=perf:…) the page counts its
+    // backend calls from the first one (src/lib/perf.ts). The init script runs before any of the page's own scripts.
+    let perf_run = std::env::var("GIZAI_SELFTEST_MODE").is_ok_and(|m| m.starts_with("perf:"));
+    let builder = if perf_run {
+        builder.plugin(tauri::plugin::Builder::new("gizai-perf").js_init_script("window.__GIZAI_PERF__ = true;").build())
+    } else {
+        builder
+    };
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

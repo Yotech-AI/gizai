@@ -1,9 +1,11 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
-import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Channel } from "@tauri-apps/api/core";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { shared } from "./lib/share";
+// Tauri's own invoke and listen, counted in a perf run only (GA-188, lib/perf.ts)
+import { invoke as tauriInvoke, listen } from "./lib/perf";
 import type * as T from "./types";
 
 // Every call: in a screen's data hook, a read another hook has on its way with the same arguments is shared (GA-190).

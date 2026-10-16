@@ -19,7 +19,7 @@ import { useDrawer } from "../lib/drawers";
 import { modKey } from "../lib/keys";
 import { liveTotal, useFolded, type Fold } from "../lib/sidebar";
 import { forgetFolder, useOpenedFolders } from "../lib/editor";
-import { foldedBehind, onTold, rowTip, rowWord } from "../lib/behind";
+import { askGit, askMain, foldedBehind, onTold, rowTip, rowWord } from "../lib/behind";
 import { asksToClose, closeQuestion, folderNameOf, openTip, openWord, rowTitle, showsCardId, useTerminals } from "../lib/terminals";
 import { FOCUS_GAP, onWindowFocus } from "../lib/windowFocus";
 import { roleIcon } from "./Avatar";
@@ -271,8 +271,9 @@ function TerminalSection({ route, tasks, youId, folded, onFold }: { route: Route
  *  ahead. A card's row is its identifier and its title, on one line (cut short, the tooltip starts with it whole; GA-151).
  *  Folded, the heading says how many folders are behind. + opens the folder picker; a right click has Open in,
  *  Copy path, Remove from the list and, on a card's row, Open card. How a folder stands against main is as last fetched
- *  (the Editor page fetches); the row follows the page at once (Update started, a fetch) and an update's end. The rows
- *  are asked again every 30 seconds and on the window's focus, unless they were 5 seconds ago or less (GA-177). */
+ *  (the Editor page fetches); the row follows the page at once (Update started, a fetch) and an update's end. The rows'
+ *  uncommitted marks are asked again every 30 seconds while the window is in use; how they stand against main when a
+ *  folder opens and on the window's focus, unless that was 5 seconds ago or less (GA-177, GA-190). */
 function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: Task[]; folded: boolean; onFold: () => void }) {
   const opened = useOpenedFolders();
   const [folders, setFolders] = useState<EditorFolder[] | null>(null);
@@ -285,15 +286,18 @@ function EditorSection({ route, tasks, folded, onFold }: { route: Route; tasks: 
   useEffect(() => {
     if (!opened.length) return;
     let alive = true;
-    const load = () => {
+    // every 30 seconds while the window is in use: the folders and their uncommitted marks (editor_git)
+    const marks = () => {
       editorFolders().then((f) => { if (alive) setFolders(f); }).catch(() => {});
-      for (const id of opened) {
-        editorGit(id).then((g) => { if (alive) setGits((m) => ({ ...m, [id]: g })); }).catch(() => {});
-        editorMain(id).then((s) => { if (alive) setMains((m) => ({ ...m, [id]: s })); }).catch(() => {});
-      }
+      for (const id of opened) askGit(id, editorGit).then((g) => { if (alive) setGits((m) => ({ ...m, [id]: g })); }).catch(() => {});
     };
-    load();
-    const stop = onWindowFocus(load, FOCUS_GAP, 30_000);
+    // when a folder opens and on the focus, also how each stands against main, one answer with the Editor page's (GA-190)
+    const all = () => {
+      marks();
+      for (const id of opened) askMain(id, editorMain).then((s) => { if (alive) setMains((m) => ({ ...m, [id]: s })); }).catch(() => {});
+    };
+    all();
+    const stop = onWindowFocus(all, FOCUS_GAP, 30_000, marks);
     return () => { alive = false; stop(); };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {

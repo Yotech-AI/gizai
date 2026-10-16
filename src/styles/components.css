@@ -136,6 +136,9 @@ html, body { background: var(--bg); color: var(--text); font-family: var(--font-
 .pulse::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid var(--live); opacity: 0; animation: gz-ping 1.6s ease-out infinite; }
 @keyframes gz-ping { 0% { transform: scale(.6); opacity: .7; } 100% { transform: scale(1.5); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .pulse::after { animation: none; } }
+/* GA-190: while nobody uses the window (hidden, or another window has the focus: lib/windowFocus.ts), what moves at rest
+   pauses: the pulse, the answer's caret and a spinner kept WebKit drawing every frame. They go on when you come back. */
+:root[data-away] .pulse::after, :root[data-away] .caret, :root[data-away] .icon.spin { animation-play-state: paused; }
 
 /* ---------- top bar and view toolbar ---------- */
 .topbar { display: flex; align-items: center; gap: 12px; height: var(--size-topbar); padding: 0 20px; border-bottom: 1px solid var(--line); }

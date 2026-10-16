@@ -5,6 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "lucide-react";
 import { continueAfterRunForMe, continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
+import { useClock } from "../lib/windowFocus";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { usePending } from "../lib/usePending";
 import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, noteIsGood, resumeCommand, runReason, triggerName } from "../lib/runs";
@@ -76,10 +77,10 @@ export const Stream = memo(function Stream({ events }: { events: SeqEvent[] }) {
   );
 });
 
-/** How long the live run has run, ticking each second: on its own, so the clock redraws only itself (GA-176). */
+/** How long the live run has run, ticking each second: on its own, so the clock redraws only itself (GA-176). It rests
+ *  while the window is hidden, and shows the time at once when it shows again (GA-190). */
 function Elapsed({ since }: { since: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const now = useClock(1000);
   return <>{elapsed(since, now)}</>;
 }
 

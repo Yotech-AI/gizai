@@ -39,7 +39,7 @@ import { FolderPicker } from "../components/editor/FolderPicker";
 import { openInItems, OpenInMenu, useEditorApps } from "../components/editor/Menus";
 import { CardBar } from "../components/editor/CardBar";
 import { BehindBar, FetchButton, Standing } from "../components/editor/BehindBar";
-import { fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../lib/behind";
+import { askGit, askMain, fetchDue, fetchTitle, hasMain, mainBar, standing, tellMain } from "../lib/behind";
 import { TerminalButton, TerminalPanel, useTerminalPanel } from "../components/editor/TerminalPanel";
 import { panelKey, terminalOff } from "../lib/terminalPanel";
 import { FOCUS_GAP, onWindowFocus } from "../lib/windowFocus";
@@ -194,10 +194,11 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
   };
 
   // ---- git ----
-  const refreshGit = useCallback(() => { editorGit(id).then(setGit).catch(() => {}); }, [id]);
+  // `share`: on the focus and the timer, one answer with the sidebar's (GA-190); after a save or a change, a fresh one
+  const refreshGit = useCallback((share = false) => { (share ? askGit(id, editorGit) : editorGit(id)).then(setGit).catch(() => {}); }, [id]);
   useEffect(() => {
-    refreshGit();
-    return onWindowFocus(() => { refreshGit(); void loadFolder(); }, FOCUS_GAP, 10_000);
+    refreshGit(true);
+    return onWindowFocus(() => { refreshGit(true); void loadFolder(); }, FOCUS_GAP, 10_000);
   }, [refreshGit, loadFolder]);
   // the tree's open folders on the focus, with a gap of their own: the 10-second refresh above leaves them alone
   useEffect(() => onWindowFocus(refreshTree), [refreshTree]);
@@ -227,9 +228,11 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     if (!m.canUpdate || m.updating) setRefusal(null);
     tellMain(id, m);
   }, [id]);
-  const refreshMain = useCallback(() => {
+  // `share`: when the folder opens and on the focus and the timer, one answer with the sidebar's (GA-190); after an
+  // update, a fresh one
+  const refreshMain = useCallback((share = false) => {
     const answer = ++asked.current;
-    editorMain(id).then((m) => showMain(answer, m)).catch(() => {});
+    (share ? askMain(id, editorMain) : editorMain(id)).then((m) => showMain(answer, m)).catch(() => {});
   }, [id, showMain]);
   const fetchMain = useCallback(() => {
     if (fetchingRef.current) return;
@@ -244,11 +247,11 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
   // fetch 10 minutes after the last; not while the window is hidden, and on the focus at once (unless the last was 5
   // seconds ago or less).
   useEffect(() => {
-    refreshMain();
+    refreshMain(true);
     fetchMain();
     return onWindowFocus(() => {
       const m = mainRef.current;
-      if ((!m || hasMain(m)) && fetchDue(lastFetch.current, Date.now(), m)) fetchMain(); else refreshMain();
+      if ((!m || hasMain(m)) && fetchDue(lastFetch.current, Date.now(), m)) fetchMain(); else refreshMain(true);
     }, FOCUS_GAP, 10_000);
   }, [refreshMain, fetchMain]);
   // An update's end: the bar says how it ended; the standing, git's marks and the tree show the new state.
@@ -387,10 +390,9 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
     }).catch((e) => patch(path, { status: "error", error: String(e).replace(/^Error:\s*/, "") }));
   }, [id, patch, read]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Outside changes: the open files' versions every 3 seconds.
+  // Outside changes: the open files' versions every 3 seconds while the window is in use, and on its focus (GA-190).
   useEffect(() => {
-    const t = setInterval(async () => {
-      if (document.hidden) return;
+    const check = async () => {
       const snap = tabsRef.current.filter((x) => x.status === "ready" && !x.saving && x.file);
       if (!snap.length) return;
       const now = await editorVersions(id, snap.map((x) => x.path)).catch(() => null);
@@ -406,8 +408,8 @@ function FolderEditor({ folderId, youId }: { folderId: string; youId: string }) 
         else if (does === "gone-ask" && cur.disk !== "deleted") patch(cur.path, { disk: "deleted" });
         else if (does === "none" && (cur.disk === "gone" || cur.disk === "deleted")) patch(cur.path, { disk: null });
       });
-    }, 3000);
-    return () => clearInterval(t);
+    };
+    return onWindowFocus(() => { void check(); }, FOCUS_GAP, 3000);
   }, [id, patch, reload]);
 
   // Read-only follows the folder: an agent starting or ending on the card, Edit anyway, Done editing.

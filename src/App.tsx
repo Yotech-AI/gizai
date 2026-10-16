@@ -11,6 +11,7 @@ import { TasksPage } from "./pages/TasksPage";
 import { DrawerHost, type DrawerReq } from "./lib/drawers";
 import { appearanceOf, setAppearance, toggleDensity, toggleTheme } from "./lib/appearance";
 import { startTerminals } from "./lib/terminals";
+import { watchAway } from "./lib/windowFocus";
 
 // GA-178: Gizai opens on the board or the Inbox (TasksPage); every other page loads when it is first opened.
 const Placeholder = lazy(() => import("./pages/Placeholder").then((m) => ({ default: m.Placeholder })));
@@ -46,6 +47,7 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
 
   // the open terminals and their views live as long as the window, not a page (GA-135)
   useEffect(() => { startTerminals(); }, []);
+  useEffect(() => watchAway(), []);
 
   useEffect(() => {
     // The theme and density are on <html> already (main.tsx); t and d switch them, like Settings → Appearance.

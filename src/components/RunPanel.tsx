@@ -1,6 +1,6 @@
 // The agent run on a task (design system: RunCard): live transcript with Stop and Open in terminal while it runs;
 // otherwise the last run's result and a Run button with an agent picker.
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "lucide-react";
 import { continueAfterRunForMe, continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
@@ -20,12 +20,21 @@ export function outcomeBadge(r: Run) {
 }
 
 /** A run's log. Memoised (GA-176): it redraws when an event arrives, not when the panel around it does; an earlier event's
- *  Markdown isn't parsed again then, as MarkdownView is memoised on its text. */
+ *  Markdown isn't parsed again then, as MarkdownView is memoised on its text. It opens at its end and follows new lines
+ *  while you are at its end; scrolled up to read, it stays put. Only its own box scrolls, never the page (GA-208). */
 export const Stream = memo(function Stream({ events }: { events: SeqEvent[] }) {
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [events.length]);
+  const box = useRef<HTMLDivElement>(null);
+  // Whether the box is at its end, within 24px: it is at first, and again when the log empties for another run.
+  const atEnd = useRef(true);
+  // Only the box's own scrollTop: scrollIntoView scrolled the card page too, back to the log, on each new line.
+  useLayoutEffect(() => {
+    const b = box.current;
+    if (!events.length) atEnd.current = true;
+    if (b && atEnd.current) b.scrollTop = b.scrollHeight;
+  }, [events.length]);
   return (
-    <div className="run-stream" aria-live="polite">
+    <div className="run-stream" aria-live="polite" ref={box}
+      onScroll={(e) => { const b = e.currentTarget; atEnd.current = b.scrollHeight - b.scrollTop - b.clientHeight <= 24; }}>
       {events.map(({ seq, event: e }) => {
         switch (e.kind) {
           case "init": return <div key={seq} className="faint">Started{e.model ? ` · ${e.model}` : ""}</div>;
@@ -39,7 +48,8 @@ export const Stream = memo(function Stream({ events }: { events: SeqEvent[] }) {
           default: return e.raw_type?.startsWith("cap_exceeded") ? <div key={seq} className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;
         }
       })}
-      <div ref={end} />
+      {/* An empty last line, as before: StreamParses.test.tsx counts the log's lines. */}
+      <div />
     </div>
   );
 });

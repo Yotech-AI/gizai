@@ -664,7 +664,7 @@ span.mem-tag { cursor: default; }
 .mcp-agent .ct-shots.off .check { cursor: default; }
 /* The card's Properties → Screenshots: Screenshots before Review as the Testing row has it, then under it what it
    follows and the way back to the project's switch. */
-.prop-row.prop-shots { grid-template-rows: 36px auto; row-gap: 0; }
+.prop-row.prop-shots { grid-template-rows: minmax(36px, auto) auto; row-gap: 0; }
 .prop-shots .prop-note { grid-column: 2; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: -6px; padding-bottom: 6px;
   color: var(--text-3); font-size: var(--fs-xs); line-height: 16px; }
 .prop-shots .prop-note .btn { margin-left: -9px; }

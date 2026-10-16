@@ -23,7 +23,8 @@
 .shot-grid { display: grid; grid-template-columns: repeat(auto-fill, 272px); gap: 20px 16px; margin: 0; padding: 0; list-style: none; }
 .shot { display: flex; flex-direction: column; align-items: stretch; width: 272px; padding: 0 0 4px; border: 0; border-radius: var(--radius); background: none;
   color: var(--text); font: inherit; text-align: left; cursor: zoom-in; }
-.shot-cell { display: grid; place-items: center; width: 272px; height: 170px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--side); }
+.shot-cell { display: flex; align-items: center; justify-content: center; width: 272px; height: 170px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--side); }
 /* the picture at its own proportions: 1280 × 800 fills the cell, 390 × 844 is 79 × 170 in the middle */
 .shot-cell img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .shot-ph { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-xs); }

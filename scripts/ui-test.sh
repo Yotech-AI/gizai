@@ -119,6 +119,14 @@
 #     the sidebar's + each join the Editor list at the bottom; a click on each row opens its page and marks it, no row
 #     moving; a listed folder picked again stays put; a ninth: the one opened longest ago leaves, the others keep their
 #     order. Then a restart: the same list in the same order, a click moves nothing, and Remove from the list takes one off.
+# 20. screenshots (GA-185), against prep_screenshots' GFW-2 in Review with six runs' sets (the browser mode's): Card |
+#     Changes | Screenshots with the newest round's 6; the sets newest first with agent, answer, when, count, commit and
+#     View the run; thumbnails with caption, size, theme and file name, drawn from blob: URLs; the four older runs folded,
+#     with what was left out, the preview that didn't start and the runs that took none, each with why; Not taken this
+#     time; one run's set at …/screenshots/<run>. The larger view: Fit | 100% (and 1), Previous and Next (and ← →), Compare
+#     (C) side by side and with the slider, Unchanged and New, Open; Esc closes it and the focus goes back to the picture.
+#     Leaving the tab frees every blob: URL; the board's sign (only on GFW-2 in Review: 6) and the Inbox row's
+#     "6 screenshots" open the tab.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -235,4 +243,8 @@ DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:rows GZ_HOME=$PWD/.devdat
 mkdir -p .devdata/uitest-home/Herd/order-g .devdata/uitest-home/Herd/order-h .devdata/uitest-home/Herd/order-i
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-a GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-b GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+fresh
+# GA-185: GFW-2's screenshot sets; prep_screenshots prints its id and its six runs', which the probe gets
+SHOTS=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_screenshots -- .devdata/uitest)
+DATA=$PWD/.devdata/uitest ROUTE="task/${SHOTS%% *}/screenshots" MODE="screenshots:$SHOTS" TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

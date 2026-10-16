@@ -8,6 +8,7 @@ import "./styles/tokens.css";
 import "./styles/components.css";
 import "./styles/app.css";
 import "./styles/changes.css";
+import "./styles/screenshots.css";
 import "./styles/terminal.css";
 import "./styles/appearance.css";
 import "./styles/band.css";

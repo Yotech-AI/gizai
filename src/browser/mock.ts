@@ -69,6 +69,13 @@ const changed = (table: string) => { void emit("rows-changed", { table }); };
 
 type Row = Record<string, unknown>;
 
+/** An agent as get_agent and every team in get_team have it, to change it in place. */
+function agents(id: unknown): Row[] {
+  const teams = commands.get_team;
+  const members = isKeyed(teams) ? Object.values(teams.$answers).flatMap((t) => ((t as { members?: Row[] }).members ?? [])) : [];
+  return [stored("get_agent", String(id)), ...members.filter((m) => m.actorId === id)].filter((m): m is Row => !!m);
+}
+
 /** The few writes the screens need to show what they saved. */
 const WRITES: Record<string, (args: Row) => unknown> = {
   update_task: ({ id, patch }) => {
@@ -97,8 +104,16 @@ const WRITES: Record<string, (args: Row) => unknown> = {
     const view = stored("agent_cli_tools", String(agentId));
     const saved = { ...((view?.saved as Row | undefined) ?? {}), ...(tools as Row) };
     if (view) view.saved = saved;
+    for (const a of agents(agentId)) a.cliTools = { ...((a.cliTools as Row | undefined) ?? {}), ...(tools as Row) };
     changed("actors");
     return saved;
+  },
+  // the browser's switch and the MCP servers' are the agent's own (its form's Tools)
+  save_agent_mcp: ({ agentId, tools }) => {
+    for (const a of agents(agentId)) a.tools = structuredClone(tools);
+    changed("team");
+    const view = fixture("agent_mcp", { agentId });
+    return view.found ? structuredClone(view.value) : empty("agent_mcp", view.why);
   },
   open_file: ({ id }) => { console.info(`Gizai in a browser: Open would show file ${id} in the system's image viewer.`); return null; },
 };

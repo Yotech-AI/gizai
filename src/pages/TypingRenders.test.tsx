@@ -257,6 +257,11 @@ const { EditorPage } = await import("./EditorPage");
 let container: FakeNode;
 let root: ReturnType<typeof createRoot> | null = null;
 async function flush() { await act(async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); }); }
+/** Flushes until the Editor page has stopped drawing (its first answers can come late when the machine is busy), so a
+ *  count that follows sees only what the step itself drew. */
+async function quiet() {
+  for (let i = 0; i < 20; i++) { const before = h.renders.get("FolderEditor") ?? 0; await flush(); if ((h.renders.get("FolderEditor") ?? 0) === before) return; }
+}
 async function mount(el: ReactNode) {
   container = doc.createElement("div");
   body.appendChild(container);
@@ -594,7 +599,7 @@ describe("a cursor move or a keystroke in the Editor redraws what shows the curs
     await mount(<EditorPage id={FOLDER} youId="u1" />);
     const row = container.all().find((n) => n.getAttribute("role") === "treeitem" && n.getAttribute("data-path") === "README.md")!;
     await click(row);
-    await flush();
+    await quiet();
     expect(view().state.doc.toString()).toBe(files["README.md"]);
     expect(cursorItem()?.textContent).toBe("Ln 1, Col 1");
     expect(rendersOf("FolderEditor")).toBeGreaterThan(0);
@@ -622,7 +627,7 @@ describe("a cursor move or a keystroke in the Editor redraws what shows the curs
   it("keystrokes after the first (which marks the tab not saved) redraw the cursor only, not FolderEditor", async () => {
     await mount(<EditorPage id={FOLDER} youId="u1" />);
     await click(container.all().find((n) => n.getAttribute("role") === "treeitem" && n.getAttribute("data-path") === "app.ts")!);
-    await flush();
+    await quiet();
     const typeAtEnd = async (text: string) => {
       const v = view();
       await act(async () => { v.dispatch({ changes: { from: v.state.doc.length, insert: text }, selection: { anchor: v.state.doc.length + text.length }, userEvent: "input.type" }); });
@@ -648,7 +653,7 @@ describe("a cursor move or a keystroke in the Editor redraws what shows the curs
       readOnlyWhy: "Over 1 MB", crlf: false, bom: false, version: "v1" });
     await mount(<EditorPage id={FOLDER} youId="u1" />);
     await click(container.all().find((n) => n.getAttribute("role") === "treeitem" && n.getAttribute("data-path") === "README.md")!);
-    await flush();
+    await quiet();
     expect(byClass(container, "ed-bar").some((n) => cls(n).includes("file"))).toBe(true);
     resetCounts();
     await act(async () => { view().dispatch({ selection: { anchor: 18 } }); });

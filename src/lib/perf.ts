@@ -25,13 +25,13 @@ export const invoke: typeof tauriInvoke = !perfOn ? tauriInvoke : (async (cmd, a
   perfCalls.push(call);
   try {
     const out = await tauriInvoke(cmd, args, options);
+    call.ms = performance.now() - call.at; // before its size is measured
     call.bytes = size(out);
     return out;
   } catch (e) {
+    call.ms = performance.now() - call.at;
     call.error = true;
     throw e;
-  } finally {
-    call.ms = performance.now() - call.at;
   }
 }) as typeof tauriInvoke;
 

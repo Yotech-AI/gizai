@@ -140,6 +140,25 @@ export function mainBar(m: FolderMain | null, o: { name: string; ended: EditorUp
   return { kind: "refused", lead, rest: `${after} ${why}`, tip: why, update: "off" };
 }
 
+// ---- one answer for the sidebar and the page (GA-190) ----
+
+const asking = new Map<string, Promise<unknown>>();
+/** One answer for everyone who asks `key` while it is on its way. */
+function once<T>(key: string, ask: () => Promise<T>): Promise<T> {
+  const on = asking.get(key);
+  if (on) return on as Promise<T>;
+  const answer = ask();
+  asking.set(key, answer);
+  const done = () => { if (asking.get(key) === answer) asking.delete(key); };
+  answer.then(done, done);
+  return answer;
+}
+/** How the folder stands against main (`ask` is editor_main, some 15 to 30 git processes), asked once for the sidebar
+ *  and the Editor page together: while an answer is on its way, asking again gets that one (a window focus asks both). */
+export const askMain = (folder: string, ask: (folder: string) => Promise<FolderMain>) => once(`main\n${folder}`, () => ask(folder));
+/** The folder's uncommitted marks (`ask` is editor_git), shared the same way. */
+export const askGit = (folder: string, ask: (folder: string) => Promise<FolderGit>) => once(`git\n${folder}`, () => ask(folder));
+
 // ---- the sidebar follows the page: each FolderMain the page gets is sent on the window ----
 
 const MAIN_EVENT = "gizai-editor-main";

@@ -20,6 +20,7 @@ import { onTerminalsChanged, readClipboardText, terminalAck, terminalAttach, ter
 import type { TerminalSession } from "../types";
 import { onAppearance } from "./appearance";
 import { modClick } from "./keys";
+import { hidden, onShown } from "./windowFocus";
 
 /** Where a terminal can show: the Terminal page, or the terminal panel of a folder in the Editor (its EditorFolder id). */
 export type TerminalPlace = { kind: "page" } | { kind: "panel"; folder: string };
@@ -207,6 +208,11 @@ type View = {
   sent: { cols: number; rows: number };
   /** The screen's pixel ratio the rows were made for (a zoom or another screen changes it). */
   dpr: number;
+  /** Output that came while no place showed it or the window was hidden, not written to xterm.js yet (GA-190). */
+  held: Uint8Array[];
+  heldBytes: number;
+  /** Counts what xterm.js wrote, for the backend's flow control. */
+  ack: (bytes: number) => void;
 };
 
 let sessions: TerminalSession[] = [];
@@ -283,6 +289,7 @@ export function startTerminals() {
   onTerminalsChanged((list) => { heard = true; setSessions(list); }).catch(() => {});
   terminalList().then((list) => { if (!heard) setSessions(list); }).catch(() => { if (!heard) setSessions([]); });
   onAppearance(() => restyle());
+  onShown(releaseShown);
 }
 
 function setSessions(list: TerminalSession[]) {
@@ -336,16 +343,52 @@ function make(s: TerminalSession) {
     term.unicode.activeVersion = "11";
     const host = document.createElement("div");
     host.className = "term-host";
-    const v: View = { id: s.id, term, fit, search, host, el: null, want: null, webgl: null, sent: { cols: s.cols, rows: s.rows }, dpr: dprNow() };
+    const ack = ackCounter((n) => { terminalAck(s.id, n).catch(() => {}); });
+    const v: View = { id: s.id, term, fit, search, host, el: null, want: null, webgl: null, sent: { cols: s.cols, rows: s.rows }, dpr: dprNow(), held: [], heldBytes: 0, ack };
     term.attachCustomKeyEventHandler((e) => keyIn(v, e));
     term.onData((d) => { terminalInput(s.id, d).catch(() => {}); });
     term.onBinary((d) => { terminalInput(s.id, d, true).catch(() => {}); });
     views.set(s.id, v);
-    // not opened yet: xterm.js keeps what is written in its buffer, and opens when a place first shows it
-    const ack = ackCounter((n) => { terminalAck(s.id, n).catch(() => {}); });
-    terminalAttach(s.id, (bytes) => term.write(bytes, () => ack(bytes.length))).catch(() => {});
+    // out of sight its output waits (take), and xterm.js keeps what is written in its buffer until a place first shows it
+    terminalAttach(s.id, (bytes) => take(v, bytes)).catch(() => {});
     changed();
   }).catch(() => { making.delete(s.id); });
+}
+
+// ---------- out of sight: the output waits (GA-190; research docs/research/performance.md F7, P9) ----------
+
+/** How much output a terminal out of sight keeps before xterm.js takes it all the same: well under what the backend lets
+ *  wait for xterm.js (500,000 bytes, terminalAck), so the program in it never waits for it. */
+export const HOLD_MAX = 256_000;
+
+/** A place shows the view, and the window isn't hidden. */
+const inSight = (v: View) => !!v.el && !hidden();
+
+const write = (v: View, bytes: Uint8Array) => v.term.write(bytes, () => v.ack(bytes.length));
+
+/** Output from the backend: written at once while the view is in sight; else it waits, until the view shows again or
+ *  HOLD_MAX bytes wait. Nothing is lost, and it comes in its order. */
+function take(v: View, bytes: Uint8Array) {
+  if (!v.held.length && inSight(v)) { write(v, bytes); return; }
+  v.held.push(bytes);
+  v.heldBytes += bytes.length;
+  if (v.heldBytes >= HOLD_MAX || inSight(v)) release(v);
+}
+
+/** Writes what waited, in one piece. */
+function release(v: View) {
+  if (!v.held.length) return;
+  const all = new Uint8Array(v.heldBytes);
+  let at = 0;
+  for (const b of v.held) { all.set(b, at); at += b.length; }
+  v.held = [];
+  v.heldBytes = 0;
+  write(v, all);
+}
+
+/** The window shows again: each terminal in a place draws what came meanwhile. */
+function releaseShown() {
+  for (const v of views.values()) if (inSight(v)) release(v);
 }
 
 function drop(id: string) {
@@ -495,6 +538,7 @@ export function attachView(id: string, el: HTMLElement): Promise<boolean> {
     v.el = el;
     setRows(v); // the font has loaded now, so the glyph measures as xterm.js will measure it
     v.term.open(v.host); // the first time builds the view; later it only picks up the new place, as VS Code does
+    release(v);
     loadWebgl(v);
     fitView(id);
     v.term.refresh(0, v.term.rows - 1);
@@ -502,7 +546,7 @@ export function attachView(id: string, el: HTMLElement): Promise<boolean> {
   });
 }
 
-/** Takes the view out of the place's element, unless another place has it already. It goes on taking in output. */
+/** Takes the view out of the place's element, unless another place has it already. Its output waits from now on (take). */
 export function detachView(id: string, el: HTMLElement) {
   const v = views.get(id);
   if (!v) return;

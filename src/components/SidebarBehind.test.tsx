@@ -8,6 +8,7 @@
 // with the full title; a by-hand row's tooltip, a row whose card isn't known and the folder rows stay as they were.
 // GA-177 QA: the rows are asked again every 30 seconds (not while the window is hidden) and on the window's focus, but a
 // focus 5 seconds or less after the last ask asks nothing (on Omarchy the focus follows the mouse).
+// GA-190: the 30-second timer asks only git's marks (editor_git); main's standing (editor_main) on a first open and a focus.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
 import type { EditorFolder, EditorUpdated, FolderGit, FolderMain, Task } from "../types";
@@ -392,17 +393,21 @@ describe("the sidebar's section headings: the + and the caret in the middle of t
 describe("GA-177: the Editor rows are asked again every 30 seconds and on a focus, at most once every 5 seconds", () => {
   const focus = () => win.dispatchEvent(new Event("focus"));
   async function wait(ms: number) { await vi.advanceTimersByTimeAsync(ms); render(); await settle(); }
-  /** One ask of the rows: the folders, and git's status and main's standing for each opened folder. */
-  const ONE = ["folders", `git ${KADE}`, `main ${KADE}`, `git ${API}`, `main ${API}`, `git ${CARD}`, `main ${CARD}`];
+  // GA-190: the 30-second timer asks only the folders and git's marks (editor_git); how each folder stands against main
+  // (editor_main, some 15 to 30 git processes) is asked when a folder opens and on the focus, after the marks.
+  /** A focus's (and a first open's) ask of the rows: the folders, git's status for each opened folder, then main's standing for each. */
+  const ONE = ["folders", `git ${KADE}`, `git ${API}`, `git ${CARD}`, `main ${KADE}`, `main ${API}`, `main ${CARD}`];
+  /** The 30-second timer's ask: the folders and git's status for each opened folder, no editor_main (GA-190). */
+  const TICK = ["folders", `git ${KADE}`, `git ${API}`, `git ${CARD}`];
   const since = (n: number) => asked.slice(n);
 
   it("20 focus events within 3 seconds ask for the rows once, not 20 times", async () => {
     await show();
-    expect(asked).toEqual(ONE);
+    expect(asked).toEqual(ONE); // GA-190: same calls, now the marks first, then main's standing
     await wait(1000);
     const n = asked.length;
     for (let i = 0; i < 20; i++) { focus(); await wait(150); }
-    expect(since(n)).toEqual(ONE);
+    expect(since(n)).toEqual(ONE); // GA-190: same calls, new order
   });
 
   it("a focus more than 5 seconds after the last ask asks at once; 5 seconds or less after it, nothing", async () => {
@@ -419,26 +424,34 @@ describe("GA-177: the Editor rows are asked again every 30 seconds and on a focu
     await wait(1);
     focus();
     await settle();
-    expect(since(n)).toEqual(ONE);
+    expect(since(n)).toEqual(ONE); // GA-190: same calls, new order
   });
 
-  it("asks every 30 seconds whatever the focus did; a focus 5 seconds or less after that ask does nothing", async () => {
+  it("asks git's marks every 30 seconds whatever the focus did, no main; a focus 5 seconds or less after the last focus does nothing", async () => {
     await show();
     await wait(28_000);
     focus(); // 28 s: asks
     await settle();
     let n = asked.length;
     await wait(2000); // 30 s: the 30-second ask, though the focus was 2 s ago
-    expect(since(n)).toEqual(ONE);
+    // GA-190: the timer asks the folders and git only (was ONE, with main for each folder)
+    expect(since(n)).toEqual(TICK);
     n = asked.length;
-    await wait(4000);
-    focus(); // 34 s: 4 s after the 30-second ask
+    await wait(2000);
+    focus(); // 32 s: 4 s after the focus's ask
     await settle();
     expect(since(n)).toEqual([]);
+    // GA-190: the timer's lighter ask doesn't count for the gap (onWindowFocus's tick), so a focus 4 s after it but
+    // 6 s after the last focus asks (before: nothing, as the timer's ask counted)
+    await wait(2000);
+    focus(); // 34 s: 6 s after the focus at 28 s, 4 s after the timer's ask
+    await settle();
+    expect(since(n)).toEqual(ONE);
+    n = asked.length;
     await wait(25_999);
     expect(since(n)).toEqual([]);
     await wait(1); // 60 s
-    expect(since(n)).toEqual(ONE);
+    expect(since(n)).toEqual(TICK); // GA-190: was ONE
   });
 
   it("the 30-second ask skips while the window is hidden; the first focus after it asks at once", async () => {
@@ -450,6 +463,16 @@ describe("GA-177: the Editor rows are asked again every 30 seconds and on a focu
     doc.hidden = false;
     focus();
     await settle();
-    expect(since(n)).toEqual(ONE);
+    expect(since(n)).toEqual(ONE); // GA-190: same calls, new order
+  });
+
+  it("GA-190: over 5 minutes in use the timer asks git's marks 10 times and editor_main not once", async () => {
+    await show();
+    const n = asked.length;
+    await wait(5 * 60_000);
+    const asks = since(n);
+    expect(asks.filter((a) => a.startsWith("main "))).toEqual([]);
+    expect(asks.filter((a) => a === `git ${KADE}`).length).toBe(10);
+    expect(asks).toEqual(Array.from({ length: 10 }, () => TICK).flat());
   });
 });

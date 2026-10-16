@@ -155,7 +155,8 @@ vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, se
 vi.stubGlobal("navigator", { userAgent: "Linux", platform: "Linux x86_64" });
 const win = new EventTarget();
 vi.stubGlobal("window", win);
-const doc = { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} } };
+// GA-190: useData and the window-focus helpers listen for visibilitychange on the document
+const doc = { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} }, addEventListener: () => {}, removeEventListener: () => {} };
 vi.stubGlobal("document", doc);
 vi.stubGlobal("requestAnimationFrame", (f: () => void) => setTimeout(f, 0));
 /** What the page told the sidebar (src/lib/behind.ts tellMain). */

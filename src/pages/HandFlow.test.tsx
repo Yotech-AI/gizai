@@ -25,7 +25,7 @@ const h = vi.hoisted(() => ({
   /** go() calls. */
   went: [] as unknown[],
   /** The listeners of "rows changed" and "runs changed". */
-  rows: [] as (() => void)[],
+  rows: [] as ((table?: string) => void)[],
   openIn: null as null | { folder: string },
 }));
 
@@ -125,7 +125,7 @@ vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, se
 vi.stubGlobal("navigator", { userAgent: "Linux", platform: "Linux x86_64" });
 const win = new EventTarget();
 vi.stubGlobal("window", win);
-vi.stubGlobal("document", { hidden: false, querySelector: () => null, getElementById: () => null, body: { style: {} }, documentElement: { style: {} } });
+vi.stubGlobal("document", { hidden: false, querySelector: () => null, getElementById: () => null, body: { style: {} }, documentElement: { style: {} }, addEventListener: () => {}, removeEventListener: () => {} });
 vi.stubGlobal("requestAnimationFrame", (f: () => void) => setTimeout(f, 0));
 
 const { TaskPage } = await import("./TaskPage");
@@ -254,7 +254,9 @@ const git = (): FolderGit => ({ branch: BRANCH, files, uncommitted: Object.keys(
 /** A deferred answer: the test says when it comes. */
 function later<T>() { let done!: (v: T) => void, fail!: (e: unknown) => void; const p = new Promise<T>((a, b) => { done = a; fail = b; }); return { p, done, fail }; }
 /** The backend reports a write (Hand over, QA sending the card back). */
-async function rowsChanged() { for (const f of [...h.rows]) f(); await settle(); }
+// GA-190: a write's notice names its table, and a screen reloads only for the tables it shows (a run's end, QA sending a
+// card back, sends "tasks"); the 100 ms fallback lets a coalesced reload run when no frame comes
+async function rowsChanged(table = "tasks") { for (const f of [...h.rows]) f(table); await vi.advanceTimersByTimeAsync(100); await settle(); }
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -270,7 +272,7 @@ beforeEach(() => {
   live = [];
   hand = { taskId: "t1", folder: FOLDER, branch: BRANCH, changed: 0, unpushed: 0 };
   folder = folderInfo();
-  const listen = (cb: () => void) => { h.rows.push(cb); return () => { h.rows = h.rows.filter((f) => f !== cb); }; };
+  const listen = (cb: (table?: string) => void) => { h.rows.push(cb); return () => { h.rows = h.rows.filter((f) => f !== cb); }; };
   Object.assign(h.answers, {
     getTask: () => task, getTeam: () => team, getProject: () => project, listUsers: () => [], listComments: () => [], taskActivity: () => [],
     listRuns: () => runs, liveRuns: () => live, onRowsChanged: listen, onRunsChanged: listen,

@@ -2791,7 +2791,9 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     // each state
     await open(`#/task/${noBranch}/changes`, () => document.querySelector(".chg-empty"));
     out.noBranch = textIn(".chg-empty b");
-    check(out.noBranch === "No changes yet" && !document.querySelector(".task-tabs .diffstat, .task-tabs .n"), `no branch: ${out.noBranch}`);
+    // the Changes tab has no count (GA-185: the Screenshots tab after it says None)
+    const changesTab = [...document.querySelectorAll(".task-tabs .tab")].find((t) => t.textContent?.startsWith("Changes"));
+    check(out.noBranch === "No changes yet" && !!changesTab && !changesTab.querySelector(".diffstat, .n"), `no branch: ${out.noBranch}`);
     await open(`#/task/${branchOnly}/changes`, () => document.querySelector(".chg-sum .src") && document.querySelector(".chg-file"));
     out.branchOnly = textIn(".chg-sum .src");
     check(out.branchOnly === "From branch gizai/kade-changes-branch (its worktree was removed)", `branch only: ${out.branchOnly}`);

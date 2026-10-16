@@ -1,7 +1,7 @@
 // GA-21: the top of Settings. Quit Gizai completely with its warning (how many runs and chat answers it stops), the
 // Notifications section under it with a switch per kind, and the warning under Runs at once (was GA-27). Rendered to HTML
 // on the server, so no data loads: the page's state is handed in, in the order of its useState calls (settings, budget,
-// msg, detecting, savedAt, agents), and the live runs and chat answers come from the replaced hooks. Switches and the
+// msg, detecting, savedAt, the screenshot value refused last (GA-185), agents), and the live runs and chat answers come from the replaced hooks. Switches and the
 // Quit button are used on the element tree with the hooks replaced, and the api is mocked to see what they send. The
 // sections below Notifications that GA-21 didn't change are stubs.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,7 +72,7 @@ const LABELS = [
 ];
 
 type Page = { s?: Partial<Settings>; agents?: CardAgent[] };
-const states = (p: Page) => [{ ...SETTINGS, ...p.s }, "", null, false, 0, p.agents ?? AGENTS];
+const states = (p: Page) => [{ ...SETTINGS, ...p.s }, "", null, false, 0, null, p.agents ?? AGENTS];
 
 function render(p: Page = {}) {
   queue.push(...states(p));

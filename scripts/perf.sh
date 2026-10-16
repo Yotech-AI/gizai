@@ -5,7 +5,7 @@
 # and the counter (src/lib/perf.ts) counts every backend call and event from the first one. Meanwhile, every 500 ms, the
 # runner reads the memory (VmRSS) and CPU time of the app and of every process under it (WebKit's web and network
 # processes, agent runs) from /proc. Then it prints the medians and writes .devdata/perf/<commit>.json, with the bundle's
-# sizes (scripts/bundle-size.mjs) next to them.
+# sizes (scripts/bundle-size.mjs) next to them. Running some scenarios again on the same commit replaces only their runs.
 # The first run of a scenario starts with WebKit's cache and storage empty (a new XDG folder): that one counts as cold, the
 # other runs as warm, and the medians are the warm runs'. "Cold" leaves the system's file cache warm: a start straight from
 # disk, as after a reboot, needs root to empty that cache, so take it by hand with RUNS=1 after a reboot.
@@ -58,8 +58,10 @@ IDLINE=$(tail -n1 "$IDS")
 COMMIT=$(git rev-parse --short HEAD)
 [ -n "$(git status --porcelain -- src src-tauri crates index.html package.json vite.config.ts)" ] && COMMIT=$COMMIT-dirty
 [ -n "${WEBKIT_ENV:-}" ] && COMMIT=$COMMIT-webkit
+# The runs of each scenario on this commit: a scenario run again replaces its own, the others stay in the result.
 OUT=$PERF/runs/$COMMIT
-rm -rf "$OUT" && mkdir -p "$OUT"
+mkdir -p "$OUT"
+for s in $SCENARIOS; do rm -rf "$OUT/$s"-*; done
 DATA=$PERF/run; RT=$PERF/rt
 mkdir -p "$RT" && chmod 700 "$RT"
 

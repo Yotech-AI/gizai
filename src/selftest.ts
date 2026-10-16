@@ -4444,21 +4444,33 @@ async function perfRunlog(o: PerfResult, ids: PerfIds) {
   if (document.querySelector(".run-card.live")) o.errors.push("the run was still live after 60 s");
 }
 
-/** `idle` (#/board, nothing happening): the calls, bytes and events of 60 s, from 2 s after the board was drawn. */
+/** The cage's window never has the focus (it has no input devices), so Gizai takes it as not in use (lib/windowFocus.ts,
+ *  `away`) and its git checks rest. `idle` and `editor` measure the window in use: from here on it says it has the
+ *  focus, and it gets a focus event as when you come back to it. `had_focus` says whether it had it. */
+function perfInUse(o: PerfResult) {
+  o.numbers.had_focus = document.hasFocus() ? 1 : 0;
+  document.hasFocus = () => true;
+  window.dispatchEvent(new FocusEvent("focus"));
+}
+
+/** `idle` (#/board, nothing happening, the window in use): the calls, bytes and events of 60 s, from 2 s after the board
+ *  was drawn. */
 async function perfIdle(o: PerfResult) {
   if (!location.hash.startsWith("#/board")) location.hash = "#/board";
   if (!(await shown(() => perfFirst.board !== undefined, 20000))) o.errors.push("the board's columns were not all drawn");
+  perfInUse(o);
   await sleep(2000);
   const from = performance.now();
   await sleep(60000);
   counted(o, "idle_60s", from);
 }
 
-/** `editor` (a git repository of 20,000 files): its tree drawn (ms from opening the folder); the 5,000-line file opened
+/** `editor` (a git repository of 20,000 files, the window in use): its tree drawn (ms from opening the folder); the 5,000-line file opened
  *  (ms); the calls in a minute while it sits open. */
 async function perfEditor(o: PerfResult, ids: PerfIds) {
   if (!ids.folder || ids.folder === "-") throw new Error("no Editor folder (prep_perf's folder=, made with --editor)");
   await perfSettle();
+  perfInUse(o);
   const t0 = performance.now();
   location.hash = `#/editor/${encodeURIComponent(ids.folder)}`;
   if (!(await shown(() => !!document.querySelector(".ed-tree [role=treeitem]"), 30000))) throw new Error("the Editor's tree was not drawn");

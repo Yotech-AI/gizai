@@ -7,14 +7,18 @@ import { href, go } from "../router";
 import { relTime } from "../lib/format";
 import { StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
+import { RowShotSign } from "./screenshots/ShotSign";
 
 const WEEK = 7 * 24 * 3600 * 1000;
 export function shortDate(ms: number, now = Date.now()): string {
   return now - ms < WEEK ? relTime(ms, now) : new Date(ms).toLocaleDateString("en-GB", { month: "short", day: "numeric" });
 }
 
-export function TaskList({ groups, showHeads, live, onAdd, empty }: {
+/** `shots` (the Inbox, GA-185): task id → the newest round's screenshots of a card in Review; its row says "6 screenshots"
+ *  and opens the card on its Screenshots tab. */
+export function TaskList({ groups, showHeads, live, onAdd, empty, shots }: {
   groups: Group<Task>[]; showHeads: boolean; live: Map<string, string>; onAdd?: (groupKey: string) => void; empty?: React.ReactNode;
+  shots?: Map<string, number>;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Done and Cancelled start collapsed, once the groups are known (tasks can arrive after the first render).
@@ -26,19 +30,19 @@ export function TaskList({ groups, showHeads, live, onAdd, empty }: {
   }, [groups]);
   const [focus, setFocus] = useState<string | null>(null);
   const visible = useMemo(() => groups.flatMap((g) => (showHeads && collapsed.has(g.key) ? [] : g.tasks)), [groups, collapsed, showHeads]);
-  const live_ = useRef({ visible, focus });
-  live_.current = { visible, focus };
+  const live_ = useRef({ visible, focus, shots });
+  live_.current = { visible, focus, shots };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable], .cm-editor, [role=dialog], [role=menu]") || e.ctrlKey || e.metaKey || e.altKey) return;
-      const { visible, focus } = live_.current;
+      const { visible, focus, shots } = live_.current;
       const i = visible.findIndex((x) => x.id === focus);
       if (e.key === "j" || e.key === "k") {
         e.preventDefault();
         const next = visible[Math.max(0, Math.min(visible.length - 1, i + (e.key === "j" ? 1 : -1)))] ?? visible[0];
         if (next) { setFocus(next.id); document.getElementById(`row-${next.id}`)?.scrollIntoView({ block: "nearest" }); }
-      } else if (e.key === "Enter" && focus) { e.preventDefault(); go({ page: "task", id: focus }); }
+      } else if (e.key === "Enter" && focus) { e.preventDefault(); go({ page: "task", id: focus, ...(shots?.get(focus) ? { view: "screenshots" as const } : {}) }); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -59,10 +63,10 @@ export function TaskList({ groups, showHeads, live, onAdd, empty }: {
             </div>
           )}
           {!(showHeads && collapsed.has(g.key)) && g.tasks.map((t) => (
-            <a key={t.id} id={`row-${t.id}`} className={`task-row${focus === t.id ? " focus" : ""}`} href={href({ page: "task", id: t.id })} onMouseEnter={() => setFocus(t.id)}>
+            <a key={t.id} id={`row-${t.id}`} className={`task-row${focus === t.id ? " focus" : ""}`} href={href({ page: "task", id: t.id, ...(shots?.get(t.id) ? { view: "screenshots" as const } : {}) })} onMouseEnter={() => setFocus(t.id)}>
               <StatusIcon category={t.stateCategory} hold={t.hold} />
               <span className="id">{t.identifier}</span>
-              <span className="title"><span>{t.title}</span></span>
+              <span className="title"><span>{t.title}</span>{!!shots?.get(t.id) && <RowShotSign count={shots.get(t.id)!} />}</span>
               <span className="labels">{t.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>)}</span>
               {t.assigneeName ? <span className="who"><Avatar name={t.assigneeName} kind={t.assigneeKind} size="sm" /><span className="ellipsis">{t.assigneeName}</span></span>
                 : <span className="who none"><User className="icon sm" />Assignee</span>}

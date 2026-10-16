@@ -50,7 +50,7 @@ function RunRow({ r }: { r: Run }) {
   const init = events?.find((e) => e.event.kind === "init")?.event;
   const model = init && init.kind === "init" ? init.model : null;
   return (
-    <div className={`run-row${open ? " open" : ""}`}>
+    <div className={`run-row${open ? " open" : ""}`} id={`run-${r.id}`}>
       <div className="panel-row run-line"><button className="run-open" aria-expanded={open} onClick={toggle}>
         <ChevronRight className="icon sm chev" />{outcomeBadge(r)}<span className="chip-id">{r.id.slice(-8)}</span>
         <span className="grow">{r.agentName} <span className="faint">· {r.roleKey} · {triggerName(r)}</span>

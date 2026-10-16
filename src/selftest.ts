@@ -11,6 +11,7 @@ import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
 import { OPENED_AT_KEY, OPENED_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
+import { shotUrlCount } from "./lib/shotUrls";
 import { tellMain } from "./lib/behind";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
@@ -1566,7 +1567,8 @@ const resultsCount = () => textOf(q(".mem-results > div.faint.mem-pad"));
 const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget: type === "mouseout" ? document.body : null }));
 
 /** GA-68, against prep_memory's notes, starting on Decisions/Use SQLite (`noteId`); `agentId`: the Backend Agent. The
- *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's one. The note
+ *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's two (its Notes
+ *  and, since GA-172, its note for project KADE, Agents/Backend Agent/KADE) and Backend Agent 2 with its one. The note
  *  reads with its links: Deploy steps and an alias to its #Rollback heading, Backup plan dashed (no such note), Release
  *  checklist embedded, KADE-1 a card chip; the panel has its outgoing links (Backup plan with Make it), outline, properties
  *  and tags. Resting on a link previews the note, which closes when the mouse leaves the link and stays when it moves
@@ -1576,8 +1578,8 @@ const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(
  *  note follows) and a drag into another folder. The missing link makes the note from the New note drawer, after which
  *  the link finds it; in the new note's editor [[ lists notes, [[Note# their headings, and Ctrl+click opens a link.
  *  KADE-1 opens the card. The agent's page shows only its folder, also when searching (Backend Agent 2's folder starts
- *  the same), and Recently changed says the agent wrote its notes in a run on KADE-1. The Team Lead's page searches every
- *  note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
+ *  the same), and Recently changed says the agent wrote its KADE note in a run on KADE-1. The Team Lead's page searches
+ *  every note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
  *  prefs are put back at the end. */
 export async function memoryProbe(noteId: string, agentId: string) {
   // GA-69: MODE=memory:graph-a|graph-b|graph-c <agent id> <note id> runs the graph's probe on prep_graph's notes instead.
@@ -1585,13 +1587,14 @@ export async function memoryProbe(noteId: string, agentId: string) {
   const prefs = Object.fromEntries(MEMORY_PREFS.map((k) => [k, localStorage.getItem(k)]));
   const out: Record<string, unknown> = {};
   try {
-    // The sidebar: the Team Lead first (every note, 7), then the Backend Agent and Backend Agent 2 (each its own folder: 1).
+    // The sidebar: the Team Lead first (every note, 8), then the Backend Agent (its own folder: Notes and KADE, 2) and
+    // Backend Agent 2 (its Notes, 1).
     const nav = () => [...document.querySelectorAll('.side .nav-section[aria-label="Memory"] .nav-item')]
       .map((e) => ({ name: textOf(e.querySelector("span")), count: textOf(e.querySelector(".count")), href: e.getAttribute("href") }));
-    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "7" ? true : null), 6000);
+    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "8" ? true : null), 6000);
     out.nav = nav();
     const navOk = JSON.stringify(nav().map((n, i) => (i === 2 ? { ...n, href: "" } : n))) === JSON.stringify([
-      { name: "Team Lead", count: "7", href: "#/memory" }, { name: "Backend Agent", count: "1", href: `#/memory/agent/${agentId}` },
+      { name: "Team Lead", count: "8", href: "#/memory" }, { name: "Backend Agent", count: "2", href: `#/memory/agent/${agentId}` },
       { name: "Backend Agent 2", count: "1", href: "" }]) && (nav()[2]?.href ?? "").startsWith("#/memory/agent/");
     const agentsFirst = textOf(q('.side .nav-section[aria-label="Memory"]')?.previousElementSibling?.querySelector(".nav-label")) === "Agents";
 
@@ -1789,33 +1792,36 @@ export async function memoryProbe(noteId: string, agentId: string) {
     const card = !!(await waitFor(() => (location.hash.startsWith("#/task/") ? true : null), 4000));
     out.card_hash = location.hash;
 
-    // An agent's page: only its folder; Recently changed says it wrote its notes in a run on KADE-1.
+    // An agent's page: only its folder, its Notes and (GA-172) its note for project KADE; Recently changed says it wrote
+    // the KADE note in a run on KADE-1.
+    const sorted = (a: string[]) => [...a].sort();
     location.hash = `#/memory/agent/${encodeURIComponent(agentId)}`;
-    await waitFor(() => (treeNotes().length && q(".mem-change") ? true : null), 5000);
+    await waitFor(() => (treeNotes().length >= 2 && textsOf(".mem-change").length >= 2 ? true : null), 5000);
     out.agent_tree = treeNotes();
     out.agent_recent = textsOf(".mem-change");
-    const agentOk = JSON.stringify(out.agent_tree) === JSON.stringify(["Agents/Backend Agent/Notes"])
-      && (out.agent_recent as string[]).length === 1 && (out.agent_recent as string[])[0]!.includes("Backend Agent in a run on KADE-1")
+    const agentOk = JSON.stringify(sorted(out.agent_tree as string[])) === JSON.stringify(["Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && (out.agent_recent as string[]).length === 2 && (out.agent_recent as string[]).some((t) => t.startsWith("KADEAgents/Backend AgentBackend Agent in a run on KADE-1"))
       && !!q(`.side .nav-section[aria-label="Memory"] a.nav-item.on[href="#/memory/agent/${agentId}"]`);
     // its search keeps to its folder too: Backend Agent 2's notes say "learned" as well
     const agentSearch = q<HTMLInputElement>('input[aria-label="Search notes"]');
     if (agentSearch) typeInto(agentSearch, "learned");
-    await waitFor(() => (q(".mem-hit") ? true : null), 4000);
+    await waitFor(() => (hitPaths().length >= 2 ? true : null), 4000);
     await sleep(400);
     out.agent_search = hitPaths();
     out.agent_search_count = resultsCount();
-    const agentSearchOk = JSON.stringify(out.agent_search) === JSON.stringify(["Agents/Backend Agent/Notes"]) && out.agent_search_count === "1 note";
+    const agentSearchOk = JSON.stringify(sorted(out.agent_search as string[])) === JSON.stringify(["Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && out.agent_search_count === "2 notes";
     if (agentSearch) typeInto(agentSearch, "");
     location.hash = "#/memory";
-    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 8 ? true : null), 5000);
+    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 9 ? true : null), 5000);
     const everyone = textsOf(".mem-change").length;
     buttonByText(q(".mem-recent") ?? document, "Agents")?.click();
     await sleep(200);
     out.recent = { everyone, agents: textsOf(".mem-change") };
-    // by agents: the Backend Agent's notes (in a run), Backend Agent 2's and the Team Lead's (each made its own)
+    // by agents: the Backend Agent's KADE note (in a run) and Notes, Backend Agent 2's and the Team Lead's (each made its own)
     const byAgents = textsOf(".mem-change");
-    const recentOk = everyone === 8 && byAgents.length === 3 && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent in a run on KADE-1"))
-      && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
+    const recentOk = everyone === 9 && byAgents.length === 4 && byAgents.some((t) => t.startsWith("KADEAgents/Backend AgentBackend Agent in a run on KADE-1"))
+      && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent")) && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
 
     // The Team Lead's page searches every note: both agents' notes say "learned"; path:"Team Lead" keeps to its folder.
     // The shared notes' page lists no agent's or Team Lead note: they all say "data", as Use SQLite does.
@@ -1826,14 +1832,14 @@ export async function memoryProbe(noteId: string, agentId: string) {
       await sleep(400);
       return { hits: hitPaths(), count: resultsCount() };
     };
-    const sorted = (a: string[]) => [...a].sort();
-    const leadLearned = await searchFor("learned", () => hitPaths().length >= 2);
+    const leadLearned = await searchFor("learned", () => hitPaths().length >= 3);
     const leadPath = await searchFor('path:"Team Lead" data', () => hitPaths().length === 1 && hitPaths()[0] === "Team Lead/Notes");
-    const leadData = await searchFor("data", () => hitPaths().length >= 4);
+    const leadData = await searchFor("data", () => hitPaths().length >= 5);
     out.lead_search = { learned: leadLearned, team_lead: leadPath, data: leadData };
-    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/Notes"]) && leadLearned.count === "2 notes"
+    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && leadLearned.count === "3 notes"
       && JSON.stringify(leadPath.hits) === JSON.stringify(["Team Lead/Notes"]) && leadPath.count === "1 note"
-      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
+      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
     const typed = q<HTMLInputElement>('input[aria-label="Search notes"]');
     if (typed) typeInto(typed, "");
     location.hash = "#/memory/shared";
@@ -2796,7 +2802,9 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     // each state
     await open(`#/task/${noBranch}/changes`, () => document.querySelector(".chg-empty"));
     out.noBranch = textIn(".chg-empty b");
-    check(out.noBranch === "No changes yet" && !document.querySelector(".task-tabs .diffstat, .task-tabs .n"), `no branch: ${out.noBranch}`);
+    // the Changes tab has no count (GA-185: the Screenshots tab after it says None)
+    const changesTab = [...document.querySelectorAll(".task-tabs .tab")].find((t) => t.textContent?.startsWith("Changes"));
+    check(out.noBranch === "No changes yet" && !!changesTab && !changesTab.querySelector(".diffstat, .n"), `no branch: ${out.noBranch}`);
     await open(`#/task/${branchOnly}/changes`, () => document.querySelector(".chg-sum .src") && document.querySelector(".chg-file"));
     out.branchOnly = textIn(".chg-sum .src");
     check(out.branchOnly === "From branch gizai/kade-changes-branch (its worktree was removed)", `branch only: ${out.branchOnly}`);
@@ -2837,6 +2845,218 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
       check(editors > 3, `${name}: files load as they come into sight (${editors} editors)`);
     }
   }
+  return { ok: errors.length === 0, errors, ...out };
+}
+
+// ---------- GA-185: a card's Screenshots tab (prep_screenshots' card) ----------
+// GIZAI_SELFTEST_MODE=screenshots:<ids> on route task/<card>/screenshots, <ids> as prep_screenshots prints them: GFW-2,
+// then its six runs, oldest first (the browser mode's fixtures give GFW-2 the same sets). Card | Changes | Screenshots
+// with the newest round's 6; the sets newest first, each with its agent, answer, when and count, its commit and View the
+// run, and its thumbnails with caption, size, theme and file name, drawn from blob: URLs; the four older runs folded, with
+// what was left out, the preview that didn't start and the runs that took none, each with why; Not taken this time; one
+// run's set at …/screenshots/<run>. The larger view from the fix's first picture: Fit | 100% (also 1), Previous and Next
+// (also ← →), Compare (C) side by side and with the slider, paired by file name (Unchanged, New), and Open; Esc closes it
+// and gives the focus back to the picture. Leaving the tab frees every blob: URL. Then the board's sign, only on the card
+// in Review, which opens the tab, and its Inbox row's "6 screenshots", which does too.
+
+/** The newest set's pictures (QA's pass), and the fix's under it: name, caption, format · size · theme, and its pairing
+ *  with the build before it. */
+const PASS_SHOTS = ["01-ac1-slider-filters-desktop-dark.png", "02-ac3-no-bikes-desktop-dark.png"];
+const FIX_SHOTS = [
+  ["01-product-list-desktop-dark.png", "Product list with the price slider below the menu", "Desktop · 1280 × 800 · Dark", "Changed"],
+  ["02-slider-dragged-desktop-dark.png", "Slider dragged to € 400 to € 900: 12 bikes left", "Desktop · 1280 × 800 · Dark", "Changed"],
+  ["03-product-list-mobile-dark.png", "Product list on a phone, the filters folded", "Mobile · 390 × 844 · Dark", "Unchanged"],
+  ["04-product-list-desktop-light.png", "Product list with the price slider, light", "Desktop · 1280 × 800 · Light", "New"],
+];
+
+export async function screenshotsProbe(ids: string[]) {
+  const [card, , , build] = ids;
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const settle = async () => { await nextFrame(); await nextFrame(); };
+  const sets = () => [...document.querySelectorAll<HTMLElement>(".shots .shot-set")];
+  const head = (set: Element | undefined) => ({
+    who: textOf(set?.querySelector(".shot-head .who")), answer: textOf(set?.querySelector(".shot-head > .badge")),
+    meta: textOf(set?.querySelector(".shot-head .meta")), commit: textOf(set?.querySelector(".shot-head .commit")),
+    sum: textOf(set?.querySelector(".shot-head .sum")), viewRun: !!set && !!buttonByText(set, "View the run"),
+  });
+  const shotNames = (set: Element | undefined) => [...(set?.querySelectorAll(".shot") ?? [])].map((s) => s.getAttribute("data-shot"));
+  const notes = (set: Element | undefined) => (set ? textsOf(".shot-note", set) : []);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const tabOpen = () => waitFor(() => (location.hash === `#/task/${card}/screenshots` && sets().length === 2 ? true : null), 5000);
+
+  // Card | Changes | Screenshots, the last with the newest round's count: the fix's 4 and QA's 2 after it
+  check(await waitFor(() => (sets().length >= 2 ? true : null), 10000), "the Screenshots tab shows the card's sets");
+  check(location.hash === `#/task/${card}/screenshots`, `the tab's route: ${location.hash}`);
+  const ident = textOf(q(".crumbs b.mono"));
+  const tabs = [...document.querySelectorAll(".task-tabs .tab")];
+  out.tabs = tabs.map((t) => textOf(t));
+  check(tabs.length === 3 && textOf(tabs[0]) === "Card" && textOf(tabs[1]).startsWith("Changes") && textOf(tabs[2]).startsWith("Screenshots"),
+    `Card | Changes | Screenshots: ${JSON.stringify(out.tabs)}`);
+  check(tabs[2]?.getAttribute("aria-selected") === "true" && textOf(tabs[2]?.querySelector(".n")) === "6",
+    `the Screenshots tab is open with the newest round's 6: ${textOf(tabs[2])}`);
+
+  // the two newest sets: QA's pass, then the fix with its pairing to the build before it
+  const [pass, fix] = sets();
+  const ph = head(pass), fh = head(fix);
+  out.sets = [ph, fh];
+  check(ph.who === "QA Agent" && ph.answer === "QA passed" && / · 2 screenshots$/.test(ph.meta) && /^[0-9a-f]{7}$/.test(ph.commit) && ph.viewRun && !ph.sum
+    && same(shotNames(pass), PASS_SHOTS) && notes(pass).length === 0, `the newest set, QA's pass: ${JSON.stringify(ph)} ${shotNames(pass)}`);
+  check(fh.who === "Frontend Agent" && fh.answer === "Ready for testing" && / · 4 screenshots$/.test(fh.meta) && /^[0-9a-f]{7}$/.test(fh.commit) && fh.viewRun
+    && fh.sum === "2 changed, 1 unchanged, 1 new", `the fix under it: ${JSON.stringify(fh)}`);
+  check(same(notes(fix), ["Not taken this time: 04-filters-open-mobile-dark.png."]), `the fix's note: ${JSON.stringify(notes(fix))}`);
+  const thumbs = [...(fix?.querySelectorAll<HTMLElement>(".shot") ?? [])];
+  out.thumbs = thumbs.map((t) => [textOf(t.querySelector(".shot-cap")), textOf(t.querySelector(".shot-meta")), textOf(t.querySelector(".shot-file"))]);
+  check(thumbs.length === 4 && FIX_SHOTS.every(([name, caption, meta, pairing], k) => {
+    const t = thumbs[k];
+    return t?.getAttribute("data-shot") === name && textOf(t.querySelector(".shot-cap")) === caption && textOf(t.querySelector(".shot-file")) === name
+      && textOf(t.querySelector(".shot-meta")) === meta + pairing && textOf(t.querySelector(".shot-meta .badge")) === pairing;
+  }), `the fix's thumbnails (caption, format · size · theme, pairing, file name): ${JSON.stringify(out.thumbs)}`);
+  // each picture from a blob: URL, once it comes near the screen
+  for (const t of thumbs) t.scrollIntoView({ block: "nearest" });
+  const imgs = () => [...document.querySelectorAll<HTMLImageElement>(".shot-set .shot img")];
+  const drawn = await waitFor(() => (imgs().length === 6 && imgs().every((i) => i.complete && i.naturalWidth > 0 && i.src.startsWith("blob:")) ? true : null), 8000);
+  out.blobUrls = shotUrlCount();
+  check(drawn && shotUrlCount() === 6, `the six pictures drawn from blob: URLs (${imgs().length} pictures, ${shotUrlCount()} URLs)`);
+  pass?.scrollIntoView({ block: "nearest" });
+
+  // the older runs, folded; open: QA's failure, the build (2 files left out), the run whose preview didn't start and the
+  // question (no screen changed)
+  const older = q<HTMLButtonElement>(".shots-older");
+  out.older = textOf(older);
+  check(older?.getAttribute("aria-expanded") === "false" && textOf(older.querySelector("b")) === "4 older runs"
+    && textOf(older.querySelector(".faint")) === "Yesterday and 2 days ago: 2 sets of screenshots and 2 runs that took none", `the four older runs, folded: ${out.older}`);
+  older?.click();
+  check(await waitFor(() => (sets().length === 6 && older?.getAttribute("aria-expanded") === "true" ? true : null), 3000), `the older runs open: ${sets().length} sets`);
+  const [, , failed, built, stopped, asked] = sets();
+  out.olderSets = [failed, built, stopped, asked].map((s) => ({ ...head(s), shots: shotNames(s).length, notes: notes(s) }));
+  check(head(failed).who === "QA Agent" && head(failed).answer === "QA failed" && shotNames(failed).length === 1, "QA's failure, with 1 picture");
+  check(head(built).answer === "Ready for testing" && shotNames(built).length === 4 && same(notes(built),
+    ["Left out 2: notes.txt isn’t a PNG, JPEG or WebP image; 05-product-list-full-desktop-dark.png is over 16,384 pixels high."]), "the build: 4 pictures, and what was left out and why");
+  check(head(stopped).answer === "Stopped at the time limit" && / · no screenshots$/.test(head(stopped).meta) && same(notes(stopped),
+    ["The preview didn’t start: it didn’t answer on port 47130 in 120 s, so the agent took none. Its last lines are in the run."]), "the run whose preview didn't start, and why");
+  check(head(asked).answer === "Needs a decision" && same(notes(asked), ["No screen changed, the agent says, so it took none."]), "the question, which took none, and why");
+  older?.click();
+  await waitFor(() => (sets().length === 2 ? true : null), 3000);
+
+  // one run's set: #/task/<card>/screenshots/<run>, and Show every run
+  location.hash = `#/task/${card}/screenshots/${build}`;
+  const one = await waitFor(() => (q(".shots-one") && sets().length === 1 ? sets()[0] : null), 3000);
+  check(one && shotNames(one).length === 4 && notes(one).length === 1 && textOf(q(".shots-one")) === "One run’s screenshots. Show every run",
+    `one run's set: ${textOf(q(".shots-one"))}, ${sets().length} sets`);
+  q<HTMLAnchorElement>(".shots-one a")?.click();
+  check(await tabOpen(), `Show every run: ${location.hash}`);
+
+  // the larger view, from the fix's first picture
+  const opener = sets()[1]?.querySelector<HTMLElement>(`.shot[data-shot="${FIX_SHOTS[0][0]}"]`) ?? null;
+  opener?.focus();
+  opener?.click();
+  const dialog = await waitFor(() => q<HTMLElement>(".shot-view[role=dialog]"), 3000);
+  await settle();
+  const count = () => textOf(q(".shot-view .sv-count"));
+  const caption = () => textOf(q(".shot-view .sv-cap b"));
+  const badge = () => textOf(q(".shot-view .sv-meta .badge"));
+  const pair = () => textOf(q(".shot-view .sv-pair"));
+  const seg = (label: string) => textsOf(`.shot-view [aria-label="${label}"] button[aria-pressed="true"]`);
+  const compare = () => q<HTMLButtonElement>(".shot-view .sv-cmp button");
+  const pictures = () => waitFor(() => {
+    const i = [...document.querySelectorAll<HTMLImageElement>(".shot-view img.sv-pic")];
+    return i.length > 0 && i.every((x) => x.complete && x.naturalWidth > 0 && x.src.startsWith("blob:")) ? i.length : null;
+  }, 5000);
+  const press = async (k: string, el: Element | null = dialog) => { if (el) key(el, k); await settle(); };
+  if (!dialog) {
+    errors.push("a click on a picture opens the larger view");
+    return { ok: false, errors, ...out };
+  }
+  check(document.activeElement === dialog, `the larger view takes the focus (${document.activeElement?.className})`);
+  check(count() === "1 of 4" && caption() === FIX_SHOTS[0][1] && dialog.getAttribute("aria-label") === `Screenshot 1 of 4: ${FIX_SHOTS[0][1]}` && badge() === "Changed"
+    && textOf(q(".shot-view .sv-meta .shot-file")) === FIX_SHOTS[0][0], `the picture clicked, its caption in the foot: ${count()}, ${caption()}, ${badge()}`);
+  check(await pictures(), "the larger view draws the picture from a blob: URL");
+  check(same(seg("Size"), ["Fit"]) && !q(".shot-view .sv-nav.prev") && q(".shot-view .sv-nav.next") && buttonByText(dialog, "Open"),
+    `Fit, Next without Previous, and Open: ${JSON.stringify(seg("Size"))}`);
+  // Fit | 100%: 1 switches, and so do the buttons
+  await press("1");
+  const full = same(seg("Size"), ["100%"]) && !!q(".shot-view .sv-scroll");
+  await press("1");
+  const fitted = same(seg("Size"), ["Fit"]) && !q(".shot-view .sv-scroll");
+  buttonByText(dialog, "100%")?.click();
+  await settle();
+  const fullByClick = same(seg("Size"), ["100%"]);
+  buttonByText(dialog, "Fit")?.click();
+  await settle();
+  check(full && fitted && fullByClick && same(seg("Size"), ["Fit"]), `Fit | 100%, by 1 and by a click: ${full} ${fitted} ${fullByClick}`);
+  // Previous and Next, and ← →
+  await press("ArrowRight");
+  const second = count() === "2 of 4" && caption() === FIX_SHOTS[1][1] && !!q(".shot-view .sv-nav.prev");
+  q<HTMLElement>(".shot-view .sv-nav.next")?.click();
+  await settle();
+  const third = count() === "3 of 4";
+  q<HTMLElement>(".shot-view .sv-nav.prev")?.click();
+  await settle();
+  await press("ArrowLeft");
+  const first = count() === "1 of 4";
+  await press("ArrowLeft");
+  check(second && third && first && count() === "1 of 4", `→, Next, Previous and ←, and ← stays on the first: ${second} ${third} ${first} ${count()}`);
+  // Compare with the run before on a changed picture: side by side, then with the slider
+  await press("ArrowRight");
+  check(compare() && !compare()!.disabled && compare()!.getAttribute("aria-pressed") === "false", "Compare is on offer for a changed picture");
+  await press("c");
+  out.side = textsOf(".shot-view .sv-side .sv-pane figcaption .badge");
+  check(compare()?.getAttribute("aria-pressed") === "true" && same(seg("How to compare"), ["Side by side"]) && same(out.side, ["The run before", "This run"]),
+    `C: side by side, the run before and this run: ${JSON.stringify(out.side)}`);
+  check(pair() === "Paired by file name with the run before’s picture, captioned “Slider dragged to € 400 to € 900: 12 bikes”.", `paired by file name: ${pair()}`);
+  check((await pictures()) === 2, "both pictures drawn side by side");
+  buttonByText(dialog, "Slider")?.click();
+  await settle();
+  const grip = q<HTMLElement>(".shot-view .sv-slider [role=slider]");
+  const middle = grip?.getAttribute("aria-valuenow");
+  grip?.focus();
+  await press("ArrowRight", grip);
+  const moved = grip?.getAttribute("aria-valuenow");
+  await press("End", grip);
+  check(same(seg("How to compare"), ["Slider"]) && middle === "50" && moved === "52" && grip?.getAttribute("aria-valuenow") === "100" && count() === "2 of 4",
+    `the slider: its line at ${middle}, → ${moved}, End ${grip?.getAttribute("aria-valuenow")}, the picture stays: ${count()}`);
+  // → in Compare goes to the next pair: the same picture as the run before; after it only a new one, so → stays
+  dialog.focus();
+  await press("ArrowRight");
+  check(count() === "3 of 4" && pair() === "Unchanged: the same picture as the run before" && badge() === "Unchanged", `→ in Compare, an unchanged pair: ${count()}, ${pair()}`);
+  await press("ArrowRight");
+  check(count() === "3 of 4" && !q(".shot-view .sv-nav.next"), `→ in Compare stops at the last pair: ${count()}`);
+  await press("c");
+  check(compare()?.getAttribute("aria-pressed") === "false" && same(seg("Size"), ["Fit"]), "C again: Compare off");
+  await press("ArrowRight");
+  const [newName, newCaption, newMeta] = FIX_SHOTS[3];
+  check(count() === "4 of 4" && caption() === newCaption && badge() === "New" && textOf(q(".shot-view .sv-meta")).startsWith(newMeta) && compare()?.disabled
+    && compare()?.title === `New in this run: the run before has no ${newName}` && !q(".shot-view .sv-nav.next"),
+    `the new picture: ${count()}, ${textOf(q(".shot-view .sv-meta"))}, Compare: ${compare()?.title}`);
+  // Esc closes it, and the focus goes back to the picture it opened from
+  await press("Escape");
+  const closed = await waitFor(() => (q(".shot-view") ? null : true), 2000);
+  await settle();
+  check(closed && document.activeElement === opener, `Esc closes the larger view and gives the focus back to the picture (${document.activeElement?.getAttribute("data-shot")})`);
+
+  // leaving the tab frees every blob: URL
+  location.hash = `#/task/${card}`;
+  check(await waitFor(() => (!q(".shots") && shotUrlCount() === 0 ? true : null), 3000), `leaving the tab frees every blob: URL (${shotUrlCount()} left)`);
+
+  // the board's sign: only on the card in Review, "6"; a click opens the tab
+  await showTasks("board");
+  const signs = await waitFor(() => { const s = [...document.querySelectorAll<HTMLElement>("[data-card] .shot-sign")]; return s.length ? s : null; }, 5000);
+  const sign = q<HTMLElement>(`[data-card="${ident}"] .shot-sign`);
+  out.signs = (signs ?? []).map((s) => `${s.closest("[data-card]")?.getAttribute("data-card")}: ${textOf(s)}`);
+  check(signs?.length === 1 && sign && textOf(sign) === "6" && sign.getAttribute("aria-label") === "6 screenshots: open the Screenshots tab"
+    && sign.closest(".col")?.getAttribute("data-col") === "Review", `the board's sign, only on ${ident} in Review: ${JSON.stringify(out.signs)}`);
+  sign?.click();
+  check(await tabOpen(), `the board's sign opens the Screenshots tab: ${location.hash}`);
+  restoreView();
+  // its Inbox row: "6 screenshots", and it opens the tab
+  await goTo("#/inbox", ".task-row");
+  const row = await waitFor(() => { const r = document.getElementById(`row-${card}`); return r?.querySelector(".shot-sign") ? r : null; }, 5000);
+  out.inbox = textOf(row?.querySelector(".shot-sign"));
+  check(row && out.inbox === "6 screenshots" && row.getAttribute("href") === `#/task/${card}/screenshots`, `the Inbox row: ${out.inbox}, ${row?.getAttribute("href")}`);
+  row?.click();
+  check(await tabOpen(), `the Inbox row opens the Screenshots tab: ${location.hash}`);
   return { ok: errors.length === 0, errors, ...out };
 }
 

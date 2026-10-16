@@ -9,8 +9,9 @@ export type Page = (typeof PAGES)[number];
 // path, encoded as one part).
 // The Terminal page (GA-135): #/terminal starts a new terminal, #/terminal/<id> is one open terminal.
 /** `scope`: on the Memory page only, which notes it shows (`memoryScope`); `view` "graph": its graph (GA-69).
- *  On a task, `view` "changes" is its Changes tab, and `run` one run's changes there (GA-112). */
-export type Route = { page: Page; id?: string; scope?: string; view?: "graph" | "changes"; run?: string };
+ *  On a task, `view` "changes" is its Changes tab, and `run` one run's changes there (GA-112); "screenshots" its
+ *  Screenshots tab, and `run` one run's set there (GA-185). */
+export type Route = { page: Page; id?: string; scope?: string; view?: "graph" | "changes" | "screenshots"; run?: string };
 // Settings' tabs (GA-42): #/settings/<tab> opens one; #/settings, or a tab it doesn't know, opens General.
 export const SETTINGS_TABS = ["general", "appearance", "notifications", "agents", "mcp", "github"] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
@@ -40,6 +41,10 @@ export function parseHash(hash: string): Route {
     const run = parts[3] === "run" && parts[4] ? { run: decodeURIComponent(parts[4]) } : {};
     return { page, id: decodeURIComponent(parts[1]), view: "changes", ...run };
   }
+  // a card's screenshots (GA-185): #/task/<id>/screenshots, and one run's set: #/task/<id>/screenshots/<run id>
+  if (page === "task" && parts[1] && parts[2] === "screenshots") {
+    return { page, id: decodeURIComponent(parts[1]), view: "screenshots", ...(parts[3] ? { run: decodeURIComponent(parts[3]) } : {}) };
+  }
   if (page === "editor") return parts[1] ? { page, id: decodeURIComponent(parts.slice(1).join("/")) } : { page };
   if (page === "terminal") return parts[1] ? { page, id: decodeURIComponent(parts[1]) } : { page };
   if ((PAGES_WITH_ID as readonly string[]).includes(page) && parts[1]) return { page, id: decodeURIComponent(parts[1]) };
@@ -55,6 +60,9 @@ export function href(r: Route): string {
   }
   if (r.page === "task" && r.id && r.view === "changes") {
     return `#/task/${encodeURIComponent(r.id)}/changes${r.run ? "/run/" + encodeURIComponent(r.run) : ""}`;
+  }
+  if (r.page === "task" && r.id && r.view === "screenshots") {
+    return `#/task/${encodeURIComponent(r.id)}/screenshots${r.run ? "/" + encodeURIComponent(r.run) : ""}`;
   }
   return `#/${r.page}${r.id ? "/" + encodeURIComponent(r.id) : ""}`;
 }

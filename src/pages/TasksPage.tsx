@@ -14,6 +14,7 @@ import { filterCount, filterTasks, groupTasks, sortTasks, type Filter, type Grou
 import type { Task } from "../types";
 import { Board } from "../components/Board";
 import { TaskList } from "../components/TaskList";
+import { useReviewShots } from "../components/screenshots/ShotSign";
 import { Popover } from "../components/Popover";
 import { ArchivedCards } from "../components/ArchivedCards";
 import { RunForMe } from "../components/RunForMe";
@@ -163,6 +164,8 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
     return sortTasks(filterTasks(base, filter), sort);
   }, [tasks, filter, sort, inbox, inboxFor]);
   const groups = useMemo(() => groupTasks(shown, group, states), [shown, group, states]);
+  // GA-185: a Review card with screenshots has the sign on the board, and says "6 screenshots" in the Inbox.
+  const shots = useReviewShots(inbox || view === "board" ? tasks : null);
 
   const onMove = useCallback(async (id: string, stateId: string, sortKey: string) => {
     const before = tasksRef.current;
@@ -243,7 +246,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <div className="content">
           {chats.length > 0 && <div className="page-pad lead-chats-pad"><LeadChats chats={chats} onDismiss={dismiss} /></div>}
           {asks.length > 0 && <div className="page-pad lead-chats-pad"><RunForMeCards tasks={asks} agentOf={(t) => (t.assigneeKind === "agent" ? t.assigneeName ?? null : null)} /></div>}
-          <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
+          <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} shots={inbox ? shots : undefined} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
             empty={inbox ? (chats.length + asks.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, the Team Lead's questions and the calls it waits for your OK on show up here.</span></div>)
               : <div className="empty"><b>No tasks here.</b><span>{nFilters ? "Nothing matches these filters." : "Press N to add one."}</span></div>} />
         </div>
@@ -251,7 +254,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <div className="board-wrap">
           {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
           {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={openCard} onAdd={(sid) => onNewTask(sid)}
-            onArchive={onArchive} working={working} members={team.members} />}
+            onArchive={onArchive} working={working} members={team.members} shots={shots} />}
         </div>
       )}
       {bin && <ArchivedCards projectId={filter.projectId} projectName={project?.name} onClose={() => setBin(false)} />}

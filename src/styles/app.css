@@ -647,3 +647,24 @@ span.mem-tag { cursor: default; }
 .mem-local-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 10px 16px; font-size: var(--fs-sm); }
 .mem-local-list > p { margin: 2px 4px 6px; }
 @media (max-width: 1300px) { .mem-local { width: 320px; } }
+
+/* ---------- screenshots settings (GA-185) ---------- */
+/* The project form's Preview → Sizes: a row per size, its name, width × height and Remove, then Add a size. */
+.shot-sizes { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.shot-size { display: flex; align-items: center; gap: 8px; }
+.shot-size .input { flex: none; }
+.shot-size .shot-name { width: 200px; }
+.shot-size .shot-px { width: 96px; }
+/* Settings → Agents and runs → Screenshots → Preview ports: from and to. */
+.shot-ports > .input { flex: 0 0 120px; }
+/* The agent form's Take screenshots of what it built, in an accent-soft box inside the browser's; off and dimmed while
+   the browser is off. */
+.mcp-agent .ct-shots { display: grid; gap: 4px; padding: 8px 10px; border-radius: var(--radius); background: var(--accent-soft); }
+.mcp-agent .ct-shots.off { opacity: .45; }
+.mcp-agent .ct-shots.off .check { cursor: default; }
+/* The card's Properties → Screenshots: Screenshots before Review as the Testing row has it, then under it what it
+   follows and the way back to the project's switch. */
+.prop-row.prop-shots { grid-template-rows: minmax(36px, auto) auto; row-gap: 0; }
+.prop-shots .prop-note { grid-column: 2; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: -6px; padding-bottom: 6px;
+  color: var(--text-3); font-size: var(--fs-xs); line-height: 16px; }
+.prop-shots .prop-note .btn { margin-left: -9px; }

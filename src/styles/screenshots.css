@@ -1,0 +1,119 @@
+/* Screenshots (GA-185): the card's Screenshots tab, its larger view and Compare, and the sign on the board and in the
+   Inbox, as GA-181 designed them (design/screenshots/README.md → Sizes and spacing). All tokens. */
+
+/* ---------- the tab: full width under the tabs, like Changes ---------- */
+.shots { flex: 1; min-width: 0; overflow-y: auto; }
+.shots-in { display: flex; flex-direction: column; gap: 28px; padding: 24px 28px 48px; }
+.shots-one { margin: 0; color: var(--text-2); }
+
+/* a set: its heading, then 12, the grid, then its notes 12 below */
+.shot-set { display: flex; flex-direction: column; gap: 12px; }
+.shot-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 28px; color: var(--text-2); font-size: var(--fs-sm); }
+.shot-head .who { color: var(--text); font-size: var(--fs); font-weight: 600; }
+.shot-head .role { width: 16px; height: 16px; color: var(--text-3); }
+.shot-head .meta, .shot-head .sum { color: var(--text-2); }
+.shot-head .commit, .shot-view .commit { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 12px; color: var(--text-3); }
+.shot-head .view-run { margin-left: auto; color: var(--text-2); }
+.shot-head .view-run:hover { color: var(--text); }
+.link.accent { color: var(--accent); }
+.link.accent:hover { text-decoration: underline; }
+.link:focus-visible, .shots-older:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-radius: var(--radius-s); }
+
+/* the thumbnails: 272 wide, 16 apart, rows 20 apart */
+.shot-grid { display: grid; grid-template-columns: repeat(auto-fill, 272px); gap: 20px 16px; margin: 0; padding: 0; list-style: none; }
+.shot { display: flex; flex-direction: column; align-items: stretch; width: 272px; padding: 0 0 4px; border: 0; border-radius: var(--radius); background: none;
+  color: var(--text); font: inherit; text-align: left; cursor: zoom-in; }
+.shot-cell { display: flex; align-items: center; justify-content: center; width: 272px; height: 170px; overflow: hidden; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--side); }
+/* the picture at its own proportions: 1280 × 800 fills the cell, 390 × 844 is 79 × 170 in the middle */
+.shot-cell img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.shot-ph { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-xs); }
+.shot-ph .icon { width: 18px; height: 18px; }
+.shot-cap { margin-top: 8px; border-radius: 3px; font-size: var(--fs); line-height: 1.4; color: var(--text); overflow-wrap: anywhere; }
+.shot-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 2px; font-size: var(--fs-sm); color: var(--text-2); }
+.shot-meta .badge { height: 18px; padding: 0 7px; font-size: 11px; }
+.shot-file { display: block; min-width: 0; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono);
+  font-size: 11.5px; color: var(--text-3); }
+.shot:hover .shot-cell { border-color: var(--line-2); }
+.shot:hover .shot-cap { background: var(--hover); box-shadow: 0 0 0 3px var(--hover); }
+.shot:focus-visible { outline: none; }
+.shot:focus-visible .shot-cell { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* Shot/Note: left out (warning), the preview (danger), no change (faint) */
+.shot-note { display: flex; align-items: flex-start; gap: 8px; margin: 0; max-width: 900px; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; }
+.shot-note .icon { flex: none; margin-top: 2px; }
+.shot-note.left .icon { color: var(--warning); }
+.shot-note.preview .icon { color: var(--danger); }
+.shot-note.none .icon { color: var(--text-3); }
+
+/* older runs, folded: a row 32 high */
+.shots-older { display: flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 32px; margin: -4px 0; padding: 0 10px 0 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--text-2); font: inherit; cursor: pointer; text-align: left; }
+.shots-older:hover { background: var(--hover); }
+.shots-older .icon { color: var(--text-3); }
+.shots-older b { font-weight: 600; color: var(--text-2); }
+.shots-older .faint { font-size: var(--fs-sm); color: var(--text-3); }
+
+/* the empty tab: .empty, at the top of the content, its text at most 640 wide */
+.shot-empty > span { max-width: 640px; line-height: 1.5; }
+.shot-empty .link.accent { margin-top: 6px; font-size: var(--fs); }
+
+/* ---------- the larger view: over the scrim, 24 from the window's edges ---------- */
+.shot-scrim { z-index: 70; }
+.shot-view { position: fixed; inset: 24px; z-index: 71; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--radius-xl);
+  background: var(--overlay); box-shadow: var(--shadow-pop); outline: none; animation: gz-fade .16s ease-out; }
+.sv-head { display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 12px 0 20px; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); color: var(--text-2); }
+.sv-count { color: var(--text); font-size: var(--fs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.sv-who { color: var(--text-2); }
+.sv-head .grow { flex: 1; }
+.sv-head .btn[aria-pressed="true"] { background: var(--selected); }
+.sv-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--side); }
+/* 100%: a scroller of its own under Previous and Next, so they stay put; drag or scroll to look around */
+.sv-scroll { position: absolute; inset: 0; display: flex; overflow: auto; cursor: grab; }
+.sv-scroll:active { cursor: grabbing; }
+.sv-center { position: absolute; inset: 0; display: grid; place-items: center; }
+.sv-full { margin: auto; padding: 24px 80px; }
+.sv-pic { display: block; user-select: none; }
+.sv-ph { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: var(--raised); color: var(--text-3); font-family: var(--font-mono); font-size: var(--fs-sm); }
+.sv-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 40px; height: 40px; margin-top: -20px; border: 1px solid var(--line-2); border-radius: 50%;
+  background: var(--raised); color: var(--text); cursor: pointer; }
+.sv-nav:hover { background: var(--hover); }
+.sv-nav.prev { left: 24px; }
+.sv-nav.next { right: 24px; }
+.sv-nav .icon { width: 18px; height: 18px; }
+.sv-nav:focus-visible, .sv-grip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.sv-foot { display: flex; align-items: flex-end; gap: 20px; flex: none; padding: 14px 20px; border-top: 1px solid var(--line); }
+.sv-cap { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.sv-cap b { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.sv-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: var(--fs-sm); color: var(--text-2); }
+.sv-meta .shot-file { margin: 0; padding: 0; }
+.sv-pair { font-size: var(--fs-sm); color: var(--text-2); }
+.sv-keys { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 14px; color: var(--text-3); font-size: var(--fs-xs); }
+.sv-keys .kbd { margin-right: 2px; }
+
+/* Compare side by side: two panes, 24 apart, 80 from the sides, each with its label, run and commit above it */
+.sv-side { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 24px; padding: 0 80px; }
+.sv-pane { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.sv-pane figcaption { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-2); }
+
+/* Compare with a slider: the run before left of a 2 px line, under a 35 % tint; a 36 px round grip */
+.sv-slider { position: relative; overflow: hidden; touch-action: none; cursor: ew-resize; }
+.sv-slider > .sv-pic, .sv-before .sv-pic { position: absolute; inset: 0; }
+.sv-before { position: absolute; inset: 0; }
+.sv-tint { position: absolute; inset: 0; background: var(--selected); opacity: .35; pointer-events: none; }
+.sv-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); }
+.sv-grip { position: absolute; top: 50%; left: 50%; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin: -18px 0 0 -18px;
+  border: 1px solid var(--line-2); border-radius: 50%; background: var(--raised); color: var(--text); cursor: ew-resize; }
+.sv-grip .icon { width: 14px; height: 14px; margin: 0 -2px; }
+.sv-label { position: absolute; top: 12px; }
+.sv-label.left { left: 12px; }
+.sv-label.right { right: 12px; }
+
+/* ---------- the sign: an outline badge on a Review card and its Inbox row ---------- */
+.shot-sign { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border: 1px solid var(--line-2); border-radius: var(--radius-pill);
+  background: transparent; color: var(--text-2); font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; text-decoration: none; }
+.shot-sign:hover { background: var(--hover); color: var(--text); }
+.shot-sign:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.shot-sign .icon { width: 13px; height: 13px; }
+.task-row .title .shot-sign { flex: none; overflow: visible; }
+.sv-cmp { display: inline-flex; }

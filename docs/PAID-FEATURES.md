@@ -34,6 +34,7 @@ Everything in the desktop app:
 - clients, projects, tasks, docs, files;
 - agents, the Team Lead chat, worktrees and gates;
 - the code editor, a card's changes and the terminal;
+- screenshots of what agents built, and the previews they're taken from;
 - local snapshots to any folder (including a Dropbox or Syncthing folder) and export.
 
 Anyone may build their own sync server against the open-source code. GizAi's edge is that the hosted one is convenient, reliable and trustworthy.
@@ -43,7 +44,7 @@ Anyone may build their own sync server against the open-source code. GizAi's edg
 | | Free | Personal | Team | Business |
 |---|---|---|---|---|
 | Price (excl. VAT) | €0, no account | €5/month or €48/year | €10/user/month yearly, €12 monthly, min. 2 | from ~€18/user or a quote, min. 10 |
-| The desktop app, agents, chat, the code editor, a card's changes and the terminal | ✓ | ✓ | ✓ | ✓ |
+| The desktop app, agents, chat, the code editor, a card's changes and screenshots, and the terminal | ✓ | ✓ | ✓ | ✓ |
 | Local snapshots, export | ✓ | ✓ | ✓ | ✓ |
 | Encrypted off-site backup, 90-day history, restore on a new machine | | ✓ (10 GB) | ✓ (25 GB per seat, pooled) | ✓ |
 | Sync between your own devices | | ✓ (when it ships, same price) | ✓ | ✓ |

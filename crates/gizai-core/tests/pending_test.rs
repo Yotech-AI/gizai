@@ -448,8 +448,9 @@ fn all_rows(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
 }
 
 /// The schema as SQLite keeps it: every table, index, trigger and view with its SQL.
+/// The schema, without SQLite's own statistics (GA-191: PRAGMA optimize at open may add sqlite_stat1 and sqlite_stat4).
 fn schema(c: &Connection) -> Vec<(String, String, Option<String>)> {
-    c.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap()
+    c.prepare("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_stat%' ORDER BY type, name").unwrap()
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
 }
 

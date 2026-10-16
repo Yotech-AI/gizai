@@ -160,16 +160,19 @@ fn the_board_checks_reads_search_their_indexes() {
     // the busy runs per agent, a card's last change, a person's answer after a hold, what the last check saw
     let busy = "SELECT agent_actor_id, count(*), max(COALESCE(started_at, created_at)) FROM runs
                                 WHERE task_id IS NOT NULL AND status IN ('queued','running','waiting_approval') GROUP BY agent_actor_id";
-    let stamp = "SELECT ch.seq, ch.hlc FROM changes ch
-         WHERE (ch.row_id = ?1 OR ch.row_id IN (SELECT id FROM comments WHERE task_id = ?1) OR ch.row_id IN (SELECT id FROM runs WHERE task_id = ?1))
-           AND (?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)
-         ORDER BY ch.seq DESC LIMIT 1";
+    // GA-191: a card's last change is the newest of three lookups, each through its index
+    let not_lead = "(?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)";
+    let stamp_own = "SELECT ch.seq, ch.hlc FROM changes ch WHERE ch.row_id = ?1 AND {NOT_LEAD} ORDER BY ch.seq DESC LIMIT 1";
+    let stamp_comments = "SELECT ch.seq, ch.hlc FROM comments m JOIN changes ch ON ch.row_id = m.id WHERE m.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1";
+    let stamp_runs = "SELECT ch.seq, ch.hlc FROM runs r JOIN changes ch ON ch.row_id = r.id WHERE r.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1";
     let answer = "SELECT c.body_md, c.created_at FROM comments c JOIN actors a ON a.id = c.author_actor_id
                          WHERE c.task_id=?1 AND c.deleted_at IS NULL AND a.kind='person' AND c.created_at > ?2
                          ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1";
     let seen = "SELECT findings_json FROM runs WHERE agent_actor_id=?1 AND trigger='board_check' AND status='succeeded'
              ORDER BY created_at DESC, rowid DESC LIMIT 1";
-    in_source("board.rs", BOARD_RS, &[busy, stamp, answer, seen]);
+    in_source("board.rs", BOARD_RS, &[busy, not_lead, stamp_own, stamp_comments, stamp_runs, answer, seen]);
     // an agent's spend this month (its budget), and the runs a restart finds (runs::ACTIVE)
     let spend = "SELECT COALESCE(SUM(cost_usd_micros), 0) FROM runs WHERE agent_actor_id=?1 AND created_at >= ?2";
     let active = "('queued','running','waiting_approval')";
@@ -185,9 +188,11 @@ fn the_board_checks_reads_search_their_indexes() {
 
     let db = Db::open_in_memory().unwrap();
     // what it is, its SQL, the table (as named there) it reads by the index, the index, and the tables it may not scan
-    let reads: [(&str, String, &str, &str, &[&str]); 7] = [
+    let reads: [(&str, String, &str, &str, &[&str]); 9] = [
         ("busy runs", busy.to_string(), "runs", "runs_active", &["runs"]),
-        ("a card's last change", stamp.to_string(), "comments", "comments_task", &["ch", "comments", "runs"]),
+        ("a card's own last change", stamp_own.replace("{NOT_LEAD}", not_lead), "ch", "changes_row", &["ch"]),
+        ("its comments' last change", stamp_comments.replace("{NOT_LEAD}", not_lead), "m", "comments_task", &["ch", "m"]),
+        ("its runs' last change", stamp_runs.replace("{NOT_LEAD}", not_lead), "r", "runs_task", &["ch", "r"]),
         ("an answer after a hold", answer.to_string(), "c", "comments_task", &["c"]),
         ("what the last check saw", seen.to_string(), "runs", "runs_agent_created", &["runs"]),
         ("an agent's spend", spend.to_string(), "runs", "runs_agent_created", &["runs"]),
@@ -343,8 +348,9 @@ fn all_rows(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
 }
 
 /// The schema as SQLite keeps it: every table, index, trigger and view with its SQL.
+/// The schema, without SQLite's own statistics (GA-191: PRAGMA optimize at open may add sqlite_stat1 and sqlite_stat4).
 fn schema(c: &Connection) -> Vec<(String, String, Option<String>)> {
-    c.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap()
+    c.prepare("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_stat%' ORDER BY type, name").unwrap()
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
 }
 
@@ -385,7 +391,8 @@ fn work(db: &Db) -> Work {
     comments::add(db, &you, &card, "Use the KADE template.", None).unwrap();
     let the_deleted = comments::add(db, &backend, &card, "Done, see the branch.", Some(ended.as_str())).unwrap();
     comments::add(db, &you, &card, "Thanks.", None).unwrap();
-    db.read(|c| Ok(c.execute("UPDATE comments SET deleted_at = 9 WHERE id = ?1", [&the_deleted])?)).unwrap();
+    // GA-191: reads of a database file are read-only, so this goes through the writer
+    db.write(None, |w| Ok(w.conn().execute("UPDATE comments SET deleted_at = 9 WHERE id = ?1", [&the_deleted])?)).unwrap();
     let lead = team::add_agent(db, &you, &s.team_id, AgentInput { name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true),
         ..Default::default() }).unwrap();
     let thread = chat::create_thread(db, &you, &lead, "Plan the invoices export").unwrap();

@@ -96,7 +96,8 @@ fn no_command_on_the_main_thread_looks_up_a_program() {
     assert!(sync_lookups("#[tauri::command]\npub async fn list_clis(st: State<'_, AppState>) -> R<()> {\n    clis::list(&st)\n}").is_empty());
 
     let all = all_commands();
-    assert!(all.iter().filter(|(_, c)| !c.is_async).count() > 50, "too few commands that aren't async were read");
+    // GA-191: nearly every command is async now; the six that aren't are named in ga191_perf_test.rs
+    assert!(all.len() > 100, "too few commands were read");
     let mut found = vec![];
     for (file, c) in &all {
         if !c.is_async {

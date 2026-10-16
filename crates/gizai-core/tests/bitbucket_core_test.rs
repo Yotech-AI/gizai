@@ -333,13 +333,14 @@ fn every_repos_row_is_kept_and_old_bitbucket_links_get_their_tidy_form() {
 fn the_upgraded_repos_table_takes_bitbucket_and_still_refuses_an_unknown_provider() {
     let f = v12_db();
     let db = Db::open(&f.path).unwrap();
-    let insert = |id: &str, provider: &str| db.read(|c| Ok(c.execute(
+    // GA-191: reads of a database file are read-only, so these go through the writer
+    let insert = |id: &str, provider: &str| db.write(None, |w| Ok(w.conn().execute(
         "INSERT INTO repos (id, created_at, updated_at, project_id, provider, remote_url, owner, name, local_path)
          VALUES (?1, 50, 50, 'p-lab', ?2, 'https://bitbucket.org/acme/lab', 'acme', 'lab', '/home/t/Code/lab2')", [id, provider])?));
     assert_eq!(insert("r-bb", "bitbucket").unwrap(), 1);
     let e = insert("r-gl", "gitlab").unwrap_err().to_string();
     assert!(e.contains("CHECK constraint failed"), "{e}");
-    let e = db.read(|c| Ok(c.execute("INSERT INTO repos (id, created_at, updated_at, project_id, remote_url) VALUES ('r-x', 1, 1, 'nope', 'u')", [])?))
+    let e = db.write(None, |w| Ok(w.conn().execute("INSERT INTO repos (id, created_at, updated_at, project_id, remote_url) VALUES ('r-x', 1, 1, 'nope', 'u')", [])?))
         .unwrap_err().to_string();
     assert!(e.contains("FOREIGN KEY constraint failed"), "the project must exist: {e}");
 }

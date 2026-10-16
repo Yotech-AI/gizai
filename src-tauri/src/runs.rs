@@ -1031,16 +1031,29 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let (folders, mut notes) = gizai_core::folders::for_run(&agent.folders, &gizai_core::folders::Places::of(&st.db));
     let folders: Vec<RunFolder> = folders.into_iter().map(|f| RunFolder { change: f.change(), path: f.path }).collect();
     notes.extend(agent_cli::folders_left_out(spec.kind, &folders));
-    // The run's own temp folder in its worktree, out of git status and empty: every CLI gets it as TMPDIR, TMP and TEMP.
-    // Without it the run still starts, and its log says why.
-    let temp_dir = match worktree::prepare_temp(&wt.path) {
-        Ok(d) => Some(d.to_string_lossy().to_string()),
-        Err(e) => {
-            notes.push(format!("Couldn't make this run's temp folder {}: {e}. TMPDIR, TMP and TEMP stay as they were.",
+    // The worktree's own `.gizai-tmp`, out of git status and empty: the screenshots and the preview go there (GA-182).
+    let own_temp = worktree::prepare_temp(&wt.path);
+    // GA-210: the run's temp folder is short and outside the worktree, Gizai's data folder and any git repository, and
+    // empty: every CLI gets it as TMPDIR, TMP and TEMP, and may read and change it. When it can't be used the run gets
+    // `.gizai-tmp`, as before; without that either it still starts. Its log says why.
+    let run_temp = worktree::prepare_run_temp(&st.temp_base, &wt.path);
+    let temp_dir = match (&run_temp, &own_temp) {
+        (Ok(d), _) => Some(d.to_string_lossy().to_string()),
+        (Err(why), Ok(own)) => {
+            notes.push(format!("Couldn't use a short temp folder for this run: {why}. TMPDIR, TMP and TEMP point at {} instead, where the \
+                                browser may not start (its socket path can be too long).", own.display()));
+            Some(own.to_string_lossy().to_string())
+        }
+        (Err(why), Err(e)) => {
+            notes.push(format!("Couldn't make this run's temp folder: {why}; nor {}: {e}. TMPDIR, TMP and TEMP stay as they were.",
                                wt.path.join(worktree::TEMP_DIR).display()));
             None
         }
     };
+    if let (Ok(_), Err(e)) = (&run_temp, &own_temp) {
+        eprintln!("gizai: couldn't make {} for run {run_id}: {e}", wt.path.join(worktree::TEMP_DIR).display());
+    }
+    let run_temp_used = run_temp.is_ok();
     // GA-92: the agent's own `git push` to the project's repository goes the way Gizai's push after the run goes, through
     // git settings in the run's environment only (every CLI, new and continued runs). Over HTTPS without gh the run
     // starts without them, and its log says why.
@@ -1287,7 +1300,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         if kind == Kind::ClaudeCode {
             crate::mcp_servers::record_seen_tools(&st2, &run_agent, &seen_cli, &seen_log);
         }
-        // GA-182: its preview's whole tree ends, then its screenshots go onto the card, before its temp folder is emptied.
+        // GA-182: its preview's whole tree ends, then its screenshots go onto the card, before its .gizai-tmp is emptied.
         // A run Gizai's quitting stopped collects nothing (as `finish_run` tells such a run).
         if let Some(run_shots) = shots {
             let finished = matches!(&result, Some(RunEvent::Result { is_error: false, .. })) && exit == "exit:0";
@@ -1297,6 +1310,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             }
         }
         if let Err(e) = worktree::empty_temp(&dir) {
+            eprintln!("gizai: couldn't empty the .gizai-tmp folder of run {rid}: {e}");
+        }
+        if run_temp_used && let Err(e) = worktree::empty_run_temp(&st2.temp_base, &dir) {
             eprintln!("gizai: couldn't empty the temp folder of run {rid}: {e}");
         }
         // The account's limits as the run left them: Codex's from its session log, or the limit a Claude Code run that

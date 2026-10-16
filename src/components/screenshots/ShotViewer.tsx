@@ -176,8 +176,11 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
               <button type="button" aria-pressed={zoom === "full"} onClick={() => setZoom("full")} title="At 100% (1)">100%</button>
             </div>
           )}
-          <button type="button" className="btn sm" aria-pressed={comparing} disabled={!before} title={compareTitle} onClick={toggleCompare}>
-            <Columns2 className="icon" />Compare</button>
+          {/* a disabled button takes no pointer, so its wrapper shows why Compare is off */}
+          <span className="sv-cmp" title={before ? undefined : compareTitle}>
+            <button type="button" className="btn sm" aria-pressed={comparing} disabled={!before} title={compareTitle} onClick={toggleCompare}>
+              <Columns2 className="icon" />Compare</button>
+          </span>
           <button type="button" className="btn ghost sm" onClick={open} title="Open it in the system’s image viewer"><ExternalLink className="icon" />Open</button>
           <button type="button" className="btn ghost sm icon-only" aria-label="Close" title="Close (Esc)" onClick={onClose}><X className="icon" /></button>
         </div>

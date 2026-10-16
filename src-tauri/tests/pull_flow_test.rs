@@ -187,6 +187,10 @@ async fn a_pull_request_an_agent_opened_shows_on_the_card_and_push_branch_adds_t
 async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_the_next_check() {
     let tmp = real_tempdir();
     let c = worked_card(tmp.path()).await;
+    // GA-210: the run's temp folder, outside the worktree, with something a crashed run left in it
+    let run_temp = gizai_agents::worktree::run_temp_in(&c.st.temp_base, &c.wt);
+    assert!(run_temp.is_dir(), "{}", run_temp.display());
+    std::fs::write(run_temp.join("left.txt"), "x").unwrap();
     review_then_done(&c);
     to_review(&c);
     std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
@@ -206,6 +210,7 @@ async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_th
     let t = task(&c);
     assert_eq!((t.state_name.as_str(), t.pr_state.as_deref()), ("Done", Some("merged")));
     assert!(!c.wt.exists(), "its worktree is removed");
+    assert!(!run_temp.exists(), "its runs' temp folder goes with it: {}", run_temp.display());
     assert!(!has_branch(&c.local, &c.branch), "its local branch is deleted");
     assert!(has_branch(&c.bare, &c.branch), "GitHub's copy is GitHub's");
     let a = gizai_core::tasks::activity(&c.st.db, &c.task).unwrap();

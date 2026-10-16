@@ -33,7 +33,7 @@ The project's **Preview command** (its form → Preview) serves the card's branc
 
 The agent's own commands get the three `GIZAI_PREVIEW_*` variables too, not `PORT`, so a project script it runs to load the demo data again finds the same database.
 
-**Demo data, never yours.** The command fills a throwaway database in `GIZAI_PREVIEW_DIR` with demo data and serves that, never the database in the worktree's `.env`, which is a copy of your checkout's. The folder goes with the temp folder when the run ends. The agent is told to shoot only the preview's address: never a `.test` site, a live site or a real account.
+**Demo data, never yours.** The command fills a throwaway database in `GIZAI_PREVIEW_DIR` with demo data and serves that, never the database in the worktree's `.env`, which is a copy of your checkout's. The folder is emptied with the rest of `.gizai-tmp/` when the run ends. The agent is told to shoot only the preview's address: never a `.test` site, a live site or a real account.
 
 GizAi waits until the port answers, at most the project's Start time, then starts the agent with the address in its prompt. When the preview doesn't answer in time (or ends first, or no port is free), the run starts anyway and takes no screenshots: the prompt, the run's output and the set say why, with the last lines of its log. The card is never held for a preview.
 

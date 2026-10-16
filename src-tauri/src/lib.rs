@@ -47,6 +47,9 @@ pub struct AppState {
     /// Off until `run_memory::start`, which Gizai's start calls: a test's Gizai keeps its processes outside systemd, and
     /// its runs don't wait for memory unless the test fakes a reading (`RunsMemory::fake_reading`).
     pub run_memory: Arc<gizai_agents::run_memory::RunsMemory>,
+    /// Where the runs' temp folders go (GA-210, `worktree::temp_base`): `/var/tmp/gizai-<uid>` on Linux and macOS. A
+    /// test's Gizai keeps them in its own folder (`test_state`).
+    pub temp_base: PathBuf,
     /// Where the MCP server for chat turns listens (see `mcp::socket_path`).
     pub mcp_socket: PathBuf,
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
@@ -297,7 +300,7 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
     let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()),
-                  run_memory: Arc::new(Default::default()), mcp_socket,
+                  run_memory: Arc::new(Default::default()), temp_base: gizai_agents::worktree::temp_base(), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
@@ -415,6 +418,8 @@ fn appindicator_found() -> bool {
 #[doc(hidden)]
 pub fn test_state(dir: &std::path::Path) -> AppState {
     let mut st = open_data(dir.join("data"), Arc::new(|_| {}), false).expect("test state");
+    // Tests keep their runs' temp folders in their own folder too, never in /var/tmp.
+    st.temp_base = dir.join("run-temp");
     // Tests keep their socket in their own folder, never in the real runtime dir.
     #[cfg(unix)]
     {

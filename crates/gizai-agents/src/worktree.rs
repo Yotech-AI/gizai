@@ -199,16 +199,18 @@ pub fn mark_prepared(wt: &Path) -> Result<(), AgentError> {
     }
 }
 
-/// The folder at a card's worktree root where its runs keep throwaway files: TMPDIR, TMP and TEMP point there, so
-/// `mktemp`, PHP, Node and Python put their temp files where the agent may write.
+/// The folder at a card's worktree root where its runs keep the screenshots and the preview's files (GA-182,
+/// `screenshots::dir`, `preview::dir`). A run's throwaway files go to its own short temp folder outside the worktree
+/// (`prepare_run_temp`, GA-210), and here only when that one can't be used.
 pub const TEMP_DIR: &str = ".gizai-tmp";
-/// The line in the repository's `info/exclude` that keeps the temp folder out of git status.
+/// The line in the repository's `info/exclude` that keeps `.gizai-tmp` out of git status.
 pub const TEMP_EXCLUDE: &str = "/.gizai-tmp/";
 
 /// One look-and-add of the exclude line at a time: runs of the same repository can start together.
 static EXCLUDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Gets the worktree's temp folder (`<wt>/.gizai-tmp`) ready for a run and returns it. First `/.gizai-tmp/` goes into
+/// Gets the worktree's own `.gizai-tmp` ready for a run and returns it: the screenshots and the preview go there, and
+/// the run's throwaway files when its own temp folder can't be used (`prepare_run_temp`). First `/.gizai-tmp/` goes into
 /// the repository's `info/exclude` (`exclude_temp`), then the folder is made, empty: a run Gizai couldn't follow to its
 /// end (Gizai quit or crashed) can have left files in it. Something else by that name, such as a link, is removed,
 /// never followed.
@@ -253,33 +255,193 @@ pub fn exclude(common: &Path, line: &str) -> Result<(), AgentError> {
     Ok(())
 }
 
-/// Empties the worktree's temp folder once a run has ended, however it ended (finished, Stop, a limit). The folder
+/// Empties the worktree's `.gizai-tmp` once a run has ended, however it ended (finished, Stop, a limit). The folder
 /// stays and goes with the worktree. Links in it are removed, never followed; one link or file in the folder's place
 /// is removed. Goes on past what it can't remove, and returns the first error.
 pub fn empty_temp(wt: &Path) -> Result<(), AgentError> {
-    let dir = wt.join(TEMP_DIR);
-    match std::fs::symlink_metadata(&dir) {
+    Ok(empty_dir(&wt.join(TEMP_DIR))?)
+}
+
+/// Empties the folder `dir`, which stays (see `empty_temp`). Nothing there is fine.
+fn empty_dir(dir: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(dir) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-        Ok(m) if !m.is_dir() => return Ok(std::fs::remove_file(&dir)?),
+        Err(e) => return Err(e),
+        Ok(m) if !m.is_dir() => return remove_link(dir),
         Ok(_) => {}
     }
     let mut first: Option<std::io::Error> = None;
-    for entry in std::fs::read_dir(&dir)? {
+    for entry in std::fs::read_dir(dir)? {
         let done = entry.and_then(|e| {
             let path = e.path();
-            if e.file_type()?.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) }
+            if e.file_type()?.is_dir() { std::fs::remove_dir_all(&path) } else { remove_link(&path) }
         });
         if let Err(e) = done {
             first.get_or_insert(e);
         }
     }
-    first.map_or(Ok(()), |e| Err(e.into()))
+    first.map_or(Ok(()), Err)
+}
+
+/// Removes the file or link at `path`, never what a link points to. On Windows a link to a folder (a symlink or a
+/// junction) goes as a folder.
+fn remove_link(path: &Path) -> std::io::Result<()> {
+    let removed = std::fs::remove_file(path);
+    if cfg!(windows) && removed.is_err() && std::fs::remove_dir(path).is_ok() {
+        return Ok(());
+    }
+    removed
 }
 
 /// The environment that points a run's temp files at `dir`: TMPDIR, TMP and TEMP.
 pub fn temp_env(dir: &Path) -> Vec<(String, String)> {
     ["TMPDIR", "TMP", "TEMP"].iter().map(|k| (k.to_string(), dir.display().to_string())).collect()
+}
+
+// GA-210: a run's temp folder is short and outside the worktree. Chromium makes its single-instance socket in
+// `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket`, and a socket path must be shorter than 108 bytes (104 on
+// macOS): under `<data>/worktrees/<KEY>/<card>/.gizai-tmp` the agents' browser couldn't start. A temp folder inside the
+// worktree was also inside Gizai's data folder and a git repository, which some tests refuse, and git run there found
+// the card's repository.
+
+/// The longest part of a worktree's folder name its run's temp folder keeps: a card name with a key of 6 letters and a
+/// number of 7 digits (`EUQRST-1234567`), so the folder's path stays at most 50 characters.
+const RUN_TEMP_NAME: usize = 14;
+
+/// Where the runs' temp folders go: `/var/tmp/gizai-<uid>` on Linux and macOS, on disk (`/tmp` is in memory on many
+/// systems, and files there count toward the runs' memory limit, GA-202), outside Gizai's data folder and any git
+/// repository; on Windows `gizai` in your own temp folder.
+pub fn temp_base() -> PathBuf {
+    #[cfg(unix)]
+    {
+        // SAFETY: getuid has no preconditions.
+        PathBuf::from(format!("/var/tmp/gizai-{}", unsafe { libc::getuid() }))
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("gizai")
+    }
+}
+
+/// The run's temp folder of the worktree at `wt`, in `base` (`temp_base`): the worktree's folder name and the first 8
+/// hex digits of the SHA-256 of its path as it is on disk, like `/var/tmp/gizai-1000/DSO-30-1a2b3c4d`. The hash keeps
+/// worktrees of the same name apart: Gizai's tests use the same card names in many data folders at once.
+pub fn run_temp_in(base: &Path, wt: &Path) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let name: String = wt.file_name().unwrap_or_default().to_string_lossy().chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .take(RUN_TEMP_NAME).collect();
+    let real = on_disk(wt).unwrap_or_else(|| wt.to_path_buf());
+    let hex: String = Sha256::digest(real.to_string_lossy().as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect();
+    base.join(format!("{name}-{hex}"))
+}
+
+/// Gets the run's temp folder of the worktree at `wt` ready in `base` (`run_temp_in`) and returns it. `base` is made
+/// with mode 0700 (Linux and macOS); one that is already there is used only when it is a real folder (not a link),
+/// yours and closed to others. Then the folder is made, empty: a run Gizai couldn't follow to its end can have left
+/// files in it. A link or file in its place is removed, never followed. An error says why it can't be used, in plain
+/// words: the run then gets `<wt>/.gizai-tmp` (`prepare_temp`), as before.
+pub fn prepare_run_temp(base: &Path, wt: &Path) -> Result<PathBuf, String> {
+    if let Err(e) = make_private_dir(base) && e.kind() != std::io::ErrorKind::AlreadyExists {
+        return Err(format!("couldn't make {}: {e}", base.display()));
+    }
+    if let Some(why) = base_problem(base) {
+        return Err(why);
+    }
+    let dir = run_temp_in(base, wt);
+    if std::fs::symlink_metadata(&dir).is_ok_and(|m| !m.is_dir()) {
+        remove_link(&dir).map_err(|e| format!("couldn't remove what is in the place of {}: {e}", dir.display()))?;
+    }
+    if let Err(e) = make_private_dir(&dir) && e.kind() != std::io::ErrorKind::AlreadyExists {
+        return Err(format!("couldn't make {}: {e}", dir.display()));
+    }
+    empty_dir(&dir).map_err(|e| format!("couldn't empty {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Empties the run's temp folder of the worktree at `wt` in `base` once its run has ended, however it ended (finished,
+/// Stop, a limit), the way `empty_temp` empties `.gizai-tmp`: links in it are removed, never followed, and the folder
+/// stays until the worktree goes. Only in a `base` that is still a real folder of yours, closed to others: else the
+/// error says why, and nothing is touched. Nothing there is fine.
+pub fn empty_run_temp(base: &Path, wt: &Path) -> Result<(), AgentError> {
+    if !base_there(base)? {
+        return Ok(());
+    }
+    Ok(empty_dir(&run_temp_in(base, wt))?)
+}
+
+/// Removes the run's temp folder of the worktree at `wt` from `base`, with everything in it, when the worktree goes
+/// (`remove_card_worktree_with`) or moves to another card (`reuse`). Links in it are removed, never followed. Only in a
+/// `base` that is still a real folder of yours, closed to others: else the error says why, and nothing is touched.
+/// Nothing there is fine.
+pub fn remove_run_temp(base: &Path, wt: &Path) -> Result<(), AgentError> {
+    remove_from_base(base, &run_temp_in(base, wt))
+}
+
+fn remove_from_base(base: &Path, dir: &Path) -> Result<(), AgentError> {
+    if !base_there(base)? {
+        return Ok(());
+    }
+    match std::fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+        Ok(m) if m.is_dir() => Ok(std::fs::remove_dir_all(dir)?),
+        Ok(_) => Ok(remove_link(dir)?),
+    }
+}
+
+/// Makes the folder `dir` (not its parents), with mode 0700 on Linux and macOS, whatever the umask.
+fn make_private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new().mode(0o700).create(dir)?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(dir)
+    }
+}
+
+/// Why the runs' temp folders can't go in `base`, in plain words, if they can't: it is a link or a file, or (Linux and
+/// macOS) someone else's folder, or one others may open. Anyone may make a folder in `/var/tmp`, so another user could
+/// have put one there, or a link to a folder of yours.
+fn base_problem(base: &Path) -> Option<String> {
+    let m = match std::fs::symlink_metadata(base) {
+        Ok(m) => m,
+        Err(e) => return Some(format!("couldn't read {}: {e}", base.display())),
+    };
+    if m.file_type().is_symlink() {
+        return Some(format!("{} is a link", base.display()));
+    }
+    if !m.is_dir() {
+        return Some(format!("{} is not a folder", base.display()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: getuid has no preconditions.
+        if m.uid() != unsafe { libc::getuid() } {
+            return Some(format!("{} belongs to another user", base.display()));
+        }
+        if m.mode() & 0o077 != 0 {
+            return Some(format!("{} is open to other users (mode {:o}, not 700)", base.display(), m.mode() & 0o777));
+        }
+    }
+    None
+}
+
+/// Whether `base` is there: false when it isn't, an error when it is but the runs' temp folders can't go in it
+/// (`base_problem`), so Gizai leaves it alone.
+fn base_there(base: &Path) -> Result<bool, AgentError> {
+    if std::fs::symlink_metadata(base).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(false);
+    }
+    match base_problem(base) {
+        Some(why) => Err(AgentError::Io(std::io::Error::other(format!("{why}, so Gizai left it alone")))),
+        None => Ok(true),
+    }
 }
 
 /// Whether `path` is inside `dir` (Gizai's worktree folder, or one project's part of it), as they are on disk.
@@ -570,7 +732,7 @@ pub fn worktree_of(repo: &Path, branch: &str) -> Result<Option<PathBuf>, AgentEr
 }
 
 /// Removes a worktree, never by force: git refuses one with uncommitted changes or untracked files, and says so. Its
-/// temp folder goes with it: `info/exclude` makes it ignored, not untracked (`exclude_temp`).
+/// `.gizai-tmp` goes with it: `info/exclude` makes it ignored, not untracked (`exclude_temp`).
 pub fn remove_worktree(repo: &Path, path: &Path) -> Result<(), AgentError> {
     git(repo, &["worktree", "remove", &path.to_string_lossy()]).map(|_| ())
 }
@@ -617,10 +779,16 @@ impl Removal {
 /// pull request is merged, and Settings → Data for the worktrees of finished cards.
 /// - The worktree is the one that has `branch` checked out. Only one inside `worktrees_dir` (Gizai's own folder) is
 ///   removed, and never by force: git keeps one with uncommitted changes or untracked files. One whose folder is
-///   already gone only leaves git's list.
+///   already gone only leaves git's list. Its runs' temp folder in `temp_base()` goes with it (`remove_run_temp`).
 /// - The branch goes only when no worktree has it checked out any more (a kept worktree keeps it). `git branch -D`
 ///   also deletes commits that aren't merged anywhere, so the caller decides whether that is fine.
 pub fn remove_card_worktree(repo: &Path, worktrees_dir: &Path, branch: &str, delete_branch: bool) -> Removal {
+    remove_card_worktree_with(repo, worktrees_dir, &temp_base(), branch, delete_branch)
+}
+
+/// `remove_card_worktree`, with the runs' temp folders in `temp_base` (Gizai's `AppState::temp_base`; a test's Gizai
+/// keeps them in its own folder).
+pub fn remove_card_worktree_with(repo: &Path, worktrees_dir: &Path, temp_base: &Path, branch: &str, delete_branch: bool) -> Removal {
     let mut out = Removal::default();
     let checked_out = match worktree_of(repo, branch) {
         Ok(None) => false,
@@ -628,16 +796,22 @@ pub fn remove_card_worktree(repo: &Path, worktrees_dir: &Path, branch: &str, del
             out.kept = Some((wt, "it isn't one of Gizai's worktrees".into()));
             true
         }
-        Ok(Some(wt)) => match remove_worktree(repo, &wt) {
-            Ok(()) => {
-                out.removed = Some(wt);
-                false
+        Ok(Some(wt)) => {
+            // named from the worktree's path as it is on disk, so before the worktree goes
+            let temp = run_temp_in(temp_base, &wt);
+            match remove_worktree(repo, &wt) {
+                Ok(()) => {
+                    // only throwaway files: one that can't go doesn't undo the worktree's removal
+                    let _ = remove_from_base(temp_base, &temp);
+                    out.removed = Some(wt);
+                    false
+                }
+                Err(e) => {
+                    out.kept = Some((wt, refusal(e)));
+                    true
+                }
             }
-            Err(e) => {
-                out.kept = Some((wt, refusal(e)));
-                true
-            }
-        },
+        }
         Err(e) => {
             if delete_branch {
                 out.branch_kept = Some(refusal(e));
@@ -672,6 +846,13 @@ fn refusal(e: AgentError) -> String {
 /// that is still there.
 fn inside(path: &Path, dir: &Path) -> bool {
     let Ok(dir) = dir.canonicalize() else { return false };
+    let Some(real) = on_disk(path) else { return false };
+    real != dir && real.starts_with(&dir)
+}
+
+/// `path` as it is on disk: the nearest folder of it that is there with its links resolved, and the rest as written, so
+/// a folder that is gone has the path it had. None when no part of it is there.
+fn on_disk(path: &Path) -> Option<PathBuf> {
     let (mut here, mut rest) = (path.to_path_buf(), vec![]);
     while !here.exists() {
         match (here.file_name(), here.parent()) {
@@ -679,14 +860,14 @@ fn inside(path: &Path, dir: &Path) -> bool {
                 rest.push(name.to_os_string());
                 here = up.to_path_buf();
             }
-            _ => return false,
+            _ => return None,
         }
     }
-    let Ok(mut real) = here.canonicalize() else { return false };
+    let mut real = here.canonicalize().ok()?;
     for name in rest.into_iter().rev() {
         real.push(name);
     }
-    real != dir && real.starts_with(&dir)
+    Some(real)
 }
 
 /// How many files in the checkout at `dir` have uncommitted changes (untracked ones included).

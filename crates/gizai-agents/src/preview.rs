@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use crate::os::{self, End, Tree};
 use crate::run_memory::Slice;
 
-/// The preview's folder in a run's temp folder: its log, and room for a throwaway database (`GIZAI_PREVIEW_DIR`).
+/// The preview's folder in the worktree's `.gizai-tmp`: its log, and room for a throwaway database
+/// (`GIZAI_PREVIEW_DIR`).
 pub const DIR: &str = "preview";
 /// Its output, in that folder.
 pub const LOG: &str = "preview.log";
@@ -32,7 +33,7 @@ pub fn url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// The preview's folder in `worktree`: `<worktree>/.gizai-tmp/preview` (it goes with the temp folder).
+/// The preview's folder in `worktree`: `<worktree>/.gizai-tmp/preview` (emptied with `.gizai-tmp` when the run ends).
 pub fn dir(worktree: &Path) -> PathBuf {
     worktree.join(crate::worktree::TEMP_DIR).join(DIR)
 }

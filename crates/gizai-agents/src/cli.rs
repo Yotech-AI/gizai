@@ -80,8 +80,9 @@ pub struct TaskRun {
     pub writable_dirs: Vec<String>,
     /// The agent's own folders (agent form → Folders) that are there: see `task_exec` for what each CLI gets.
     pub folders: Vec<RunFolder>,
-    /// The run's temp folder (`<worktree>/.gizai-tmp`, `worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and
-    /// TEMP. None when Gizai couldn't make it.
+    /// The run's temp folder, short and outside the worktree (`worktree::prepare_run_temp`), or `<worktree>/.gizai-tmp`
+    /// when that one can't be used (`worktree::prepare_temp`): every CLI gets it as TMPDIR, TMP and TEMP, and may read
+    /// and change it like one of the agent's folders (see `task_exec`). None when Gizai couldn't make either.
     pub temp_dir: Option<String>,
     /// The git settings that send the agent's own push to the project's repository the way Gizai pushes
     /// (`connection::PushOver::run_config`): every CLI gets them as GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and
@@ -157,7 +158,9 @@ pub fn folders_left_out(kind: Kind, folders: &[RunFolder]) -> Option<String> {
 /// - Gemini: `--include-directories` for each read and change folder; read folders are left out;
 /// - Other: none.
 ///
-/// Every CLI gets the run's temp folder as TMPDIR, TMP and TEMP, then the git settings of the agent's own push
+/// The run's temp folder comes after them as one more read and change folder (`--add-dir`, a writable root,
+/// `--include-directories`): it is outside the worktree, and without that Claude Code refuses a command or the Write
+/// tool there. Every CLI gets it as TMPDIR, TMP and TEMP, then the git settings of the agent's own push
 /// (`TaskRun::git_config`) as GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n> and GIT_CONFIG_VALUE_<n>, after its own environment
 /// lines. Codex gets those also in its shell environment policy (`codex_args`).
 pub fn task_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
@@ -182,7 +185,7 @@ fn cli_exec(cli: &CliSpec, run: &TaskRun) -> Exec {
             // slash commands and plugin skills (e.g. superpowers), unless the agent has Slash commands and skills on. Nor
             // is Claude Code's own memory: agents keep their notes in Gizai's.
             disable_hooks: true, disable_skills: !run.slash_commands, disable_auto_memory: true, effort: run.effort.clone(), env: cli.env.clone(),
-            add_dirs: run.folders.iter().map(|f| f.path.clone()).collect(),
+            add_dirs: run.folders.iter().map(|f| f.path.clone()).chain(run.temp_dir.clone()).collect(),
             disallowed_tools: claude_read_only(&run.folders).into_iter().chain(run.disallowed_tools.iter().cloned()).collect(),
             mcp_config: run.mcp_config.clone(),
             ..Default::default()
@@ -226,9 +229,9 @@ fn codex_args(run: &TaskRun) -> Vec<String> {
         _ => {
             a.extend(["-c".into(), r#"sandbox_mode="workspace-write""#.into()]);
             a.extend(["-c".into(), "sandbox_workspace_write.network_access=true".into()]);
-            // The repository's git folder, and the agent's read and change folders.
+            // The repository's git folder, the agent's read and change folders and the run's temp folder.
             let roots: Vec<String> = run.writable_dirs.iter().chain(run.folders.iter().filter(|f| f.change).map(|f| &f.path))
-                .map(|d| toml_str(d)).collect();
+                .chain(&run.temp_dir).map(|d| toml_str(d)).collect();
             if !roots.is_empty() {
                 a.extend(["-c".into(), format!("sandbox_workspace_write.writable_roots=[{}]", roots.join(","))]);
             }
@@ -274,8 +277,8 @@ fn gemini_args(run: &TaskRun) -> Vec<String> {
         a.push("--allowed-tools=web_fetch".into());
     }
     // Gemini's file tools may use these folders as well as the worktree, read and write: it has no read-only folder.
-    for f in run.folders.iter().filter(|f| f.change) {
-        a.push(format!("--include-directories={}", f.path));
+    for dir in run.folders.iter().filter(|f| f.change).map(|f| &f.path).chain(&run.temp_dir) {
+        a.push(format!("--include-directories={dir}"));
     }
     a.extend(["-p".into(), "Do the work described above.".into()]);
     a

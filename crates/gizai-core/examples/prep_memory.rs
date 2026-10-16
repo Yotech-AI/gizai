@@ -2,7 +2,8 @@
 //! paused in Settings too, Claude Code pointed at the fake), and notes that link each other: Decisions/Use SQLite links
 //! Workflows/Deploy steps (also its #Rollback heading), a note that doesn't exist yet (Backup plan), embeds
 //! Standards/Release checklist and names the card KADE-1; Lessons/Flaky tests names Deploy steps without a link (an
-//! unlinked mention). The Backend Agent learned a line in a run on KADE-1 (Recently changed: an agent, in a run).
+//! unlinked mention). The Backend Agent learned a line in a run on KADE-1, which goes in its note for project KADE,
+//! Agents/Backend Agent/KADE (GA-172), next to its Notes (Recently changed: an agent, in a run).
 //! Prints the id of Decisions/Use SQLite, then the Backend Agent's id, on one line.
 //! usage: cargo run -p gizai-core --example prep_memory -- <data dir> <fake claude>
 use gizai_core::memory::{self, Who};

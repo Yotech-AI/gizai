@@ -1561,7 +1561,8 @@ const resultsCount = () => textOf(q(".mem-results > div.faint.mem-pad"));
 const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget: type === "mouseout" ? document.body : null }));
 
 /** GA-68, against prep_memory's notes, starting on Decisions/Use SQLite (`noteId`); `agentId`: the Backend Agent. The
- *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's one. The note
+ *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's two (its Notes
+ *  and, since GA-172, its note for project KADE, Agents/Backend Agent/KADE) and Backend Agent 2 with its one. The note
  *  reads with its links: Deploy steps and an alias to its #Rollback heading, Backup plan dashed (no such note), Release
  *  checklist embedded, KADE-1 a card chip; the panel has its outgoing links (Backup plan with Make it), outline, properties
  *  and tags. Resting on a link previews the note, which closes when the mouse leaves the link and stays when it moves
@@ -1571,8 +1572,8 @@ const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(
  *  note follows) and a drag into another folder. The missing link makes the note from the New note drawer, after which
  *  the link finds it; in the new note's editor [[ lists notes, [[Note# their headings, and Ctrl+click opens a link.
  *  KADE-1 opens the card. The agent's page shows only its folder, also when searching (Backend Agent 2's folder starts
- *  the same), and Recently changed says the agent wrote its notes in a run on KADE-1. The Team Lead's page searches every
- *  note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
+ *  the same), and Recently changed says the agent wrote its KADE note in a run on KADE-1. The Team Lead's page searches
+ *  every note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
  *  prefs are put back at the end. */
 export async function memoryProbe(noteId: string, agentId: string) {
   // GA-69: MODE=memory:graph-a|graph-b|graph-c <agent id> <note id> runs the graph's probe on prep_graph's notes instead.
@@ -1580,13 +1581,14 @@ export async function memoryProbe(noteId: string, agentId: string) {
   const prefs = Object.fromEntries(MEMORY_PREFS.map((k) => [k, localStorage.getItem(k)]));
   const out: Record<string, unknown> = {};
   try {
-    // The sidebar: the Team Lead first (every note, 7), then the Backend Agent and Backend Agent 2 (each its own folder: 1).
+    // The sidebar: the Team Lead first (every note, 8), then the Backend Agent (its own folder: Notes and KADE, 2) and
+    // Backend Agent 2 (its Notes, 1).
     const nav = () => [...document.querySelectorAll('.side .nav-section[aria-label="Memory"] .nav-item')]
       .map((e) => ({ name: textOf(e.querySelector("span")), count: textOf(e.querySelector(".count")), href: e.getAttribute("href") }));
-    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "7" ? true : null), 6000);
+    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "8" ? true : null), 6000);
     out.nav = nav();
     const navOk = JSON.stringify(nav().map((n, i) => (i === 2 ? { ...n, href: "" } : n))) === JSON.stringify([
-      { name: "Team Lead", count: "7", href: "#/memory" }, { name: "Backend Agent", count: "1", href: `#/memory/agent/${agentId}` },
+      { name: "Team Lead", count: "8", href: "#/memory" }, { name: "Backend Agent", count: "2", href: `#/memory/agent/${agentId}` },
       { name: "Backend Agent 2", count: "1", href: "" }]) && (nav()[2]?.href ?? "").startsWith("#/memory/agent/");
     const agentsFirst = textOf(q('.side .nav-section[aria-label="Memory"]')?.previousElementSibling?.querySelector(".nav-label")) === "Agents";
 
@@ -1784,33 +1786,36 @@ export async function memoryProbe(noteId: string, agentId: string) {
     const card = !!(await waitFor(() => (location.hash.startsWith("#/task/") ? true : null), 4000));
     out.card_hash = location.hash;
 
-    // An agent's page: only its folder; Recently changed says it wrote its notes in a run on KADE-1.
+    // An agent's page: only its folder, its Notes and (GA-172) its note for project KADE; Recently changed says it wrote
+    // the KADE note in a run on KADE-1.
+    const sorted = (a: string[]) => [...a].sort();
     location.hash = `#/memory/agent/${encodeURIComponent(agentId)}`;
-    await waitFor(() => (treeNotes().length && q(".mem-change") ? true : null), 5000);
+    await waitFor(() => (treeNotes().length >= 2 && textsOf(".mem-change").length >= 2 ? true : null), 5000);
     out.agent_tree = treeNotes();
     out.agent_recent = textsOf(".mem-change");
-    const agentOk = JSON.stringify(out.agent_tree) === JSON.stringify(["Agents/Backend Agent/Notes"])
-      && (out.agent_recent as string[]).length === 1 && (out.agent_recent as string[])[0]!.includes("Backend Agent in a run on KADE-1")
+    const agentOk = JSON.stringify(sorted(out.agent_tree as string[])) === JSON.stringify(["Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && (out.agent_recent as string[]).length === 2 && (out.agent_recent as string[]).some((t) => t.startsWith("KADEAgents/Backend AgentBackend Agent in a run on KADE-1"))
       && !!q(`.side .nav-section[aria-label="Memory"] a.nav-item.on[href="#/memory/agent/${agentId}"]`);
     // its search keeps to its folder too: Backend Agent 2's notes say "learned" as well
     const agentSearch = q<HTMLInputElement>('input[aria-label="Search notes"]');
     if (agentSearch) typeInto(agentSearch, "learned");
-    await waitFor(() => (q(".mem-hit") ? true : null), 4000);
+    await waitFor(() => (hitPaths().length >= 2 ? true : null), 4000);
     await sleep(400);
     out.agent_search = hitPaths();
     out.agent_search_count = resultsCount();
-    const agentSearchOk = JSON.stringify(out.agent_search) === JSON.stringify(["Agents/Backend Agent/Notes"]) && out.agent_search_count === "1 note";
+    const agentSearchOk = JSON.stringify(sorted(out.agent_search as string[])) === JSON.stringify(["Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && out.agent_search_count === "2 notes";
     if (agentSearch) typeInto(agentSearch, "");
     location.hash = "#/memory";
-    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 8 ? true : null), 5000);
+    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 9 ? true : null), 5000);
     const everyone = textsOf(".mem-change").length;
     buttonByText(q(".mem-recent") ?? document, "Agents")?.click();
     await sleep(200);
     out.recent = { everyone, agents: textsOf(".mem-change") };
-    // by agents: the Backend Agent's notes (in a run), Backend Agent 2's and the Team Lead's (each made its own)
+    // by agents: the Backend Agent's KADE note (in a run) and Notes, Backend Agent 2's and the Team Lead's (each made its own)
     const byAgents = textsOf(".mem-change");
-    const recentOk = everyone === 8 && byAgents.length === 3 && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent in a run on KADE-1"))
-      && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
+    const recentOk = everyone === 9 && byAgents.length === 4 && byAgents.some((t) => t.startsWith("KADEAgents/Backend AgentBackend Agent in a run on KADE-1"))
+      && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent")) && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
 
     // The Team Lead's page searches every note: both agents' notes say "learned"; path:"Team Lead" keeps to its folder.
     // The shared notes' page lists no agent's or Team Lead note: they all say "data", as Use SQLite does.
@@ -1821,14 +1826,14 @@ export async function memoryProbe(noteId: string, agentId: string) {
       await sleep(400);
       return { hits: hitPaths(), count: resultsCount() };
     };
-    const sorted = (a: string[]) => [...a].sort();
-    const leadLearned = await searchFor("learned", () => hitPaths().length >= 2);
+    const leadLearned = await searchFor("learned", () => hitPaths().length >= 3);
     const leadPath = await searchFor('path:"Team Lead" data', () => hitPaths().length === 1 && hitPaths()[0] === "Team Lead/Notes");
-    const leadData = await searchFor("data", () => hitPaths().length >= 4);
+    const leadData = await searchFor("data", () => hitPaths().length >= 5);
     out.lead_search = { learned: leadLearned, team_lead: leadPath, data: leadData };
-    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/Notes"]) && leadLearned.count === "2 notes"
+    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && leadLearned.count === "3 notes"
       && JSON.stringify(leadPath.hits) === JSON.stringify(["Team Lead/Notes"]) && leadPath.count === "1 note"
-      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
+      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
     const typed = q<HTMLInputElement>('input[aria-label="Search notes"]');
     if (typed) typeInto(typed, "");
     location.hash = "#/memory/shared";

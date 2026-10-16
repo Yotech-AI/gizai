@@ -172,12 +172,23 @@ pub fn get(db: &Db, id: &str) -> Result<Team> {
     db.read(|c| get_in(c, id))
 }
 
+/// `get` without each agent's instructions (`instructions_md` None), for the window (GA-191): only an agent's page and
+/// form show them, and they ask `agent`. The agents' and the Team Lead's tools keep `get`'s full rows.
+pub fn get_lean(db: &Db, id: &str) -> Result<Team> {
+    db.read(|c| team_in(c, id, false))
+}
+
 pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Team> {
+    team_in(c, id, true)
+}
+
+fn team_in(c: &Connection, id: &str, instructions: bool) -> Result<Team> {
     let name: String = c
         .query_row("SELECT name FROM teams WHERE id=?1 AND deleted_at IS NULL", [id], |r| r.get(0))
         .optional()?
         .ok_or_else(|| Error::NotFound(format!("team {id}")))?;
-    let mut st = c.prepare(&format!("{MEMBER_SELECT} WHERE m.team_id = ?1 AND m.deleted_at IS NULL AND a.deleted_at IS NULL
+    let select = if instructions { MEMBER_SELECT.to_string() } else { MEMBER_SELECT.replacen("g.instructions_md", "NULL", 1) };
+    let mut st = c.prepare(&format!("{select} WHERE m.team_id = ?1 AND m.deleted_at IS NULL AND a.deleted_at IS NULL
          ORDER BY a.kind DESC, a.name COLLATE NOCASE"))?;
     let members = st.query_map([id], member_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut st = c.prepare(

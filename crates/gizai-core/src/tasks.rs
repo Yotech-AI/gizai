@@ -6,7 +6,7 @@ use crate::{Error, Result, ids};
 use rusqlite::{Connection, OptionalExtension, Row};
 use std::collections::HashMap;
 
-const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, {desc}, t.acceptance_md, t.state_id, s.name,
+const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, {desc}, {acceptance}, t.state_id, s.name,
     s.category, t.priority, t.assignee_actor_id, a.name, a.kind, t.hold, t.hold_reason, t.bounce_count, t.fail_count,
     t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state, t.testing, t.deleted_at,
     CASE WHEN t.deleted_at IS NOT NULL THEN (SELECT x.name FROM changes ch JOIN actors x ON x.id = ch.actor_id
@@ -21,8 +21,11 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
 
-fn select(full: bool) -> String {
-    format!("SELECT {}", COLS.replace("{desc}", if full { "t.description_md" } else { "''" }))
+/// The cards' columns: with the description only when `full`, and the acceptance criteria only with `acceptance`
+/// (otherwise "" and NULL).
+fn select(full: bool, acceptance: bool) -> String {
+    format!("SELECT {}", COLS.replace("{desc}", if full { "t.description_md" } else { "''" })
+        .replace("{acceptance}", if acceptance { "t.acceptance_md" } else { "NULL" }))
 }
 
 fn row(r: &Row) -> rusqlite::Result<Task> {
@@ -61,22 +64,30 @@ fn labels_for(c: &Connection, task_ids: &[String]) -> Result<HashMap<String, Vec
 
 /// Lists omit the description (it can be large); `get` returns it.
 pub fn list(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
-    db.read(|c| {
-        let mut sql = format!("{} WHERE t.deleted_at IS NULL", select(false));
-        if filter.project_id.is_some() {
-            sql.push_str(" AND t.project_id = ?1");
-        }
-        if filter.open_only {
-            sql.push_str(" AND t.state_category NOT IN ('done','cancelled')");
-        }
-        sql.push_str(" ORDER BY s.sort_key, t.sort_key");
-        let mut st = c.prepare(&sql)?;
-        let tasks: Vec<Task> = match &filter.project_id {
-            Some(p) => st.query_map([p], row)?.collect::<rusqlite::Result<_>>()?,
-            None => st.query_map([], row)?.collect::<rusqlite::Result<_>>()?,
-        };
-        with_labels(c, tasks)
-    })
+    db.read(|c| list_in(c, filter, true))
+}
+
+/// `list` without each card's acceptance criteria too (`acceptance_md` None), for the window's lists (GA-191): only a
+/// card's own page shows them, and it asks `get`. The agents' and the Team Lead's tools keep `list`'s full rows.
+pub fn list_lean(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
+    db.read(|c| list_in(c, filter, false))
+}
+
+fn list_in(c: &Connection, filter: &TaskFilter, acceptance: bool) -> Result<Vec<Task>> {
+    let mut sql = format!("{} WHERE t.deleted_at IS NULL", select(false, acceptance));
+    if filter.project_id.is_some() {
+        sql.push_str(" AND t.project_id = ?1");
+    }
+    if filter.open_only {
+        sql.push_str(" AND t.state_category NOT IN ('done','cancelled')");
+    }
+    sql.push_str(" ORDER BY s.sort_key, t.sort_key");
+    let mut st = c.prepare(&sql)?;
+    let tasks: Vec<Task> = match &filter.project_id {
+        Some(p) => st.query_map([p], row)?.collect::<rusqlite::Result<_>>()?,
+        None => st.query_map([], row)?.collect::<rusqlite::Result<_>>()?,
+    };
+    with_labels(c, tasks)
 }
 
 fn with_labels(c: &Connection, mut tasks: Vec<Task>) -> Result<Vec<Task>> {
@@ -92,7 +103,7 @@ fn with_labels(c: &Connection, mut tasks: Vec<Task>) -> Result<Vec<Task>> {
 pub fn archived(db: &Db, project_id: Option<&str>) -> Result<Vec<Task>> {
     db.read(|c| {
         let mut st = c.prepare(&format!(
-            "{} WHERE t.deleted_at IS NOT NULL AND (?1 IS NULL OR t.project_id = ?1) ORDER BY t.deleted_at DESC, t.identifier", select(false)))?;
+            "{} WHERE t.deleted_at IS NOT NULL AND (?1 IS NULL OR t.project_id = ?1) ORDER BY t.deleted_at DESC, t.identifier", select(false, true)))?;
         let tasks: Vec<Task> = st.query_map([project_id], row)?.collect::<rusqlite::Result<_>>()?;
         with_labels(c, tasks)
     })
@@ -124,7 +135,7 @@ pub fn id_of(db: &Db, identifier: &str) -> Result<String> {
 
 pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Task> {
     let mut t = c
-        .query_row(&format!("{} WHERE t.id = ?1", select(true)), [id], row)
+        .query_row(&format!("{} WHERE t.id = ?1", select(true, true)), [id], row)
         .optional()?
         .ok_or_else(|| Error::NotFound(format!("task {id}")))?;
     t.labels = labels_for(c, &[t.id.clone()])?.remove(&t.id).unwrap_or_default();

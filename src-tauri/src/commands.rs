@@ -106,9 +106,10 @@ pub async fn save_project(app: AppHandle, st: State<'_, AppState>, id: Option<St
 }
 
 // ---- tasks ----
+/// Without each card's acceptance criteria (null): only the card's own page shows them, and it asks `get_task` (GA-191).
 #[tauri::command]
 pub async fn list_tasks(st: State<'_, AppState>, filter: TaskFilter) -> R<Vec<Task>> {
-    off(&st, move |st| tasks::list(&st.db, &filter).map_err(e)).await
+    off(&st, move |st| tasks::list_lean(&st.db, &filter).map_err(e)).await
 }
 #[tauri::command]
 pub async fn get_task(st: State<'_, AppState>, id: String) -> R<Task> { off(&st, move |st| tasks::get(&st.db, &id).map_err(e)).await }
@@ -183,6 +184,7 @@ pub async fn add_comment(app: AppHandle, st: State<'_, AppState>, task_id: Strin
 // ---- teams ----
 #[tauri::command]
 pub async fn list_teams(st: State<'_, AppState>) -> R<Vec<team::TeamSummary>> { off(&st, |st| team::list(&st.db).map_err(e)).await }
+/// Without each agent's instructions (null): only an agent's page and form show them, and they ask `get_agent` (GA-191).
 #[tauri::command]
 pub async fn get_team(st: State<'_, AppState>, id: Option<String>) -> R<team::Team> {
     off(&st, move |st| {
@@ -190,7 +192,7 @@ pub async fn get_team(st: State<'_, AppState>, id: Option<String>) -> R<team::Te
             Some(i) => i,
             None => team::list(&st.db).map_err(e)?.first().map(|t| t.id.clone()).ok_or("no team")?,
         };
-        team::get(&st.db, &id).map_err(e)
+        team::get_lean(&st.db, &id).map_err(e)
     }).await
 }
 

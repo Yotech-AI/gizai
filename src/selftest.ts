@@ -10,7 +10,7 @@ import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
-import { OPENED_AT_KEY, OPENED_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
+import { OPENED_AT_KEY, OPENED_KEY, TABS_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
 import { shotUrlCount } from "./lib/shotUrls";
 import { tellMain } from "./lib/behind";
 import { perfCalls, perfCount, perfFirst, perfFrames, perfOn } from "./lib/perf";
@@ -4482,6 +4482,8 @@ async function perfEditor(o: PerfResult, ids: PerfIds) {
   if (!ids.folder || ids.folder === "-") throw new Error("no Editor folder (prep_perf's folder=, made with --editor)");
   await perfSettle();
   perfInUse(o);
+  // every run opens the file anew: the Editor reopens the tabs the run before left (WebKit's storage stays between runs)
+  localStorage.removeItem(TABS_KEY);
   const t0 = performance.now();
   location.hash = `#/editor/${encodeURIComponent(ids.folder)}`;
   if (!(await shown(() => !!document.querySelector(".ed-tree [role=treeitem]"), 30000))) throw new Error("the Editor's tree was not drawn");

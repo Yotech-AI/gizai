@@ -61,7 +61,6 @@ that researches a feature before it's built.
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
 - **Tools per agent.** Give each agent only the commands, folders, MCP servers, web access and hidden browser it needs. [Read more](docs/features/tools.md)
 - **The Inbox.** Questions, approvals, commands to run and cards to review wait for you in one list. [Read more](docs/features/inbox.md)
-- **Screenshots of what was built.** Agents with the browser save screenshots of the screens they changed, served from the card's branch with demo data, and the card shows them on its Screenshots tab before you read the pull request. [Read more](docs/features/screenshots.md)
 
 ## Install
 

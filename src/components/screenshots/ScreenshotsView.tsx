@@ -135,7 +135,7 @@ export function ScreenshotsView({ task, sets, error, runId, project, agent, onSh
   const shown = one ?? all.slice(0, SHOWN_SETS);
   const rest = one ? [] : all.slice(SHOWN_SETS);
   const compared = useMemo(() => new Map(all.map((s) => [s.runId, compare(all, s)])), [all]);
-  // a set that changed under the larger view (a new run's) closes it, as its pictures may be gone
+  // the larger view closes when its set is gone after a reload (cleared), as its pictures are too
   useEffect(() => { if (view && !all.some((s) => s.runId === view.set.runId)) setView(null); }, [all, view]);
   const open = (set: ScreenshotSet, index: number, el: HTMLElement) => { opener.current = el; setView({ set, index }); };
   const close = () => { setView(null); requestAnimationFrame(() => opener.current?.focus()); };

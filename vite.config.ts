@@ -20,6 +20,8 @@ const browserPage = (): Plugin => ({
 // has only index.html, so the app never contains it.
 export default defineConfig(({ mode }) => ({
   plugins: mode === "browser" ? [react(), browserPage()] : [react()],
+  // its own prebundled dependencies, apart from the app's dev server (npm run dev), so the two never mix
+  ...(mode === "browser" ? { cacheDir: "node_modules/.vite-browser" } : {}),
   clearScreen: false,
   server: mode === "browser"
     ? { host: "127.0.0.1", port: Number(process.env.GIZAI_PREVIEW_PORT) || 1430, strictPort: true, watch }

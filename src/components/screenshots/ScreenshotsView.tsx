@@ -2,7 +2,7 @@
 // run, newest first, older runs folded after the newest two; a click on a picture opens the larger view. Full width like
 // Changes. The pictures come through screenshotBytes as blob: URLs while they show (lib/shotUrls).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, CircleAlert, GitCommitHorizontal, Images, Info, PanelRight, Settings, TriangleAlert } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronRight, CircleAlert, GitCommitHorizontal, Image, Images, Info, PanelRight, Settings, TriangleAlert } from "lucide-react";
 import { agentCliTools, agentMcp } from "../../api";
 import { href } from "../../router";
 import { BROWSER } from "../../lib/cliTools";
@@ -14,7 +14,7 @@ import { useNearScreen, useShotUrl } from "../../lib/shotUrls";
 import { reveal } from "../../lib/reveal";
 import { useDrawer } from "../../lib/drawers";
 import type { Member, Project, Screenshot, ScreenshotSet, Task } from "../../types";
-import { Avatar } from "../Avatar";
+import { Avatar, roleIcon } from "../Avatar";
 import { ShotViewer } from "./ShotViewer";
 
 /** One thumbnail: the picture at its own proportions in its cell, its caption, format, size and theme, Changed, Unchanged or
@@ -22,14 +22,13 @@ import { ShotViewer } from "./ShotViewer";
 function Thumb({ shot, pairing, onOpen }: { shot: Screenshot; pairing?: keyof typeof PAIRING_TEXT; onOpen: (el: HTMLElement) => void }) {
   const [ref, near] = useNearScreen<HTMLButtonElement>();
   const { url, error } = useShotUrl(shot, near);
-  const portrait = shot.height * 272 > shot.width * 170;
   return (
     <li>
       <button ref={ref} type="button" className="shot" data-shot={shot.name} aria-label={`${shot.caption}. ${formatOf(shot)}, ${sizeOf(shot)}, ${themeOf(shot)}. Open the larger view`}
         onClick={(e) => onOpen(e.currentTarget)}>
         <span className="shot-cell">
-          {url ? <img src={url} alt="" className={portrait ? "tall" : "wide"} draggable={false} />
-            : <span className="shot-ph" title={error ?? undefined}>{error ? "Couldn’t load this picture" : sizeOf(shot)}</span>}
+          {url ? <img src={url} alt="" draggable={false} />
+            : <span className="shot-ph" title={error ?? undefined}><Image className="icon" aria-hidden />{error ? "Couldn’t load this picture" : sizeOf(shot)}</span>}
         </span>
         <span className="shot-cap">{shot.caption}</span>
         <span className="shot-meta">{formatOf(shot)} · {sizeOf(shot)} · {themeOf(shot)}{pairing && <span className="badge">{PAIRING_TEXT[pairing]}</span>}</span>
@@ -53,17 +52,18 @@ function SetBlock({ set, compared, onOpen, onViewRun }: {
   const answer = answerOf(set);
   const none = noneText(set);
   const commit = shortCommit(set.commit);
+  const Role = roleIcon(set.role);
   return (
     <section className="shot-set" aria-label={`${set.agentName}: ${answer.text}, ${when(set.endedAt)}, ${shotCount(set.shots.length)}`}>
       <div className="shot-head">
         <Avatar name={set.agentName} kind="agent" role={set.role} />
         <b className="who">{set.agentName}</b>
+        {set.role && <Role className="icon role" aria-label={set.role} />}
         <span className={`badge ${answer.cls}`}>{answer.text}</span>
-        <span className="faint" title={new Date(set.endedAt).toLocaleString("en-GB")}>{when(set.endedAt)}</span>
-        <span className="dot-sep" aria-hidden>·</span><span className="n">{shotCount(set.shots.length)}</span>
-        {commit && <><span className="dot-sep" aria-hidden>·</span><span className="commit" title={set.commit ?? undefined}><GitCommitHorizontal className="icon sm" aria-hidden />{commit}</span></>}
-        {compared && <><span className="dot-sep" aria-hidden>·</span><span className="sum">{summaryOf(compared)}</span></>}
-        <button type="button" className="link view-run" onClick={() => onViewRun(set.runId)}>View the run</button>
+        <span className="meta"><span title={new Date(set.endedAt).toLocaleString("en-GB")}>{when(set.endedAt)}</span> · {shotCount(set.shots.length)}</span>
+        {commit && <span className="commit" title={set.commit ?? undefined}><GitCommitHorizontal className="icon sm" aria-hidden />{commit}</span>}
+        {compared && <span className="sum">{summaryOf(compared)}</span>}
+        <button type="button" className="link view-run" onClick={() => onViewRun(set.runId)}>View the run<ArrowRight className="icon sm" aria-hidden /></button>
       </div>
       {set.shots.length > 0 && (
         <ul className="shot-grid">
@@ -106,9 +106,9 @@ function EmptyTab({ task, project, agent, onShowProps }: { task: Task; project: 
   });
   const { title, text } = emptyTexts(reason);
   const action = reason.kind === "no-preview"
-    ? <button type="button" className="btn" onClick={() => { drawer({ kind: "project", id: project.id }); reveal("project-preview"); }}><Settings className="icon" />Set up the preview</button>
+    ? <button type="button" className="btn" onClick={() => { drawer({ kind: "project", id: project.id }); reveal("project-preview", "p-preview"); }}><Settings className="icon" />Set up the preview</button>
     : reason.kind === "agent-off"
-      ? <button type="button" className="btn" onClick={() => { drawer({ kind: "agent", id: reason.agentId }); reveal("agent-browser"); }}><Settings className="icon" />Open {reason.agent} settings</button>
+      ? <button type="button" className="btn" onClick={() => { drawer({ kind: "agent", id: reason.agentId }); reveal("agent-browser", "agent-screenshots"); }}><Settings className="icon" />Open {reason.agent} settings</button>
       : reason.kind === "card-off"
         ? <button type="button" className="btn" onClick={onShowProps}><PanelRight className="icon" />Show properties</button>
         : <a className="link accent" href={href({ page: "settings", id: "agents" })} onClick={() => reveal("settings-screenshots")}>Screenshot settings</a>;

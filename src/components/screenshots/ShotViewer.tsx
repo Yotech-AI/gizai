@@ -5,7 +5,7 @@
 import {
   useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject,
 } from "react";
-import { ChevronLeft, ChevronRight, Columns2, ExternalLink, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Columns2, ExternalLink, GitCommitHorizontal, Image, X } from "lucide-react";
 import { openFile } from "../../api";
 import { answerOf, compare, formatOf, PAIRING_TEXT, shortCommit, sizeOf, themeOf, when } from "../../lib/screenshots";
 import { useShotUrl } from "../../lib/shotUrls";
@@ -41,7 +41,7 @@ function Picture({ shot, size, label }: { shot: Screenshot; size?: Size; label?:
   const { url, error } = useShotUrl(shot);
   const style = size ? { width: size.w, height: size.h } : { width: shot.width, height: shot.height };
   return url ? <img className="sv-pic" src={url} alt={label ?? shot.caption} style={style} draggable={false} />
-    : <span className="sv-pic sv-ph" style={style} role="img" aria-label={label ?? shot.caption}>{error ? "Couldn’t load this picture" : sizeOf(shot)}</span>;
+    : <span className="sv-pic sv-ph" style={style} role="img" aria-label={label ?? shot.caption}><Image className="icon" aria-hidden />{error ? "Couldn’t load this picture" : sizeOf(shot)}</span>;
 }
 
 /** Slider: the run before left of the line (under a tint), this run right of it; drag the line, or move it with the keys
@@ -162,10 +162,8 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
         <div className="sv-head">
           <span className="sv-count">{i + 1} of {n}</span>
           <Avatar name={set.agentName} kind="agent" role={set.role} size="sm" />
-          <b>{set.agentName}</b>
-          <span className={`badge ${answer.cls}`}>{answer.text}</span>
-          <span className="faint">{when(set.endedAt)}</span>
-          {commit && <span className="commit faint">{commit}</span>}
+          <span className="sv-who">{set.agentName} · {answer.text} · {when(set.endedAt)}</span>
+          {commit && <span className="commit"><GitCommitHorizontal className="icon sm" aria-hidden />{commit}</span>}
           <span className="grow" />
           {comparing ? (
             <div className="seg" role="group" aria-label="How to compare">
@@ -180,7 +178,7 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
           )}
           <button type="button" className="btn sm" aria-pressed={comparing} disabled={!before} title={compareTitle} onClick={toggleCompare}>
             <Columns2 className="icon" />Compare</button>
-          <button type="button" className="btn sm" onClick={open} title="Open it in the system’s image viewer"><ExternalLink className="icon" />Open</button>
+          <button type="button" className="btn ghost sm" onClick={open} title="Open it in the system’s image viewer"><ExternalLink className="icon" />Open</button>
           <button type="button" className="btn ghost sm icon-only" aria-label="Close" title="Close (Esc)" onClick={onClose}><X className="icon" /></button>
         </div>
         {err && <div className="error-banner" role="alert">{err}</div>}
@@ -191,8 +189,8 @@ export function ShotViewer({ sets, set, start, onClose }: { sets: ScreenshotSet[
             <div className="sv-side">
               {([["The run before", "", compared!.before, before], ["This run", "info", set, shot]] as const).map(([label, cls, s, pic]) => (
                 <figure key={label} className="sv-pane">
-                  <figcaption><span className={`badge ${cls}`}>{label}</span><span>{s.agentName}</span><span className="faint">{when(s.endedAt)}</span>
-                    {s.commit && <span className="commit faint">{shortCommit(s.commit)}</span>}</figcaption>
+                  <figcaption><span className={`badge ${cls}`}>{label}</span><span>{s.agentName} · {when(s.endedAt)}</span>
+                    {s.commit && <span className="commit"><GitCommitHorizontal className="icon sm" aria-hidden />{shortCommit(s.commit)}</span>}</figcaption>
                   <Picture shot={pic} size={fit(pic, side)} label={`${label}: ${pic.caption}`} />
                 </figure>
               ))}

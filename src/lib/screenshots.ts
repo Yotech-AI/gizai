@@ -35,7 +35,7 @@ export function answerOf(s: Pick<ScreenshotSet, "outcome" | "status">): { cls: s
   if (s.status === "timed_out") return { cls: "warn", text: "Stopped at the time limit" };
   if (s.status === "cancelled") return { cls: "", text: "Stopped" };
   switch (s.outcome) {
-    case "ready_for_testing": return { cls: "", text: "Ready for testing" };
+    case "ready_for_testing": return { cls: "info", text: "Ready for testing" };
     case "qa_pass": return { cls: "ok", text: "QA passed" };
     case "qa_fail": return { cls: "fail", text: "QA failed" };
     case "needs_decision": return { cls: "needs", text: "Needs a decision" };

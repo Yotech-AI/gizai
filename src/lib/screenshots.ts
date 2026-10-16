@@ -109,18 +109,25 @@ export function summaryOf(c: Compared): string {
   return (["changed", "unchanged", "new"] as const).filter((k) => c.counts[k] > 0).map((k) => `${c.counts[k]} ${k}`).join(", ");
 }
 
+/** The backend's sentences with the app's apostrophe, as the design writes them: "didn't" → "didn’t". */
+const curly = (s: string) => s.replace(/'/g, "’");
+
+/** A set with pictures whose preview didn't start (the agent served the page itself): "The preview didn’t start: …." */
+export const previewText = (why: string) => `The preview didn’t start: ${curly(why.trim().replace(/\.$/, ""))}.`;
+
 /** "Not taken this time: a.png, b.png." */
 export const notTakenText = (names: string[]) => `Not taken this time: ${names.join(", ")}.`;
 
 /** One of the backend's "<name>: <why>" lines as the design writes it: "notes.txt isn’t a PNG, JPEG or WebP image",
- *  "13-board.png is over the limit of 12 a run"; any other why stays after its colon. */
+ *  "13-board.png is over the limit of 12 a run", "screenshots couldn’t be read (…)"; any other why stays after its colon. */
 function leftOutLine(line: string): string {
-  const l = line.trim().replace(/\.$/, "");
+  const l = curly(line.trim().replace(/\.$/, ""));
   const at = l.indexOf(": ");
   if (at < 0) return l;
   const name = l.slice(0, at), why = l.slice(at + 2);
   if (why.startsWith("not ")) return `${name} isn’t ${why.slice(4)}`;
   if (/^(over|under|too) /.test(why)) return `${name} is ${why}`;
+  if (why.startsWith("couldn’t ")) return `${name} ${why}`;
   return l;
 }
 
@@ -133,7 +140,7 @@ export function leftOutText(lines: string[]): string {
 export function noneText(s: ScreenshotSet): { kind: "preview" | "none"; text: string } | null {
   if (s.shots.length > 0) return null;
   if (s.preview) {
-    const why = s.preview.trim().replace(/\.$/, "");
+    const why = curly(s.preview.trim().replace(/\.$/, ""));
     return { kind: "preview", text: `The preview didn’t start: ${why[0].toLowerCase()}${why.slice(1)}, so the agent took none. Its last lines are in the run.` };
   }
   if (s.leftOut.length > 0) return null;

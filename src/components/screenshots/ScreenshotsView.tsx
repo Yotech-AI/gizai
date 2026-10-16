@@ -3,12 +3,12 @@
 // Changes. The pictures come through screenshotBytes as blob: URLs while they show (lib/shotUrls).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, ChevronDown, ChevronRight, CircleAlert, GitCommitHorizontal, Image, Images, Info, PanelRight, Settings, TriangleAlert } from "lucide-react";
-import { agentCliTools, agentMcp } from "../../api";
+import { agentCliTools } from "../../api";
 import { href } from "../../router";
-import { BROWSER } from "../../lib/cliTools";
+import { browserOn } from "../../lib/cliTools";
 import {
-  answerOf, compare, emptyReason, emptyTexts, formatOf, leftOutText, noneText, notTakenText, olderCount, olderText, PAIRING_TEXT, shortCommit,
-  shotCount, SHOWN_SETS, sizeOf, summaryOf, themeOf, when, type Compared, type EmptyReason,
+  answerOf, compare, emptyReason, emptyTexts, formatOf, leftOutText, noneText, notTakenText, olderCount, olderText, PAIRING_TEXT, previewText,
+  shortCommit, shotCount, SHOWN_SETS, sizeOf, summaryOf, themeOf, when, type Compared, type EmptyReason,
 } from "../../lib/screenshots";
 import { useNearScreen, useShotUrl } from "../../lib/shotUrls";
 import { reveal } from "../../lib/reveal";
@@ -71,28 +71,28 @@ function SetBlock({ set, compared, onOpen, onViewRun }: {
         </ul>
       )}
       {none && <Note kind={none.kind === "preview" ? "preview" : "none"}>{none.text}</Note>}
-      {set.shots.length > 0 && set.preview && <Note kind="preview">{`The preview didn’t start: ${set.preview.replace(/\.$/, "")}.`}</Note>}
+      {set.shots.length > 0 && set.preview && <Note kind="preview">{previewText(set.preview)}</Note>}
       {set.leftOut.length > 0 && <Note kind="left">{leftOutText(set.leftOut)}</Note>}
       {compared && compared.notTaken.length > 0 && <Note kind="none">{notTakenText(compared.notTaken)}</Note>}
     </section>
   );
 }
 
-/** Whether the card's agent takes screenshots: its browser and its Take screenshots switch. */
+/** Whether the card's agent takes screenshots: its browser switch (the agent's own, as its form has it: the built-in
+ *  browser isn't one of Settings' MCP servers), on a CLI that has the browser, and its Take screenshots switch. */
 function useAgentShots(agent: Member | null) {
-  const [state, setState] = useState<{ id: string; browser: boolean; screenshots: boolean } | null>(null);
+  const [state, setState] = useState<{ id: string; disabled: boolean } | null>(null);
   const id = agent?.actorId ?? null, cli = agent?.adapter || "claude_code";
   useEffect(() => {
     if (!id) { setState(null); return; }
     let alive = true;
-    Promise.all([agentMcp(id), agentCliTools(id, cli)]).then(([mcp, tools]) => {
-      if (!alive) return;
-      const browser = mcp.servers.some((s) => s.serverId === BROWSER && s.on) && !tools.browser.disabled;
-      setState({ id, browser, screenshots: browser && !!tools.saved?.screenshots });
-    }).catch(() => alive && setState({ id, browser: true, screenshots: true }));
+    agentCliTools(id, cli).then((tools) => { if (alive) setState({ id, disabled: !!tools.browser.disabled }); })
+      .catch(() => { if (alive) setState({ id, disabled: false }); });
     return () => { alive = false; };
   }, [id, cli]);
-  return state && state.id === id ? state : null;
+  if (!agent || !state || state.id !== id) return null;
+  const browser = browserOn(agent.tools?.mcp ?? []) && !state.disabled;
+  return { browser, screenshots: browser && !!agent.cliTools?.screenshots };
 }
 
 /** The empty tab: why there are none, with a link to the setting that changes it. */

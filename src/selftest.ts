@@ -4375,8 +4375,10 @@ async function perfMemory(o: PerfResult) {
   let typed = 0;
   const f = await perfFrames(10000, () => { if (typed < word.length) typeInto(input, word.slice(0, ++typed)); }, () => typed >= word.length);
   const last = performance.now();
-  const hits = await shown(() => !!document.querySelector(".mem-results [role=listitem], .mem-results > *"), 5000);
+  // "Searching…" until the search, 150 ms after the last key, has answered: then the hits, or no match
+  const hits = await shown(() => { const box = q(".mem-results"); return !!box && !(box.textContent ?? "").includes("Searching…"); }, 5000);
   o.numbers.search_results_ms = hits ? ms(performance.now() - last) : -1;
+  o.numbers.search_hits = document.querySelectorAll(".mem-results .mem-hit").length;
   o.numbers.search_fps = f.fps;
   o.numbers.search_longest_frame_ms = f.longestFrameMs;
   typeInto(input, "");

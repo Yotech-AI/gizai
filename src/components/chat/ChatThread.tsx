@@ -4,9 +4,10 @@
 // chat's answers run on) and Send, or Stop while the Team Lead answers.
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
-import { chatRunsOn, groupMessages, SUGGESTIONS, toolName } from "../../lib/chat";
+import { chatRunsOn, groupMessages, SUGGESTIONS, toolName, type Group } from "../../lib/chat";
 import { addPaths } from "../../lib/files";
 import { placePending } from "../../lib/pending";
 import { usePending, type Pending } from "../../lib/usePending";
@@ -135,6 +136,12 @@ function Queued({ q, waiting, onError }: { q: QueuedMessage; waiting: boolean; o
   );
 }
 
+/** About how tall a group of messages draws, before it is measured: a header, and a line per 90 characters. */
+function groupHeight(g: Group): number {
+  if (g.side === "system") return 52;
+  return g.items.reduce((h, m) => h + 30 + 22 * Math.ceil(Math.max(1, (m.bodyMd ?? "").length) / 90), 50);
+}
+
 export function ChatThread({ threadId, thread, agent }: { threadId: string | null; thread?: Thread; agent: Member }) {
   const { messages, draft, tool, working, queue, error, setWorking, pending: calls } = useChat(threadId);
   // GA-102: the Team Lead's calls that wait for your approval in this chat, each under the answer that tried it.
@@ -241,6 +248,24 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
 
   // Worked out again only when the messages or the waiting calls change, not for each streamed piece (GA-176).
   const groups = useMemo(() => groupMessages(messages), [messages]);
+  // Only the groups in sight, and a margin around them, are in the page (GA-190): a long chat opens and scrolls like a
+  // short one. Each group's height is measured as it shows; the others are space of the height they had, or are thought
+  // to have. The list starts below what comes before it in the column (its padding, an error).
+  const list = useRef<HTMLDivElement>(null);
+  const [above, setAbove] = useState(0);
+  const virt = useVirtualizer({
+    count: groups.length, getScrollElement: () => scroller.current, getItemKey: (i) => groups[i]!.key, estimateSize: (i) => groupHeight(groups[i]!),
+    overscan: 6, scrollMargin: above,
+    // it opens at its end (the virtualizer scrolls there as the chat shows); before the chat is measured, about a screen
+    // and a half of groups
+    initialOffset: Number.MAX_SAFE_INTEGER, initialRect: { width: 0, height: 1200 },
+  });
+  useLayoutEffect(() => {
+    const s = scroller.current, l = list.current;
+    if (!s || !l || typeof l.getBoundingClientRect !== "function") return;
+    const at = Math.round(l.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop);
+    if (at !== above) setAbove(at);
+  });
   const last = groups[groups.length - 1];
   const placed = useMemo(() => placePending(groups, waitingCalls), [groups, waitingCalls]);
   const under = useMemo(() => new Map([...placed].map(([key, actions]) => [key, <PendingActions actions={actions} onError={setSendError} />])), [placed]);
@@ -251,6 +276,9 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
       <div className="chat-working" role="status"><span className="pulse" />{tool ? `Using ${toolName(tool).replace(/_/g, " ")}` : draft ? "Writing" : "Thinking"}…</div>
     </>
   ) : null;
+
+  const rows = virt.getVirtualItems();
+  const below = rows.length ? virt.getTotalSize() - (rows[rows.length - 1]!.end - above) : 0;
 
   return (
     <section className={`chat-main${dropping ? " dropping" : ""}`} ref={zone}>
@@ -268,8 +296,19 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
               </div>
             </div>
           )}
-          {groups.map((g, i) => <MessageGroup key={g.key} g={g} agentRole={agent.roleKey} noteActions={noteActions}
-            live={i === groups.length - 1 && g.side === "agent" ? liveBits : undefined} after={g.side === "agent" ? callsUnder(g.key) : undefined} />)}
+          <div ref={list}>
+            {rows.length > 0 && rows[0]!.start > above && <div aria-hidden style={{ height: rows[0]!.start - above }} />}
+            {rows.map((r) => {
+              const g = groups[r.index]!;
+              return (
+                <div key={r.key} className="chat-row" data-index={r.index} ref={virt.measureElement}>
+                  <MessageGroup g={g} agentRole={agent.roleKey} noteActions={noteActions}
+                    live={r.index === groups.length - 1 && g.side === "agent" ? liveBits : undefined} after={g.side === "agent" ? callsUnder(g.key) : undefined} />
+                </div>
+              );
+            })}
+            {below > 0 && <div aria-hidden style={{ height: below }} />}
+          </div>
           {working && last?.side !== "agent" && (
             <MessageGroup g={{ side: "agent", key: "live", at: Date.now(), author: agent.name, items: [] }} agentRole={agent.roleKey} live={liveBits} />
           )}

@@ -392,6 +392,8 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 /* ---------- chat (ChatMessage, ToolCard, ChatSetup) ---------- */
 .chat-col { max-width: calc(760px * var(--chat-scale, 1)); margin: 0 auto; padding: 24px; }
 .chat-group { margin-bottom: 22px; }
+/* a group in the chat's list (GA-190): it holds its margins, so its measured height is all the room it takes */
+.chat-row { display: flow-root; }
 .chat-group.user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 /* Your message spans the column, so its bubble's 85% is of the column, not of the bubble itself (which wrapped its
    last words); the bubble is as wide as its text. */

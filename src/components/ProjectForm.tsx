@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { Plus, X } from "lucide-react";
 import { checkRepo, getProject, listClients, saveProject, type RepoCheck } from "../api";
 import { go } from "../router";
-import type { Project, ProjectInput } from "../types";
+import type { Project, ProjectInput, ProjectScreenshots } from "../types";
 import { modKey } from "../lib/keys";
 import { suggestKey } from "../lib/projectKey";
+import {
+  HEIGHT, nextSize, projectShotsFrom, projectShotsProblem, shownNumber, SIZES, START_SECS, typedNumber, WIDTH, type ShotSize, type ShotsProblem,
+} from "../lib/screenshotSettings";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -12,6 +16,8 @@ import { MarkdownEditor } from "./MarkdownEditor";
 /** The design system's decorative colours (c-blue … c-grey). */
 export const PROJECT_COLORS = ["#6f97ff", "#3fb8a0", "#e3bd3c", "#a98bfa", "#f29a4a", "#e77ab3", "#f2706b", "#8a8e98"];
 
+/** The form's values for project `p`, or a new project's. Preview (GA-185): Screenshots on, Desktop 1280 × 800 and Mobile
+ *  390 × 844, one theme, one window's height, no Preview command (saved as "", which leaves none) and 120 seconds. */
 export function toProjectInput(p?: Project | null): ProjectInput {
   return {
     name: p?.name ?? "", key: p?.key ?? "", clientId: p?.clientId ?? null, status: p?.status ?? "active", goalMd: p?.goalMd ?? "",
@@ -19,12 +25,28 @@ export function toProjectInput(p?: Project | null): ProjectInput {
     budgetAmountMinor: p?.budgetAmountMinor ?? null, budgetHours: p?.budgetHours ?? null,
     worktreeCopy: p?.worktreeCopy ?? [], worktreeInstall: p?.worktreeInstall ?? true, worktreeSetup: p?.worktreeSetup ?? "",
     leadMayMerge: p?.leadMayMerge ?? false,
+    screenshots: projectShotsFrom(p?.screenshots), previewCommand: p?.previewCommand ?? "", previewStartSecs: p?.previewStartSecs ?? START_SECS.default,
   };
 }
 
 /** The copy list as typed: one path per line. */
 export function copyPaths(text: string): string[] {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
+/** The input of a size's name, width or height in Preview → Sizes. */
+const sizeInput = (i: number, part: "name" | "width" | "height") => `p-size-${i}-${part}`;
+/** The input that holds Preview's problem. */
+const problemInput = (p: ShotsProblem) => (p.at === "start" ? "p-start" : p.at === "sizes" ? sizeInput(0, "name") : sizeInput(p.size, p.at));
+
+/** Puts the focus on the input `id` once the form has drawn it, its text selected with `select`. */
+function focusSoon(id: string, select = false) {
+  setTimeout(() => {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    el?.focus();
+    if (select) el?.select();
+  }, 0);
 }
 
 /** New project (no id) or edit one, in a drawer. */
@@ -58,7 +80,19 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
     const dir = await open({ directory: true, multiple: false, title: "Choose the project's git repository" });
     if (typeof dir === "string") set("repoPath", dir);
   };
+  // Preview (GA-185): the project's screenshots, its Preview command and Start time
+  const shots = v.screenshots ?? projectShotsFrom(null);
+  const setShots = (s: Partial<ProjectScreenshots>) => setV({ ...v, screenshots: { ...shots, ...s } });
+  const setSize = (i: number, s: Partial<ShotSize>) => setShots({ sizes: shots.sizes.map((x, j) => (j === i ? { ...x, ...s } : x)) });
+  const addSize = () => { setShots({ sizes: [...shots.sizes, nextSize(shots.sizes)] }); focusSoon(sizeInput(shots.sizes.length, "name"), true); };
+  const removeSize = (i: number) => {
+    setShots({ sizes: shots.sizes.filter((_, j) => j !== i) });
+    focusSoon(sizeInput(Math.min(i, shots.sizes.length - 2), "name"));
+  };
   const save = async () => {
+    // A value outside its range is refused before saving, with why, as the backend would refuse it.
+    const problem = projectShotsProblem(v);
+    if (problem) { setErr(problem.message); focusSoon(problemInput(problem)); return; }
     setBusy(true);
     try { const saved = await saveProject(id ?? null, v); onClose(); if (isNew) go({ page: "project", id: saved }); }
     catch (e) { setErr(String(e)); setBusy(false); }
@@ -114,6 +148,46 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
           </Field>
           <Field label="Setup command" htmlFor="p-setup" wide hint="Optional. Runs in each new worktree after the install, before the agent starts: a migration, a build. If it fails, the card goes on hold with its output.">
             <input id="p-setup" className="input mono" value={v.worktreeSetup ?? ""} onChange={(e) => set("worktreeSetup", e.target.value)} placeholder="php artisan migrate --seed" />
+          </Field>
+        </FormSection>
+        <FormSection id="project-preview" title="Preview" text="While an agent works on a card, Gizai serves the card’s branch with demo data, so the agent can take screenshots of the screens it changed. The card shows them on its Screenshots tab.">
+          <Field label="Screenshots" htmlFor="p-shots" wide hint="On by default. Off: no agent takes any here, and its cards have no Screenshots tab.">
+            <label className="check"><input id="p-shots" type="checkbox" checked={shots.on} onChange={(e) => setShots({ on: e.target.checked })} />Take screenshots of this project’s screens</label>
+          </Field>
+          <Field label="Preview command" htmlFor="p-preview" wide
+            hint="Empty by default: no preview, so no screenshots. Runs with bash -c in the card’s worktree when a run starts whose agent takes screenshots, on a free port in GIZAI_PREVIEW_PORT (and PORT), with GIZAI_PREVIEW_DIR for a throwaway database. Serve demo data, never your .env database. Gizai ends it with the run.">
+            <input id="p-preview" className="input mono" spellCheck={false} autoComplete="off" value={v.previewCommand ?? ""} onChange={(e) => set("previewCommand", e.target.value)}
+              placeholder={'npx astro dev --host 127.0.0.1 --port "$GIZAI_PREVIEW_PORT" --ignore-lock'} />
+          </Field>
+          <Field label="Start time (seconds)" htmlFor="p-start" hint="10 to 600; 120 by default. The agent starts once the page answers, or after this long without it.">
+            <input id="p-start" className="input" type="number" min={START_SECS.low} max={START_SECS.high} step={1} value={shownNumber(v.previewStartSecs)}
+              onChange={(e) => set("previewStartSecs", typedNumber(e.target.value))} />
+          </Field>
+          <Field label="Themes" htmlFor="p-themes" hint="Off by default (on for Gizai). On: each changed screen in the first theme, and the card’s main screen in the other one too.">
+            <label className="check"><input id="p-themes" type="checkbox" checked={shots.bothThemes} onChange={(e) => setShots({ bothThemes: e.target.checked })} />Both themes, dark and light</label>
+          </Field>
+          <Field label="Sizes" htmlFor={sizeInput(0, "name")} wide
+            hint="1 to 4 sizes, each 320 to 3840 wide and 320 to 2400 high. Desktop 1280 × 800 and Mobile 390 × 844 by default; Gizai’s own are Window 1440 × 900 and Small 900 × 600.">
+            <div className="shot-sizes" role="group" aria-label="Sizes">
+              {shots.sizes.map((size, i) => (
+                <div key={i} className="shot-size">
+                  <input id={sizeInput(i, "name")} className="input shot-name" aria-label={`Name of size ${i + 1}`} value={size.name} placeholder="Desktop"
+                    onChange={(e) => setSize(i, { name: e.target.value })} />
+                  <input id={sizeInput(i, "width")} className="input shot-px" type="number" min={WIDTH.low} max={WIDTH.high} step={1} aria-label={`Width of size ${i + 1}`}
+                    value={shownNumber(size.width)} onChange={(e) => setSize(i, { width: typedNumber(e.target.value) })} />
+                  <span className="faint" aria-hidden="true">×</span>
+                  <input id={sizeInput(i, "height")} className="input shot-px" type="number" min={HEIGHT.low} max={HEIGHT.high} step={1} aria-label={`Height of size ${i + 1}`}
+                    value={shownNumber(size.height)} onChange={(e) => setSize(i, { height: typedNumber(e.target.value) })} />
+                  {shots.sizes.length > SIZES.low && (
+                    <button type="button" className="btn ghost sm icon-only" aria-label={`Remove size ${i + 1}`} title="Remove" onClick={() => removeSize(i)}><X className="icon" /></button>
+                  )}
+                </div>
+              ))}
+              {shots.sizes.length < SIZES.high && <button type="button" className="btn ghost sm" onClick={addSize}><Plus className="icon" />Add a size</button>}
+            </div>
+          </Field>
+          <Field label="Whole page" htmlFor="p-fullpage" wide hint="Off by default: one window’s height at each size.">
+            <label className="check"><input id="p-fullpage" type="checkbox" checked={shots.fullPage} onChange={(e) => setShots({ fullPage: e.target.checked })} />The whole length of each page</label>
           </Field>
         </FormSection>
         <FormSection title="Budget" text="Optional. Shown on the project page.">

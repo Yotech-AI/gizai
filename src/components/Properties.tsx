@@ -1,10 +1,12 @@
 // The task's properties panel (design system: PropertiesPanel). Values are popover pickers; changes save at once.
 import { Check, X } from "lucide-react";
-import { listTasks, moveTask, setTaskLabels, updateTask } from "../api";
+import { getProject, listTasks, moveTask, setTaskLabels, updateTask } from "../api";
 import { href } from "../router";
 import { relTime, textEnd } from "../lib/format";
 import { keyBetween } from "../lib/sortKey";
 import { files } from "../lib/changes";
+import { cardShotsHint } from "../lib/screenshotSettings";
+import { useData } from "../lib/useData";
 import type { CardChanges, Person, Task, Team } from "../types";
 import { PRIORITY_NAMES, PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
@@ -27,6 +29,8 @@ export function Properties({ task, team, people, onError, onClose, onReadComment
   changes?: CardChanges | null;
 }) {
   const run = (p: Promise<unknown>) => p.catch((e) => onError(String(e)));
+  // The project's Screenshots switch, which Screenshots before Review follows until the card has its own (GA-185)
+  const { data: project } = useData(() => (task.projectId ? getProject(task.projectId) : Promise.resolve(null)), [task.projectId]);
   // A value that opens its picker, or only shows when the card is read-only.
   const pick = (label: string, cls: string, value: React.ReactNode, menu: (close: () => void) => React.ReactNode, style?: React.CSSProperties) => readOnly
     ? <span className={`v${cls}`} style={style}>{value}</span>
@@ -43,6 +47,10 @@ export function Properties({ task, team, people, onError, onClose, onReadComment
   };
   const row = (k: string, v: React.ReactNode) => <div className="prop-row"><span className="k">{k}</span>{v}</div>;
   const testing = task.testing !== false; // on unless the card says off
+  // Screenshots before Review: the card's own switch, else its project's (on until the project says, as a new one is)
+  const ownShots = task.screenshots ?? null;
+  const projectShots = project?.screenshots?.on;
+  const projectName = task.projectName || project?.name || "the project";
   // A long hold reason is usually the agent's whole summary, which the comments show: only its end (the questions) here.
   const reasonEnd = task.holdReason ? textEnd(task.holdReason, REASON_CHARS) : null;
   return (
@@ -55,6 +63,19 @@ export function Properties({ task, team, people, onError, onClose, onReadComment
           (close) => [1, 2, 3, 4, 0].map((p) => <button key={p} className="opt" onClick={() => { close(); run(updateTask(task.id, { priority: p })); }}><PriorityIcon priority={p} />{PRIORITY_NAMES[p]}{p === task.priority && <Check className="icon tick" />}</button>)))}
         {row("Testing", <label className={`v${readOnly ? "" : " editable"} check`} title={testing ? "On: the QA Agent tests the card before Review" : "Off: the card skips Testing and goes straight to Review"}>
           <input type="checkbox" checked={testing} disabled={readOnly} onChange={(e) => run(updateTask(task.id, { testing: e.target.checked }))} />Test before Review</label>)}
+        <div className="prop-row prop-shots">
+          <span className="k">Screenshots</span>
+          <label className={`v${readOnly ? "" : " editable"} check`}>
+            <input id="props-screenshots" type="checkbox" checked={ownShots ?? projectShots ?? true} disabled={readOnly} aria-describedby="props-screenshots-hint"
+              onChange={(e) => run(updateTask(task.id, { screenshots: e.target.checked }))} />Screenshots before Review</label>
+          <div className="prop-note">
+            <span id="props-screenshots-hint">{cardShotsHint(ownShots, projectShots, projectName)}</span>
+            {!readOnly && ownShots !== null && (
+              <button type="button" className="btn ghost sm" title={`Follow ${projectName}’s Screenshots switch again`}
+                onClick={() => run(updateTask(task.id, { screenshots: null }))}>{`Follow ${projectName}`}</button>
+            )}
+          </div>
+        </div>
         {row("Labels", pick("Labels", task.labels.length ? "" : " none",
           task.labels.length ? task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>) : "No labels",
           () => (<>

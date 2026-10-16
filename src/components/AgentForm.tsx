@@ -11,6 +11,7 @@ import { cliToolsToSave, fitCliTools, sameCliTools } from "../lib/cliTools";
 import { modKey } from "../lib/keys";
 import { cleanSwitches, sameSwitches } from "../lib/mcp";
 import { effortChoices, findModel, modelHint } from "../lib/models";
+import { screenshotsDefault } from "../lib/screenshotSettings";
 import type { AgentFolder, CliKind, CliStatus, FolderCheck, Member, ModelOption } from "../types";
 export type { AgentPreset } from "../lib/agents";
 import { AgentCliToolsFields } from "./AgentCliTools";
@@ -156,6 +157,7 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
   const [busy, setBusy] = useState(false);
   const edited = useRef(!isNew); // once the instructions are edited, a role change no longer replaces them
   const toolsEdited = useRef(!isNew); // the same for the allowed commands
+  const shotsSwitched = useRef(false); // once Take screenshots is switched, a new agent's role change no longer sets it
   const added = useRef<string | null>(null);
   const lastTemplate = useRef("");
   const lastTools = useRef("");
@@ -180,10 +182,19 @@ export function AgentDrawer({ teamId, agentId, preset, onClose }: { teamId?: str
     if (toolsEdited.current || role === undefined) return;
     roleTools(role || "agent").then((list) => { const t = list.join("\n"); lastTools.current = t; setD((x) => (x ? { ...x, tools: t } : x)); setInitial((x) => (x && isNew ? { ...x, tools: t } : x)); }).catch(() => {});
   }, [role, isNew]);
+  // A new agent's Take screenshots of what it built (GA-185) is its role's default until you switch it, which is what the
+  // backend gives an agent whose switch isn't sent: saving sends it only when it differs from that default.
+  useEffect(() => {
+    if (!isNew || role === undefined) return;
+    const on = screenshotsDefault(role);
+    setInitial((x) => (x ? { ...x, cliTools: { ...x.cliTools, screenshots: on } } : x));
+    if (!shotsSwitched.current) setD((x) => (x ? { ...x, cliTools: { ...x.cliTools, screenshots: on } } : x));
+  }, [role, isNew]);
   if (!d || !initial) return null;
   const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => {
     if (k === "instructions" && v !== lastTemplate.current) edited.current = true;
     if (k === "tools" && v !== lastTools.current) toolsEdited.current = true;
+    if (k === "cliTools" && (v as AgentDraft["cliTools"]).screenshots !== d.cliTools.screenshots) shotsSwitched.current = true;
     setD((x) => (x ? { ...x, [k]: v } : x));
   };
   const custom = !ROLES.includes(d.role);

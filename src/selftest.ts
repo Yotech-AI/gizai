@@ -4371,7 +4371,7 @@ async function perfMemory(o: PerfResult) {
   const input = q<HTMLInputElement>('input[aria-label="Search notes"]');
   if (!input) throw new Error("no Memory search");
   input.focus();
-  const word = "Note 12 deploy";
+  const word = "Note 12";
   let typed = 0;
   const f = await perfFrames(10000, () => { if (typed < word.length) typeInto(input, word.slice(0, ++typed)); }, () => typed >= word.length);
   const last = performance.now();

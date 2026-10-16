@@ -646,12 +646,14 @@ pub fn run() {
                 });
             }
             // Once a minute the agents take cards that had to wait (the run limit was full, Gizai just started), and the
-            // Team Lead checks the board when its interval has passed; only new findings start it.
+            // Team Lead checks the board when its interval has passed; only new findings start it. The cards start on
+            // their own (GA-191): the board check doesn't wait for a card's fetch and install.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
-                    let _ = runs::pull(&state).await;
+                    let st = state.clone();
+                    tauri::async_runtime::spawn(async move { runs::pull(&st).await; });
                     let _ = board::tick(&state, gizai_core::ids::now_ms()).await;
                 }
             });

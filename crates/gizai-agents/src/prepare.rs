@@ -113,6 +113,13 @@ pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: O
 /// memory limit for agent runs covers them too. None: outside it, as `prepare`.
 pub fn prepare_in(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: Option<&OsStr>, slice: Option<&Slice>)
     -> Result<Prepared, PrepareFailed> {
+    let copied = copy_in(main, wt, p, path, slice);
+    install_in(wt, p, since, path, slice, copied)
+}
+
+/// `prepare_in`'s first part: only the copies from the main checkout `main` (GA-191). The one part that reads `main`, so
+/// the only part an update of `main` must wait for. A copy that fails leaves nothing behind and is noted in `failed`.
+pub fn copy_in(main: &Path, wt: &Path, p: &Prepare, path: Option<&OsStr>, slice: Option<&Slice>) -> Prepared {
     let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
     let mut out = Prepared::default();
     for entry in &p.copy {
@@ -134,6 +141,14 @@ pub fn prepare_in(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path
             }
         }
     }
+    out
+}
+
+/// `prepare_in`'s second part, in the worktree `wt` only: the installs of what is still missing, then the setup command,
+/// added to what `copy_in` did (`copied`). The first command that fails stops it.
+pub fn install_in(wt: &Path, p: &Prepare, since: Option<&str>, path: Option<&OsStr>, slice: Option<&Slice>, copied: Prepared)
+    -> Result<Prepared, PrepareFailed> {
+    let mut out = copied;
     if p.install {
         for dep in &DEPS {
             if !wt.join(dep.manifest).is_file() {

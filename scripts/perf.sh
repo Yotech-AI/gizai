@@ -40,11 +40,17 @@ gz_app || { echo "could not build the app"; exit 1; }
 PERF=$GZ/.devdata/perf
 BASE=$PERF/base; IDS=$PERF/base.ids; REPO=$PERF/repo; EDITOR=$PERF/editor
 FAKE=$GZ/crates/gizai-agents/tests/fake-claude.sh
-mkdir -p "$PERF"
+# The app runs in a scratch home folder: it reads and writes nothing in yours (no ~/.claude, no login profile), and the
+# Editor may open the made repository, which in your home would be inside Gizai's data folder when this checkout is a
+# card's worktree (~/.local/share/gizai/worktrees/…).
+HOMEDIR=$PERF/home; XDG=$PERF/xdg
+mkdir -p "$PERF" "$HOMEDIR"
 if [ ! -s "$IDS" ] || [ ! -f "$BASE/gizai.db" ] || [ crates/gizai-core/examples/prep_perf.rs -nt "$IDS" ]; then
   echo "making the benchmark data in $BASE (prep_perf)"
   rm -rf "$BASE" "$IDS" "$REPO" && mkdir -p "$BASE"
-  (source scripts/env.sh && cargo run --release -q -p gizai-core --example prep_perf -- "$BASE" "$FAKE" --repo "$REPO" --editor "$EDITOR") > "$IDS.new" \
+  (source scripts/env.sh && cargo build --release -q -p gizai-core --example prep_perf) || { echo "could not build prep_perf"; exit 1; }
+  # with the home and data folders the app runs with, so prep_perf checks the Editor's folder as the app will
+  env HOME="$HOMEDIR" XDG_DATA_HOME="$XDG/data" target/release/examples/prep_perf "$BASE" "$FAKE" --repo "$REPO" --editor "$EDITOR" > "$IDS.new" \
     && [ -s "$IDS.new" ] && mv "$IDS.new" "$IDS" || { echo "could not make the benchmark data"; exit 1; }
 fi
 IDLINE=$(tail -n1 "$IDS")
@@ -54,7 +60,7 @@ COMMIT=$(git rev-parse --short HEAD)
 [ -n "${WEBKIT_ENV:-}" ] && COMMIT=$COMMIT-webkit
 OUT=$PERF/runs/$COMMIT
 rm -rf "$OUT" && mkdir -p "$OUT"
-DATA=$PERF/run; XDG=$PERF/xdg; RT=$PERF/rt
+DATA=$PERF/run; RT=$PERF/rt
 mkdir -p "$RT" && chmod 700 "$RT"
 
 # The runner, inside the cage: notes the launch (ms since 1970), starts Gizai, and every 500 ms writes one line per process
@@ -99,7 +105,7 @@ for s in $SCENARIOS; do
     fi
     printf '%s run %s of %s … ' "$s" "$n" "$RUNS"
     # shellcheck disable=SC2086 # WEBKIT_ENV is a list of NAME=value words
-    env -i HOME="$HOME" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$RT" \
+    env -i HOME="$HOMEDIR" PATH="$PATH" USER="${USER:-gizai}" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$RT" \
       WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=gles2 WLR_RENDER_DRM_DEVICE=/dev/dri/renderD128 \
       GIZAI_DATA_DIR="$DATA" GIZAI_SELFTEST="$dir/report.json" GIZAI_ROUTE="$(route "$s")" GIZAI_SELFTEST_MODE="perf:$s $IDLINE" \
       GIZAI_SKIP_ONBOARDING=1 \

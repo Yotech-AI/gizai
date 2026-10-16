@@ -3,7 +3,13 @@
 //! start in this Gizai's own slice (`gizai_agents::run_memory`), which the setting limits; Gizai itself stays outside it.
 //! On every system no run starts while memory is short (`wait_reason`), and a process Linux ended at the limit shows in
 //! the card's activity (`ended_on_card`).
-use gizai_agents::run_memory::{self as mem, GB};
+//!
+//! What runs leave behind in the slice (GA-211): a run's end ends what it left in its scope and its log names it
+//! (`leftovers_note`); quitting ends whatever is still in the slice (`end_leftovers`), and so does Gizai's next start,
+//! after a crash, before it recovers the runs (`end_leftovers_at_start`).
+use std::path::Path;
+
+use gizai_agents::run_memory::{self as mem, GB, Leftover};
 use gizai_core::{ids, settings};
 
 use crate::AppState;
@@ -112,6 +118,38 @@ pub fn ended_note(st: &AppState, count: u64) -> String {
     let what = if count == 1 { "a process".to_string() } else { format!("{count} processes") };
     format!("Linux ended {what} in this run: Gizai's agent runs reached their memory limit of {} GB together. \
              Change it in Settings → Runs → Memory for agent runs.", whole(limit(st)))
+}
+
+/// The run's own note at its end, when Gizai ended processes it left running in its scope, outside its process group
+/// (and its preview in the preview's scope): "Ended 1 process this run left running: chromium (pid 12345).", each
+/// process once.
+pub fn leftovers_note(left: &[Leftover]) -> String {
+    format!("Ended {}.", mem::leftovers_text(left, "this run"))
+}
+
+/// Gizai quits, once its agents have ended (`quit`): whatever still runs in its slice ends too, SIGTERM and SIGKILL 3 s
+/// later, so nothing outlives Gizai: a browser a run started detached, a run that didn't end in time. Only the slice this
+/// Gizai set up (none in a test's Gizai, unless the test enabled it); Gizai itself is outside it. Returns what it
+/// ended, which Gizai's log names.
+pub fn end_leftovers(st: &AppState) -> Vec<Leftover> {
+    let Some(slice) = st.run_memory.made() else { return vec![] };
+    let left = slice.end_leftovers();
+    if !left.is_empty() {
+        eprintln!("gizai: quitting ended {}", mem::leftovers_text(&left, "the agent runs"));
+    }
+    left
+}
+
+/// Gizai's start, before it recovers the runs a previous Gizai left (`open_state`): whatever that Gizai left running in
+/// the slice of the data folder `data_dir` ends (it crashed, or was killed), its runs' CLIs and what they started, SIGTERM
+/// and SIGKILL 3 s later. A Gizai with another data folder has another slice, which this never touches. Linux with a
+/// systemd user session; nothing with `GIZAI_RUNS_SLICE=off`. Returns what it ended, which Gizai's log names.
+pub fn end_leftovers_at_start(data_dir: &Path) -> Vec<Leftover> {
+    let left = mem::end_leftovers_in(&mem::slice_name(data_dir));
+    if !left.is_empty() {
+        eprintln!("gizai: ended {}", mem::leftovers_text(&left, "a previous Gizai"));
+    }
+    left
 }
 
 /// Bytes as GB with one decimal ("27.3").

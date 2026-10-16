@@ -43,6 +43,8 @@ const h = vi.hoisted(() => {
     keys: ((e: unknown) => boolean) | null = null;
     data: ((d: string) => void) | null = null;
     written = 0;
+    /** What was written, each piece as it came (GA-190: the order of what waited out of sight). */
+    chunks: Uint8Array[] = [];
     pasted: string[] = [];
     selection = "";
     disposed = false;
@@ -52,7 +54,7 @@ const h = vi.hoisted(() => {
     attachCustomKeyEventHandler(f: (e: unknown) => boolean) { this.keys = f; }
     onData(f: (d: string) => void) { this.data = f; return { dispose() {} }; }
     onBinary() { return { dispose() {} }; }
-    write(b: Uint8Array, cb?: () => void) { this.written += b.length; cb?.(); }
+    write(b: Uint8Array, cb?: () => void) { this.written += b.length; this.chunks.push(b.slice()); cb?.(); }
     hasSelection() { return this.selection !== ""; }
     getSelection() { return this.selection; }
     clearSelection() { this.selection = ""; }
@@ -115,7 +117,23 @@ const TOKENS: Record<string, string> = {
   "--font-mono": '"Atkinson Hyperlegible Mono", ui-monospace, monospace', "--ui-grow": "0px",
 };
 Object.assign(s.tokens, TOKENS);
-vi.stubGlobal("document", { documentElement: {}, body: el(), createElement: () => el() });
+// GA-190: the document says whether the window is hidden and sends visibilitychange (lib/windowFocus.ts onShown)
+const docEvents = new EventTarget();
+const doc = {
+  hidden: false, documentElement: {}, body: el(), createElement: () => el(),
+  addEventListener: docEvents.addEventListener.bind(docEvents), removeEventListener: docEvents.removeEventListener.bind(docEvents),
+};
+vi.stubGlobal("document", doc);
+/** The window is hidden (closed to the tray) or shows again, with its visibilitychange. */
+const setHidden = (on: boolean) => { doc.hidden = on; docEvents.dispatchEvent(new Event("visibilitychange")); };
+/** Bytes all of one value, so the order of what is written can be read back. */
+const bytes = (n: number, value: number) => new Uint8Array(n).fill(value);
+/** What was written, as [value, how many] runs, in order. */
+function runsOf(pieces: Uint8Array[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const p of pieces) for (const b of p) { const last = out.at(-1); if (last && last[0] === b) last[1]++; else out.push([b, 1]); }
+  return out;
+}
 vi.stubGlobal("getComputedStyle", () => ({ getPropertyValue: (n: string) => s.tokens[n] ?? "" }));
 vi.stubGlobal("requestAnimationFrame", (f: (t: number) => void) => { f(0); return 0; });
 vi.stubGlobal("devicePixelRatio", 1);
@@ -344,14 +362,26 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     expect(o.disableStdin).toBe(false);
   });
 
-  it("takes in output while no place shows it, and acknowledges every 100,000 bytes xterm.js wrote", () => {
+  it("holds output while no place shows it, writes it in its order at HOLD_MAX bytes, and acknowledges every 100,000 bytes xterm.js wrote", () => {
     expect(T.probeView("t1")?.renderer).toBe("none");
     const [, onBytes] = s.attached[0]!;
-    for (let i = 0; i < 7; i++) onBytes(new Uint8Array(30_000));
-    expect(term().written).toBe(210_000);
-    expect(s.acks).toEqual([["t1", 120_000]]);
-    onBytes(new Uint8Array(30_000));
-    expect(s.acks).toEqual([["t1", 120_000], ["t1", 120_000]]);
+    // GA-190: out of sight the output waits (it was written at once, 210,000 bytes, and 120,000 acknowledged): nothing
+    // is written to xterm.js, so nothing is acknowledged yet
+    expect(T.HOLD_MAX).toBe(256_000);
+    for (let i = 1; i <= 8; i++) onBytes(bytes(30_000, i));
+    expect(term().written).toBe(0);
+    expect(s.acks).toEqual([]);
+    // GA-190: the 9th piece makes 270,000 bytes waiting, at least HOLD_MAX: all of it is written in one piece, in its order,
+    // and acknowledged (was: 30,000 more bytes written and a second 120,000 acknowledged)
+    onBytes(bytes(30_000, 9));
+    expect(term().written).toBe(270_000);
+    expect(term().chunks.length).toBe(1);
+    expect(runsOf(term().chunks)).toEqual(Array.from({ length: 9 }, (_, i) => [i + 1, 30_000]));
+    expect(s.acks).toEqual([["t1", 270_000]]);
+    // what comes next waits again, until a place shows the view (the next test)
+    onBytes(bytes(1000, 10));
+    onBytes(bytes(1000, 11));
+    expect(term().written).toBe(270_000);
   });
 
   it("sends what is typed to the shell", () => {
@@ -380,6 +410,9 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     page = el();
     s.glyph = 1.25; // the loaded font measures otherwise than the one there was when the view was made
     expect(await T.attachView("t1", page as unknown as HTMLElement)).toBe(true);
+    // GA-190: what waited out of sight is written as the place shows the view, in its order, nothing lost
+    expect(term().written).toBe(272_000);
+    expect(runsOf(term().chunks.slice(1))).toEqual([[10, 1000], [11, 1000]]);
     expect(rowPx(12.5, term().options.lineHeight)).toBe(20); // measured again before it opens: still 20px rows
     const v = T.probeView("t1")!;
     expect(page.children).toEqual([v.host]);
@@ -432,6 +465,50 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     T.detachView("t1", panel as unknown as HTMLElement);
     expect(page.children).toEqual([v.host]);
     expect(T.probeView("t1")?.renderer).not.toBe("none");
+  });
+
+  // ---- GA-190: while the window is hidden (closed to the tray), a terminal in a place holds its output too ----
+  const acked = (id: string) => s.acks.filter(([i]) => i === id).reduce((n, [, b]) => n + b, 0);
+  it("GA-190: with the window hidden, a terminal in a place holds its output; when the window shows it writes it all, in order", () => {
+    expect(T.probeView("t1")?.renderer).not.toBe("none"); // in a place: the page
+    const [, onBytes] = s.attached[0]!;
+    const w0 = term().written, c0 = term().chunks.length;
+    setHidden(true);
+    onBytes(bytes(500, 21));
+    onBytes(bytes(700, 22));
+    onBytes(bytes(300, 23));
+    expect(term().written).toBe(w0);
+    setHidden(true); // another visibilitychange while still hidden writes nothing
+    expect(term().written).toBe(w0);
+    setHidden(false);
+    expect(term().written).toBe(w0 + 1500);
+    expect(term().chunks.length).toBe(c0 + 1); // in one piece
+    expect(runsOf(term().chunks.slice(c0))).toEqual([[21, 500], [22, 700], [23, 300]]);
+    // shown, output is written at once again
+    onBytes(bytes(100, 24));
+    expect(term().written).toBe(w0 + 1600);
+    expect(runsOf(term().chunks.slice(c0 + 1))).toEqual([[24, 100]]);
+    // acknowledged as written: what isn't acknowledged yet is under 100,000 bytes
+    expect(term().written - acked("t1")).toBeGreaterThanOrEqual(0);
+    expect(term().written - acked("t1")).toBeLessThan(T.ACK_EVERY);
+  });
+
+  it("GA-190: hidden, output that reaches HOLD_MAX is written all the same, so the program in the terminal never waits", () => {
+    const [, onBytes] = s.attached[0]!;
+    const w0 = term().written, c0 = term().chunks.length, a0 = acked("t1");
+    setHidden(true);
+    onBytes(bytes(200_000, 31));
+    expect(term().written).toBe(w0);
+    onBytes(bytes(60_000, 32)); // 260,000 waiting
+    expect(term().written).toBe(w0 + 260_000);
+    expect(runsOf(term().chunks.slice(c0))).toEqual([[31, 200_000], [32, 60_000]]);
+    expect(acked("t1")).toBeGreaterThan(a0);
+    expect(term().written - acked("t1")).toBeLessThan(T.ACK_EVERY);
+    onBytes(bytes(10, 33)); // waits again
+    expect(term().written).toBe(w0 + 260_000);
+    setHidden(false);
+    expect(term().written).toBe(w0 + 260_010);
+    expect(runsOf(term().chunks.slice(c0 + 1))).toEqual([[33, 10]]);
   });
 
   it("goes on with the DOM renderer when the WebGL context is lost, or when WebGL is off", () => {
@@ -519,6 +596,27 @@ describe("the store: one view per terminal, for the terminal's whole life", () =
     s.changed!([session("t1", { ended: { code: 0, at: 2, why: null } }), session("t2", { name: "gizai 3" })]);
     expect(term(0).options.disableStdin).toBe(true);
     expect(term(1).options.disableStdin).toBe(false);
+  });
+
+  it("GA-190: a terminal in no place keeps its output when the window shows; a place showing it writes it all, in order", async () => {
+    const [id, onBytes] = s.attached[1]!;
+    expect(id).toBe("t2");
+    expect(T.probeView("t2")?.renderer).toBe("none");
+    const t2 = term(1);
+    setHidden(true);
+    onBytes(bytes(400, 41));
+    setHidden(false);
+    onBytes(bytes(600, 42));
+    expect(t2.written).toBe(0); // shown window, but no place shows it: it waits
+    const where = el();
+    expect(await T.attachView("t2", where as unknown as HTMLElement)).toBe(true);
+    expect(t2.written).toBe(1000);
+    expect(runsOf(t2.chunks)).toEqual([[41, 400], [42, 600]]);
+    onBytes(bytes(5, 43)); // in sight: at once
+    expect(runsOf(t2.chunks)).toEqual([[41, 400], [42, 600], [43, 5]]);
+    T.detachView("t2", where as unknown as HTMLElement); // out of its place again (frees its WebGL context)
+    onBytes(bytes(5, 44));
+    expect(t2.written).toBe(1005);
   });
 
   it("disposes of a view, its WebGL context and its place when its terminal leaves the list", () => {

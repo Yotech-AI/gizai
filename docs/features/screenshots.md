@@ -103,8 +103,8 @@ What you attached to a card is never removed. [Your data](../install.md#your-dat
 For GizAi's developers, and the agents that work on it: `npm run browser` serves GizAi's screens in a plain browser with a fake backend. It is the Preview command of the project for GizAi's own repository, best with the sizes Window 1440 × 900 and Small 900 × 600 (the window's default and smallest size) and both themes on.
 
 - It serves them at `http://127.0.0.1:$GIZAI_PREVIEW_PORT/` (port 1430 without that variable), so a card opens at `/#/task/<id>`. The page is `browser.html` with `src/browser/`, where Tauri's `mockIPC` stands in for the backend.
-- Commands answer from `src/browser/fixtures.json`. To write it again from the demo data: `cargo run -p gizai-core --example demo -- <dir>`, then `cargo run -p gizai-core --example fixtures -- <dir> src/browser/fixtures.json`. The demo's GFW-2, in Review, has screenshot sets; their pictures are drawn from each one's size and caption, as the fixtures hold no images.
-- A command without a fixture answers empty and logs its name in the browser's console.
+- Commands answer from `src/browser/fixtures.json`. To write it again from the demo data: `cargo run -p gizai-core --example demo -- <dir>`, then `cargo run -p gizai-core --example fixtures -- <dir> src/browser/fixtures.json`. The demo's GFW-2, in Review and in the Inbox, has six runs' screenshot sets; their pictures are drawn from each one's size and caption, as the fixtures hold no images. KADE-1, GFW-1, GFW-3 and GFW-5 show the empty tab's four reasons.
+- A command without a fixture answers empty and logs its name in the browser's console. `gizaiBlobUrls()` in the console lists the pictures' `blob:` URLs that are alive, so you can see them freed when the pictures leave the screen.
 - `t` switches the theme, as in the app (or set `gizai-theme` in localStorage).
 - What differs from the app: Chrome draws it, not the app's webview, and native dialogs, file drops and the tray don't exist there. The app's own build (`npm run build`, `npm run tauri build`) contains none of it.
 

@@ -71,7 +71,7 @@ The browser works on Claude Code only, so Codex and Gemini agents take none. Onc
 
 | Setting | Default | Range | What it does |
 |---|---|---|---|
-| Screenshots: Screenshots before Review | its project's Screenshots switch | on or off | Off: the card's agents take none. Until you set it, it follows the project's switch. |
+| Screenshots: Screenshots before Review | its project's Screenshots switch | on or off | Off: the card's agents take none. Until you set it, it follows the project's switch; once set, Follow <project> under it goes back to that. |
 
 ## The window and the tray
 

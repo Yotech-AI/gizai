@@ -61,6 +61,7 @@ that researches a feature before it's built.
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
 - **Tools per agent.** Give each agent only the commands, folders, MCP servers, web access and hidden browser it needs. [Read more](docs/features/tools.md)
 - **The Inbox.** Questions, approvals, commands to run and cards to review wait for you in one list. [Read more](docs/features/inbox.md)
+- **Screenshots of what was built.** Agents with the browser save screenshots of the screens they changed, served from the card's branch with demo data, and the card shows them on its Screenshots tab before you read the pull request. [Read more](docs/features/screenshots.md)
 
 ## Install
 
@@ -111,8 +112,8 @@ The details are in [docs/install.md](docs/install.md): what each system needs, u
 ## Documentation
 
 - [Install](docs/install.md): what each system needs, when macOS or Windows warns, updates, your data and no telemetry.
-- [Settings](docs/settings.md): what each tab holds, how GizAi looks, and the tray.
-- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [CLIs](docs/features/cli.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md)
+- [Settings](docs/settings.md): what each tab holds, how GizAi looks, the tray, and the screenshot settings.
+- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [CLIs](docs/features/cli.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md) · [Screenshots](docs/features/screenshots.md)
 - [Memory in depth](docs/memory.md): folders, properties, links, search, and how runs get notes.
 - [Agent tools in depth](docs/agent-tools.md): MCP servers, signing in, the web, the browser and the safety rules.
 - [Linux, macOS and Windows](docs/PLATFORMS.md): what differs on each system.

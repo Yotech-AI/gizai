@@ -68,7 +68,7 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
 
 Each card's runs get a short temp folder outside its worktree, GizAi's data folder and any git repository: `/var/tmp/gizai-<uid>/<card>-<hash>`, like `/var/tmp/gizai-1000/DSO-30-1a2b3c4d` (on Windows `%TEMP%\gizai\<card>-<hash>`). Before every run GizAi makes it, empty, and sets `TMPDIR`, `TMP` and `TEMP` to it for every CLI. So `mktemp`, PHP's `sys_get_temp_dir()`, Node's `os.tmpdir()`, Python's `tempfile` and the agents' browser write there.
 
-- It is short: at most 50 characters for any card name, so a Unix socket in it fits. Chromium makes its socket at `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket`, and a socket path must be shorter than 108 bytes (104 on macOS): in the worktree, the agents' browser couldn't start.
+- It is short: on Linux and macOS at most 50 characters for any card name, so a Unix socket in it fits. Chromium makes its socket at `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket`, and a socket path must be shorter than 108 bytes (104 on macOS): in the worktree, the agents' browser couldn't start.
 - The hash comes from the worktree's path, so worktrees with the same name in different data folders get different folders.
 - It is in `/var/tmp`, on disk: `/tmp` is in memory on many systems (Arch, Fedora), and files there would count toward the runs' memory limit.
 - Claude Code gets it with `--add-dir`, Codex as a writable root and Gemini with `--include-directories`, so the agent may read and change it.

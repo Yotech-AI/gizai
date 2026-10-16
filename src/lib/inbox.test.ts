@@ -89,8 +89,9 @@ import rustTasks from "../../crates/gizai-core/src/tasks.rs?raw";
 
 describe("needsYou and tasks::needs_you (GA-70)", () => {
   it("both leave out a card with the Team Lead", () => {
-    const fn = rustTasks.slice(rustTasks.indexOf("pub fn needs_you"), rustTasks.indexOf("pub fn needs_you") + 600);
-    expect(fn).toContain("t.hold.is_some() && !t.with_lead");
-    expect(fn).toMatch(/"review" \| "deploy"\) && t\.assignee_id\.as_deref\(\) == Some\(you_id\)/);
+    // GA-191: the database picks them, so the rule is SQL now (ga191_core_test checks it gives the old filter's cards)
+    const fn = rustTasks.slice(rustTasks.indexOf("pub fn needs_you"), rustTasks.indexOf("pub fn needs_you") + 800);
+    expect(fn).toContain("(t.hold IS NOT NULL AND COALESCE({WITH_LEAD}, 0) = 0)");
+    expect(fn).toContain("(s.category IN ('review','deploy') AND t.assignee_actor_id = ?1)");
   });
 });

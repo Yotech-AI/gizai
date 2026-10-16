@@ -114,3 +114,64 @@ fn gizais_notes_in_a_log_become_note_events_first() {
 fn want_text(e: &RunEvent) -> String {
     match e { RunEvent::Note { text } => text.clone(), _ => unreachable!() }
 }
+
+// ---- GA-210: the run's temp folder is outside the worktree, so every CLI may read and change it ----
+
+const TEMP: &str = "/var/tmp/gizai-1000/KADE-1-1a2b3c4d";
+
+fn with_temp() -> TaskRun {
+    TaskRun { temp_dir: Some(TEMP.into()), ..run() }
+}
+
+#[test]
+fn claude_code_gets_the_runs_temp_folder_as_its_last_add_dir_without_a_deny_rule() {
+    let e = cli::task_exec(&spec(Kind::ClaudeCode), &with_temp());
+    assert_eq!(values(&e.args, "--add-dir"), ["/srv/shared", "/srv/out", "/home/u/My docs", TEMP]);
+    assert_eq!(e.args.iter().filter(|a| *a == "--add-dir").count(), 1);
+    assert!(!values(&e.args, "--disallowedTools").iter().any(|r| r.contains("gizai-1000")), "it may change it: {:?}", e.args);
+    assert_eq!(e.stdin, "Do the card", "the prompt still goes in on stdin, not after a variadic option");
+    // without folders of its own: the temp folder alone, and no deny rule
+    let e = cli::task_exec(&spec(Kind::ClaudeCode), &TaskRun { folders: vec![], ..with_temp() });
+    assert_eq!(values(&e.args, "--add-dir"), [TEMP]);
+    assert!(!e.args.iter().any(|a| a == "--disallowedTools"), "{:?}", e.args);
+}
+
+#[test]
+fn codex_gets_the_runs_temp_folder_as_its_last_writable_root_in_its_workspace_sandbox() {
+    let e = cli::task_exec(&spec(Kind::Codex), &TaskRun { writable_dirs: vec!["/repo/.git".into()], ..with_temp() });
+    let roots: Vec<&String> = e.args.iter().filter(|a| a.starts_with("sandbox_workspace_write.writable_roots=")).collect();
+    assert_eq!(roots, [&format!(r#"sandbox_workspace_write.writable_roots=["/repo/.git","/srv/out","{TEMP}"]"#)]);
+    // no other root: the temp folder alone
+    let e = cli::task_exec(&spec(Kind::Codex), &TaskRun { folders: vec![], ..with_temp() });
+    assert!(e.args.contains(&format!(r#"sandbox_workspace_write.writable_roots=["{TEMP}"]"#)), "{:?}", e.args);
+    // its read-only sandbox writes nothing, and without a sandbox there is no root to give
+    for mode in ["read-only", "danger-full-access"] {
+        let e = cli::task_exec(&spec(Kind::Codex), &TaskRun { permission_mode: mode.into(), ..with_temp() });
+        assert!(!e.args.iter().any(|a| a.contains("writable_roots")), "{mode}: {:?}", e.args);
+    }
+}
+
+#[test]
+fn gemini_gets_the_runs_temp_folder_as_its_last_include_directories() {
+    let e = cli::task_exec(&spec(Kind::Gemini), &with_temp());
+    let dirs: Vec<&String> = e.args.iter().filter(|a| a.starts_with("--include-directories")).collect();
+    let temp = format!("--include-directories={TEMP}");
+    assert_eq!(dirs, ["--include-directories=/srv/out", temp.as_str()]);
+    let p = e.args.iter().position(|a| a == "-p").unwrap();
+    assert!(e.args.iter().position(|a| *a == temp).unwrap() < p, "before -p");
+    let e = cli::task_exec(&spec(Kind::Gemini), &TaskRun { folders: vec![], ..with_temp() });
+    let dirs: Vec<&String> = e.args.iter().filter(|a| a.starts_with("--include-directories")).collect();
+    assert_eq!(dirs, [&temp]);
+}
+
+#[test]
+fn every_cli_gets_the_runs_temp_folder_as_tmpdir_tmp_and_temp_and_an_other_cli_no_folder_argument() {
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        let e = cli::task_exec(&spec(kind), &with_temp());
+        let temps: Vec<(&str, &str)> = e.env.iter().filter(|(k, _)| ["TMPDIR", "TMP", "TEMP"].contains(&k.as_str()))
+            .map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(temps, [("TMPDIR", TEMP), ("TMP", TEMP), ("TEMP", TEMP)], "{kind:?}");
+    }
+    let e = cli::task_exec(&spec(Kind::Other), &with_temp());
+    assert!(!e.args.iter().any(|a| a.contains("gizai-1000")), "{:?}", e.args);
+}

@@ -391,7 +391,9 @@ async fn a_run_with_the_browser_and_a_preview_command_gets_its_preview_and_its_s
         Ok(own) => assert_eq!(g.env.get("PORT"), Some(&own), "only the PORT this test process has"),
     }
     assert_ne!(g.env.get("PORT"), Some(&port.to_string()));
-    assert_eq!(g.env.get("TMPDIR").map(PathBuf::from), Some(g.wt.join(".gizai-tmp")), "{:?}", g.env);
+    // GA-210: TMPDIR is the run's own short temp folder; the screenshots and the preview stay in .gizai-tmp
+    let run_temp = gizai_agents::worktree::run_temp_in(&t.st.temp_base, &g.wt);
+    assert_eq!(g.env.get("TMPDIR").map(PathBuf::from), Some(run_temp.clone()), "{:?}", g.env);
 
     // the Preview command got PORT, the three GIZAI_PREVIEW_*, the worktree as its folder and no CLAUDECODE
     let info = t.info(port);
@@ -430,9 +432,11 @@ async fn a_run_with_the_browser_and_a_preview_command_gets_its_preview_and_its_s
     // the run's output says what Gizai kept
     let said = notes(&t.st, &s.run_id);
     assert!(said.iter().any(|n| n == "Gizai kept 2 screenshots on the card."), "{said:?}");
-    // and its temp folder is empty
+    // and its .gizai-tmp and its temp folder are empty
     assert_eq!(names_in(&g.wt.join(".gizai-tmp")), Vec::<String>::new());
     assert!(g.wt.join(".gizai-tmp").is_dir());
+    assert_eq!(names_in(&run_temp), Vec::<String>::new());
+    assert!(run_temp.is_dir());
 }
 
 #[tokio::test]

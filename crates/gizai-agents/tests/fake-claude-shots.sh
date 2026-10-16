@@ -12,7 +12,7 @@
 #   preview.log  a copy of $GIZAI_PREVIEW_DIR/preview.log as it was when it started (only when there was one)
 #   shot       written once it has saved its screenshots (see below)
 # When the prompt has the Screenshots section with the preview's address ("## Screenshots" … "served at
-# http://127.0.0.1:"), it saves two tiny PNGs (only their signature and IHDR header) as $TMPDIR/screenshots/
+# http://127.0.0.1:"), it saves two tiny PNGs (only their signature and IHDR header) as <worktree>/.gizai-tmp/screenshots/
 # 01-board-desktop.png (32 x 20) and 02-card-mobile.png (24 x 48), and captions.json with a caption for the first only.
 # FAKE_SHOTS_GATE in the prompt (from the card's description): after that, it waits until $FAKE_MCP_OUT/gate exists (at
 # most 30 s) before it finishes, so a test can hold several runs live at once.
@@ -57,7 +57,8 @@ if [ -n "${GIZAI_PREVIEW_DIR:-}" ] && [ -f "$GIZAI_PREVIEW_DIR/preview.log" ]; t
   cp "$GIZAI_PREVIEW_DIR/preview.log" "$out/preview.log"
 fi
 case "$prompt" in *"## Screenshots"*"served at http://127.0.0.1:"*)
-  shots="${TMPDIR:-$PWD/.gizai-tmp}/screenshots"
+  # where the prompt says: the worktree's .gizai-tmp, not TMPDIR (GA-210: the run's temp folder is outside the worktree)
+  shots="$PWD/.gizai-tmp/screenshots"
   mkdir -p "$shots"
   # PNG signature, then the IHDR chunk's length and type, width and height (big-endian), bit depth, colour type,
   # compression, filter, interlace and a CRC Gizai doesn't check

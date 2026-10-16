@@ -352,3 +352,28 @@ fn every_task_prompt_on_every_cli_says_how_to_ask_the_user_to_run_a_command() {
     // it names neither "commands" (another CLI's section names none) nor sleep (named only when the agent may run it)
     assert!(!RUN_FOR_ME.contains("commands") && !RUN_FOR_ME.contains("sleep"), "{RUN_FOR_ME}");
 }
+
+// GA-210: the run's temp folder is short and outside the worktree. "How this run works" names it for every CLI, and
+// Claude Code in acceptEdits hears that its commands and file tools reach it.
+const SHORT_TEMP: &str = "/var/tmp/gizai-1000/KADE-1-1a2b3c4d";
+
+#[test]
+fn how_this_run_works_names_the_short_temp_folder_for_every_cli() {
+    for kind in [Kind::ClaudeCode, Kind::Codex, Kind::Gemini, Kind::Other] {
+        let s = rules_section(&RunRules { temp_dir: Some(SHORT_TEMP.into()), ..rules(kind, "") });
+        assert!(s.contains(&format!("Throwaway files go only in `{SHORT_TEMP}` (TMPDIR, TMP and TEMP point there")), "{kind:?}: {s}");
+        assert!(s.contains("never in `/tmp` or anywhere else, and are never committed. Gizai empties that folder when the run ends."),
+                "{kind:?}: {s}");
+        assert!(!s.contains(".gizai-tmp"), "{kind:?}: {s}");
+        // only Claude Code in acceptEdits: a variable such as $TMPDIR is refused in its commands
+        assert_eq!(s.contains("; in a command, write this path, not `$TMPDIR`)"), kind == Kind::ClaudeCode, "{kind:?}: {s}");
+    }
+    let s = rules_section(&RunRules { temp_dir: Some(SHORT_TEMP.into()), ..rules(Kind::ClaudeCode, "") });
+    assert!(s.contains("Commands and file tools reach only this worktree and your folders (`/home/u/notes`), and this run's temp folder: \
+reading or writing anywhere else (`/tmp`, `..`) is refused"), "{s}");
+    let s = rules_section(&RunRules { temp_dir: Some(SHORT_TEMP.into()), folders: vec![], ..rules(Kind::ClaudeCode, "") });
+    assert!(s.contains("Commands and file tools reach only this worktree and this run's temp folder: reading or writing"), "{s}");
+    // without a temp folder: the worktree only, as before
+    let s = rules_section(&RunRules { temp_dir: None, folders: vec![], ..rules(Kind::ClaudeCode, "") });
+    assert!(s.contains("Commands and file tools reach only this worktree: reading or writing"), "{s}");
+}

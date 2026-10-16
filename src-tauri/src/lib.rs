@@ -248,11 +248,15 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     open_data(dir, notify, true)
 }
 
-/// `open_state`, with or without the default agents on a first start.
+/// `open_state`, with or without the default agents on a first start. The log says once how long each part took
+/// (GA-191), so a slow start says where its time went.
 fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, default_agents: bool) -> Result<AppState, String> {
+    let mut timed = Timed::start();
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let lock = lock_data_dir(&dir)?;
+    timed.part("the lock");
     let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
+    timed.part("the database");
     let seed = if default_agents {
         gizai_core::seed::ensure_seed_with_agents(&db, &display_name(), clis::codex_at_first_start)
     } else {
@@ -274,6 +278,7 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
         eprintln!("gizai: making the agents' memory folders failed: {e}");
     }
+    timed.part("the seed");
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
@@ -300,7 +305,9 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     // Messages queued in a chat wait for Send now: the answer they waited for is gone.
     let _ = gizai_core::chat::hold_all_queues(&db);
     chat::remove_stray_configs(&dir);
+    timed.part("the recovery");
     housekeeping(&db, &dir);
+    timed.part("the housekeeping");
     let mcp_socket = mcp::socket_path(&dir);
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
@@ -314,7 +321,37 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
     // failed, so it never runs twice, and its chat says so.
     pending::at_start(&st);
+    timed.part("the calls that wait for approval");
+    eprintln!("gizai: {}", timed.said());
     Ok(st)
+}
+
+/// The parts of the start and how long each took (GA-191, `open_data`).
+struct Timed {
+    at: std::time::Instant,
+    began: std::time::Instant,
+    parts: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl Timed {
+    fn start() -> Timed {
+        let now = std::time::Instant::now();
+        Timed { at: now, began: now, parts: vec![] }
+    }
+
+    /// The part `what` ended now.
+    fn part(&mut self, what: &'static str) {
+        let now = std::time::Instant::now();
+        self.parts.push((what, now - self.at));
+        self.at = now;
+    }
+
+    /// "the start took 182 ms: the lock 0 ms, the database 41 ms, …".
+    fn said(&self) -> String {
+        let ms = |d: std::time::Duration| d.as_millis();
+        let parts: Vec<String> = self.parts.iter().map(|(what, d)| format!("{what} {} ms", ms(*d))).collect();
+        format!("the start took {} ms: {}", ms(self.at - self.began), parts.join(", "))
+    }
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {

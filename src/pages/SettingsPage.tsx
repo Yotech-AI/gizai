@@ -17,7 +17,7 @@ import { OldWorktrees } from "../components/OldWorktrees";
 import { QuitSettings } from "../components/QuitSettings";
 import { focusLimit, ScreenshotSettings } from "../components/ScreenshotSettings";
 import { UpdateSettings } from "../components/UpdateSettings";
-import { limitsProblem } from "../lib/screenshotSettings";
+import { limitsProblem, type LimitsProblem } from "../lib/screenshotSettings";
 import { cardAgents, runsAtOnceWarning, runsMemoryError, runsMemoryHint, type CardAgent } from "../lib/settings";
 
 /** Settings → Notifications: a switch per kind, in this order. */
@@ -43,6 +43,8 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [savedAt, setSavedAt] = useState(0);
+  // The screenshot value Save settings refused last, shown under its field too (the message above is out of view there)
+  const [shotsErr, setShotsErr] = useState<LimitsProblem | null>(null);
   // The active agents on the columns, for the warning under Runs at once.
   const [agents, setAgents] = useState<CardAgent[]>([]);
   const say = useCallback((ok: boolean, text: string) => setMsg({ ok, text }), []);
@@ -64,6 +66,7 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
     if (memory) { setMsg({ ok: false, text: memory }); return; }
     // Settings → Agents and runs → Screenshots (GA-185): a value outside its range is refused with why, before the backend would
     const shots = limitsProblem(next);
+    setShotsErr(shots);
     if (shots) { setMsg({ ok: false, text: shots.message }); focusLimit(shots.key); return; }
     try { await saveSettings({ ...next, maxRunUsd: usd }); setMsg({ ok: true, text: "Settings saved." }); setSavedAt(Date.now()); } catch (e) { setMsg({ ok: false, text: String(e) }); }
   };
@@ -125,7 +128,7 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
             <MemorySetting say={say} />
             <AskLeadSetting say={say} />
           </FormSection>
-          <ScreenshotSettings s={s} setS={setS} />
+          <ScreenshotSettings s={s} setS={setS} problem={shotsErr} />
         </div>
         <div {...panel("mcp")}>
           <FormSection title="MCP servers" text="Outside services your agents can use, like Otus OS: one list for all agents, switched on per agent in its form → Tools. Values of environment and header lines and sign-ins stay in your keychain.">

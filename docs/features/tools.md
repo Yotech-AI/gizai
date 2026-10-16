@@ -66,10 +66,19 @@ Agent runs are headless: nobody is there to approve anything while one runs, so 
 
 ### A temp folder per card
 
-Each card's worktree has a `.gizai-tmp/` folder. Before every run GizAi makes it, empty, and sets `TMPDIR`, `TMP` and `TEMP` to it for every CLI. So `mktemp`, PHP's `sys_get_temp_dir()`, Node's `os.tmpdir()` and Python's `tempfile` write inside the worktree, where the agent may write.
+Each card's runs get a short temp folder outside its worktree, GizAi's data folder and any git repository: `/var/tmp/gizai-<uid>/<card>-<hash>`, like `/var/tmp/gizai-1000/DSO-30-1a2b3c4d` (on Windows `%TEMP%\gizai\<card>-<hash>`). Before every run GizAi makes it, empty, and sets `TMPDIR`, `TMP` and `TEMP` to it for every CLI. So `mktemp`, PHP's `sys_get_temp_dir()`, Node's `os.tmpdir()`, Python's `tempfile` and the agents' browser write there.
+
+- It is short: at most 50 characters for any card name, so a Unix socket in it fits. Chromium makes its socket at `$TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket`, and a socket path must be shorter than 108 bytes (104 on macOS): in the worktree, the agents' browser couldn't start.
+- The hash comes from the worktree's path, so worktrees with the same name in different data folders get different folders.
+- It is in `/var/tmp`, on disk: `/tmp` is in memory on many systems (Arch, Fedora), and files there would count toward the runs' memory limit.
+- Claude Code gets it with `--add-dir`, Codex as a writable root and Gemini with `--include-directories`, so the agent may read and change it.
+- GizAi makes `/var/tmp/gizai-<uid>` with mode 0700. One that is already there is used only when it is a real folder (not a link), yours and closed to others. Otherwise, or when the folder can't be made, the run uses the worktree's `.gizai-tmp/` instead, and its log says why.
+- The folder is emptied when the run ends, also after Stop or a limit, and removed with the card's worktree. Links in it are removed, never followed.
+
+The worktree's own `.gizai-tmp/` stays for the screenshots and the preview:
 
 - GizAi adds `/.gizai-tmp/` once to the repository's `.git/info/exclude`, which your checkout and every worktree share. So the folder never shows in `git status`, and `.gitignore` is left alone.
-- The folder is emptied when the run ends, also after Stop or a limit, and goes with the worktree.
+- It is emptied when the run ends, also after Stop or a limit, and goes with the worktree.
 
 ### How this run works
 
@@ -77,7 +86,7 @@ Every task prompt, new or continued, ends with "How this run works": nobody can 
 
 For Claude Code in acceptEdits mode (the default), checked against Claude Code 2.1.289:
 
-- commands and file tools reach only the worktree and the agent's folders: `ls /tmp`, `ls ..`, a redirect to `/tmp` and the Write tool on `/tmp` are refused, also for an allowed command;
+- commands and file tools reach only the worktree, the agent's folders and the run's temp folder: `ls /tmp`, `ls ..`, a redirect to `/tmp` and the Write tool on `/tmp` are refused, also for an allowed command;
 - `$(…)`, backticks, variables such as `$TMPDIR` and heredocs with an unquoted delimiter (`<<EOF`) are refused;
 - pipes, `2>&1`, `&&` and `;` between allowed commands work, and so does a redirect to a file in the worktree.
 

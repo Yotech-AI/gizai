@@ -70,12 +70,13 @@ fn lower_first(s: &str) -> String {
     }
 }
 
-/// For a run that gets the Screenshots section (`gets_section`), after its worktree and temp folder are ready and before
-/// its CLI starts: marks the run (its set shows on the card also when it saves none), takes a free block of ten ports
-/// from Settings → Agents and runs → Screenshots → Preview ports (none of another live run's, the first one checked by
-/// binding 127.0.0.1 on it), starts the project's Preview command in the worktree (`gizai_agents::preview::start`) and
-/// waits until its port answers, at most the project's Start time. When it doesn't, the run starts anyway: its prompt
-/// says why and to take no screenshots, its set records why, and the preview is ended at once. The card is never held.
+/// For a run that gets the Screenshots section (`gets_section`), after its worktree and `.gizai-tmp` are ready and
+/// before its CLI starts: marks the run (its set shows on the card also when it saves none), takes a free block of ten
+/// ports from Settings → Agents and runs → Screenshots → Preview ports (none of another live run's, the first one
+/// checked by binding 127.0.0.1 on it), starts the project's Preview command in the worktree
+/// (`gizai_agents::preview::start`) and waits until its port answers, at most the project's Start time. When it
+/// doesn't, the run starts anyway: its prompt says why and to take no screenshots, its set records why, and the preview
+/// is ended at once. The card is never held.
 pub(crate) async fn start(st: &AppState, run_id: &str, role: &str, project: &Project, wt: &Path) -> RunShots {
     let limits = core_shots::limits(&st.db);
     if let Err(e) = core_shots::begin(&st.db, run_id) {
@@ -174,7 +175,7 @@ pub(crate) fn end_previews(previews: &Previews) {
 /// At a run's end, however it ended, after its CLI's process group has ended: ends its preview's whole tree (SIGTERM,
 /// SIGKILL after 3 s; on Windows its Job Object) and frees its ports, then, unless Gizai's quitting stopped the run
 /// (`collect` false), collects its screenshots onto the card (`keep`) and records on the run what was left out and why.
-/// Before its temp folder is emptied. Returns what the run's output says about them, if anything.
+/// Before its `.gizai-tmp` is emptied. Returns what the run's output says about them, if anything.
 pub(crate) async fn finish(st: &AppState, run_id: &str, task_id: &str, agent_id: &str, wt: &Path, run: RunShots, collect: bool) -> Option<String> {
     let RunShots { preview, lease, rules, .. } = run;
     if let Some(p) = preview {

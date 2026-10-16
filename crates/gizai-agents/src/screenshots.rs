@@ -1,6 +1,6 @@
 //! A run's screenshots (GA-182): what its agent saved in the worktree's `.gizai-tmp/screenshots/`, checked before Gizai
 //! keeps them on the card (`gizai_core::files::insert_evidence`). Collected at the run's end, after its CLI's process
-//! group and its preview have ended and before its temp folder is emptied. No database here.
+//! group and its preview have ended and before its `.gizai-tmp` is emptied. No database here.
 //!
 //! The checks (docs/research/screenshots.md §3.4):
 //! 1. Only that folder's own files: no subfolders, nothing else from `.gizai-tmp/`. The folder is found from the
@@ -21,7 +21,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// The folder in a run's temp folder where its agent saves its screenshots.
+/// The folder in the worktree's `.gizai-tmp` where a run's agent saves its screenshots.
 pub const DIR: &str = "screenshots";
 /// The agent's captions, in that folder: `{"01-board-desktop.png": "The board with three cards"}`.
 pub const CAPTIONS: &str = "captions.json";

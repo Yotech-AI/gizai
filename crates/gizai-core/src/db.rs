@@ -228,7 +228,12 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         let mut db = Self::init(conn)?;
         db.dir = path.parent().map(|d| std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()));
-        // After the migrations: the readers see the schema as it is now.
+        // The query planner's statistics for every table that needs them, as SQLite advises for a connection that has just
+        // opened; the daily housekeeping keeps them fresh (`optimize`). A failure only costs plans: Gizai opens anyway.
+        if let Err(e) = lock(&db.conn).execute_batch("PRAGMA optimize=0x10002") {
+            eprintln!("gizai: PRAGMA optimize at open failed: {e}");
+        }
+        // After the migrations and the statistics: the readers see the schema as it is now.
         db.readers = match Readers::open(path) {
             Ok(r) => Some(r),
             Err(e) => {
@@ -289,6 +294,13 @@ impl Db {
         // it only read: the transaction ends with nothing to keep (dropping it rolls back)
         drop(tx);
         out
+    }
+
+    /// SQLite's `PRAGMA optimize` on the writer: it gathers the query planner's statistics again (ANALYZE) for the tables
+    /// that have changed much since (the daily housekeeping). Quick when nothing has.
+    pub fn optimize(&self) -> Result<()> {
+        lock(&self.conn).execute_batch("PRAGMA optimize")?;
+        Ok(())
     }
 
     pub fn write<T>(&self, actor: Option<&str>, f: impl FnOnce(&mut Writer) -> Result<T>) -> Result<T> {

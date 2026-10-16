@@ -26,10 +26,15 @@ pub struct Pruned {
 }
 
 /// Removes the chat tools' dead tokens (`tokens::prune`) and the old logs in the `LOG_DIRS` of `data_dir` (`prune_logs`).
-/// The runs themselves stay, with their summary, cost and commits.
+/// The runs themselves stay, with their summary, cost and commits. Then SQLite's `PRAGMA optimize` keeps the query
+/// planner's statistics fresh (GA-191, `Db::optimize`).
 pub fn run(db: &Db, data_dir: &Path, now_ms: i64) -> Result<Pruned> {
     let tokens = tokens::prune(db, now_ms)?;
     let logs = LOG_DIRS.iter().map(|d| prune_logs(&data_dir.join(d), now_ms)).sum();
+    // only the plans would suffer: what was removed stays removed
+    if let Err(e) = db.optimize() {
+        eprintln!("gizai: PRAGMA optimize in the housekeeping failed: {e}");
+    }
     Ok(Pruned { tokens, logs })
 }
 

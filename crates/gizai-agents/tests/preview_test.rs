@@ -62,12 +62,31 @@ fn read_json(path: &Path) -> serde_json::Value {
     }
 }
 
+/// Whether the process `pid` still runs: one that has ended but waits to be reaped (a zombie) has ended, as in
+/// src-tauri/tests/screenshots_flow_test.rs. On macOS the program `start` started (bash, or what it exec'd) can stay a
+/// zombie of this test process after `stop`, as its group stops counting a process that is exiting before it can be
+/// waited for, and kill(pid, 0) answers yes for a zombie.
 fn alive(pid: i64) -> bool {
     // SAFETY: signal 0 only checks that the process exists; nothing is sent.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    if unsafe { libc::kill(pid as i32, 0) } != 0 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        match fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(s) => !s.rsplit_once(')').is_some_and(|(_, rest)| rest.trim_start().starts_with('Z')),
+            Err(_) => false,
+        }
+    }
+    // macOS, which has no /proc: the same from `ps` (nothing when the process is gone)
+    #[cfg(not(target_os = "linux"))]
+    {
+        let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().expect("ps runs");
+        String::from_utf8_lossy(&out.stdout).trim().chars().next().is_some_and(|st| st != 'Z')
+    }
 }
 
-/// Waits a moment for `pid` to be gone (its parent, init, reaps it).
+/// Waits a moment for `pid` to be gone (ended; its parent, this process or init, reaps it).
 fn gone(pid: i64) -> bool {
     let t0 = Instant::now();
     while alive(pid) && t0.elapsed() < Duration::from_secs(5) {

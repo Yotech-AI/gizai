@@ -757,6 +757,9 @@ async function chatPickerAndFilesProbe() {
   const plus = document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null;
   if (!idle || !plus) return { ok: false, error: "no idle composer or no + button" };
   const threadId = window.location.hash.slice("#/chat/".length);
+  // GA-190: a long chat has only the messages in sight on the page, so what was sent is counted where it is saved
+  const savedUsers = async () => (await chatMessages(threadId)).filter((m) => m.role === "user").length;
+  const savedBefore = await savedUsers();
   // GA-83: the empty text box's height (two lines), which it gets back after a send.
   const cmHeight = () => rectOf(document.querySelector(".composer-editor .cm-editor"))?.height ?? NaN;
   const emptyH = cmHeight();
@@ -831,7 +834,9 @@ async function chatPickerAndFilesProbe() {
   await sleep(200);
   const tall = cm().getBoundingClientRect().height;
   const scroller = document.querySelector(".composer-editor .cm-scroller") as HTMLElement;
-  const grows = oneLine < 60 && tall > 150 && tall <= 201 && scroller.scrollHeight > scroller.clientHeight + 20 && sentCount() === before + 2;
+  const overflow = scroller.scrollHeight - scroller.clientHeight;
+  const sentSaved = (await savedUsers()) - savedBefore;
+  const grows = oneLine < 60 && tall > 150 && tall <= 201 && overflow > 20 && sentSaved === 2;
   const view = EditorView.findFromDOM(box)!;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
   await sleep(100);
@@ -871,7 +876,7 @@ async function chatPickerAndFilesProbe() {
     && dropState === "Drop to add to this message" && JSON.stringify(chips) === '["gizai.db"]' && dropGone && refused.includes("is a folder, not a file") && removed
     && JSON.stringify(again) === '["gizai.db"]' && textOf(sentFile) === "gizai.db" && chipsCleared && saved?.files?.[0]?.name === "gizai.db"
     && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk && chipsAbove && shrinks;
-  return { ok, grows: { ok: grows, one_line: oneLine, tall, back_to_two_lines: shrinks, sent_back_to_two_lines: sentBackToTwo, empty: emptyH }, chips_above_text: chipsAbove, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
+  return { ok, grows: { ok: grows, one_line: oneLine, tall, overflow, sent_saved: sentSaved, sent_in_page: sentCount() - before, back_to_two_lines: shrinks, sent_back_to_two_lines: sentBackToTwo, empty: emptyH }, chips_above_text: chipsAbove, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
     no_drop: noDrop, on_again: on }, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
     enter_links_without_sending: enterLinks, chip_in_box: chipInBox, shift_enter_new_line: twoLines, sent_chip: sentChip?.textContent, cleared,
     drop_state: dropState, chips, drop_state_gone: dropGone, refused, removed, dropped_again: again, sent_file: textOf(sentFile), chips_cleared: chipsCleared,

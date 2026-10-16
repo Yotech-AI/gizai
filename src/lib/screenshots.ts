@@ -137,6 +137,10 @@ export function noneText(s: ScreenshotSet): { kind: "preview" | "none"; text: st
     return { kind: "preview", text: `The preview didn’t start: ${why[0].toLowerCase()}${why.slice(1)}, so the agent took none. Its last lines are in the run.` };
   }
   if (s.leftOut.length > 0) return null;
+  // a run that ended early took none because it ended, not because nothing changed
+  if (s.status === "timed_out") return { kind: "none", text: "It stopped at the time limit before it saved any." };
+  if (s.status === "failed") return { kind: "none", text: "It failed before it saved any." };
+  if (s.status === "cancelled") return { kind: "none", text: "It was stopped before it saved any." };
   return { kind: "none", text: "No screen changed, the agent says, so it took none." };
 }
 

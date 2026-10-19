@@ -128,6 +128,26 @@ describe("in a perf run (window.__GIZAI_PERF__ set before the page's scripts)", 
     expect(perf.perfHeard.map((h) => h.event)).toEqual(["runs-changed"]);
     expect(perf.perfCount().commands.find((c) => c.cmd === "app_info")?.bytes).toBe(JSON.stringify({ cmd: "app_info", cards: [1, 2, 3] }).length);
   });
+
+  // GA-188 QA: since GA-191 a run's and a chat's events come in batches; runlog and lead count both the messages heard
+  // and the stream events in them (selftest.ts, streamed).
+  it("notes the stream events a heard batch brings, and 1 for any other message", async () => {
+    const { perf } = await perfRun();
+    const api = await import("../api");
+    const seen: number[] = [];
+    await api.onRunEvent((e) => { seen.push(e.seq); });
+    await perf.listen("rows-changed", () => {});
+    const ev = (seq: number) => ({ seq, event: { type: "text", text: "x" } });
+    handlers[0]({ event: "run-events", id: 1, payload: { runId: "r1", events: [ev(1), ev(2), ev(3)] } });
+    handlers[0]({ event: "run-events", id: 1, payload: { runId: "r1", events: [] } });
+    handlers[1]({ event: "rows-changed", id: 2, payload: { id: "KADE-1" } });
+    handlers[1]({ event: "rows-changed", id: 2, payload: null });
+    handlers[1]({ event: "rows-changed", id: 2, payload: { events: "not a list" } });
+    expect(seen).toEqual([1, 2, 3]); // the app's own listener still gets each event
+    expect(perf.perfHeard.map((h) => [h.event, h.items])).toEqual([
+      ["run-events", 3], ["run-events", 0], ["rows-changed", 1], ["rows-changed", 1], ["rows-changed", 1],
+    ]);
+  });
 });
 
 // GA-188 QA: the board scenario scrolls only once boardDrawn has stayed true for 500 ms (selftest.ts, boardSteady), as a

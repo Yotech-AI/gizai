@@ -13,7 +13,8 @@
 //! dependencies are behind main, the turn's line gets a note: on a chat's first turn, and again when it changes. The
 //! Team Lead then offers to update the folder, and `update_checkout` does that in the background once you said yes
 //! (`start_update`), putting uncommitted changes in git's stash first only when you agreed to that too; never at the
-//! same time as a card's preparation copying from the same folder (`folder_lock`). The Editor's Update (`editor`)
+//! same time as a card's preparation copying from the same folder (`folder_lock`; its install runs in the worktree, so
+//! it doesn't count). The Editor's Update (`editor`)
 //! shares both: one update per folder at a time (`begin_update`), under the same lock.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -41,8 +42,8 @@ pub struct Copies {
     slots: Mutex<HashMap<String, Arc<Slot>>>,
     /// Chat thread → what its turns' lines have told the Team Lead.
     heard: Mutex<HashMap<String, Heard>>,
-    /// Linked folder (as it is on disk) → held while it is updated, or while a card's worktree is prepared from it.
-    folders: Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>,
+    /// Linked folder (as it is on disk) → written while it is updated, read while a card's worktree copies from it.
+    folders: Mutex<HashMap<PathBuf, Arc<tokio::sync::RwLock<()>>>>,
     /// Folders an update runs in (from chat, or the Editor's Update), with what it does: the plan's sentence, "" while
     /// it is still being checked.
     updating: Mutex<HashMap<PathBuf, String>>,
@@ -352,9 +353,11 @@ async fn tidy(st: &AppState, keep: &[Project]) {
     }
 }
 
-/// Held while a project's linked folder `folder` is updated (`start_update`, or the Editor's Update), or while a card's
-/// new worktree is prepared from it (`runs`): they wait for each other, so no card copies a half-installed node_modules/.
-pub fn folder_lock(st: &AppState, folder: &Path) -> Arc<tokio::sync::Mutex<()>> {
+/// A project's linked folder `folder`: written while it is updated (`start_update`, or the Editor's Update), read while a
+/// card's new worktree copies from it (`runs`, the copies only: not its install or setup command, GA-191). An update
+/// waits for the copies under way and the copies for the update, so no card copies a half-installed node_modules/; copies
+/// go side by side.
+pub fn folder_lock(st: &AppState, folder: &Path) -> Arc<tokio::sync::RwLock<()>> {
     let key = folder.canonicalize().unwrap_or_else(|_| folder.to_path_buf());
     st.code.folders.lock().unwrap().entry(key).or_default().clone()
 }
@@ -424,7 +427,7 @@ pub async fn start_update(st: &AppState, thread: &str, project: &Project, switch
         // after a card's preparation that is copying from the folder; the folder may have changed meanwhile, so the
         // checks run again
         let lock = folder_lock(&st2, &dir);
-        let _held = lock.lock().await;
+        let _held = lock.write().await;
         let (p2, dir2) = (p.clone(), dir.clone());
         let ended = tokio::task::spawn_blocking(move || {
             let plan = plan(&p2, &dir2, switch, stash).map_err(Ended::Refused)?;

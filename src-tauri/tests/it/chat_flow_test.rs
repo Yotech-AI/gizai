@@ -41,14 +41,16 @@ async fn setup() -> T {
     let dir = tempfile::tempdir().unwrap();
     let notes: Arc<Mutex<Vec<String>>> = Arc::default();
     let n2 = notes.clone();
+    // GA-191: a chat's events come in batches (`chat-events`): one note per event of a batch
     let mut st = gizai_lib::open_state(dir.path().join("data"), Arc::new(move |n: Note| {
-        let s = match n {
-            Note::Chat { thread_id: _, event } => format!("chat:{}", serde_json::to_value(&event).unwrap()["kind"].as_str().unwrap()),
-            Note::ChatChanged => "chat-changed".into(),
-            Note::RowsChanged(t) => format!("rows:{t}"),
-            _ => "other".into(),
+        let s: Vec<String> = match n {
+            Note::ChatEvents { thread_id: _, events } => events.iter()
+                .map(|event| format!("chat:{}", serde_json::to_value(event).unwrap()["kind"].as_str().unwrap())).collect(),
+            Note::ChatChanged => vec!["chat-changed".into()],
+            Note::RowsChanged(t) => vec![format!("rows:{t}")],
+            _ => vec!["other".into()],
         };
-        n2.lock().unwrap().push(s);
+        n2.lock().unwrap().extend(s);
     })).unwrap();
     st.mcp_socket = st.data_dir.join("mcp.sock");
     st.mcp_shim = Some(shim());
@@ -111,7 +113,11 @@ async fn a_chat_turn_runs_tools_and_saves_the_conversation() {
     assert_eq!(argv[argv.len() - 2..], ["--allowedTools", "mcp__gizai"]);
     let sys = &argv[argv.iter().position(|a| a == "--append-system-prompt").unwrap() + 1];
     assert!(sys.contains("Team Lead") && sys.contains("GIZAI_RESULT"), "{sys}");
-    // the UI heard about it as it happened
+    // the UI heard about it as it happened (GA-191: the turn's last batch goes within 50 ms of its end)
+    for _ in 0..40 {
+        if t.notes.lock().unwrap().iter().any(|n| n == "chat:message") { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     let notes = t.notes.lock().unwrap().clone();
     assert!(notes.iter().any(|n| n == "chat:delta"), "{notes:?}");
     assert!(notes.iter().any(|n| n == "chat:message"), "{notes:?}");

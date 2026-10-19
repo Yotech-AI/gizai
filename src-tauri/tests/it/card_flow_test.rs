@@ -274,16 +274,17 @@ async fn a_claude_that_is_not_logged_in_holds_one_card_and_the_others_stay_in_to
     runs::pull(&a.st).await;
     until("the runs end", || runs::live(&a.st).is_empty()).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let t = a.task(&cards[0]);
-    assert_eq!((t.state_name.as_str(), t.hold.as_deref(), t.fail_count), ("To do", Some("blocked"), 0), "back where it was, blocked");
-    assert!(t.hold_reason.as_deref().unwrap_or("").contains("Not logged in"), "{:?}", t.hold_reason);
-    assert!(runs::pull_paused(&a.st, &be).is_some());
+    // the agent's cards start side by side, so the run that fails first holds its card: not always the best one
     let held: Vec<usize> = (0..4).filter(|i| a.task(&cards[*i]).hold.is_some()).collect();
-    assert_eq!(held, [0], "one missing login holds one card");
-    for c in &cards[1..] {
+    assert_eq!(held.len(), 1, "one missing login holds one card; held: {held:?}");
+    let t = a.task(&cards[held[0]]);
+    assert_eq!(t.hold.as_deref(), Some("blocked"), "held as blocked");
+    assert!(t.hold_reason.as_deref().unwrap_or("").contains("Not logged in"), "{:?}", t.hold_reason);
+    for (i, c) in cards.iter().enumerate() {
         let t = a.task(c);
-        assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 0));
+        assert_eq!((t.state_name.as_str(), t.fail_count), ("To do", 0), "card {i}: back where it was, not a failed run");
     }
+    assert!(runs::pull_paused(&a.st, &be).is_some());
 }
 
 #[tokio::test]

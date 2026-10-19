@@ -28,6 +28,9 @@ export type Project = {
   screenshots: ProjectScreenshots;    // (SB1)
   previewCommand: string | null;      // null or "": no preview          (SB2)
   previewStartSecs: number;           // 120, 10–600                     (SB2)
+  /** Test runs at once (GA-212): how many of its cards may be in a test run (a run on a card in a Testing column) at the
+   *  same time, 1–20. null: no limit of its own. */
+  testRunsAtOnce?: number | null;
 };
 export type ProjectScreenshots = {
   on: boolean;                                                // true
@@ -48,6 +51,8 @@ export type ProjectInput = {
   screenshots?: ProjectScreenshots | null;  // (SB1)
   previewCommand?: string | null;     // null or "": no preview          (SB2)
   previewStartSecs?: number | null;   // 120, 10–600                     (SB2)
+  /** Test runs at once (GA-212): 1–20; 0 removes it (no limit of its own). Left out (null): kept as it is. */
+  testRunsAtOnce?: number | null;
 };
 export type Label = { id: string; name: string; color?: string | null };
 export type Task = {

@@ -6,23 +6,31 @@ use crate::{Error, Result, ids};
 use rusqlite::{Connection, OptionalExtension, Row};
 use std::collections::HashMap;
 
-const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, {desc}, t.acceptance_md, t.state_id, s.name,
+const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, {desc}, {acceptance}, t.state_id, s.name,
     s.category, t.priority, t.assignee_actor_id, a.name, a.kind, t.hold, t.hold_reason, t.bounce_count, t.fail_count,
     t.sort_key, t.branch, t.created_at, t.updated_at, t.pr_url, t.pr_state, t.testing, t.deleted_at,
     CASE WHEN t.deleted_at IS NOT NULL THEN (SELECT x.name FROM changes ch JOIN actors x ON x.id = ch.actor_id
       WHERE ch.row_id = t.id AND ch.table_name = 'tasks' AND ch.op = 'delete' ORDER BY ch.seq DESC LIMIT 1) END, t.hold_at,
     CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
       WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
-    CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') IN ('asking','answering') FROM runs r
-      WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
-      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
+    {with_lead},
     EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person'), t.screenshots
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
 
-fn select(full: bool) -> String {
-    format!("SELECT {}", COLS.replace("{desc}", if full { "t.description_md" } else { "''" }))
+/// Whether the card's question is with the Team Lead (GA-70): on hold needs_decision, and the Team Lead asks or answers
+/// on its latest run that went to it. 1, 0 or NULL.
+const WITH_LEAD: &str = "CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') IN ('asking','answering') FROM runs r
+      WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
+      ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END";
+
+/// The cards' columns: with the description only when `full`, and the acceptance criteria only with `acceptance`
+/// (otherwise "" and NULL).
+fn select(full: bool, acceptance: bool) -> String {
+    format!("SELECT {}", COLS.replace("{desc}", if full { "t.description_md" } else { "''" })
+        .replace("{acceptance}", if acceptance { "t.acceptance_md" } else { "NULL" })
+        .replace("{with_lead}", WITH_LEAD))
 }
 
 fn row(r: &Row) -> rusqlite::Result<Task> {
@@ -40,43 +48,52 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
     })
 }
 
+/// The labels of the cards `task_ids`, by card, each card's by name: looked up by card (GA-191), not read for every card
+/// and dropped.
 fn labels_for(c: &Connection, task_ids: &[String]) -> Result<HashMap<String, Vec<Label>>> {
     let mut out: HashMap<String, Vec<Label>> = HashMap::new();
     if task_ids.is_empty() {
         return Ok(out);
     }
-    let mut st = c.prepare(
-        "SELECT tl.task_id, l.id, l.name, l.color FROM task_labels tl JOIN labels l ON l.id = tl.label_id
-         WHERE tl.deleted_at IS NULL ORDER BY l.name",
+    let ids = serde_json::to_string(task_ids)?;
+    let mut st = c.prepare_cached(
+        "SELECT tl.task_id, l.id, l.name, l.color FROM json_each(?1) j
+         JOIN task_labels tl ON tl.task_id = j.value AND tl.deleted_at IS NULL
+         JOIN labels l ON l.id = tl.label_id ORDER BY l.name",
     )?;
-    let wanted: std::collections::HashSet<&String> = task_ids.iter().collect();
-    for r in st.query_map([], |r| Ok((r.get::<_, String>(0)?, Label { id: r.get(1)?, name: r.get(2)?, color: r.get(3)? })))? {
+    for r in st.query_map([ids], |r| Ok((r.get::<_, String>(0)?, Label { id: r.get(1)?, name: r.get(2)?, color: r.get(3)? })))? {
         let (tid, l) = r?;
-        if wanted.contains(&tid) {
-            out.entry(tid).or_default().push(l);
-        }
+        out.entry(tid).or_default().push(l);
     }
     Ok(out)
 }
 
 /// Lists omit the description (it can be large); `get` returns it.
 pub fn list(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
-    db.read(|c| {
-        let mut sql = format!("{} WHERE t.deleted_at IS NULL", select(false));
-        if filter.project_id.is_some() {
-            sql.push_str(" AND t.project_id = ?1");
-        }
-        if filter.open_only {
-            sql.push_str(" AND t.state_category NOT IN ('done','cancelled')");
-        }
-        sql.push_str(" ORDER BY s.sort_key, t.sort_key");
-        let mut st = c.prepare(&sql)?;
-        let tasks: Vec<Task> = match &filter.project_id {
-            Some(p) => st.query_map([p], row)?.collect::<rusqlite::Result<_>>()?,
-            None => st.query_map([], row)?.collect::<rusqlite::Result<_>>()?,
-        };
-        with_labels(c, tasks)
-    })
+    db.read(|c| list_in(c, filter, true))
+}
+
+/// `list` without each card's acceptance criteria too (`acceptance_md` None), for the window's lists (GA-191): only a
+/// card's own page shows them, and it asks `get`. The agents' and the Team Lead's tools keep `list`'s full rows.
+pub fn list_lean(db: &Db, filter: &TaskFilter) -> Result<Vec<Task>> {
+    db.read(|c| list_in(c, filter, false))
+}
+
+fn list_in(c: &Connection, filter: &TaskFilter, acceptance: bool) -> Result<Vec<Task>> {
+    let mut sql = format!("{} WHERE t.deleted_at IS NULL", select(false, acceptance));
+    if filter.project_id.is_some() {
+        sql.push_str(" AND t.project_id = ?1");
+    }
+    if filter.open_only {
+        sql.push_str(" AND t.state_category NOT IN ('done','cancelled')");
+    }
+    sql.push_str(" ORDER BY s.sort_key, t.sort_key");
+    let mut st = c.prepare(&sql)?;
+    let tasks: Vec<Task> = match &filter.project_id {
+        Some(p) => st.query_map([p], row)?.collect::<rusqlite::Result<_>>()?,
+        None => st.query_map([], row)?.collect::<rusqlite::Result<_>>()?,
+    };
+    with_labels(c, tasks)
 }
 
 fn with_labels(c: &Connection, mut tasks: Vec<Task>) -> Result<Vec<Task>> {
@@ -92,7 +109,7 @@ fn with_labels(c: &Connection, mut tasks: Vec<Task>) -> Result<Vec<Task>> {
 pub fn archived(db: &Db, project_id: Option<&str>) -> Result<Vec<Task>> {
     db.read(|c| {
         let mut st = c.prepare(&format!(
-            "{} WHERE t.deleted_at IS NOT NULL AND (?1 IS NULL OR t.project_id = ?1) ORDER BY t.deleted_at DESC, t.identifier", select(false)))?;
+            "{} WHERE t.deleted_at IS NOT NULL AND (?1 IS NULL OR t.project_id = ?1) ORDER BY t.deleted_at DESC, t.identifier", select(false, true)))?;
         let tasks: Vec<Task> = st.query_map([project_id], row)?.collect::<rusqlite::Result<_>>()?;
         with_labels(c, tasks)
     })
@@ -101,12 +118,16 @@ pub fn archived(db: &Db, project_id: Option<&str>) -> Result<Vec<Task>> {
 /// The Inbox: open cards on hold (an agent or a gate needs a person), except a card whose question is with the Team Lead
 /// (GA-70: it answers or asks you first), and cards waiting for `you` in Review or Deploy (merged, not deployed yet).
 /// Same rule as the UI's `needsYou`.
+/// The database picks them (GA-191): the other open cards aren't read.
 pub fn needs_you(db: &Db, you_id: &str) -> Result<Vec<Task>> {
-    Ok(list(db, &TaskFilter { open_only: true, ..Default::default() })?
-        .into_iter()
-        .filter(|t| (t.hold.is_some() && !t.with_lead)
-            || (matches!(t.state_category.as_str(), "review" | "deploy") && t.assignee_id.as_deref() == Some(you_id)))
-        .collect())
+    db.read(|c| {
+        let mut st = c.prepare(&format!(
+            "{} WHERE t.deleted_at IS NULL AND t.state_category NOT IN ('done','cancelled')
+               AND ((t.hold IS NOT NULL AND COALESCE({WITH_LEAD}, 0) = 0) OR (s.category IN ('review','deploy') AND t.assignee_actor_id = ?1))
+             ORDER BY s.sort_key, t.sort_key", select(false, true)))?;
+        let tasks: Vec<Task> = st.query_map([you_id], row)?.collect::<rusqlite::Result<_>>()?;
+        with_labels(c, tasks)
+    })
 }
 
 pub fn get(db: &Db, id: &str) -> Result<Task> {
@@ -124,7 +145,7 @@ pub fn id_of(db: &Db, identifier: &str) -> Result<String> {
 
 pub(crate) fn get_in(c: &Connection, id: &str) -> Result<Task> {
     let mut t = c
-        .query_row(&format!("{} WHERE t.id = ?1", select(true)), [id], row)
+        .query_row(&format!("{} WHERE t.id = ?1", select(true, true)), [id], row)
         .optional()?
         .ok_or_else(|| Error::NotFound(format!("task {id}")))?;
     t.labels = labels_for(c, &[t.id.clone()])?.remove(&t.id).unwrap_or_default();

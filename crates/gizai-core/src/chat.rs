@@ -2,6 +2,7 @@
 //! and the messages that wait while the Team Lead answers (the queue). A turn's process, stream and tools live in the app;
 //! this is only the record, and the hand-over a new session gets.
 use rusqlite::OptionalExtension;
+use std::collections::HashMap;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -156,19 +157,22 @@ fn thread_row(r: &rusqlite::Row) -> rusqlite::Result<ChatThread> {
 }
 
 /// The chats with calls of the Team Lead's that wait for your approval (GA-102), newest activity first: they wait for
-/// you in the Inbox.
+/// you in the Inbox. The database picks them (GA-191).
 pub fn chats_with_pending(db: &Db) -> Result<Vec<ChatThread>> {
-    Ok(list_threads(db)?.into_iter().filter(|t| t.pending_actions > 0).collect())
+    threads_where(db, "id IN (SELECT thread_id FROM pending_actions WHERE status = 'pending')", None)
 }
 
-/// Fills in the identifiers of the cards Team Lead chats are about.
+/// Fills in the identifiers of the cards Team Lead chats are about: one lookup for all the chats' cards (GA-191).
 fn with_tasks(c: &rusqlite::Connection, mut threads: Vec<ChatThread>) -> Result<Vec<ChatThread>> {
-    for t in threads.iter_mut().filter(|t| !t.task_ids.is_empty()) {
-        for id in &t.task_ids {
-            if let Some(ident) = c.query_row("SELECT identifier FROM tasks WHERE id=?1 AND deleted_at IS NULL", [id], |r| r.get::<_, String>(0)).optional()? {
-                t.tasks.push(ident);
-            }
-        }
+    let ids: Vec<&String> = threads.iter().flat_map(|t| &t.task_ids).collect();
+    if ids.is_empty() {
+        return Ok(threads);
+    }
+    let mut st = c.prepare_cached("SELECT t.id, t.identifier FROM json_each(?1) j JOIN tasks t ON t.id = j.value AND t.deleted_at IS NULL")?;
+    let found: HashMap<String, String> = st.query_map([serde_json::to_string(&ids)?], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for t in &mut threads {
+        t.tasks = t.task_ids.iter().filter_map(|id| found.get(id).cloned()).collect();
     }
     Ok(threads)
 }
@@ -237,10 +241,16 @@ pub fn recent_threads(db: &Db, limit: usize) -> Result<Vec<ChatThread>> {
 }
 
 fn threads(db: &Db, limit: Option<usize>) -> Result<Vec<ChatThread>> {
+    threads_where(db, "1", limit)
+}
+
+/// The chats for which `filter` (SQL on `chat_threads`) holds, newest activity first, at most `limit`.
+fn threads_where(db: &Db, filter: &str, limit: Option<usize>) -> Result<Vec<ChatThread>> {
     // SQLite reads a negative LIMIT as no limit.
     let limit = limit.map_or(-1, |n| i64::try_from(n).unwrap_or(i64::MAX));
     db.read(|c| {
-        let mut st = c.prepare(&format!("SELECT {THREAD_COLS} FROM chat_threads WHERE deleted_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT ?1"))?;
+        let mut st = c.prepare(&format!(
+            "SELECT {THREAD_COLS} FROM chat_threads WHERE deleted_at IS NULL AND ({filter}) ORDER BY updated_at DESC, rowid DESC LIMIT ?1"))?;
         with_tasks(c, st.query_map([limit], thread_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
     })
 }
@@ -303,9 +313,10 @@ pub fn get_thread(db: &Db, id: &str) -> Result<ChatThread> {
     })
 }
 
-/// The chats the Team Lead started that still wait for you (the Inbox), newest activity first.
+/// The chats the Team Lead started that still wait for you (the Inbox), newest activity first. The database picks them
+/// (GA-191), as `thread_row` tells `waiting`.
 pub fn waiting_lead_chats(db: &Db) -> Result<Vec<ChatThread>> {
-    Ok(list_threads(db)?.into_iter().filter(|t| t.waiting).collect())
+    threads_where(db, "kind IS NOT NULL AND answered_at IS NULL AND dismissed_at IS NULL", None)
 }
 
 pub const LEAD_KINDS: [&str; 2] = ["question", "approval"];

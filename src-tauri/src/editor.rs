@@ -275,7 +275,7 @@ pub async fn update(st: &AppState, folder: &str) -> R<String> {
     };
     tokio::spawn(async move {
         let lock = crate::code::folder_lock(&st, Path::new(&f.id));
-        let _held = lock.lock().await;
+        let _held = lock.write().await;
         let (st2, id) = (st.clone(), f.id.clone());
         let end = tokio::task::spawn_blocking(move || update_now(&st2, &id)).await.unwrap_or_else(|e| End::Refused(e.to_string()));
         drop(running);

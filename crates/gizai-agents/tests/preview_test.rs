@@ -273,7 +273,8 @@ async fn three_previews_at_once_get_their_own_ports_and_all_answer() {
         assert_eq!(env["port"], p.port.to_string());
         pids.push(env["pid"].as_i64().unwrap());
     }
-    assert!(taken[1] - taken[0] >= 10 && taken[2] - taken[1] >= 10, "{taken:?}");
+    // free_port gives the first free block, which can lie below an earlier one when a port was busy for a moment
+    assert!(taken.iter().enumerate().all(|(i, a)| taken[i + 1..].iter().all(|b| a.abs_diff(*b) >= 10)), "{taken:?}");
     for (p, _) in previews {
         p.stop().await;
     }

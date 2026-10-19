@@ -160,16 +160,19 @@ fn the_board_checks_reads_search_their_indexes() {
     // the busy runs per agent, a card's last change, a person's answer after a hold, what the last check saw
     let busy = "SELECT agent_actor_id, count(*), max(COALESCE(started_at, created_at)) FROM runs
                                 WHERE task_id IS NOT NULL AND status IN ('queued','running','waiting_approval') GROUP BY agent_actor_id";
-    let stamp = "SELECT ch.seq, ch.hlc FROM changes ch
-         WHERE (ch.row_id = ?1 OR ch.row_id IN (SELECT id FROM comments WHERE task_id = ?1) OR ch.row_id IN (SELECT id FROM runs WHERE task_id = ?1))
-           AND (?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)
-         ORDER BY ch.seq DESC LIMIT 1";
+    // GA-191: a card's last change is the newest of three lookups, each through its index
+    let not_lead = "(?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)";
+    let stamp_own = "SELECT ch.seq, ch.hlc FROM changes ch WHERE ch.row_id = ?1 AND {NOT_LEAD} ORDER BY ch.seq DESC LIMIT 1";
+    let stamp_comments = "SELECT ch.seq, ch.hlc FROM comments m JOIN changes ch ON ch.row_id = m.id WHERE m.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1";
+    let stamp_runs = "SELECT ch.seq, ch.hlc FROM runs r JOIN changes ch ON ch.row_id = r.id WHERE r.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1";
     let answer = "SELECT c.body_md, c.created_at FROM comments c JOIN actors a ON a.id = c.author_actor_id
                          WHERE c.task_id=?1 AND c.deleted_at IS NULL AND a.kind='person' AND c.created_at > ?2
                          ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1";
     let seen = "SELECT findings_json FROM runs WHERE agent_actor_id=?1 AND trigger='board_check' AND status='succeeded'
              ORDER BY created_at DESC, rowid DESC LIMIT 1";
-    in_source("board.rs", BOARD_RS, &[busy, stamp, answer, seen]);
+    in_source("board.rs", BOARD_RS, &[busy, not_lead, stamp_own, stamp_comments, stamp_runs, answer, seen]);
     // an agent's spend this month (its budget), and the runs a restart finds (runs::ACTIVE)
     let spend = "SELECT COALESCE(SUM(cost_usd_micros), 0) FROM runs WHERE agent_actor_id=?1 AND created_at >= ?2";
     let active = "('queued','running','waiting_approval')";
@@ -185,9 +188,11 @@ fn the_board_checks_reads_search_their_indexes() {
 
     let db = Db::open_in_memory().unwrap();
     // what it is, its SQL, the table (as named there) it reads by the index, the index, and the tables it may not scan
-    let reads: [(&str, String, &str, &str, &[&str]); 7] = [
+    let reads: [(&str, String, &str, &str, &[&str]); 9] = [
         ("busy runs", busy.to_string(), "runs", "runs_active", &["runs"]),
-        ("a card's last change", stamp.to_string(), "comments", "comments_task", &["ch", "comments", "runs"]),
+        ("a card's own last change", stamp_own.replace("{NOT_LEAD}", not_lead), "ch", "changes_row", &["ch"]),
+        ("its comments' last change", stamp_comments.replace("{NOT_LEAD}", not_lead), "m", "comments_task", &["ch", "m"]),
+        ("its runs' last change", stamp_runs.replace("{NOT_LEAD}", not_lead), "r", "runs_task", &["ch", "r"]),
         ("an answer after a hold", answer.to_string(), "c", "comments_task", &["c"]),
         ("what the last check saw", seen.to_string(), "runs", "runs_agent_created", &["runs"]),
         ("an agent's spend", spend.to_string(), "runs", "runs_agent_created", &["runs"]),
@@ -237,7 +242,7 @@ fn the_project_lists_counts_and_runs_this_month_search_tasks_project() {
     p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
     (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
     (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown}),
-    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs
+    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs, p.test_runs_at_once
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL";
@@ -268,7 +273,7 @@ fn check_indexes(c: &Connection) {
 
 #[test]
 fn a_new_database_has_the_eight_indexes() {
-    assert_eq!(db::SCHEMA_VERSION, 19);
+    assert_eq!(db::SCHEMA_VERSION, 20);
     Db::open_in_memory().unwrap().read(|c| {
         check_indexes(c);
         Ok(())
@@ -287,7 +292,7 @@ fn v17_db(path: &Path) -> Connection {
         include_str!("../../migrations/0014_memory.sql"), include_str!("../../migrations/0015_lead_merges.sql"),
         include_str!("../../migrations/0016_memory_groups.sql"), include_str!("../../migrations/0017_pending_actions.sql"),
     ];
-    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 2, "two schema steps back (0018, and GA-182's 0019 after it)");
+    assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 3, "three schema steps back (0018, and GA-182's 0019 and GA-212's 0020 after it)");
     let mut c = Connection::open(path).unwrap();
     c.pragma_update(None, "foreign_keys", "OFF").unwrap();
     Migrations::new(all.iter().map(|sql| M::up(sql)).collect()).to_latest(&mut c).unwrap();
@@ -295,9 +300,13 @@ fn v17_db(path: &Path) -> Connection {
     c
 }
 
-/// GA-182's 0019 columns: NULL in every row an upgrade keeps.
-const COLUMNS_0019: [(&str, &str); 8] = [("files", "caption"), ("files", "width"), ("files", "height"), ("runs", "screenshots_note"),
-    ("tasks", "screenshots"), ("projects", "screenshots_json"), ("projects", "preview_command"), ("projects", "preview_start_secs")];
+/// GA-182's 0019 columns and GA-212's 0020 column: NULL in every row an upgrade keeps.
+const COLUMNS_0019_0020: [(&str, &str); 9] = [("files", "caption"), ("files", "width"), ("files", "height"), ("runs", "screenshots_note"),
+    ("tasks", "screenshots"), ("projects", "screenshots_json"), ("projects", "preview_command"), ("projects", "preview_start_secs"),
+    ("projects", "test_runs_at_once")];
+
+/// Undoes GA-212's 0020: no Test runs at once on projects.
+const UNDO_0020: &str = "ALTER TABLE projects DROP COLUMN test_runs_at_once;";
 
 /// Undoes GA-182's 0019: no screenshot columns on files, runs, tasks and projects, and no files_run index.
 const UNDO_0019: &str = "DROP INDEX files_run; ALTER TABLE files DROP COLUMN caption; ALTER TABLE files DROP COLUMN width;
@@ -305,10 +314,10 @@ const UNDO_0019: &str = "DROP INDEX files_run; ALTER TABLE files DROP COLUMN cap
     ALTER TABLE projects DROP COLUMN screenshots_json; ALTER TABLE projects DROP COLUMN preview_command;
     ALTER TABLE projects DROP COLUMN preview_start_secs;";
 
-/// As all_rows, without 0019's columns, each checked NULL in every row first: an upgraded database's rows, to compare
-/// with those of the schema before it.
-fn rows_without_0019(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
-    for (t, col) in COLUMNS_0019 {
+/// As all_rows, without 0019's and 0020's columns, each checked NULL in every row first: an upgraded database's rows, to
+/// compare with those of the schema before it.
+fn rows_without_0019_0020(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
+    for (t, col) in COLUMNS_0019_0020 {
         let set: i64 = c.query_row(&format!("SELECT count(*) FROM {t} WHERE {col} IS NOT NULL"), [], |r| r.get(0)).unwrap();
         assert_eq!(set, 0, "{t}.{col} is NULL in every kept row");
     }
@@ -317,7 +326,7 @@ fn rows_without_0019(c: &Connection) -> std::collections::BTreeMap<String, Vec<S
     tables.into_iter().map(|t| {
         let cols: Vec<String> = c.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid").unwrap()
             .query_map([&t], |r| r.get(0)).unwrap().map(Result::unwrap)
-            .filter(|n: &String| !COLUMNS_0019.contains(&(t.as_str(), n.as_str()))).collect();
+            .filter(|n: &String| !COLUMNS_0019_0020.contains(&(t.as_str(), n.as_str()))).collect();
         let list = cols.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
         let mut s = c.prepare(&format!("SELECT {list} FROM \"{t}\"")).unwrap();
         let n = s.column_count();
@@ -343,8 +352,9 @@ fn all_rows(c: &Connection) -> std::collections::BTreeMap<String, Vec<String>> {
 }
 
 /// The schema as SQLite keeps it: every table, index, trigger and view with its SQL.
+/// The schema, without SQLite's own statistics (GA-191: PRAGMA optimize at open may add sqlite_stat1 and sqlite_stat4).
 fn schema(c: &Connection) -> Vec<(String, String, Option<String>)> {
-    c.prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name").unwrap()
+    c.prepare("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_stat%' ORDER BY type, name").unwrap()
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect()
 }
 
@@ -385,7 +395,8 @@ fn work(db: &Db) -> Work {
     comments::add(db, &you, &card, "Use the KADE template.", None).unwrap();
     let the_deleted = comments::add(db, &backend, &card, "Done, see the branch.", Some(ended.as_str())).unwrap();
     comments::add(db, &you, &card, "Thanks.", None).unwrap();
-    db.read(|c| Ok(c.execute("UPDATE comments SET deleted_at = 9 WHERE id = ?1", [&the_deleted])?)).unwrap();
+    // GA-191: reads of a database file are read-only, so this goes through the writer
+    db.write(None, |w| Ok(w.conn().execute("UPDATE comments SET deleted_at = 9 WHERE id = ?1", [&the_deleted])?)).unwrap();
     let lead = team::add_agent(db, &you, &s.team_id, AgentInput { name: "Team Lead".into(), role_key: "lead".into(), chat_enabled: Some(true),
         ..Default::default() }).unwrap();
     let thread = chat::create_thread(db, &you, &lead, "Plan the invoices export").unwrap();
@@ -405,11 +416,11 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     let db = Db::open(&path).unwrap();
     let w = work(&db);
     drop(db);
-    // two steps back to the database a version before GA-180 leaves (schema 17): 0018 only adds indexes, and GA-182's 0019 only columns
-    // and an index
+    // three steps back to the database a version before GA-180 leaves (schema 17): 0018 only adds indexes, GA-182's 0019 only columns
+    // and an index, and GA-212's 0020 only a column
     let c = Connection::open(&path).unwrap();
     let drops: String = INDEXES.iter().map(|(name, ..)| format!("DROP INDEX {name}; ")).collect();
-    c.execute_batch(&format!("{UNDO_0019} {drops}PRAGMA user_version = 17;")).unwrap();
+    c.execute_batch(&format!("{UNDO_0020} {UNDO_0019} {drops}PRAGMA user_version = 17;")).unwrap();
     let other = tempfile::tempdir().unwrap();
     let genuine = v17_db(&other.path().join("gizai.db"));
     assert_eq!(schema(&c), schema(&genuine), "the step back is exactly schema 17 (migrations 0001..0017)");
@@ -424,15 +435,16 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     let (v, broken, ok): (i64, i64, String) = db.read(|c| Ok((version(c),
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?,
         c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken, ok.as_str()), (19, 0, "ok"), "schema 19, foreign keys and the file (indexes too) intact");
-    let with_0019 = v17_db(&other.path().join("with-0019.db"));
-    with_0019.execute_batch(include_str!("../../migrations/0019_screenshots.sql")).unwrap();
+    assert_eq!((v, broken, ok.as_str()), (20, 0, "ok"), "schema 20, foreign keys and the file (indexes too) intact");
+    let with_0019_0020 = v17_db(&other.path().join("with-0019-0020.db"));
+    with_0019_0020.execute_batch(include_str!("../../migrations/0019_screenshots.sql")).unwrap();
+    with_0019_0020.execute_batch(include_str!("../../migrations/0020_test_runs_at_once.sql")).unwrap();
     db.read(|c| {
         check_indexes(c);
         let mut rest = schema(c);
         rest.retain(|(_, name, _)| !INDEXES.iter().any(|(n, ..)| name.as_str() == *n));
-        assert_eq!(rest, schema(&with_0019), "the eight indexes and nothing else are new, besides 0019's columns and index");
-        let after = rows_without_0019(c);
+        assert_eq!(rest, schema(&with_0019_0020), "the eight indexes and nothing else are new, besides 0019's columns and index and 0020's column");
+        let after = rows_without_0019_0020(c);
         assert_eq!(before.keys().collect::<Vec<_>>(), after.keys().collect::<Vec<_>>(), "no table lost or added");
         for (t, rows) in &before {
             assert!(&after[t] == rows, "{t}: every row kept as it was ({} before, {} after)", rows.len(), after[t].len());
@@ -441,7 +453,7 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     }).unwrap();
     // the backup made before the upgrade is that schema 17 database, with the same rows
     let snaps: Vec<_> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().path()).collect();
-    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v19-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].file_name().unwrap().to_string_lossy().starts_with("gizai-before-v20-"), "{snaps:?}");
     let old = Connection::open(&snaps[0]).unwrap();
     assert_eq!(version(&old), 17, "the backup is the schema 17 database");
     assert!(!schema(&old).iter().any(|(_, name, _)| INDEXES.iter().any(|(n, ..)| name.as_str() == *n)), "with none of 0018's indexes");
@@ -456,7 +468,7 @@ fn a_v17_database_full_of_work_gets_the_indexes_after_a_backup_every_row_kept_an
     };
     let db = Db::open(&path).unwrap();
     let (schema_2, rows_2, v) = db.read(|c| Ok((schema(c), all_rows(c), version(c)))).unwrap();
-    assert_eq!((schema_2, v), (schema_1, 19), "the same schema");
+    assert_eq!((schema_2, v), (schema_1, 20), "the same schema");
     assert!(rows_2 == rows_1, "the same rows");
     assert_eq!(std::fs::read_dir(dir.path().join("backups")).unwrap().count(), 1, "no new backup");
 
@@ -482,7 +494,7 @@ fn a_database_with_a_comments_task_index_of_its_own_still_opens_and_keeps_it() {
         c.query_row("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'comments_task'", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name IN ('chat_messages_thread', 'runs_chat', 'tasks_claimed',
                      'runs_active', 'runs_agent_created', 'runs_created', 'tasks_project')", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, sql.as_str(), others), (19, "CREATE INDEX comments_task ON comments(task_id)", 7), "its own comments_task kept, the seven others added");
+    assert_eq!((v, sql.as_str(), others), (20, "CREATE INDEX comments_task ON comments(task_id)", 7), "its own comments_task kept, the seven others added");
     let p = plan(&db, COMMENTS_LIST);
     assert!(searches(&p, "m", "comments_task") && no_scan(&p), "a card's comments still go through it: {p:?}");
 }

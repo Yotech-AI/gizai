@@ -260,18 +260,28 @@ pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         Some(c) => Some(resolve::client(cx, &c)?.id),
         None => cur.client_id.clone(),
     };
+    // GA-212: Test runs at once, 1 to 20; 0 (or an empty string) clears it, left out keeps it.
+    let test_runs_at_once = match a.text("test_runs_at_once").as_deref() {
+        Some("") => Some(0),
+        _ => a.int("test_runs_at_once")?,
+    };
+    if let Some(n) = test_runs_at_once && n != 0 && !projects::TEST_RUNS_AT_ONCE.contains(&n) {
+        return Err(format!("test_runs_at_once is a number from {} to {}, or 0 to clear it, not {n}. Nothing changed.",
+                           projects::TEST_RUNS_AT_ONCE.start(), projects::TEST_RUNS_AT_ONCE.end()));
+    }
     projects::update(cx.db(), cx.actor, &cur.id, ProjectInput {
         client_id, name: a.opt("name").unwrap_or_else(|| cur.name.clone()), key: cur.key.clone(),
         status: a.opt("status").or(Some(cur.status.clone())), goal_md: keep(a, "goal_md", &cur.goal_md),
         repo_path, default_branch: a.opt("default_branch").or(Some(cur.default_branch.clone())),
         color: keep(a, "color", &cur.color), budget_amount_minor: cur.budget_amount_minor, budget_hours: cur.budget_hours,
-        repo_url: keep(a, repository_arg(a), &cur.repo_url), ..Default::default()
+        repo_url: keep(a, repository_arg(a), &cur.repo_url), test_runs_at_once, ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &cur.id).map_err(err)?;
     let label = format!("{} ({})", p.name, p.key);
     Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path,
-              "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref())}, "link": link("project", &p.id, &label)}))
+              "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()), "test_runs_at_once": p.test_runs_at_once},
+              "link": link("project", &p.id, &label)}))
 }
 
 // ---- tasks ----

@@ -129,3 +129,33 @@ describe("in a perf run (window.__GIZAI_PERF__ set before the page's scripts)", 
     expect(perf.perfCount().commands.find((c) => c.cmd === "app_info")?.bytes).toBe(JSON.stringify({ cmd: "app_info", cards: [1, 2, 3] }).length);
   });
 });
+
+// GA-188 QA: the board scenario scrolls only once boardDrawn has stayed true for 500 ms (selftest.ts, boardSteady), as a
+// start on #/board may draw the board twice, with no board on the page between the two.
+describe("boardDrawn, which the board scenario waits on", () => {
+  /** A stand-in board: per open column the count in its head and the cards drawn in its body; null is no board at all. */
+  function board(cols: { n: number; drawn: number }[] | null) {
+    const col = (c: { n: number; drawn: number }) => ({
+      querySelector: (s: string) => (s === ".col-head .n" ? { textContent: String(c.n) } : null),
+      querySelectorAll: (s: string) => (s === ".col-body .card" ? Array.from({ length: c.drawn }, () => ({})) : []),
+    });
+    vi.stubGlobal("document", {
+      querySelector: (s: string) => (s === ".board .card" && cols?.some((c) => c.drawn > 0) ? {} : null),
+      querySelectorAll: (s: string) => (s === ".board .col:not(.rail)" && cols ? cols.map(col) : []),
+    });
+  }
+
+  it("is true only while a board is on the page and every open column shows its cards, at most 50 each", async () => {
+    const { boardDrawn } = await import("./perf");
+    board(null); // between the default route's board and #/board's own
+    expect(boardDrawn()).toBe(false);
+    board([{ n: 120, drawn: 0 }, { n: 3, drawn: 0 }]); // the columns, before their cards
+    expect(boardDrawn()).toBe(false);
+    board([{ n: 120, drawn: 50 }, { n: 3, drawn: 2 }]); // one column still short of its cards
+    expect(boardDrawn()).toBe(false);
+    board([{ n: 120, drawn: 49 }, { n: 3, drawn: 3 }]); // a big column short of its first 50
+    expect(boardDrawn()).toBe(false);
+    board([{ n: 120, drawn: 50 }, { n: 3, drawn: 3 }, { n: 0, drawn: 0 }]); // 50 is all a column draws; an empty one is drawn
+    expect(boardDrawn()).toBe(true);
+  });
+});

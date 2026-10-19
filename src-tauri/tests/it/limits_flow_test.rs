@@ -4,7 +4,6 @@
 // coding CLI entry that run used, and only for it; Codex's are read from its own session log after the run. The fakes
 // are small wrappers around crates/gizai-agents/tests/fake-claude.sh, fake-claude-chat.py and fake-cli.sh, never the
 // real CLIs.
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,10 +21,15 @@ const EVENT_1: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"status":
 /// And account 2 (session 91% with a warning, weekly 35%, no Fable window).
 const EVENT_2: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1791561600,"rateLimitType":"five_hour","utilization":0.91,"unifiedWindows":{"five_hour":{"utilization":0.91,"resetsAt":1791561600},"seven_day":{"utilization":0.35,"resetsAt":1792054800}}},"session_id":"S"}"#;
 
+/// An executable script, written through a child `sh`, so this process never holds it open for writing: a program
+/// another test starts meanwhile would keep a copy of that, and running the script would fail with "Text file busy".
 fn script(dir: &Path, name: &str, body: &str) -> String {
+    use std::io::Write;
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut sh = std::process::Command::new("sh").args(["-c", r#"cat > "$1" && chmod 755 "$1""#, "sh"]).arg(&path)
+        .stdin(std::process::Stdio::piped()).spawn().unwrap();
+    sh.stdin.take().unwrap().write_all(format!("#!/usr/bin/env bash\n{body}\n").as_bytes()).unwrap();
+    assert!(sh.wait().unwrap().success(), "can't write {}", path.display());
     path.to_string_lossy().into_owned()
 }
 

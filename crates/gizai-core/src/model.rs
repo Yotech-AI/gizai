@@ -123,6 +123,11 @@ pub struct Project {
     /// Start time: how long Gizai waits for the preview's port to answer before the agent starts anyway, in seconds.
     #[serde(default = "default_start_secs")]
     pub preview_start_secs: u32,
+    /// Test runs at once (GA-212): how many of the project's cards may be in a test run (a run on a card in a column of
+    /// kind testing) at the same time, 1 to 20. None: no limit of its own, only "Runs at once" and the agents' cards at
+    /// once (`workflow::test_runs_full`).
+    #[serde(default)]
+    pub test_runs_at_once: Option<u32>,
 }
 
 fn default_start_secs() -> u32 {
@@ -150,6 +155,8 @@ pub struct ProjectInput {
     pub worktree_install: Option<bool>,
     /// The command a new worktree runs after the install ("" removes it); None keeps it.
     pub worktree_setup: Option<String>,
+    /// Test runs at once (GA-212), 1 to 20; 0 removes it (no limit of its own); None keeps it (none for a new project).
+    pub test_runs_at_once: Option<i64>,
     /// Team Lead may merge; None keeps it (off for a new project). Only a person may give it (`projects::create`/`update`
     /// refuse it from an agent).
     pub lead_may_merge: Option<bool>,

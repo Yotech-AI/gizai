@@ -11,6 +11,7 @@ use std::time::Duration;
 use gizai_agents::os::{End, Tree};
 use gizai_agents::preview::{self, Preview};
 use gizai_agents::prompt::{PreviewDown, Screenshots};
+use gizai_agents::run_memory::Leftover;
 use gizai_agents::screenshots::{self as shots, Collected, Rules};
 use gizai_core::files::{self, Evidence};
 use gizai_core::model::{Project, Task};
@@ -46,6 +47,8 @@ pub(crate) struct RunShots {
     pub note: Option<String>,
     /// Its preview while it runs: ended at the run's end, before the collect.
     preview: Option<Preview>,
+    /// What its preview left running in its scope, ended when the preview did (GA-211): named in the run's note at its end.
+    left: Vec<Leftover>,
     /// Its ports.
     lease: Option<PortLease>,
     /// What its screenshots are held to.
@@ -70,12 +73,13 @@ fn lower_first(s: &str) -> String {
     }
 }
 
-/// For a run that gets the Screenshots section (`gets_section`), after its worktree and temp folder are ready and before
-/// its CLI starts: marks the run (its set shows on the card also when it saves none), takes a free block of ten ports
-/// from Settings → Agents and runs → Screenshots → Preview ports (none of another live run's, the first one checked by
-/// binding 127.0.0.1 on it), starts the project's Preview command in the worktree (`gizai_agents::preview::start`) and
-/// waits until its port answers, at most the project's Start time. When it doesn't, the run starts anyway: its prompt
-/// says why and to take no screenshots, its set records why, and the preview is ended at once. The card is never held.
+/// For a run that gets the Screenshots section (`gets_section`), after its worktree and `.gizai-tmp` are ready and
+/// before its CLI starts: marks the run (its set shows on the card also when it saves none), takes a free block of ten
+/// ports from Settings → Agents and runs → Screenshots → Preview ports (none of another live run's, the first one
+/// checked by binding 127.0.0.1 on it), starts the project's Preview command in the worktree
+/// (`gizai_agents::preview::start`) and waits until its port answers, at most the project's Start time. When it
+/// doesn't, the run starts anyway: its prompt says why and to take no screenshots, its set records why, and the preview
+/// is ended at once. The card is never held.
 pub(crate) async fn start(st: &AppState, run_id: &str, role: &str, project: &Project, wt: &Path) -> RunShots {
     let limits = core_shots::limits(&st.db);
     if let Err(e) = core_shots::begin(&st.db, run_id) {
@@ -93,7 +97,7 @@ pub(crate) async fn start(st: &AppState, run_id: &str, role: &str, project: &Pro
         full_page: s.full_page,
         per_run: limits.per_run,
     };
-    let mut run = RunShots { section, env: vec![], note: None, preview: None, lease: None, rules };
+    let mut run = RunShots { section, env: vec![], note: None, preview: None, left: vec![], lease: None, rules };
     let Some(lease) = take_ports(st, run_id, limits.port_from, limits.port_to) else {
         let why = format!("There was no free block of ten ports for it in {} to {} (Settings → Agents and runs → Screenshots → Preview ports)",
                           limits.port_from, limits.port_to);
@@ -128,7 +132,7 @@ pub(crate) async fn start(st: &AppState, run_id: &str, role: &str, project: &Pro
         }
         Err(why) => {
             let tail = preview::log_tail(wt);
-            p.stop().await;
+            run.left = p.stop().await;
             let _ = core_shots::set_preview_pid(&st.db, run_id, None);
             failed(st, run_id, run, why, tail)
         }
@@ -172,25 +176,28 @@ pub(crate) fn end_previews(previews: &Previews) {
 }
 
 /// At a run's end, however it ended, after its CLI's process group has ended: ends its preview's whole tree (SIGTERM,
-/// SIGKILL after 3 s; on Windows its Job Object) and frees its ports, then, unless Gizai's quitting stopped the run
-/// (`collect` false), collects its screenshots onto the card (`keep`) and records on the run what was left out and why.
-/// Before its temp folder is emptied. Returns what the run's output says about them, if anything.
-pub(crate) async fn finish(st: &AppState, run_id: &str, task_id: &str, agent_id: &str, wt: &Path, run: RunShots, collect: bool) -> Option<String> {
-    let RunShots { preview, lease, rules, .. } = run;
+/// SIGKILL after 3 s; on Windows its Job Object), then what the preview left in its scope (GA-211), and frees its ports,
+/// then, unless Gizai's quitting stopped the run (`collect` false), collects its screenshots onto the card (`keep`) and
+/// records on the run what was left out and why. Before its `.gizai-tmp` is emptied. Returns what the run's output says
+/// about them, if anything, and the processes its preview left running that were ended (also those of a preview that
+/// didn't start).
+pub(crate) async fn finish(st: &AppState, run_id: &str, task_id: &str, agent_id: &str, wt: &Path, run: RunShots, collect: bool)
+    -> (Option<String>, Vec<Leftover>) {
+    let RunShots { preview, mut left, lease, rules, .. } = run;
     if let Some(p) = preview {
-        p.stop().await;
+        left.extend(p.stop().await);
         let _ = core_shots::set_preview_pid(&st.db, run_id, None);
     }
     drop(lease);
     if !collect {
-        return None;
+        return (None, left);
     }
     let (st2, rid, tid, aid, dir) = (st.clone(), run_id.to_string(), task_id.to_string(), agent_id.to_string(), wt.to_path_buf());
     let collected = match tokio::task::spawn_blocking(move || keep(&st2, &rid, &tid, &aid, &dir, &rules)).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("gizai: collecting the screenshots of run {run_id} failed: {e}");
-            return None;
+            return (None, left);
         }
     };
     if let Err(e) = core_shots::set_left_out(&st.db, run_id, &collected.left_out) {
@@ -199,7 +206,7 @@ pub(crate) async fn finish(st: &AppState, run_id: &str, task_id: &str, agent_id:
     if collected.kept > 0 {
         (st.notify)(crate::runs::Note::RowsChanged("files"));
     }
-    collected.note()
+    (collected.note(), left)
 }
 
 /// Collects the screenshots in the run's worktree `wt` (`gizai_agents::screenshots::collect`, one at a time) and keeps

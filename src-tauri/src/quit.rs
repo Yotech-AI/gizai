@@ -7,8 +7,10 @@
 //!
 //! Agents at work (runs and chat answers) are stopped before Gizai quits, however it is asked to: Quit Gizai
 //! completely (the tray or Settings), a signal, logging out (SIGTERM) or shutting down. They are recorded as stopped
-//! because Gizai quit, and none outlives Gizai. Every terminal ends then too (GA-133, `end_terminals`), by the same
-//! paths; closing the window keeps Gizai and its terminals running, and nothing is restored at the next start.
+//! because Gizai quit, and none outlives Gizai. On Linux with the slice for agent runs, whatever is still in that slice
+//! then ends too (GA-211, `end_slice`): a browser a run started detached, a run that was slow to end. Every terminal
+//! ends then too (GA-133, `end_terminals`), by the same paths; closing the window keeps Gizai and its terminals running,
+//! and nothing is restored at the next start.
 //!
 //! Windows: logging off and shutting down reach Gizai as WM_ENDSESSION, which Tauri's event loop (tao) turns into its
 //! last event (`RunEvent::Exit`) before it ends the process: agents at work end at once there (`end_agents`, within the
@@ -58,6 +60,13 @@ pub fn end_agents(st: &AppState) {
     while (!runs::live(st).is_empty() || !chat::live(st).is_empty() || chat::checking(st)) && t0.elapsed() < END_WAIT {
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Gizai exits, once its agents have ended (`end_agents`): whatever still runs in its slice for agent runs ends too
+/// (GA-211, `run_memory::end_leftovers`: SIGTERM, SIGKILL 3 s later), so nothing outlives Gizai. Linux with the slice;
+/// Gizai itself and its terminals are outside it.
+pub fn end_slice(st: &AppState) {
+    crate::run_memory::end_leftovers(st);
 }
 
 /// Gizai exits: every terminal ends, with its shell and everything it started (`terminal::end_all`: SIGHUP, the

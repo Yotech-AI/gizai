@@ -420,12 +420,14 @@ fn check_blocking(st: &AppState, via: &Via, card: &PrCard) -> Result<Checked, St
     Ok(out)
 }
 
-/// After a merge: removes the card's worktree (`worktree::remove_card_worktree`: only one of Gizai's, never by
-/// force, so one with uncommitted changes stays) and deletes its branch when the pull request has its latest commit.
-/// Returns what it did as one sentence for the card's activity ("" when there was nothing to clean up).
+/// After a merge: removes the card's worktree with its runs' temp folder (`worktree::remove_card_worktree_with`: only
+/// one of Gizai's, never by force, so one with uncommitted changes stays) and deletes its branch when the pull request
+/// has its latest commit. Returns what it did as one sentence for the card's activity ("" when there was nothing to
+/// clean up).
 fn clean_up(st: &AppState, card: &PrCard, pr: &PullRequest, tip: Option<&str>) -> String {
     let all_in = tip.is_some_and(|t| pr.contains(t));
-    let removal = worktree::remove_card_worktree(Path::new(&card.repo_path), &st.data_dir.join("worktrees"), &card.branch, all_in);
+    let removal = worktree::remove_card_worktree_with(Path::new(&card.repo_path), &st.data_dir.join("worktrees"), &st.temp_base,
+                                                      &card.branch, all_in);
     let mut said = removal.phrases(&card.branch);
     if tip.is_some() && !all_in && removal.kept.is_none() {
         said.push(format!("kept branch {}, which has commits the pull request doesn't", card.branch));

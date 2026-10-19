@@ -4,8 +4,8 @@
 //! tests change process-wide state (`std::env::set_var`, `set_current_dir`) or count on it stays in tests/, alone.
 //! Paths in `include_str!` and `#[path]` are relative to this folder.
 //! run_memory_test.rs and run_leftovers_test.rs stay in tests/ too: their runs push a command past a 1 GB slice's limit,
-//! which Linux throttles for a minute or more before it ends it, and all four side by side here ran past their runs'
-//! 120 s cap.
+//! which Linux throttles for a minute or more before it ends it; with all four side by side here, two of them ran past
+//! their runs' 120 s cap.
 
 mod behind_test;
 mod bitbucket_prompt_test;

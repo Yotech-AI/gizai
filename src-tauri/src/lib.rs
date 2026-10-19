@@ -269,6 +269,10 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
         eprintln!("gizai: making the agents' memory folders failed: {e}");
     }
+    // GA-211: first, whatever a previous Gizai (one that crashed, or was killed) left running in this data folder's slice
+    // for agent runs ends: its runs' CLIs and what they started, a browser started detached too. Linux with the slice; a
+    // Gizai with another data folder has another slice, which this never touches.
+    run_memory::end_leftovers_at_start(&dir);
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
@@ -695,9 +699,11 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);
-                // agents still at work and every terminal end now, at the same time, so none outlives Gizai
+                // agents still at work and every terminal end now, at the same time, so none outlives Gizai; then what is
+                // still in the agent runs' slice (GA-211)
                 let terminals = quit::end_terminals(app.state::<AppState>().inner());
                 quit::end_agents(app.state::<AppState>().inner());
+                quit::end_slice(app.state::<AppState>().inner());
                 let _ = terminals.join();
                 mcp::remove_socket(app.state::<AppState>().inner());
                 // an update that is building stops (its source and build so far are kept for the next one)

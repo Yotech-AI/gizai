@@ -122,7 +122,9 @@ fn notes(st: &AppState, run_id: &str) -> Vec<String> {
     gizai_lib::runs::events_for(st, run_id).into_iter().filter_map(|e| match e.event { RunEvent::Note { text } => Some(text), _ => None }).collect()
 }
 
-/// Whether the process `pid` still runs: one that has ended but waits to be reaped (a zombie) has ended.
+/// Whether the process `pid` still runs: one that has ended but waits to be reaped (a zombie) has ended. On macOS too: a
+/// preview's program (the bash Gizai started, or what it exec'd) can stay a zombie of this test process there, as its
+/// group stops counting a process that is exiting before it can be waited for, and kill(pid, 0) answers yes for a zombie.
 fn alive(pid: i64) -> bool {
     // SAFETY: kill with signal 0 only asks whether the process exists.
     if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
@@ -135,9 +137,11 @@ fn alive(pid: i64) -> bool {
             Err(_) => false,
         }
     }
+    // macOS, which has no /proc: the same from `ps` (nothing when the process is gone)
     #[cfg(not(target_os = "linux"))]
     {
-        true
+        let out = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().expect("ps runs");
+        String::from_utf8_lossy(&out.stdout).trim().chars().next().is_some_and(|st| st != 'Z')
     }
 }
 
@@ -566,8 +570,9 @@ async fn three_runs_at_once_each_get_a_block_of_ports_of_their_own() {
     );
     let started = [a.unwrap(), b.unwrap(), c.unwrap()];
     let ids: Vec<String> = started.iter().map(|(id, _)| id.clone()).collect();
-    // all three live at once, each held at the gate
-    until("the three fakes", 60, || ids.iter().all(|id| t.out_of(id).join("env").is_file())).await;
+    // all three live at once, each held at the gate, once each fake has written what it got: it writes `shot` after
+    // `answered` and `answer` (its GET to the preview), so `env` alone could leave `answer` still empty
+    until("the three fakes", 60, || ids.iter().all(|id| t.out_of(id).join("shot").is_file())).await;
     let got: Vec<Got> = ids.iter().map(|id| t.got(id)).collect();
     let mut ports: Vec<u16> = got.iter().map(Got::port).collect();
     for g in &got {
@@ -840,4 +845,43 @@ async fn after_a_crash_a_preview_whose_command_changed_folder_is_ended() {
     let _ = tokio::time::timeout(Duration::from_secs(30), done).await.expect("stopped");
     assert!(!left_running, "Gizai started again after a crash and left the preview of `cd web && …` running (node {pid}, port {port}): \
 its group's leader {leader} works in {leader_cwd:?}, not in the worktree {}", wt.display());
+}
+
+/// GA-211, Linux with a systemd user session: in the test Gizai's own slice for agent runs (named after its own data
+/// folder, stopped and reverted at the end), what the preview started in a group of its own (`setsid`) stays in the
+/// preview's scope, ends with the run, and the run's log names it once. Without a user session it says so and passes.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn in_the_slice_what_the_preview_left_in_a_group_of_its_own_ends_with_the_run_and_its_log_names_it() {
+    use gizai_agents::run_memory::{GB, Slice, slice_name};
+    struct Own(Slice);
+    impl Drop for Own {
+        fn drop(&mut self) {
+            let _ = self.0.remove();
+        }
+    }
+    let t = setup(Some((49900, 49999)));
+    t.st.run_memory.enable(&slice_name(&t.st.data_dir), 2 * GB);
+    let Some(slice) = t.st.run_memory.slice().map(Own) else {
+        assert!(std::env::var_os("GIZAI_TEST_SLICE").is_none(), "GIZAI_TEST_SLICE is set, but there is no slice");
+        eprintln!("skipped: no slice for agent runs on this Linux");
+        return;
+    };
+    let left = t.tmp.path().join("preview-left");
+    t.project(&format!("setsid bash -c 'echo $$ > \"{}\"; exec sleep 600' > /dev/null 2>&1 & {}", left.display(), t.node_preview("")), None, None);
+    let task = t.task("");
+    let (s, g) = t.run(&task).await;
+    assert_eq!(s.status, "succeeded", "{:?}", s.error);
+    let port = g.port();
+    preview_gone(&t.info(port), port);
+    let pid: i64 = read(&left).trim().parse().unwrap();
+    assert!(!alive(pid), "the preview's server in a group of its own ({pid}) still runs after the run");
+    let said = notes(&t.st, &s.run_id);
+    let ended: Vec<&String> = said.iter().filter(|n| n.starts_with("Ended ")).collect();
+    assert_eq!(ended, [&format!("Ended 1 process this run left running: sleep (pid {pid}).")], "{said:?}");
+    assert!(said.iter().any(|n| n == "Gizai kept 2 screenshots on the card."), "{said:?}");
+    // nothing is left in any of the slice's scopes
+    let scopes = std::fs::read_dir(slice.0.dir()).unwrap().flatten().filter(|e| e.path().is_dir());
+    let procs: String = scopes.map(|e| std::fs::read_to_string(e.path().join("cgroup.procs")).unwrap_or_default()).collect();
+    assert!(procs.trim().is_empty(), "{procs}");
 }

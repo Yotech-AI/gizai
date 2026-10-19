@@ -1243,6 +1243,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         let mut refused: Vec<Refusal> = vec![];
         // GA-202: the processes Linux ended in this run at the memory limit for agent runs
         let mut ended_at_limit = 0u64;
+        // GA-211: the processes Gizai ended at the run's end that it left running in its scope
+        let mut left: Vec<gizai_agents::run_memory::Leftover> = vec![];
         while let Some(ev) = handle.events.recv().await {
             // What Claude Code heard of the account's limits: kept for this run's CLI (the Usage page's Subscription tab),
             // not shown in the Run panel.
@@ -1257,6 +1259,11 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                     crate::run_memory::ended_on_card(&st2, &tid, &agent_name);
                 }
                 ended_at_limit = n.parse().unwrap_or(ended_at_limit + 1).max(ended_at_limit);
+                continue;
+            }
+            // A process the run left running in its scope, ended: the run's note at its end names it.
+            if let RunEvent::Other { raw_type } = &ev && let Some(l) = process::leftover(raw_type) {
+                left.push(l);
                 continue;
             }
             match &ev {
@@ -1302,12 +1309,21 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         }
         // GA-182: its preview's whole tree ends, then its screenshots go onto the card, before its .gizai-tmp is emptied.
         // A run Gizai's quitting stopped collects nothing (as `finish_run` tells such a run).
+        let mut shots_note = None;
         if let Some(run_shots) = shots {
             let finished = matches!(&result, Some(RunEvent::Result { is_error: false, .. })) && exit == "exit:0";
             let quit = is_closing(&st2) && (st2.runs.stopped.lock().unwrap().contains(&rid) || !finished);
-            if let Some(text) = crate::screenshots::finish(&st2, &rid, &tid, &shots_agent, &dir, run_shots, !quit).await {
-                note_run(&st2, &rid, &text);
-            }
+            let (text, preview_left) = crate::screenshots::finish(&st2, &rid, &tid, &shots_agent, &dir, run_shots, !quit).await;
+            left.extend(preview_left);
+            shots_note = text;
+        }
+        // GA-211: what the run left running in its scope (and its preview in the preview's), which Gizai ended: each
+        // process once. Nothing when it left nothing.
+        if !left.is_empty() {
+            note_run(&st2, &rid, &crate::run_memory::leftovers_note(&left));
+        }
+        if let Some(text) = shots_note {
+            note_run(&st2, &rid, &text);
         }
         if let Err(e) = worktree::empty_temp(&dir) {
             eprintln!("gizai: couldn't empty the .gizai-tmp folder of run {rid}: {e}");

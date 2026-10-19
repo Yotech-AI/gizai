@@ -95,7 +95,9 @@ const WRITES: Record<string, (args: Row) => unknown> = {
   },
   save_settings: ({ settings }) => { commands.get_settings = settings; changed("settings"); return null; },
   save_project: ({ id, input }) => {
-    const i = input as Row;
+    const i = { ...(input as Row) };
+    // Test runs at once 0 is no limit, kept as null (GA-212), as the backend does
+    if (i.testRunsAtOnce === 0) i.testRunsAtOnce = null;
     for (const p of [stored("get_project", String(id)), ...((commands.list_projects as Row[] | undefined) ?? []).filter((x) => x.id === id)]) if (p) Object.assign(p, i);
     changed("projects");
     return id ?? "new-project";

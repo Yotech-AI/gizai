@@ -9,6 +9,7 @@ import { suggestKey } from "../lib/projectKey";
 import {
   HEIGHT, nextSize, projectShotsFrom, projectShotsProblem, shownNumber, SIZES, START_SECS, typedNumber, WIDTH, type ShotSize, type ShotsProblem,
 } from "../lib/screenshotSettings";
+import { TEST_RUNS, testRunsProblem, testRunsToSave } from "../lib/testRunsAtOnce";
 import { Drawer } from "./Drawer";
 import { Field, FormSection } from "./Form";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -17,13 +18,15 @@ import { MarkdownEditor } from "./MarkdownEditor";
 export const PROJECT_COLORS = ["#6f97ff", "#3fb8a0", "#e3bd3c", "#a98bfa", "#f29a4a", "#e77ab3", "#f2706b", "#8a8e98"];
 
 /** The form's values for project `p`, or a new project's. Preview (GA-185): Screenshots on, Desktop 1280 × 800 and Mobile
- *  390 × 844, one theme, one window's height, no Preview command (saved as "", which leaves none) and 120 seconds. */
+ *  390 × 844, one theme, one window's height, no Preview command (saved as "", which leaves none) and 120 seconds. Test
+ *  runs at once (GA-212): empty, no limit (saved as 0, which leaves none). */
 export function toProjectInput(p?: Project | null): ProjectInput {
   return {
     name: p?.name ?? "", key: p?.key ?? "", clientId: p?.clientId ?? null, status: p?.status ?? "active", goalMd: p?.goalMd ?? "",
     repoPath: p?.repoPath ?? "", repoUrl: p?.repoUrl ?? "", defaultBranch: p?.defaultBranch ?? "main", color: p?.color ?? PROJECT_COLORS[0],
     budgetAmountMinor: p?.budgetAmountMinor ?? null, budgetHours: p?.budgetHours ?? null,
     worktreeCopy: p?.worktreeCopy ?? [], worktreeInstall: p?.worktreeInstall ?? true, worktreeSetup: p?.worktreeSetup ?? "",
+    testRunsAtOnce: p?.testRunsAtOnce ?? null,
     leadMayMerge: p?.leadMayMerge ?? false,
     screenshots: projectShotsFrom(p?.screenshots), previewCommand: p?.previewCommand ?? "", previewStartSecs: p?.previewStartSecs ?? START_SECS.default,
   };
@@ -91,10 +94,14 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
   };
   const save = async () => {
     // A value outside its range is refused before saving, with why, as the backend would refuse it.
+    const testRuns = testRunsProblem(v.testRunsAtOnce);
+    if (testRuns) { setErr(testRuns); focusSoon("p-test-runs"); return; }
     const problem = projectShotsProblem(v);
     if (problem) { setErr(problem.message); focusSoon(problemInput(problem)); return; }
     setBusy(true);
-    try { const saved = await saveProject(id ?? null, v); onClose(); if (isNew) go({ page: "project", id: saved }); }
+    // An empty Test runs at once is saved as 0, which removes the limit (left out, it would be kept).
+    const input = { ...v, testRunsAtOnce: testRunsToSave(v.testRunsAtOnce) };
+    try { const saved = await saveProject(id ?? null, input); onClose(); if (isNew) go({ page: "project", id: saved }); }
     catch (e) { setErr(String(e)); setBusy(false); }
   };
   const euros = v.budgetAmountMinor == null ? "" : String(v.budgetAmountMinor / 100);
@@ -148,6 +155,11 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
           </Field>
           <Field label="Setup command" htmlFor="p-setup" wide hint="Optional. Runs in each new worktree after the install, before the agent starts: a migration, a build. If it fails, the card goes on hold with its output.">
             <input id="p-setup" className="input mono" value={v.worktreeSetup ?? ""} onChange={(e) => set("worktreeSetup", e.target.value)} placeholder="php artisan migrate --seed" />
+          </Field>
+          <Field label="Test runs at once" htmlFor="p-test-runs"
+            hint="How many of this project's cards are tested at the same time. A test run builds and runs the whole test suite; on a big project (Rust, a large monorepo) more than one at a time can fill the disk and slow your computer down. Empty: no limit.">
+            <input id="p-test-runs" className="input" type="number" min={TEST_RUNS.low} max={TEST_RUNS.high} step={1} value={shownNumber(v.testRunsAtOnce)}
+              onChange={(e) => set("testRunsAtOnce", typedNumber(e.target.value))} />
           </Field>
         </FormSection>
         <FormSection id="project-preview" title="Preview" text="While an agent works on a card, Gizai serves the card’s branch with demo data, so the agent can take screenshots of the screens it changed. The card shows them on its Screenshots tab.">

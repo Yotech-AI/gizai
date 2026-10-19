@@ -937,15 +937,20 @@ fn on_windows_the_editors_are_found_as_cmd_and_exe() {
 #[cfg(unix)]
 #[test]
 fn open_in_starts_the_editor_in_the_folder_with_the_file_at_its_line_and_doesnt_wait_for_it() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::io::Write;
     let tmp = real_tempdir();
     let dir = repo(tmp.path(), "shop", &[("src/main.rs", "fn main() {}\n")]);
     let said = tmp.path().join("said.txt");
     let fake = tmp.path().join("bin/code");
     fs::create_dir_all(fake.parent().unwrap()).unwrap();
-    // writes its folder and arguments, then keeps running as an editor does
-    fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$PATH\" \"$@\" > '{}.part'\nmv '{0}.part' '{0}'\nexec sleep 3\n", said.display())).unwrap();
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    // writes its folder and arguments, then keeps running as an editor does. Written by a child sh, so this process
+    // never holds it open for writing: a program another test starts meanwhile would keep a copy of that, and starting
+    // the editor would fail with "Text file busy".
+    let script = format!("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$PATH\" \"$@\" > '{}.part'\nmv '{0}.part' '{0}'\nexec sleep 3\n", said.display());
+    let mut sh = Command::new("sh").args(["-c", r#"cat > "$1" && chmod 755 "$1""#, "sh"]).arg(&fake)
+        .stdin(std::process::Stdio::piped()).spawn().unwrap();
+    sh.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    assert!(sh.wait().unwrap().success(), "can't write {}", fake.display());
     let file = editor::joined(&dir, "src/main.rs").unwrap();
     assert_eq!(file, dir.join("src").join("main.rs"));
     assert!(editor::joined(&dir, "../x").is_err());

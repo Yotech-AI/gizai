@@ -3,6 +3,8 @@
 //! file goes here, with its `mod` line. The tests of all these files run side by side in one process: a file whose
 //! tests change process-wide state (`std::env::set_var`, `set_current_dir`) or count on it stays in tests/, alone.
 //! Paths in `include_str!` and `#[path]` are relative to this folder.
+//! run_memory_flow_test.rs stays in tests/ too: its run pushes a command past a 1 GB slice's limit, which Linux throttles
+//! for a minute or more before it ends it, and side by side with the tests here it once ran past its 120 s limit.
 
 mod agent_runs_test;
 mod app_state_test;
@@ -46,7 +48,6 @@ mod repo_check_test;
 mod run_commits_test;
 mod run_flow_test;
 mod run_leftovers_flow_test;
-mod run_memory_flow_test;
 mod run_memory_settings_test;
 mod screenshots_settings_test;
 mod slash_commands_flow_test;

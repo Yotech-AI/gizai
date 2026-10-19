@@ -86,11 +86,12 @@ fn gh_calls(dir: &Path) -> Vec<String> {
     std::fs::read_to_string(dir.join("gh-args")).unwrap_or_default().lines().map(String::from).collect()
 }
 
-/// gh's answer to `pr list` for pull request #7, with its merge commit once merged.
-fn list(dir: &Path, state: &str, head: &str, merge: Option<&str>) {
-    let pr = json!([{"number": 7, "url": format!("{LINK}/pull/7"), "state": state, "isDraft": false, "headRefOid": head,
-                     "commits": [{"oid": head}], "mergeCommit": merge.map(|m| json!({"oid": m}))}]);
-    std::fs::write(dir.join("list.json"), pr.to_string()).unwrap();
+/// gh's answer to `pr list` for pull request #7 from the card's branch, with its merge commit once merged (the light
+/// fields only, GA-214: no `commits`).
+fn list(c: &Card, state: &str, head: &str, merge: Option<&str>) {
+    let pr = json!([{"number": 7, "url": format!("{LINK}/pull/7"), "state": state, "isDraft": false, "headRefName": c.branch,
+                     "headRefOid": head, "mergeCommit": merge.map(|m| json!({"oid": m}))}]);
+    std::fs::write(c.gh.join("list.json"), pr.to_string()).unwrap();
 }
 
 struct Card { st: gizai_lib::AppState, task: String, bare: PathBuf, local: PathBuf, wt: PathBuf, branch: String, gh: PathBuf,
@@ -289,7 +290,7 @@ async fn a_merge_commit_a_squash_and_a_rebase_merge_each_save_the_whole_card_whi
         let tip = git(&c.wt, &["rev-parse", "HEAD"]);
         in_review(&c).await;
         let merge = merge_on_github(tmp.path(), &c, how, message);
-        list(&c.gh, "MERGED", &tip, Some(&merge));
+        list(&c, "MERGED", &tip, Some(&merge));
         // the PR check: fetches main, saves the range, then removes the worktree and the branch
         let checked = pulls::check_all(&c.st).await;
         assert_eq!(checked[0].moved_to.as_deref(), Some("Done"), "{how:?}");
@@ -328,7 +329,7 @@ async fn a_merge_seen_offline_saves_the_range_from_main_as_last_fetched() {
         let tip = git(&c.wt, &["rev-parse", "HEAD"]);
         in_review(&c).await;
         let merge = merge_on_github(tmp.path(), &c, how, message);
-        list(&c.gh, "MERGED", &tip, Some(&merge));
+        list(&c, "MERGED", &tip, Some(&merge));
         // GitHub can't be fetched at the merge, so this repository doesn't have the merge commit
         offline(tmp.path(), &c.local);
         let checked = pulls::check_all(&c.st).await;
@@ -351,7 +352,7 @@ async fn a_card_merged_before_ranges_were_saved_shows_its_merge_commit_against_i
         let tip = git(&c.wt, &["rev-parse", "HEAD"]);
         in_review(&c).await;
         let merge = merge_on_github(tmp.path(), &c, how, &message.replace("{branch}", &c.branch));
-        list(&c.gh, "MERGED", &tip, Some(&merge));
+        list(&c, "MERGED", &tip, Some(&merge));
         pulls::check_all(&c.st).await;
         assert_eq!(task(&c).pr_state.as_deref(), Some("merged"));
         // as before GA-106: no saved range

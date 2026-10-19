@@ -28,6 +28,7 @@ mod memory_result_test;
 mod models_test;
 mod os_test;
 mod parse_test;
+mod pr_check_git_test;
 mod prepare_test;
 mod process_test;
 mod prompt_screenshots_test;

@@ -678,7 +678,9 @@ async fn h_done_when_a_card_goes_through_the_columns_set_up_by_the_team_lead_and
         }
     }
     let head = git(&wt, &["rev-parse", "HEAD"]);
-    let pr = json!([{"number": 7, "url": format!("{LINK}/pull/7"), "state": "MERGED", "isDraft": false, "headRefOid": head, "commits": [{"oid": head}]}]);
+    // gh's light answer (GA-214): the pull request's branch, no commits
+    let branch = rs[0].branch.clone().unwrap();
+    let pr = json!([{"number": 7, "url": format!("{LINK}/pull/7"), "state": "MERGED", "isDraft": false, "headRefName": branch, "headRefOid": head}]);
     std::fs::write(gh.join("list.json"), pr.to_string()).unwrap();
     let t0 = Instant::now();
     while a.column(&c) != "Deploy" {

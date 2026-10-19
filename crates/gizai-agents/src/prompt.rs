@@ -308,7 +308,8 @@ pub struct RunRules {
     pub allowed_tools: Vec<String>,
     /// The agent's folders besides the worktree that this run gets (absolute paths).
     pub folders: Vec<String>,
-    /// The run's temp folder (`<worktree>/.gizai-tmp`); None when Gizai couldn't make it.
+    /// The run's temp folder, short and outside the worktree (`worktree::prepare_run_temp`), or `<worktree>/.gizai-tmp`
+    /// when that one can't be used; None when Gizai couldn't make either.
     pub temp_dir: Option<String>,
 }
 
@@ -347,8 +348,8 @@ fn commands_line(tools: &[String], other_tools: bool) -> String {
 fn temp_line(temp_dir: Option<&str>, make: Option<&str>, literal_path: bool) -> String {
     let make = make.map(|m| format!("{m} ")).unwrap_or_default();
     match temp_dir {
-        Some(d) => format!("{make}Throwaway files go only in `{d}` (TMPDIR, TMP and TEMP point there{}), never in `/tmp` or anywhere else \
-outside the worktree, and are never committed. Gizai empties that folder when the run ends.",
+        Some(d) => format!("{make}Throwaway files go only in `{d}` (TMPDIR, TMP and TEMP point there{}), never in `/tmp` or anywhere else, \
+and are never committed. Gizai empties that folder when the run ends.",
                            if literal_path { "; in a command, write this path, not `$TMPDIR`" } else { "" }),
         None => format!("{make}Throwaway files never go in `/tmp` or anywhere else outside the worktree, and are never committed."),
     }
@@ -422,8 +423,14 @@ pub fn rules_section(r: &RunRules) -> String {
                 let reach = if r.folders.is_empty() { "this worktree".to_string() } else {
                     format!("this worktree and your folders ({})", r.folders.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", "))
                 };
-                lines.push(format!("Commands and file tools reach only {reach}: reading or writing anywhere else (`/tmp`, `..`) is refused, \
-also with an allowed command."));
+                // GA-210: the temp folder is outside the worktree, and Claude Code gets it with --add-dir
+                let temp_too = match (temp.is_some(), r.folders.is_empty()) {
+                    (false, _) => "",
+                    (true, true) => " and this run's temp folder",
+                    (true, false) => ", and this run's temp folder",
+                };
+                lines.push(format!("Commands and file tools reach only {reach}{temp_too}: reading or writing anywhere else (`/tmp`, `..`) is \
+refused, also with an allowed command."));
                 lines.push("In a command, `$(…)`, backticks, variables such as `$TMPDIR` and heredocs with an unquoted delimiter (`<<EOF`) are \
 refused. Pipes, `2>&1`, `&&` and `;` between allowed commands are fine, and so is a redirect (`>`, `>>`, `2>`) to a file in this worktree.".into());
             }

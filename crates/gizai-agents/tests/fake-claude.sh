@@ -9,7 +9,7 @@
 # and then finishes like run-ok. FAKE_REFUSED finishes like run-refused (Claude Code refusing four tool calls).
 # FAKE_REFUSED_THEN_HANG prints run-refused up to its result line, then hangs like FAKE_HANG (a run stopped part-way).
 # FAKE_TEMP=1 in its environment (a CLI's environment line, GA-48) also writes TMPDIR, TMP and TEMP, whether that
-# folder is there and the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty.
+# folder is there, what is in it and the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty.
 # FAKE_NO_RESULT in the prompt, or FAKE_NO_RESULT=1 in its environment (every run, Gizai's nudge too), finishes like
 # run-no-result: the agent pushes, starts a background wait for CI and ends its message without the GIZAI_RESULT line
 # (GA-54). FAKE_GATE=<file> in its environment waits (at most 30 s) until that file exists before it finishes, so a test
@@ -36,6 +36,8 @@ if [ -n "${FAKE_TEMP:-}" ]; then
   echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2
   if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
     echo "temp exists: yes" >&2
+    # what was in it when the run started (GA-210: nothing)
+    echo "temp entries: $(ls -A "$TMPDIR" | tr '\n' ' ')" >&2
     mkdir -p "$TMPDIR/scratch" && echo x > "$TMPDIR/scratch/test.db" && echo y > "$TMPDIR/left.txt"
   else
     echo "temp exists: no" >&2

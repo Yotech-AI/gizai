@@ -21,6 +21,12 @@ sha2 = "0.10"
 # The system's random source on every system (getrandom on Linux, getentropy on macOS, ProcessPrng on Windows).
 getrandom = "0.4"
 
+# Debug builds keep line tables only: panics and backtraces still show file and line, and the test programs are a
+# fraction of their size with full debug info (GA-213). On dev, not only on test: `cargo test` takes dev's settings,
+# and if the two differed, `cargo build` and `cargo test` would each compile every crate.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

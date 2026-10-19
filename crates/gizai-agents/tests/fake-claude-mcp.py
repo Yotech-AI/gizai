@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stands in for `claude` in mcp_cleanup_test (and the quit test in src-tauri/tests/team_lead_mcp_rules_test.rs): like Claude
+"""Stands in for `claude` in mcp_cleanup_test (and the quit test in src-tauri/tests/it/team_lead_mcp_rules_test.rs): like Claude
 Code, it starts an MCP server (fake-mcp-server.sh) as its own child, in its process group, prints an init line and works
 until it is interrupted. On SIGINT it exits 130 at once, like Claude Code, without ending the server itself: only
 Gizai's signals to the run's process group reach the server.

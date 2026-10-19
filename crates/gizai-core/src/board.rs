@@ -462,14 +462,26 @@ pub fn unsee(db: &Db, run_id: &str, key: &str) -> Result<()> {
     })
 }
 
-/// The card's last change not made by `lead` (its own row, its comments and its runs): (`changes.seq`, Unix ms).
+/// The card's last change not made by `lead` (its own row, its comments and its runs): (`changes.seq`, Unix ms). The
+/// newest of three lookups by index (GA-191): the card's own changes (`changes_row`), its comments' (`comments_task`) and
+/// its runs' (`runs_task`), each newest first.
 fn stamp(c: &Connection, task_id: &str, lead: Option<&str>) -> Result<(i64, i64)> {
-    let row: Option<(i64, String)> = c.query_row(
-        "SELECT ch.seq, ch.hlc FROM changes ch
-         WHERE (ch.row_id = ?1 OR ch.row_id IN (SELECT id FROM comments WHERE task_id = ?1) OR ch.row_id IN (SELECT id FROM runs WHERE task_id = ?1))
-           AND (?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)
-         ORDER BY ch.seq DESC LIMIT 1",
-        rusqlite::params![task_id, lead], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    const NOT_LEAD: &str = "(?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)";
+    let lookups = [
+        format!("SELECT ch.seq, ch.hlc FROM changes ch WHERE ch.row_id = ?1 AND {NOT_LEAD} ORDER BY ch.seq DESC LIMIT 1"),
+        format!("SELECT ch.seq, ch.hlc FROM comments m JOIN changes ch ON ch.row_id = m.id WHERE m.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1"),
+        format!("SELECT ch.seq, ch.hlc FROM runs r JOIN changes ch ON ch.row_id = r.id WHERE r.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1"),
+    ];
+    let mut row: Option<(i64, String)> = None;
+    for sql in &lookups {
+        let found: Option<(i64, String)> = c.prepare_cached(sql)?
+            .query_row(rusqlite::params![task_id, lead], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        if let Some(f) = found && row.as_ref().is_none_or(|(seq, _)| f.0 > *seq) {
+            row = Some(f);
+        }
+    }
     Ok(match row {
         Some((seq, hlc)) => (seq, hlc.split('-').next().and_then(|s| s.parse().ok()).unwrap_or(0)),
         None => (0, 0),

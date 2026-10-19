@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use gizai_core::model::{AgentInput, ProjectInput};
 use gizai_core::{chat, projects, runs, team};
+use gizai_lib::chat::ChatUiEvent;
 use gizai_lib::runs::Note;
 
 #[tokio::main]
@@ -19,12 +20,14 @@ async fn main() {
     let model = a.get(2).cloned().unwrap_or_else(|| "haiku".into());
     let text = a.get(3).cloned().unwrap_or_else(|| "Use get_overview, then tell me in one sentence how many projects there are and their keys.".into());
     let mut st = gizai_lib::open_state(dir.join("data"), Arc::new(|n: Note| {
-        if let Note::Chat { event, .. } = n {
-            let v = serde_json::to_value(&event).unwrap();
-            match v["kind"].as_str() {
-                Some("delta") => { print!("{}", v["text"].as_str().unwrap_or("")); let _ = std::io::stdout().flush(); }
-                Some("tool") => println!("\n[tool] {}", v["name"]),
-                _ => {}
+        // A chat's events come in batches (at most one every 50 ms), so print each event of the batch in turn.
+        if let Note::ChatEvents { events, .. } = n {
+            for event in events {
+                match event {
+                    ChatUiEvent::Delta { text, .. } => { print!("{text}"); let _ = std::io::stdout().flush(); }
+                    ChatUiEvent::Tool { name } => println!("\n[tool] {name}"),
+                    _ => {}
+                }
             }
         }
     })).unwrap();

@@ -39,9 +39,11 @@ pub use gizai_core::seed::DEFAULT_TOOLS;
 pub enum Note {
     RowsChanged(&'static str),
     RunsChanged,
-    Event { run_id: String, seq: u64, event: RunEvent },
-    /// Something happened in a chat turn (text written, a tool called, a message saved).
-    Chat { thread_id: String, event: crate::chat::ChatUiEvent },
+    /// A run's events since its last message, in `seq` order: at most one message every 50 ms per run (`stream`).
+    RunEvents { run_id: String, events: Vec<SeqEvent> },
+    /// What happened in a chat turn since its last message (text written, a tool called, a message saved): at most one
+    /// message every 50 ms per chat, pieces of text one after the other joined (`stream`).
+    ChatEvents { thread_id: String, events: Vec<crate::chat::ChatUiEvent> },
     /// A chat turn started or ended.
     ChatChanged,
     /// The release check or an update moved on (see `update`).
@@ -76,8 +78,10 @@ pub struct RunManager {
     stopped: Mutex<HashSet<String>>,
     /// Set while Gizai quits: no new runs start.
     closing: AtomicBool,
-    /// Cards whose run is starting (their worktree being made and prepared): one start at a time per card.
-    starting: std::sync::Arc<Mutex<HashSet<String>>>,
+    /// Cards whose run is starting (claimed, their worktree being made and prepared): one start at a time per card. With
+    /// the agent whose run it will be ("" until the start has chosen it), counted with the live runs against the run
+    /// limits (`under_way`); None for a person's start by hand (GA-111), which isn't a run.
+    starting: std::sync::Arc<Mutex<HashMap<String, Option<String>>>>,
     /// Agents that stopped taking cards from the queue (`pull`) after a start that couldn't work or a run
     /// that failed, with why (the first failure's). It is asked before every start, and only the failure that paused the
     /// agent holds its card: a card started just before goes back to waiting when it fails the same way, so one missing
@@ -147,17 +151,29 @@ fn takes_cards(st: &AppState, agent_id: &str) -> bool {
     !is_closing(st) && !settings::get::<bool>(&st.db, "agents_paused").ok().flatten().unwrap_or(false) && pull_paused(st, agent_id).is_none()
 }
 
-/// Held while a card's run starts.
-struct Starting {
-    cards: std::sync::Arc<Mutex<HashSet<String>>>,
+/// Held while a card's run starts: the card is claimed (`RunManager::starting`).
+pub(crate) struct Starting {
+    cards: std::sync::Arc<Mutex<HashMap<String, Option<String>>>>,
     task_id: String,
 }
 
 impl Starting {
-    fn take(st: &AppState, task_id: &str) -> Option<Starting> {
+    /// Claims the card when nothing starts on it yet: for a run of `agent` (Some("") while the start still chooses it), or
+    /// None for a person's start by hand.
+    fn take(st: &AppState, task_id: &str, agent: Option<&str>) -> Option<Starting> {
         let cards = st.runs.starting.clone();
-        let taken = cards.lock().unwrap().insert(task_id.to_string());
+        let taken = {
+            let mut claimed = cards.lock().unwrap();
+            !claimed.contains_key(task_id) && claimed.insert(task_id.to_string(), agent.map(str::to_string)).is_none()
+        };
         taken.then(|| Starting { cards, task_id: task_id.to_string() })
+    }
+
+    /// The agent whose run it is, once the start has chosen it.
+    fn for_agent(&self, agent: &str) {
+        if let Some(a) = self.cards.lock().unwrap().get_mut(&self.task_id) {
+            *a = Some(agent.to_string());
+        }
     }
 }
 
@@ -448,14 +464,30 @@ pub async fn models_for(st: &AppState, cli_id: Option<&str>, refresh: bool) -> R
     Ok(list)
 }
 
-/// An agent works on the card now: a live run, or a run still getting its worktree ready.
+/// An agent works on the card now: a live run, or a run still getting its worktree ready. (One lock at a time.)
 pub fn working_on(st: &AppState, task_id: &str) -> bool {
-    st.runs.starting.lock().unwrap().contains(task_id) || st.runs.live.lock().unwrap().values().any(|l| l.task_id == task_id)
+    let starting = st.runs.starting.lock().unwrap().contains_key(task_id);
+    starting || st.runs.live.lock().unwrap().values().any(|l| l.task_id == task_id)
 }
 
 /// The cards whose run is getting its worktree ready now (with `live`, the cards of `working_on`).
 pub fn starting(st: &AppState) -> Vec<String> {
-    st.runs.starting.lock().unwrap().iter().cloned().collect()
+    st.runs.starting.lock().unwrap().keys().cloned().collect()
+}
+
+/// The cards with a run under way (GA-191): live, or starting (claimed for a run, its worktree being made ready), of
+/// `agent` or of every agent, each card once, without `except`. What the run limits count: since cards start side by
+/// side, a claimed card holds its place before its run is live. A person's start by hand isn't a run.
+fn under_way(st: &AppState, agent: Option<&str>, except: Option<&str>) -> usize {
+    let mut cards: HashSet<String> = st.runs.live.lock().unwrap().values()
+        .filter(|l| agent.is_none_or(|a| l.agent_id == a)).map(|l| l.task_id.clone()).collect();
+    let starting: Vec<String> = st.runs.starting.lock().unwrap().iter()
+        .filter(|(_, by)| by.as_deref().is_some_and(|by| agent.is_none_or(|a| a == by))).map(|(t, _)| t.clone()).collect();
+    cards.extend(starting);
+    if let Some(e) = except {
+        cards.remove(e);
+    }
+    cards.len()
 }
 
 pub fn live(st: &AppState) -> Vec<LiveRun> {
@@ -464,12 +496,26 @@ pub fn live(st: &AppState) -> Vec<LiveRun> {
         .collect()
 }
 
-/// The run's events: from memory while it is live, else re-read from its log. When housekeeping removed the log (the
-/// run ended more than 30 days ago), a note says so.
+/// The run's events: from memory while it is live (its last `BUFFER`), else re-read from its log. When housekeeping
+/// removed the log (the run ended more than 30 days ago), a note says so.
 pub fn events_for(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
-    if let Some(l) = st.runs.live.lock().unwrap().get(run_id) {
-        return l.events.clone();
+    let live = st.runs.live.lock().unwrap().get(run_id).map(|l| l.events.clone());
+    live.unwrap_or_else(|| logged_events(st, run_id))
+}
+
+/// The window's `run_events` (GA-191): the run's events numbered after `after_seq` (all of them for None), at most the
+/// last `BUFFER`, so a page that has a run's events up to a number asks only for the rest.
+pub fn events_after(st: &AppState, run_id: &str, after_seq: Option<u64>) -> Vec<SeqEvent> {
+    let mut events = events_for(st, run_id);
+    if let Some(a) = after_seq {
+        events.retain(|e| e.seq > a);
     }
+    let cut = events.len().saturating_sub(BUFFER);
+    events.split_off(cut)
+}
+
+/// A run's events as its log has them (a run that isn't live), numbered from 0.
+fn logged_events(st: &AppState, run_id: &str) -> Vec<SeqEvent> {
     let Ok(run) = core_runs::get(&st.db, run_id) else { return vec![] };
     let events = match std::fs::read_to_string(&run.log_path) {
         // The limits Claude Code reported are for the Usage page, not the Run panel.
@@ -579,7 +625,7 @@ impl From<&str> for StartError {
 /// Starts a run and returns its id plus a handle that resolves when it has finished and its verdict is applied.
 pub async fn start(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), String> {
-    let (run_id, done) = start_inner(st, task_id, agent_id, bin_override, trigger, None).await.map_err(StartError::message)?;
+    let (run_id, done) = start_inner(st, task_id, agent_id, bin_override, trigger, None, None, &mut None).await.map_err(StartError::message)?;
     if trigger == "manual" && let Ok(r) = core_runs::get(&st.db, &run_id) {
         resume_pull(st, &r.agent_id);
     }
@@ -738,7 +784,7 @@ async fn continue_with(st: &AppState, run_id: &str, bin_override: Option<String>
     }
     let reason = run.error.clone().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "it ended without a result".into());
     let started = start_inner(st, &task_id, Some(run.agent_id.clone()), bin_override, "manual",
-                              Some(Resume { session, cli, reason, answer, nudge: false, note })).await?;
+                              Some(Resume { session, cli, reason, answer, nudge: false, note }), None, &mut None).await?;
     resume_pull(st, &run.agent_id);
     if tasks::get(&st.db, &task_id).is_ok_and(|t| t.hold.is_some()) {
         let patch = gizai_core::model::TaskPatch { hold: Some(String::new()), ..Default::default() };
@@ -754,9 +800,15 @@ async fn continue_with(st: &AppState, run_id: &str, bin_override: Option<String>
 /// why, and the agent stops taking cards until a person starts or edits it. When another card's failure paused the agent
 /// while this card was starting, the card only waits again: one failure holds one card. A start that only has to wait
 /// leaves the card waiting for the next pull.
-async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger: &str, resume: Option<Resume>)
-    -> Option<tokio::task::JoinHandle<RunSummary>> {
-    match start_inner(st, task_id, Some(agent_id.to_string()), None, trigger, resume).await {
+///
+/// `claim` and `checked` are the queue's (`pull`): the card it claimed, and what the agent's next card waits for. That
+/// one is told once this start is past its quick checks, or else once this start has ended, a pause it caused included,
+/// so the agent's best card is the one a start that can't work holds.
+async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger: &str, resume: Option<Resume>, claim: Option<Starting>,
+                          checked: Option<tokio::sync::oneshot::Sender<()>>) -> Option<tokio::task::JoinHandle<RunSummary>> {
+    let mut checked = checked;
+    let started = start_inner(st, task_id, Some(agent_id.to_string()), None, trigger, resume, claim, &mut checked).await;
+    let out = match started {
         Ok((_, done)) => Some(done),
         Err(StartError::Card(reason)) => {
             if pause_pull(st, agent_id, &reason) {
@@ -769,7 +821,9 @@ async fn start_background(st: &AppState, task_id: &str, agent_id: &str, trigger:
         Err(StartError::Held(reason)) => { pause_pull(st, agent_id, &reason); None }
         Err(StartError::Wait(_)) => None,
         Err(StartError::Other(reason)) => { eprintln!("gizai: {trigger} start of an agent failed: {reason}"); None }
-    }
+    };
+    drop(checked);
+    out
 }
 
 /// Puts the card on hold "blocked" with the reason, as `actor` (the agent that couldn't start), so Jeffrey sees why.
@@ -824,15 +878,24 @@ fn open_worktree_now(st: &AppState, project: &Project, task: &Task, repo: &Path,
 async fn prepare_worktree(st: &AppState, holder: Option<&str>, task: &Task, project: &Project, repo: &Path, wt: &worktree::Worktree,
                           todo: worktree::Unprepared) -> Result<(), StartError> {
     let plan = Prepare { copy: project.worktree_copy.clone(), install: project.worktree_install, setup: project.worktree_setup.clone() };
-    // Not while the project's own folder is being updated from chat (`code::start_update`), and the other way round:
-    // no card copies a half-installed node_modules/.
-    let folder = crate::code::folder_lock(st, repo);
-    let _folder = folder.lock().await;
-    let (main, dir, memory) = (repo.to_path_buf(), wt.path.clone(), st.run_memory.clone());
+    // The copies from the project's own folder hold its lock: not while it is being updated from chat
+    // (`code::start_update`) or the Editor, and the other way round, so no card copies a half-installed node_modules/.
+    // Copies go side by side (a read lock). The install and the setup command run in the worktree only, so they go
+    // without it (GA-191): one card's long install doesn't hold up an update or another card's copy.
+    let copied = {
+        let folder = crate::code::folder_lock(st, repo);
+        let _copying = folder.read().await;
+        let (main, dir, plan, memory) = (repo.to_path_buf(), wt.path.clone(), plan.clone(), st.run_memory.clone());
+        tokio::task::spawn_blocking(move || {
+            let path = command_path();
+            // GA-202: in the slice of the agent runs, under their memory limit (Linux)
+            prep::copy_in(&main, &dir, &plan, Some(path.as_os_str()), memory.slice().as_ref())
+        }).await.map_err(|e| StartError::Other(e.to_string()))?
+    };
+    let (dir, memory) = (wt.path.clone(), st.run_memory.clone());
     let done = tokio::task::spawn_blocking(move || {
         let path = command_path();
-        // GA-202: in the slice of the agent runs, under their memory limit (Linux)
-        prep::prepare_in(&main, &dir, &plan, todo.since.as_deref(), Some(path.as_os_str()), memory.slice().as_ref())
+        prep::install_in(&dir, &plan, todo.since.as_deref(), Some(path.as_os_str()), memory.slice().as_ref(), copied)
     }).await.map_err(|e| StartError::Other(e.to_string()))?;
     match done {
         Ok(did) => {
@@ -919,18 +982,26 @@ pub fn age_login_path(by: Duration) {
     *kept = kept.take().and_then(|(at, path)| Some((at.checked_sub(by)?, path)));
 }
 
-async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str, resume: Option<Resume>)
+/// `claim`: the card as the queue claimed it (`pull`); None: the start claims it. `checked`: told once the start is past
+/// its quick checks (the agent, its CLI and model, the card's project), before the fetch and the worktree; the queue's
+/// next card of the same agent waits for that (`pull`).
+async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin_override: Option<String>, trigger: &str, resume: Option<Resume>,
+                     claim: Option<Starting>, checked: &mut Option<tokio::sync::oneshot::Sender<()>>)
     -> Result<(String, tokio::task::JoinHandle<RunSummary>), StartError> {
     if st.runs.closing.load(Ordering::SeqCst) {
         return Err(StartError::Wait("Gizai is quitting".into()));
     }
-    let _starting = Starting::take(st, task_id)
-        .ok_or_else(|| StartError::Wait("This card's run is already starting: Gizai is getting its worktree ready".into()))?;
+    let _starting = match claim {
+        Some(c) => c,
+        None => Starting::take(st, task_id, Some(agent_id.as_deref().unwrap_or_default()))
+            .ok_or_else(|| StartError::Wait("This card's run is already starting: Gizai is getting its worktree ready".into()))?,
+    };
     if let Ok(t) = tasks::get(&st.db, task_id) && t.archived_at.is_some() {
         return Err(StartError::Other(format!("{} is archived: restore it first", t.identifier)));
     }
     let max = get_settings(st).max_concurrent_runs;
-    if st.runs.live.lock().unwrap().len() as u32 >= max {
+    // the other cards under way count, those still starting too: cards start side by side (GA-191)
+    if under_way(st, None, Some(task_id)) as u32 >= max {
         return Err(StartError::Wait(format!("{max} runs are already active; wait for one to finish or raise the limit in Settings")));
     }
     // GA-202: no new run while the runs use most of their memory limit or the computer has little free.
@@ -945,6 +1016,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Some(a) => { let m = team::agent(&st.db, &a).map_err(|e| e.to_string())?; (m.actor_id, m.role_key) }
         None => choose_agent(st, task_id)?,
     };
+    _starting.for_agent(&agent_id);
     let agent = team::agent(&st.db, &agent_id).map_err(|e| e.to_string())?;
     if agent.status != "active" {
         return Err(StartError::Wait(format!("{} is paused", agent.name)));
@@ -962,7 +1034,12 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         return Err(format!("{} now runs on {}, and this run was on {}: Run starts the card fresh on {}",
                            agent.name, cli.name, r.cli.name, cli.name).into());
     }
-    let spec = crate::clis::spec(st, &cli, bin_override.clone()).map_err(StartError::Card)?;
+    // finding the CLI's program can start your login shell (GA-191: off the async runtime)
+    let spec = {
+        let (st2, cli2, bin) = (st.clone(), cli.clone(), bin_override.clone());
+        tokio::task::spawn_blocking(move || crate::clis::spec(&st2, &cli2, bin)).await.map_err(|e| StartError::Other(e.to_string()))?
+            .map_err(StartError::Card)?
+    };
     if let Some(model) = agent.model.as_deref().map(str::trim).filter(|m| !m.is_empty() && *m != "default") {
         check_model(st, &cli, &spec, bin_override.is_some(), model, &agent.name).await?;
     }
@@ -970,6 +1047,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| StartError::Card(e.to_string()))?;
     let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
         .ok_or_else(|| StartError::Card(format!("Link a git repository to {} first (project page → Edit)", project.name)))?;
+    // Past the quick checks: the queue's next card of this agent may start too (`pull`).
+    if let Some(tx) = checked.take() {
+        let _ = tx.send(());
+    }
     // With a link (GitHub, Bitbucket or another git URL), a card starts from the main branch just fetched from it, and
     // a card that already has a branch hears how far that main has moved on.
     let start = {
@@ -992,9 +1073,13 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     if let Some(todo) = worktree::unprepared(&wt.path) {
         prepare_worktree(st, Some(&agent_id), &task, &project, Path::new(&repo), &wt, todo).await?;
     }
+    let behind = if project.repo_url.is_none() || wt.created { 0 } else {
+        let (dir, from) = (wt.path.clone(), start.clone());
+        tokio::task::spawn_blocking(move || worktree::behind(&dir, &from).unwrap_or(0)).await.unwrap_or(0)
+    };
     let base = project.repo_url.as_ref().map(|_| BaseInfo {
         from: start.strip_prefix("refs/remotes/").or_else(|| start.strip_prefix("refs/")).unwrap_or(&start).to_string(),
-        behind: if wt.created { 0 } else { worktree::behind(&wt.path, &start).unwrap_or(0) },
+        behind,
     });
 
     // Gizai may have begun to quit while the worktree was made ready.
@@ -1032,7 +1117,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     // your answer in memory, linked to the card.
     crate::ask_lead::learn(st, task_id, &run_id);
 
-    if let Ok(sha) = worktree::rev_parse(&wt.path, "HEAD") {
+    let head = { let dir = wt.path.clone(); tokio::task::spawn_blocking(move || worktree::rev_parse(&dir, "HEAD").ok()).await.ok().flatten() };
+    if let Some(sha) = head {
         let _ = core_runs::set_base_sha(&st.db, &run_id, &sha);
     }
 
@@ -1179,13 +1265,19 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         Some(r) => prompt::continue_prompt_with(&r.reason, note.as_ref(), Some(limits)),
         None => prompt::with_memory(&prompt::build_from(&ctx, &instructions, fetched_from(&project)), &memory.text),
     }, shots.as_ref().map(|s| &s.section)), &rules);
+    let writable_dirs: Vec<String> = if spec.kind == Kind::Codex {
+        let dir = wt.path.clone();
+        tokio::task::spawn_blocking(move || git_common_dir(&dir)).await.ok().flatten().into_iter().collect()
+    } else {
+        vec![]
+    };
     let run = TaskRun {
         session_id: session.clone(), resume: resume.is_some(),
         prompt: if untrusted { format!("{base_prompt}\n\n{}", gizai_agents::mcp_run::UNTRUSTED) } else { base_prompt },
         permission_mode, allowed_tools, mcp_config: mcp_config.clone(), disallowed_tools: mcp_refused, web, slash_commands,
         model: agent.model.clone(), max_budget_usd: get_settings(st).max_run_usd, effort: agent.effort.clone(),
         // A worktree's commits go to the repository's git folder, outside the worktree: Codex's sandbox must be able to write it.
-        writable_dirs: if spec.kind == Kind::Codex { git_common_dir(&wt.path).into_iter().collect() } else { vec![] },
+        writable_dirs,
         folders, temp_dir, git_config,
     };
     // GA-202: the CLI and everything it starts run in the slice of the agent runs, under their memory limit (Linux).
@@ -1299,16 +1391,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                 RunEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type.clone(),
                 _ => {}
             }
-            let seq = {
-                let mut live = st2.runs.live.lock().unwrap();
-                let Some(l) = live.get_mut(&rid) else { continue };
-                let seq = l.next_seq;
-                l.next_seq += 1;
-                l.events.push(SeqEvent { seq, event: ev.clone() });
-                if l.events.len() > BUFFER { l.events.remove(0); }
-                seq
-            };
-            (st2.notify)(Note::Event { run_id: rid.clone(), seq, event: ev });
+            push_event(&st2, &rid, ev);
         }
         let capped = capped.map(|c| if c.ends_with(":time") {
             format!("stopped at the time limit of {} minutes per run (Settings → Runs)", limits.minutes)
@@ -1682,7 +1765,7 @@ pub async fn start_by_hand(st: &AppState, task_id: &str) -> Result<worktree::Wor
         return Err(busy());
     }
     workflow::start_by_hand_check(&st.db, &st.you_id, task_id).map_err(|e| e.to_string())?;
-    let _starting = Starting::take(st, task_id).ok_or_else(busy)?;
+    let _starting = Starting::take(st, task_id, None).ok_or_else(busy)?;
     let project = projects::get(&st.db, task.project_id.as_deref().unwrap_or_default()).map_err(|e| e.to_string())?;
     let repo = project.repo_path.clone().filter(|p| !p.trim().is_empty())
         .ok_or_else(|| format!("Link a git repository to {} first (project page → Edit)", project.name))?;
@@ -1717,17 +1800,21 @@ fn note_run(st: &AppState, run_id: &str, text: &str) {
             eprintln!("gizai: couldn't add a note to the log of run {run_id}: {e}");
         }
     }
-    let event = RunEvent::Note { text: text.to_string() };
-    let seq = {
-        let mut live = st.runs.live.lock().unwrap();
-        let Some(l) = live.get_mut(run_id) else { return };
-        let seq = l.next_seq;
-        l.next_seq += 1;
-        l.events.push(SeqEvent { seq, event: event.clone() });
-        if l.events.len() > BUFFER { l.events.remove(0); }
-        seq
-    };
-    (st.notify)(Note::Event { run_id: run_id.to_string(), seq, event });
+    push_event(st, run_id, RunEvent::Note { text: text.to_string() });
+}
+
+/// The live run's next event: numbered, kept for the Run panel (its last `BUFFER`) and queued for the window (`stream`),
+/// all under the live runs' lock, so the window gets them in `seq` order. Nothing when the run isn't live.
+fn push_event(st: &AppState, run_id: &str, event: RunEvent) {
+    let mut live = st.runs.live.lock().unwrap();
+    let Some(l) = live.get_mut(run_id) else { return };
+    let seq = l.next_seq;
+    l.next_seq += 1;
+    l.events.push(SeqEvent { seq, event: event.clone() });
+    if l.events.len() > BUFFER {
+        l.events.remove(0);
+    }
+    crate::stream::run_event(st, run_id, SeqEvent { seq, event });
 }
 
 /// Gizai's nudge (GA-54): a run that ended normally without its GIZAI_RESULT line (succeeded, `no_result`) is continued
@@ -1765,13 +1852,13 @@ fn start_nudge<'a>(st: &'a AppState, task_id: &'a str, agent_id: &'a str, resume
             return;
         }
         let Ok(agent) = team::agent(&st.db, agent_id) else { return };
-        let busy = st.runs.live.lock().unwrap().values().filter(|l| l.agent_id == agent_id).count() as i64;
-        if busy >= agent.max_runs.max(1) {
+        // its cards under way, those still starting too (GA-191)
+        if under_way(st, Some(agent_id), None) as i64 >= agent.max_runs.max(1) {
             return;
         }
         // The start checks the rest: active, budget, Runs at once (a wait, so nothing changes). Its own trigger
         // (`result_nudge`), so the Runs list tells it from a Continue.
-        if start_background(st, task_id, agent_id, core_runs::RESULT_NUDGE, Some(resume)).await.is_some() {
+        if start_background(st, task_id, agent_id, core_runs::RESULT_NUDGE, Some(resume), None, None).await.is_some() {
             eprintln!("gizai: a run on card {task_id} ended without a result: continued it once");
         }
     })
@@ -1818,44 +1905,83 @@ pub fn pull(st: &AppState) -> std::pin::Pin<Box<dyn std::future::Future<Output =
 }
 
 async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSummary>)> {
+    if blocking(st, |st| get_settings(st).agents_paused).await.unwrap_or(true) || is_closing(st) {
+        return vec![];
+    }
+    // The lock covers choosing and claiming the cards only (GA-191): the next pull (a run's end, a card that changed, the
+    // minute's) claims more while these start, and the claims count against the run limits (`under_way`).
+    let claims = {
+        let _one = st.runs.pulling.lock().await;
+        blocking(st, claim_cards).await.unwrap_or_default()
+    };
+    // Each claimed card's start (the fetch, its worktree, the copies, the install) in a task of its own: one card's install
+    // doesn't hold up the next card. An agent's cards pass their quick checks one after the other, best first, so a start
+    // that can't work (a wrong model, no repository) holds the best card and the others go back to waiting, as before.
+    let mut checked: HashMap<String, tokio::sync::oneshot::Receiver<()>> = HashMap::new();
+    let starts: Vec<_> = claims.into_iter().map(|c| {
+        let (tell, told) = tokio::sync::oneshot::channel();
+        let before = checked.insert(c.agent.clone(), told);
+        let st = st.clone();
+        tokio::spawn(async move {
+            if let Some(before) = before {
+                let _ = before.await;
+            }
+            // a card this pull started may have failed already: a failing CLI must not run through the queue
+            let agent = c.agent.clone();
+            if !blocking(&st, move |st| takes_cards(st, &agent)).await.unwrap_or(false) {
+                return None;
+            }
+            let task = c.task.clone();
+            start_background(&st, &task, &c.agent, "assigned", None, Some(c.claim), Some(tell)).await.map(|done| (task, done))
+        })
+    }).collect();
     let mut started = vec![];
-    if get_settings(st).agents_paused || is_closing(st) {
-        return started;
-    }
-    let _one = st.runs.pulling.lock().await;
-    let max = get_settings(st).max_concurrent_runs as usize;
-    // GA-202: while memory is short no card starts; each start checks again (`start_inner`).
-    if crate::run_memory::wait_reason(st).is_some() {
-        return started;
-    }
-    for (_, a) in team::all_agents(&st.db).unwrap_or_default() {
-        if a.status != "active" {
-            continue;
-        }
-        // At most its cards at once per pull; a slot that frees up meanwhile is filled by the pull its run's end starts.
-        // The pause is asked before each start: a card this pull started may have failed already, and a failing CLI
-        // must not run through the queue.
-        for _ in 0..a.max_runs.max(1) {
-            if !takes_cards(st, &a.actor_id) {
-                break;
-            }
-            let (mine, all) = {
-                let live = st.runs.live.lock().unwrap();
-                (live.values().filter(|l| l.agent_id == a.actor_id).count() as i64, live.len())
-            };
-            if mine >= a.max_runs.max(1) || all >= max {
-                break;
-            }
-            // Read again each time: the cards this pull started are claimed now, and others may have moved or been held.
-            let busy = |t: &String| st.runs.live.lock().unwrap().values().any(|l| &l.task_id == t) || st.runs.starting.lock().unwrap().contains(t);
-            // GA-212: a card in Testing waits while its project's Test runs at once is full; the agent takes its next card.
-            let Some(task) = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default().into_iter()
-                .find(|t| !busy(t) && test_runs_full(st, t).is_none()) else { break };
-            match start_background(st, &task, &a.actor_id, "assigned", None).await {
-                Some(done) => started.push((task, done)),
-                None => break,
-            }
+    for s in starts {
+        if let Ok(Some(s)) = s.await {
+            started.push(s);
         }
     }
     started
+}
+
+/// A card the queue claimed for an agent's run (`claim_cards`).
+struct Claimed {
+    task: String,
+    agent: String,
+    claim: Starting,
+}
+
+/// The queue's choice: each active agent whose pull isn't paused takes its best waiting cards nobody works on, until it
+/// has its cards at once under way or "Runs at once" is reached, counting the runs under way and the cards claimed so far
+/// (`under_way`). Each is claimed for its agent at once, so no other start takes it.
+fn claim_cards(st: &AppState) -> Vec<Claimed> {
+    let max = get_settings(st).max_concurrent_runs as usize;
+    // GA-202: while memory is short no card starts; each start checks again (`start_inner`).
+    if crate::run_memory::wait_reason(st).is_some() {
+        return vec![];
+    }
+    let mut claimed = vec![];
+    for (_, a) in team::all_agents(&st.db).unwrap_or_default() {
+        if a.status != "active" || !takes_cards(st, &a.actor_id) {
+            continue;
+        }
+        let slots = a.max_runs.max(1) as usize;
+        while under_way(st, Some(&a.actor_id), None) < slots && under_way(st, None, None) < max {
+            let live: HashSet<String> = st.runs.live.lock().unwrap().values().map(|l| l.task_id.clone()).collect();
+            let waiting = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default();
+            // GA-212: a card in Testing waits while its project's Test runs at once is full, the cards claimed so far
+            // counted (they are starting); the agent takes its next card.
+            let Some((task, claim)) = waiting.into_iter().filter(|t| !live.contains(t) && test_runs_full(st, t).is_none())
+                .find_map(|t| Starting::take(st, &t, Some(&a.actor_id)).map(|c| (t, c))) else { break };
+            claimed.push(Claimed { task, agent: a.actor_id.clone(), claim });
+        }
+    }
+    claimed
+}
+
+/// `f` with the state on a thread that may wait (for the database, /proc, git or a shell), not on the async runtime's
+/// threads, which every async command and event also needs (GA-191). None when `f` panicked.
+async fn blocking<T: Send + 'static>(st: &AppState, f: impl FnOnce(&AppState) -> T + Send + 'static) -> Option<T> {
+    let st = st.clone();
+    tokio::task::spawn_blocking(move || f(&st)).await.ok()
 }

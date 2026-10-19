@@ -2,6 +2,7 @@
 //! - The queue: project GA ("Giz AI", Test runs at once 1) has two cards in Testing; the QA Agent (cards at once 3)
 //!   starts one, passes over the other and starts project KADE's (no limit) meanwhile; the second GA card starts by
 //!   itself once the first one's test run has ended. With the setting empty, both GA cards start at once, as today.
+//!   With Test runs at once 2 and three GA cards in Testing, one pull starts two side by side and the third waits (GA-191).
 //! - Two GA cards that start at the same moment (by hand, or the queue and a hand) never both start.
 //! - Run, Continue and the Team Lead's start_agent_run and continue_agent_run on the second card don't start it, and say
 //!   why word for word; with a limit of 2 they name both cards in a test run.
@@ -195,6 +196,25 @@ async fn without_the_setting_both_cards_of_the_project_start_at_once_as_today() 
     a.run(&a3).await.unwrap();
     assert!(a.live_cards().contains(&a3));
     assert!(gizai_lib::board::findings(&a.st, gizai_core::ids::now_ms() + 2 * 60 * 60_000).unwrap().iter().all(|f| f.code != "test_runs_full"));
+    a.stop_everything().await;
+}
+
+/// GA-191 claims a pull's cards first and starts them side by side: the cards claimed in that pull count against Test
+/// runs at once, and the claimed ones, each starting while the other is, don't make each other wait.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_pull_claims_as_many_of_the_projects_testing_cards_as_its_test_runs_at_once_and_starts_them_side_by_side() {
+    let a = app(Some(2));
+    let a1 = a.card(&a.ga, "Testing", "FAKE_HANG", 1);
+    let a2 = a.card(&a.ga, "Testing", "FAKE_HANG", 2);
+    let a3 = a.card(&a.ga, "Testing", "FAKE_HANG", 3);
+    let started: Vec<String> = runs::pull(&a.st).await.into_iter().map(|(t, _)| t).collect();
+    assert_eq!(started, [a1.clone(), a2.clone()], "GA-1 and GA-2 start, GA-3 waits, with a slot of the QA Agent's still free");
+    assert_eq!(a.live_cards(), sorted(vec![a1.clone(), a2.clone()]));
+    let t = a.task(&a3);
+    assert_eq!((a.runs_of(&a3).len(), t.state_name.as_str(), t.hold.as_deref()), (0, "Testing", None), "GA-3 only waits");
+    assert!(runs::pull(&a.st).await.is_empty(), "the next pull starts nothing either");
+    assert_eq!(a.run(&a3).await.unwrap_err(),
+               "Giz AI tests 2 cards at a time (project settings): wait for GA-1 or GA-2 to finish testing, or raise the limit on the project page.");
     a.stop_everything().await;
 }
 

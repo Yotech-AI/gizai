@@ -46,7 +46,9 @@ fn waiting() -> MutexGuard<'static, Option<Waiting>> {
     WAITING.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The page has unsaved text in an editor (or no longer has).
+/// The page has unsaved text in an editor (or no longer has). On the main thread (GA-191), with `close_answer` and the
+/// window's close and quit requests, which run there too: the page's words are taken in the order it said them, so a
+/// "saved" never comes before the "unsaved" it answers. A flag in memory: no database or file work.
 #[tauri::command]
 pub fn set_unsaved_edits(unsaved: bool) {
     UNSAVED.store(unsaved, Ordering::SeqCst);
@@ -107,7 +109,9 @@ pub fn settle() {
 }
 
 /// The page's answer: "asking" (the question shows: the window comes forward, and Gizai waits for Close or Stay),
-/// "close" (saved, or Close: go on closing) or "stay" (Gizai stays as it was).
+/// "close" (saved, or Close: go on closing) or "stay" (Gizai stays as it was). On the main thread (GA-191): it shows,
+/// hides or quits the window, in order with `set_unsaved_edits` and the window's close and quit requests. No database or
+/// file work.
 #[tauri::command]
 pub fn close_answer(app: AppHandle, answer: String) {
     let mut w = waiting();

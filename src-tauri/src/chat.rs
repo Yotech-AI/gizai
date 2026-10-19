@@ -28,6 +28,7 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::runs::Note;
+use crate::stream::Draft;
 
 /// The limits of an answer of the Team Lead that starts now (Settings → Runs, Minutes and Tool calls per chat answer): a
 /// chat answer, a board check, its look at an agent's question. Each answer reads them once as it starts and keeps them
@@ -344,8 +345,9 @@ pub fn kill_all(st: &AppState) -> usize {
     live.len() + check as usize + questions.len()
 }
 
+/// Queues the event for the window (`stream`): it goes with the chat's next batch.
 fn emit(st: &AppState, thread_id: &str, event: ChatUiEvent) {
-    (st.notify)(Note::Chat { thread_id: thread_id.to_string(), event });
+    crate::stream::chat_event(st, thread_id, event);
 }
 
 fn save(st: &AppState, m: NewMessage) -> Option<ChatMessage> {
@@ -1113,16 +1115,34 @@ fn set_live(st: &AppState, thread_id: &str, f: impl FnOnce(&mut LiveTurn)) {
     }
 }
 
-/// Changes the text being written in the thread's live turn, numbered (`ChatStatus::seq`) under the same lock as the
-/// change, so a snapshot holds exactly the changes up to its number. Returns the change's number.
-fn draft_change(st: &AppState, thread_id: &str, f: impl FnOnce(&mut String)) -> u64 {
+/// The next number for a change to the text being written, in any chat (`ChatStatus::seq`). `stream::chat_draft` takes
+/// it as it queues the change.
+pub(crate) fn next_seq(st: &AppState) -> u64 {
+    st.chat.seq.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// The batch of the chat's events that goes to the window now (`stream`), taken with `take` under the live turns' lock,
+/// and its changes to the text being written applied to the turn's draft there. So a snapshot (`live`) holds exactly the
+/// batches sent before it: the page adds the batches it hears after it, and gets no piece of text twice and loses none.
+pub(crate) fn publish(st: &AppState, thread_id: &str, take: impl FnOnce() -> Vec<ChatUiEvent>) -> Vec<ChatUiEvent> {
     let mut live = st.chat.live.lock().unwrap();
-    let seq = st.chat.seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let events = take();
     if let Some(l) = live.get_mut(thread_id) {
-        f(&mut l.draft);
-        l.seq = seq;
+        for ev in &events {
+            match ev {
+                ChatUiEvent::Delta { text, seq } => {
+                    l.draft.push_str(text);
+                    l.seq = *seq;
+                }
+                ChatUiEvent::Block { seq } => {
+                    l.draft.clear();
+                    l.seq = *seq;
+                }
+                _ => {}
+            }
+        }
     }
-    seq
+    events
 }
 
 /// The folders the Team Lead may read, for `--add-dir` in a chat turn and in a board check: `copies` (its copies of the
@@ -1218,8 +1238,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     let _ = core_runs::set_running(&st.db, &run_id, handle.pid);
     let stopped_early = st.chat.stopped.lock().unwrap().contains(&thread.id);
     set_live(st, &thread.id, |l| { l.run_id = run_id.clone(); l.stop = Some(handle.stop.clone()); l.tool = None; });
-    let seq = draft_change(st, &thread.id, String::clear);
-    emit(st, &thread.id, ChatUiEvent::Block { seq });
+    crate::stream::chat_draft(st, &thread.id, Draft::Block);
     if stopped_early {
         handle.stop.stop();
     }
@@ -1247,13 +1266,11 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
             }
             ChatEvent::BlockStart => {
                 draft.clear();
-                let seq = draft_change(st, &thread.id, String::clear);
-                emit(st, &thread.id, ChatUiEvent::Block { seq });
+                crate::stream::chat_draft(st, &thread.id, Draft::Block);
             }
             ChatEvent::Delta { text } => {
                 draft.push_str(&text);
-                let seq = draft_change(st, &thread.id, |d| d.push_str(&text));
-                emit(st, &thread.id, ChatUiEvent::Delta { text, seq });
+                crate::stream::chat_draft(st, &thread.id, Draft::Delta(text));
             }
             ChatEvent::Text { text } => {
                 draft.clear();
@@ -1261,8 +1278,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
                     save(st, NewMessage { body_md: Some(text.trim().to_string()), ..base("agent") });
                 }
                 // The block is saved: the text being written starts again.
-                let seq = draft_change(st, &thread.id, String::clear);
-                emit(st, &thread.id, ChatUiEvent::Block { seq });
+                crate::stream::chat_draft(st, &thread.id, Draft::Block);
             }
             ChatEvent::ToolUse { id, name, input } => {
                 if is_outside_tool(&name) {

@@ -308,7 +308,7 @@ async fn update_waits_for_a_cards_preparation_from_the_same_folder_runs_one_at_a
 
     // a card's worktree is being prepared from the folder (it holds the folder's lock)
     let lock = code::folder_lock(&st, &folder);
-    let held = lock.clone().lock_owned().await;
+    let held = lock.clone().read_owned().await;
     let will = editor::update(&st, &id).await.unwrap();
     assert_eq!(will, format!("move main 1 commit to {}", &to[..7]), "it answers at once");
     let m = editor::main(&st, &id).unwrap();
@@ -327,7 +327,7 @@ async fn update_waits_for_a_cards_preparation_from_the_same_folder_runs_one_at_a
     // the folder changed while it waited: checked again, and it doesn't start
     let to = gh.push(&[("app.js", "1\n")], "b");
     editor::fetch(&st, &id).unwrap();
-    let held = lock.clone().lock_owned().await;
+    let held = lock.clone().read_owned().await;
     editor::update(&st, &id).await.unwrap();
     std::fs::write(folder.join("README.md"), "# Mine\n").unwrap();
     let at = head();

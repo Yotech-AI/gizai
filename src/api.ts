@@ -186,11 +186,16 @@ export const continueAfterRunForMe = (taskId: string) => invoke<string>("continu
 export const listRuns = (taskId: string) => invoke<T.Run[]>("list_runs", { taskId });
 /** The commits a finished run made, oldest first. */
 export const runCommits = (runId: string) => invoke<T.Commit[]>("run_commits", { runId });
-export const runEvents = (runId: string) => invoke<T.SeqEvent[]>("run_events", { runId });
+/** The run's events numbered after `afterSeq` (all of them without it), at most the last 500. */
+export const runEvents = (runId: string, afterSeq: number | null = null) => invoke<T.SeqEvent[]>("run_events", { runId, afterSeq });
 export const liveRuns = () => invoke<T.LiveRun[]>("live_runs");
 export const suggestAgent = (taskId: string) => invoke<string | null>("suggest_agent", { taskId });
+/** Each live run event, one call per event: they come in batches (`run-events`, at most one every 50 ms per run), in
+ *  seq order. */
 export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEvent }) => void): Promise<UnlistenFn> =>
-  listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
+  listen<{ runId: string; events: T.SeqEvent[] }>("run-events", (m) => {
+    for (const e of m.payload.events) cb({ runId: m.payload.runId, seq: e.seq, event: e.event });
+  });
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
 /** A card's changed files with their counts: its worktree (uncommitted changes included) against its merge base with main,
@@ -382,5 +387,8 @@ export const approvePendingActions = (ids: string[]) => invoke<T.PendingAction[]
 export const discardPendingAction = (id: string) => invoke<T.PendingAction>("discard_pending_action", { id });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
-export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));
+/** Each event of a chat's answer, one call per event: they come in batches (`chat-events`, at most one every 50 ms per
+ *  chat, pieces of text one after the other joined into one). */
+export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> =>
+  listen<{ threadId: string; events: T.ChatEvent[] }>("chat-events", (m) => { for (const e of m.payload.events) cb(e); });
 export const onChatChanged = (cb: () => void): Promise<UnlistenFn> => listen("chat-changed", () => cb());

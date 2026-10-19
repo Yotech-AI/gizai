@@ -61,14 +61,16 @@ export type TerminalEnd = { code: number | null; at: number; why: string | null 
 `;
 
 /** Contract CT's Rust commands, as the card has them. */
+// GA-191: every command off the main thread but the three that must keep the page's order (input, resize, ack), so
+// terminal_list, terminal_attach and terminal_rename are async now; what they answer is the same.
 const CT_RUST = `
-#[tauri::command] pub fn terminal_list(st: State<'_, AppState>) -> Vec<TerminalSession>
+#[tauri::command] pub async fn terminal_list(st: State<'_, AppState>) -> R<Vec<TerminalSession>>
 #[tauri::command] pub async fn terminal_open(st: State<'_, AppState>, folder: String, cols: u16, rows: u16, name: Option<String>) -> Result<TerminalSession, String>
-#[tauri::command] pub fn terminal_attach(st: State<'_, AppState>, id: String, output: tauri::ipc::Channel<tauri::ipc::Response>) -> Result<(), String>
+#[tauri::command] pub async fn terminal_attach(st: State<'_, AppState>, id: String, output: tauri::ipc::Channel<tauri::ipc::Response>) -> Result<(), String>
 #[tauri::command] pub fn terminal_input(st: State<'_, AppState>, id: String, data: String, binary: bool) -> Result<(), String>
 #[tauri::command] pub fn terminal_resize(st: State<'_, AppState>, id: String, cols: u16, rows: u16) -> Result<(), String>
 #[tauri::command] pub fn terminal_ack(st: State<'_, AppState>, id: String, bytes: u32) -> Result<(), String>
-#[tauri::command] pub fn terminal_rename(st: State<'_, AppState>, id: String, name: String) -> Result<TerminalSession, String>
+#[tauri::command] pub async fn terminal_rename(st: State<'_, AppState>, id: String, name: String) -> Result<TerminalSession, String>
 #[tauri::command] pub async fn terminal_close(st: State<'_, AppState>, id: String) -> Result<(), String>
 `;
 

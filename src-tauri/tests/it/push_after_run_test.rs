@@ -135,9 +135,14 @@ async fn a_claude_code_run_that_commits_but_does_not_push_leaves_its_branch_on_g
     // what the Run panel gets while the run ends
     let live: Arc<Mutex<Vec<String>>> = Arc::default();
     let seen = live.clone();
+    // GA-191: the run's events come in batches (`run-events`)
     st.notify = Arc::new(move |n| {
-        if let gizai_lib::runs::Note::Event { event: RunEvent::Note { text }, .. } = n {
-            seen.lock().unwrap().push(text);
+        if let gizai_lib::runs::Note::RunEvents { events, .. } = n {
+            for e in events {
+                if let RunEvent::Note { text } = e.event {
+                    seen.lock().unwrap().push(text);
+                }
+            }
         }
     });
     let c = card_on(st, tmp.path());
@@ -158,6 +163,8 @@ async fn a_claude_code_run_that_commits_but_does_not_push_leaves_its_branch_on_g
     assert_eq!(notes(&c.st, &s.run_id), [said.clone()], "the run output says what Gizai pushed");
     let log = std::fs::read_to_string(&run.log_path).unwrap();
     assert!(log.lines().any(|l| l.contains("\"gizai_note\"") && l.contains(&said)), "in the run's log: {log}");
+    // GA-191: the run's last batch goes within 50 ms of its end
+    until("the note's batch", || live.lock().unwrap().contains(&said)).await;
     assert!(live.lock().unwrap().contains(&said), "and live in the Run panel: {:?}", live.lock().unwrap());
 }
 

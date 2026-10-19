@@ -112,4 +112,20 @@ describe("in a perf run (window.__GIZAI_PERF__ set before the page's scripts)", 
     const none = perf.perfCount(performance.now() + 1000);
     expect([none.calls, none.heard, none.commands]).toEqual([0, 0, []]);
   });
+
+  it("counts what api.ts asks, app_info and the sidebar's lists included, and the events its listeners hear", async () => {
+    const { perf } = await perfRun();
+    const api = await import("../api");
+    await api.appInfo();
+    await api.listProjects();
+    let changed = 0;
+    await api.onRunsChanged(() => { changed += 1; });
+    handlers[0]({ event: "runs-changed", id: 1, payload: { id: "KADE-1" } });
+    expect(changed).toBe(1);
+    // every call goes through the counter on its way to Tauri's invoke, from the first one
+    expect(perf.perfCalls.map((c) => c.cmd)).toEqual(["app_info", "list_projects", "listen"]);
+    expect(tauriInvoke.mock.calls.map((c) => c[0])).toEqual(["app_info", "list_projects"]);
+    expect(perf.perfHeard.map((h) => h.event)).toEqual(["runs-changed"]);
+    expect(perf.perfCount().commands.find((c) => c.cmd === "app_info")?.bytes).toBe(JSON.stringify({ cmd: "app_info", cards: [1, 2, 3] }).length);
+  });
 });

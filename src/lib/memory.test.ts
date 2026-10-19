@@ -176,7 +176,7 @@ describe("agentFolder: an agent's name as its folder's name (gizai_core::memory:
     expect(agentFolder("Bot\u0085One")).toBe("Bot-One");
     expect(agentFolder("Bot\u009bOne")).toBe("Bot-One");
   });
-  // The same names as crates/gizai-core/tests/memory_page_test.rs checks against folder_name.
+  // The same names as crates/gizai-core/tests/it/memory_page_test.rs checks against folder_name.
   it.each([
     ["\u0085QA\u0085", "QA"],
     [" QA　", "QA"],

@@ -127,7 +127,8 @@ What the baseline already shows (measured; what to do about it is for the later 
   Over all 40 runs the page began 330 to 885 ms after the launch, with the disk flushed before each, so compare medians
   of several runs.
 - **The database:** the board check, which holds the one connection's lock, takes 14.4 ms on 500 cards; every other
-  query here stays under 6 ms on this data (F3: `bench_queries --years <n>` shows how they grow).
+  query here stays under 6 ms on this data (F3: `bench_queries` on data made with `prep_perf --years <n>` shows how they
+  grow).
 
 ## 4. Findings, biggest cost first
 
@@ -942,7 +943,8 @@ by side.
 8. **History that only grows.** Runs, comments, chat messages and the `changes` log are never deleted (F3). Should Gizai
    ever thin them out, for example the `changes` rows of cards archived a year ago? *Recommendation:* not now: with
    P8's indexes their size stops mattering for speed, and `changes` is meant as the log a future sync reads
-   (`crates/gizai-core/src/db.rs:1-2`); look again if `bench_queries --years 3` still shows growth after P8.
+   (`crates/gizai-core/src/db.rs:1-2`); look again if `bench_queries` on `prep_perf --years 3`'s data still shows growth
+   after P8.
 
 ## 10. Sources
 

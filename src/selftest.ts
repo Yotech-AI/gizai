@@ -13,7 +13,7 @@ import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/termin
 import { OPENED_AT_KEY, OPENED_KEY, TABS_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
 import { shotUrlCount } from "./lib/shotUrls";
 import { tellMain } from "./lib/behind";
-import { perfCalls, perfCount, perfFirst, perfFrames, perfOn } from "./lib/perf";
+import { boardDrawn, perfCalls, perfCount, perfFirst, perfFrames, perfOn } from "./lib/perf";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
 import type { FolderMain } from "./types";
@@ -4290,19 +4290,38 @@ async function perfStart(o: PerfResult) {
   if (!info) o.errors.push("the counter did not see app_info");
 }
 
+/** Waits until the whole board is drawn and has stayed so for `steady` ms (false after `timeout` ms). A start on #/board
+ *  may draw it twice: the default route's board first, then, when app_info has sent the app to #/board, that page's own,
+ *  with no board between the two while its cards load. */
+async function boardSteady(timeout: number, steady = 500) {
+  const end = performance.now() + timeout;
+  let since: number | null = null;
+  while (performance.now() < end) {
+    if (!boardDrawn()) since = null;
+    else if (since === null) since = performance.now();
+    else if (performance.now() - since >= steady) return true;
+    await nextFrame();
+  }
+  return false;
+}
+
 /** `board` (#/board, 500 cards): all columns drawn (ms since the page began); 3 s of scrolling in each column; the first
  *  To do card dragged into In progress: ms until it is drawn there, and the calls in the 2 s after the drop. */
 async function perfBoard(o: PerfResult) {
   if (!location.hash.startsWith("#/board")) location.hash = "#/board";
   if (!(await shown(() => perfFirst.board !== undefined, 20000))) throw new Error("the board's columns were not all drawn");
   o.numbers.columns_drawn_ms = ms(perfFirst.board);
+  // the columns are read only once the board stays on the page (boardSteady), and each again by its name
+  if (!(await boardSteady(20000))) throw new Error("the board did not stay on the page for 500 ms within 20 s");
   const per: { column: string; fps: number; longestFrameMs: number }[] = [];
   const skipped: string[] = [];
   const scrolled = performance.now();
   const names = [...document.querySelectorAll<HTMLElement>(".board .col:not(.rail)")].map((c) => c.dataset.col ?? "");
+  o.detail.open_columns = names;
   for (const name of names) {
     const body = () => document.querySelector<HTMLElement>(`.board .col[data-col="${CSS.escape(name)}"] .col-body`);
-    const b = body();
+    const b = await waitFor(body, 2000);
+    if (!b) o.errors.push(`the ${name} column left the page before it was scrolled`);
     if (!b || b.scrollHeight <= b.clientHeight + 1) {
       skipped.push(b ? `${name}: ${b.querySelectorAll(".card").length} cards in ${b.scrollHeight} of ${b.clientHeight} px` : `${name}: gone`);
       continue;
@@ -4319,6 +4338,7 @@ async function perfBoard(o: PerfResult) {
   o.windows.scroll = [Math.round(o.timeOrigin + scrolled), Math.round(o.timeOrigin + performance.now())];
   o.numbers.scroll_fps = per.length ? Math.min(...per.map((p) => p.fps)) : -1;
   o.numbers.scroll_longest_frame_ms = per.length ? Math.max(...per.map((p) => p.longestFrameMs)) : -1;
+  if (!per.length) o.errors.push(`no board column was scrolled (${names.length} open: ${skipped.join("; ") || "none found"})`);
   await sleep(500);
   // the drag, the way a mouse does it (dragProbe), without asking the backend anything itself
   const card = document.querySelector<HTMLElement>('[data-col="To do"] .card');

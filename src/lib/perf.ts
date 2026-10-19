@@ -44,7 +44,7 @@ export const listen: typeof tauriListen = !perfOn ? tauriListen : <T>(event: Eve
 };
 
 /** The cards have come, and every open board column shows its own (at most 50 each). */
-function boardDrawn() {
+export function boardDrawn() {
   const cols = [...document.querySelectorAll(".board .col:not(.rail)")];
   return cols.length > 0 && !!document.querySelector(".board .card") && cols.every((c) => {
     const n = parseInt(c.querySelector(".col-head .n")?.textContent ?? "0", 10) || 0;

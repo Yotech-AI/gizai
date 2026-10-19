@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stands in for `claude` in the GA-39 MCP run tests (src-tauri/tests/mcp_run_flow_test.rs), never the real one. It finishes
+# Stands in for `claude` in the GA-39 MCP run tests (src-tauri/tests/it/mcp_run_flow_test.rs), never the real one. It finishes
 # like fake-claude.sh's plain run (the run-ok fixture as a stream), and before it prints anything it keeps what it was
 # given in the folder $FAKE_MCP_OUT (one of the CLI's environment lines in Settings → Coding CLIs):
 #   argv       its arguments, one per line

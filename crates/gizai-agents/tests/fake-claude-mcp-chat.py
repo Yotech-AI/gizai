@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stands in for `claude` in the GA-39 chat tests (src-tauri/tests/mcp_run_flow_test.rs), never the real one. It starts
+"""Stands in for `claude` in the GA-39 chat tests (src-tauri/tests/it/mcp_run_flow_test.rs), never the real one. It starts
 no MCP server: it keeps what the turn gave it and answers in one short message.
 
 Each run appends {argv, prompt, path, mode, config} to fake-mcp-calls.jsonl next to its --mcp-config file: `config` is

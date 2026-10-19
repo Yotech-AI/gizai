@@ -445,7 +445,10 @@ pub fn starting(st: &AppState) -> Vec<String> {
 /// GA-212: why a run on the card waits for its project's Test runs at once (project settings), if it does: the card is in
 /// a Testing column, and as many of the project's other cards in a Testing column have a run live or still starting.
 fn test_runs_full(st: &AppState, task_id: &str) -> Option<String> {
-    let under_way: Vec<String> = live(st).into_iter().map(|l| l.task_id).chain(starting(st)).collect();
+    // The cards still starting first, then the live ones: a run is live before its card stops starting, so a start that
+    // goes live meanwhile is in one of the two.
+    let mut under_way = starting(st);
+    under_way.extend(live(st).into_iter().map(|l| l.task_id));
     match workflow::test_runs_full(&st.db, task_id, &under_way) {
         Ok(full) => full.map(|f| f.message()),
         Err(e) => {

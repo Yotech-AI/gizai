@@ -246,6 +246,46 @@ mod linux {
         assert!(t0.elapsed() < Duration::from_secs(3), "an empty scope costs no wait: {:?}", t0.elapsed());
     }
 
+    #[tokio::test]
+    async fn a_runs_end_never_touches_another_run_at_work_in_the_same_slice_nor_what_that_run_left() {
+        // agent runs share the slice: one run's end ends only what is in its own scope
+        let tmp = tempfile::tempdir().unwrap();
+        let Some(s) = own_slice(tmp.path(), 2 * GB) else { return };
+        let (one, two) = (tmp.path().join("one"), tmp.path().join("two"));
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        // the other run: at work, and it left a child in a session of its own too
+        let other_left = two.join("left");
+        let exec = Exec { bin: cli(&two, &setsid_sleep(&other_left)), args: vec!["-p".into()], env: vec![], stdin: "FAKE_HANG".into(),
+                          slice: Some(s.0.clone()) };
+        let mut other = spawn_exec::<RunEvent, _>(&exec, &two, &two.join("r.jsonl"),
+                                                  Caps { max_time: Duration::from_secs(120), max_tool_calls: 80 }, ClaudeLines).unwrap();
+        let other_child = pid_in(&other_left, "sleep");
+        let other_first = other.events.recv().await.expect("the other CLI's first line");
+
+        // this run leaves a child and finishes: its child ends, in its own scope
+        let (evs, pid, scope, ended) = run_leaving_a_child(&one, Some(&s.0), Ends::Finished).await;
+        ended_with_the_run(&evs, pid, &scope, &s.0, ended, "exit:0");
+        let other_scope = cgroup_in(&std::fs::read_to_string(two.join("cgroup")).unwrap());
+        assert_ne!(other_scope, scope, "a scope each");
+        assert_eq!(other_scope.parent(), Some(s.0.dir()));
+        assert!(alive(other.pid), "the other run's CLI keeps running");
+        assert!(alive(other_child), "and so does what the other run left, until that run ends");
+        assert_eq!(cgroup_of(other_child), other_scope);
+
+        // the other run's end ends its own leftover
+        other.stop.stop();
+        let mut other_evs = vec![other_first];
+        while let Some(e) = other.events.recv().await {
+            other_evs.push(e);
+        }
+        until("the other run's leftover ends", 5, || !alive(other_child));
+        let others = others(&other_evs);
+        let marked: Vec<&String> = others.iter().filter(|o| o.starts_with(LEFTOVER)).collect();
+        assert_eq!(marked, [&format!("{LEFTOVER}{other_child} sleep")], "{others:?}");
+        until("nothing is left in the slice", 5, || procs_in(s.0.dir()).is_empty());
+    }
+
     #[test]
     fn a_leftover_that_ignores_sigterm_gets_it_first_and_sigkill_3_s_later_and_one_that_doesnt_ends_at_once() {
         let tmp = tempfile::tempdir().unwrap();

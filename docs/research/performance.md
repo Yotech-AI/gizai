@@ -487,6 +487,9 @@ run's numbers, the medians of the warm runs and the cold run's. Section 3 has th
    run" (`tauri-2.12.1/src/plugin.rs:329-330`, `:371`) **[V]**, and only in a perf run; outside one, `perf.ts` hands back
    Tauri's `invoke` and `listen` themselves, so the app runs exactly as today. The listener registrations themselves
    (`plugin:event|listen`, made inside `@tauri-apps/api`) aren't counted; the probe counts them as `listen` calls.
+   Since GA-191 a run's and a chat's events come in batches (`run-events`, `chat-events`, at most one message every
+   50 ms), before it one message per event (`run-event`, `chat-event`): `runlog` and `lead` count both names, so a
+   result from before GA-191 (the baseline in section 3) compares; there messages and events are the same number.
 
    | Scenario | Route and data | Numbers |
    |---|---|---|
@@ -494,10 +497,10 @@ run's numbers, the medians of the warm runs and the cold run's. Section 3 has th
    | `board` | `#/board`, 500 cards | all columns drawn (ms); 3 s scrolling each column, once the board has stayed on the page for 500 ms (fps, longest frame; an error when no column was scrolled); a drag to the next column (ms to drawn; calls after the drop) |
    | `chat` | the 1,000-message chat | first screen (ms); scroll to the top (fps, longest frame); 50 characters typed in the composer (longest frame) |
    | `memory` | `#/memory`, 300 notes; `#/memory/graph` | tree drawn (ms); search typing (longest frame); the graph probe's load, fps, settle and frame numbers |
-   | `runlog` | the card with the 5,000-event run; then a fake run streaming 50 events a second for 20 s | log drawn (ms); scroll (fps, longest frame); live: fps, longest frame, calls and events counted |
+   | `runlog` | the card with the 5,000-event run; then a fake run streaming 50 events a second for 20 s | log drawn (ms); scroll (fps, longest frame); live: fps, longest frame, calls and events counted (`live_run_events`: the run's messages heard; `live_run_stream_events`: the events in them) |
    | `idle` | `#/board`, 60 s, nothing happening | calls and bytes, events heard |
    | `editor` | the Editor on a made git repository of 20,000 files | tree drawn (ms); a 5,000-line file opened (ms); calls a minute while it sits open |
-   | `lead` | the chat, with the fake Team Lead streaming a 20 KB answer | fps and longest frame while it streams; events heard |
+   | `lead` | the chat, with the fake Team Lead streaming a 20 KB answer | fps and longest frame while it streams; events heard (`stream_chat_events`: the chat's messages heard; `stream_chat_stream_events`: the events in them) |
 
 3. **The script, `scripts/perf.sh [scenario …]`.** Builds when stale (`gz_app`, `scripts/app-ready.sh:20-27`), makes the
    data once, then per scenario starts `target/release/gizai` in the headless `cage` exactly as `scripts/smoke-cage.sh:16-22`
@@ -513,7 +516,8 @@ run's numbers, the medians of the warm runs and the cold run's. Section 3 has th
    results side by side with the change in %. Optional: `--webkit-env 'WEBKIT_DISABLE_COMPOSITING_MODE=1'` runs the same
    with an environment variable, to compare WebKitGTK's drawing modes.
 4. **The query bench, `crates/gizai-core/examples/bench_queries.rs`** (new): on the `prep_perf` data, without a window,
-   times each hot core function 30 times (the task list with each filter, the project list, the team, the chat list, the
+   times each hot core function 30 times (the task list with each filter, and the window's lean one, `tasks.list_lean`,
+   since GA-191; the project list, the team, and the window's lean one, `team.get_lean`; the chat list, the
    usage summary, the big chat's messages, a card's comments and activity, the Memory list and search, and the whole
    board check, `gizai_core::board::check`, which is also how long it holds the lock) and prints the median and p95 in
    µs as JSON lines: `cargo run --release -p gizai-core --example bench_queries -- <data dir>`. With `--plan` it prints

@@ -1,10 +1,11 @@
 //! Times Gizai's hot core functions on prep_perf's data, without a window (GA-188, docs/research/performance.md §7 part
 //! 4 and F3): each one 30 times after a warm-up, and prints one JSON line per query, like
 //! {"name":"tasks.list","runs":30,"median_us":4200,"p95_us":5100}. The queries are what the window and the Team Lead's
-//! tools read most: the task list with each filter they use (the window sends none and filters in the page; the Team
-//! Lead's list_tasks a project and open cards, then a column or an assignee in Rust), the bin, the Inbox, a card, its
-//! comments and activity, the project list, the team, the chat list, a big chat, Usage, Memory, and the whole board
-//! check, which holds the database while it reads.
+//! tools read most: the task list with each filter they use (the window's list_tasks sends none, filters in the page and
+//! gets the lean list without acceptance criteria, tasks::list_lean since GA-191; the Team Lead's tools get the full one,
+//! with none to find a card, or a project and open cards, then a column or an assignee in Rust), the bin, the Inbox, a
+//! card, its comments and activity, the project list, the team (the window's lean one without the agents' instructions,
+//! and the tools' full one), the chat list, a big chat, Usage, Memory, and the whole board check, the longest read.
 //! --plan: each line also has "plan": every SQL statement the function ran (caught with SQLite's trace hook), how many
 //!   times it ran, and its EXPLAIN QUERY PLAN with its parameters NULL: [{"sql":…,"times":…,"plan":["SCAN …"]}].
 //! --writer: a writer works beside the reads for the whole bench, as a working agent does: a comment and an update of one
@@ -21,7 +22,8 @@ use std::time::{Duration, Instant};
 use gizai_core::board::{self, Context};
 use gizai_core::memory::{self, Who};
 use gizai_core::model::{TaskFilter, TaskPatch};
-use gizai_core::{chat, comments, db::Db, ids, projects, seed, settings, tasks, team, usage};
+use gizai_core::db::{Db, READERS};
+use gizai_core::{chat, comments, ids, projects, seed, settings, tasks, team, usage};
 use rusqlite::ffi;
 use serde_json::{Value, json};
 
@@ -57,6 +59,7 @@ fn main() {
     let kade_open = TaskFilter { project_id: Some(kade.clone()), open_only: true };
 
     let queries: Vec<(&str, Box<dyn Fn() + '_>)> = vec![
+        ("tasks.list_lean", Box::new(|| keep(tasks::list_lean(&db, &TaskFilter::default())))),
         ("tasks.list", Box::new(|| keep(tasks::list(&db, &TaskFilter::default())))),
         ("tasks.list kade", Box::new(|| keep(tasks::list(&db, &TaskFilter { project_id: Some(kade.clone()), open_only: false })))),
         ("tasks.list open", Box::new(|| keep(tasks::list(&db, &TaskFilter { project_id: None, open_only: true })))),
@@ -73,6 +76,7 @@ fn main() {
         ("tasks.activity kade-1", Box::new(|| keep(tasks::activity(&db, &kade1.id)))),
         ("comments.list kade-1", Box::new(|| keep(comments::list(&db, &kade1.id)))),
         ("projects.list", Box::new(|| keep(projects::list(&db)))),
+        ("team.get_lean", Box::new(|| keep(team::get_lean(&db, &s.team_id)))),
         ("team.get", Box::new(|| keep(team::get(&db, &s.team_id)))),
         ("chat.list_threads", Box::new(|| keep(chat::list_threads(&db)))),
         ("chat.messages big", Box::new(|| keep(chat::messages(&db, &big)))),
@@ -155,13 +159,22 @@ unsafe extern "C" fn on_statement(_event: c_uint, _ctx: *mut c_void, _stmt: *mut
     0
 }
 
-/// Turns the trace hook on or off on Gizai's one connection.
+/// Turns the trace hook on or off on every connection a read can take. Since GA-191 a read takes one of the database's
+/// `READERS` read-only connections, so these reads nest until each one is held, also one the writer's thread is using
+/// now. A read outside a transaction is on the one connection (the read-only ones couldn't open): nothing to nest.
 fn trace(db: &Db, on: bool) {
+    trace_from(db, on, READERS);
+}
+
+fn trace_from(db: &Db, on: bool, left: usize) {
     db.read(|c| {
-        // SAFETY: the handle is only used to set the hook, while `db` holds the connection's lock.
+        // SAFETY: the handle is only used to set the hook, while this read holds the connection.
         unsafe {
             ffi::sqlite3_trace_v2(c.handle(), if on { ffi::SQLITE_TRACE_STMT } else { 0 }, if on { Some(on_statement) } else { None },
                                   std::ptr::null_mut());
+        }
+        if left > 1 && !c.is_autocommit() {
+            trace_from(db, on, left - 1);
         }
         Ok(())
     }).unwrap();

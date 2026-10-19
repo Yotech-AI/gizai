@@ -17,6 +17,8 @@
 # FAKE_RUN_FOR_ME in the prompt finishes like run-for-me: a needs_decision whose result line asks the user to run two
 # commands (`run_for_me`, GA-31). FAKE_ASKS finishes like run-asks: a needs_decision without them (an older result line).
 # FAKE_LEARNED in the prompt finishes like run-learned: run-ok with two `learned` lines on its result line (GA-19).
+# FAKE_STREAM <rate>x<seconds> in the prompt (FAKE_STREAM 50x20: 50 events a second for 20 s) prints the init line, those
+# events (a text, a tool call, its result, again) and run-ok's last two lines; Stop's SIGINT ends it part-way (GA-188).
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -96,6 +98,37 @@ if [ "$prompt" = "leftover" ]; then
 fi
 if [ -n "${FAKE_GATE:-}" ]; then
   for _ in $(seq 600); do [ -e "$FAKE_GATE" ] && break; sleep 0.05; done
+fi
+# FAKE_STREAM (GA-188): one foreground perl prints it all, as print_and_wait does, so Stop's SIGINT ends it wherever it
+# is. Each event goes out at its own time from the start, so the time printing takes doesn't slow the rate down.
+stream='FAKE_STREAM ([1-9][0-9]*)x([0-9]+)'
+if [[ $prompt =~ $stream ]]; then
+  trap 'exit 130' INT
+  perl -MTime::HiRes=time,sleep -e '
+    $| = 1;
+    my ($rate, $secs, $fixture) = @ARGV;
+    open my $in, "<", $fixture or die "fake claude: $fixture: $!\n";
+    chomp(my @lines = <$in>);
+    print "$lines[0]\n";
+    # A round: a text, a tool call and its result. Each %d is the round.
+    my @events = (
+      q{{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"**Step %d.** Reading `src/lib/part%d.ts`, which draws the *list*: the change goes there.\n\nThen I run its tests and check [the notes](docs/part%d.md)."}]},"session_id":"S1"}},
+      q{{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-stream-%d","name":"Read","input":{"file_path":"src/lib/part%d.ts"}}]},"session_id":"S1"}},
+      q{{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-stream-%d","content":"// part %d\nexport const part%d = (n: number) => n + 1;","is_error":false}]},"session_id":"S1"}},
+    );
+    my ($n, $t0) = ($rate * $secs, time);
+    for my $i (0 .. $n - 1) {
+      my $wait = $t0 + $i / $rate - time;
+      sleep $wait if $wait > 0;
+      my $round = int($i / 3) + 1;
+      print sprintf($events[$i % 3], $round, $round, $round), "\n";
+    }
+    my $wait = $t0 + $n / $rate - time;
+    sleep $wait if $wait > 0;
+    print "$lines[-2]\n$lines[-1]\n";
+  ' -- "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$here/fixtures/run-ok.jsonl" || exit 1
+  echo "fake claude done" >&2
+  exit 0
 fi
 while IFS= read -r line; do
   printf '%s\n' "$line"

@@ -21,6 +21,8 @@ The prompt (stdin) decides what happens:
                                   the file at each of its files' paths instead (GA-207)
   FAKE_REMEMBER <text>            calls memory_append to add "- <text>" (the rest of that line) under Working agreements in
                                   Team Lead/Notes (GA-19), instead of get_overview
+  FAKE_CHAT_STREAM                the last answer is about 20 KB of Markdown (headings, lists, tables, code blocks), streamed
+                                  in pieces of 20 to 40 characters, one every 10 ms; exits 130 on SIGINT (GA-188)
 Each run appends {argv, prompt, account, cwd, auto_memory} to fake-calls.jsonl next to its MCP config, for the tests to
 read; `account` is its CLAUDE_CONFIG_DIR, `auto_memory` its CLAUDE_CODE_DISABLE_AUTO_MEMORY (null when unset, GA-85). Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
 to the MCP config, never in the account's folder), and --resume from another account exits 1 before init, like Claude
@@ -148,13 +150,48 @@ if "FAKE_CHAT_HANG" in prompt:
     time.sleep(600)
     sys.exit(0)
 
-def say(text, index=0):
+def say(text, index=0, pieces=None):
     out({"type": "stream_event", "event": {"type": "content_block_start", "index": index, "content_block": {"type": "text", "text": ""}}, "session_id": sid})
     half = len(text) // 2
-    for part in (text[:half], text[half:]):
+    t0 = time.monotonic()
+    for n, part in enumerate(pieces or (text[:half], text[half:]), 1):
         out({"type": "stream_event", "event": {"type": "content_block_delta", "index": index, "delta": {"type": "text_delta", "text": part}}, "session_id": sid})
-        time.sleep(0.02)
+        # FAKE_CHAT_STREAM's pieces: one every 10 ms, timed from the start, so the time printing takes doesn't add up.
+        time.sleep(max(0.0, t0 + n * 0.01 - time.monotonic()) if pieces else 0.02)
     out({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}, "session_id": sid})
+
+def in_pieces(text):
+    """The text in pieces of 20 to 40 characters, the same every run (FAKE_CHAT_STREAM)."""
+    cuts = [0]
+    while cuts[-1] < len(text):
+        cuts.append(cuts[-1] + 20 + len(cuts) * 8 % 21)
+    return [text[a:b] for a, b in zip(cuts, cuts[1:])]
+
+def long_answer():
+    """FAKE_CHAT_STREAM's answer (GA-188): about 20 KB of Markdown, the same every run, with what a long Team Lead answer
+    has: headings, paragraphs, bullet lists, tables and code blocks."""
+    areas = ["board", "chat", "run log", "Memory", "editor", "Inbox"]
+    parts = ["# Where KADE stands\n\nI went through the board, this week's runs and the notes. For each area: what is done, "
+             "what waits, and what I would do next.\n"]
+    n = 0
+    while sum(map(len, parts)) < 20000:
+        n += 1
+        area = areas[n % len(areas)]
+        parts.append(f"\n## {n}. The {area}\n\n"
+                     f"KADE-{n} changed how the {area} loads: it asks for **one list** instead of three, and the page draws "
+                     f"in about {40 + n} ms now. Two cards still wait for a review, and *KADE-{n + 100}* needs your decision "
+                     "before it can start.\n\n"
+                     f"- **Done:** `list_{n}` keeps its order and leaves out archived cards\n"
+                     f"- **Waiting:** KADE-{n + 1} for a review, KADE-{n + 2} for a test that fails now and then\n"
+                     f"- **Next:** a write reloads only what it changed (see [the plan](docs/plan-{n}.md))\n")
+        if n % 3 == 0:
+            parts.append(f"\n```ts\nconst cards = await invoke(\"list_tasks\", {{ project: \"KADE\", limit: {n * 10} }});\n"
+                         "setCards(cards.filter((c) => c.state !== \"done\"));\n```\n")
+        if n % 4 == 0:
+            parts.append("\n| Card | State | Runs | Cost |\n|---|---|---:|---:|\n"
+                         + "".join(f"| KADE-{n * 10 + i} | {('To do', 'In progress', 'Review')[i % 3]} | {i + 1} | ${0.42 * (i + 1):.2f} |\n"
+                                   for i in range(5)))
+    return "".join(parts)
 
 say("Sure, on it.")
 m = re.search(r"create task (.+?) in ([A-Za-z0-9]+)", prompt)
@@ -183,7 +220,12 @@ if "FAKE_READ_FILES" in prompt:
     if project:
         added = [f["path"] for f in json.loads(text)["files"]]
     final = "Read: " + " | ".join(open(p).read() for p in added)
-say(final)
+if "FAKE_CHAT_STREAM" in prompt:
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(130))   # a Stop while it streams, as FAKE_CHAT_HANG
+    final = long_answer()
+    say(final, pieces=in_pieces(final))
+else:
+    say(final)
 mcp.stdin.close()
 mcp.wait(timeout=5)
 n = 2 if resume else 1

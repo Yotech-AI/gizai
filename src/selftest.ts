@@ -10,9 +10,10 @@ import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
-import { OPENED_AT_KEY, OPENED_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
+import { OPENED_AT_KEY, OPENED_KEY, TABS_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
 import { shotUrlCount } from "./lib/shotUrls";
 import { tellMain } from "./lib/behind";
+import { boardDrawn, perfCalls, perfCount, perfFirst, perfFrames, perfHeard, perfOn } from "./lib/perf";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
 import type { FolderMain } from "./types";
@@ -4221,4 +4222,367 @@ async function editorOrderProbe(part: "a" | "b") {
   for (const id of openedOf(localStorage.getItem(OPENED_KEY))) forgetFolder(id);
   await sleep(500);
   return done();
+}
+
+// ---- GA-188: the benchmark harness's probe (docs/research/performance.md §7; scripts/perf.sh) ----
+
+/** One scenario's result: its numbers (flat, each a number: scripts/perf.sh takes the median of each over its runs), when
+ *  the page began (`timeOrigin`, ms since 1970: perf.sh measures from its launch to it), the windows it measured in (ms
+ *  since 1970: perf.sh takes the processes' CPU in each from its samples) and what else it saw. */
+export type PerfResult = {
+  scenario: string; ok: boolean; errors: string[]; timeOrigin: number; numbers: Record<string, number>;
+  windows: Record<string, [number, number]>; detail: Record<string, unknown>;
+};
+type PerfIds = Record<string, string | undefined>;
+
+const ms = (n: number | undefined) => (n === undefined ? -1 : Math.round(n));
+const kib = (bytes: number) => Math.round(bytes / 102.4) / 10;
+/** Waits until `drawn` is true, then one more frame: the time it was on screen. */
+async function shown(drawn: () => boolean, timeout: number) {
+  const ok = await waitFor(() => (drawn() ? true : null), timeout);
+  if (ok) await nextFrame();
+  return !!ok;
+}
+/** Scrolls the box `at` finds (again each frame: React may draw it anew) by `step` px a frame for `time` ms, back and
+ *  forth between its ends: frames a second and the longest frame. */
+const scrolling = (at: () => HTMLElement | null, time: number, step = 60) => {
+  let dir = step;
+  return perfFrames(time, () => {
+    const box = at();
+    if (!box) return;
+    if (dir > 0 && box.scrollTop + box.clientHeight >= box.scrollHeight - 1) dir = -step;
+    else if (dir < 0 && box.scrollTop <= 0) dir = step;
+    box.scrollTop += dir;
+  });
+};
+/** The calls and events from `from` until now, as numbers named `<name>_…`. */
+function counted(o: PerfResult, name: string, from: number, to = performance.now()) {
+  const c = perfCount(from, to);
+  o.windows[name] = [Math.round(o.timeOrigin + from), Math.round(o.timeOrigin + to)];
+  o.numbers[`${name}_calls`] = c.calls;
+  o.numbers[`${name}_kb`] = kib(c.bytes);
+  o.numbers[`${name}_events`] = c.heard;
+  o.detail[name] = { calls: c.commands, events: c.events };
+  return c;
+}
+
+/** A stream's messages heard between `from` and `to`, and the stream events in them. Since GA-191 a run's and a chat's
+ *  events come in batches (`run-events`, `chat-events`), before it one message each (`run-event`, `chat-event`), so
+ *  both names count and a result from before GA-191 compares. */
+function streamed(from: number, to: number, ...names: string[]) {
+  let messages = 0, events = 0;
+  for (const h of perfHeard) if (h.at >= from && h.at < to && names.includes(h.event)) { messages += 1; events += h.items; }
+  return { messages, events };
+}
+
+/** Before a scenario opens its page: the start's own work done (the sidebar drawn, then a second). */
+async function perfSettle() {
+  await waitFor(() => (perfFirst.sidebar !== undefined ? true : null), 20000);
+  await sleep(1000);
+}
+
+/** `start` (the default route): when the page's file came and its first script ran, app_info answered, the sidebar and
+ *  the first card were drawn (ms since the page began); the calls and bytes of the first 5 s; the first calls in order. */
+async function perfStart(o: PerfResult) {
+  const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  if (!(await shown(() => perfFirst.card !== undefined, 20000))) o.errors.push("no card was drawn");
+  const wait = 5000 - performance.now();
+  if (wait > 0) await sleep(wait);
+  const info = perfCalls.find((c) => c.cmd === "app_info");
+  Object.assign(o.numbers, {
+    response_start_ms: ms(nav?.responseStart), dom_content_loaded_ms: ms(nav?.domContentLoadedEventEnd),
+    app_info_ms: info ? ms(info.at + info.ms) : -1, sidebar_ms: ms(perfFirst.sidebar), first_card_ms: ms(perfFirst.card),
+  });
+  const c = counted(o, "first_5s", 0, 5000);
+  o.numbers.first_5s_listens = c.commands.find((x) => x.cmd === "listen")?.calls ?? 0;
+  o.detail.first_calls = perfCalls.slice(0, 40).map((x) => `${x.cmd} @${ms(x.at)}`);
+  if (!info) o.errors.push("the counter did not see app_info");
+}
+
+/** Waits until the whole board is drawn and has stayed so for `steady` ms (false after `timeout` ms). A start on #/board
+ *  may draw it twice: the default route's board first, then, when app_info has sent the app to #/board, that page's own,
+ *  with no board between the two while its cards load. */
+async function boardSteady(timeout: number, steady = 500) {
+  const end = performance.now() + timeout;
+  let since: number | null = null;
+  while (performance.now() < end) {
+    if (!boardDrawn()) since = null;
+    else if (since === null) since = performance.now();
+    else if (performance.now() - since >= steady) return true;
+    await nextFrame();
+  }
+  return false;
+}
+
+/** `board` (#/board, 500 cards): all columns drawn (ms since the page began); 3 s of scrolling in each column; the first
+ *  To do card dragged into In progress: ms until it is drawn there, and the calls in the 2 s after the drop. */
+async function perfBoard(o: PerfResult) {
+  if (!location.hash.startsWith("#/board")) location.hash = "#/board";
+  if (!(await shown(() => perfFirst.board !== undefined, 20000))) throw new Error("the board's columns were not all drawn");
+  o.numbers.columns_drawn_ms = ms(perfFirst.board);
+  // the columns are read only once the board stays on the page (boardSteady), and each again by its name
+  if (!(await boardSteady(20000))) throw new Error("the board did not stay on the page for 500 ms within 20 s");
+  const per: { column: string; fps: number; longestFrameMs: number }[] = [];
+  const skipped: string[] = [];
+  const scrolled = performance.now();
+  const names = [...document.querySelectorAll<HTMLElement>(".board .col:not(.rail)")].map((c) => c.dataset.col ?? "");
+  o.detail.open_columns = names;
+  for (const name of names) {
+    const body = () => document.querySelector<HTMLElement>(`.board .col[data-col="${CSS.escape(name)}"] .col-body`);
+    const b = await waitFor(body, 2000);
+    if (!b) o.errors.push(`the ${name} column left the page before it was scrolled`);
+    if (!b || b.scrollHeight <= b.clientHeight + 1) {
+      skipped.push(b ? `${name}: ${b.querySelectorAll(".card").length} cards in ${b.scrollHeight} of ${b.clientHeight} px` : `${name}: gone`);
+      continue;
+    }
+    b.scrollTop = 0;
+    await nextFrame();
+    const f = await scrolling(body, 3000);
+    const after = body();
+    if (after) after.scrollTop = 0;
+    per.push({ column: name, fps: f.fps, longestFrameMs: f.longestFrameMs });
+  }
+  o.detail.columns = per;
+  if (skipped.length) o.detail.not_scrolled = skipped;
+  o.windows.scroll = [Math.round(o.timeOrigin + scrolled), Math.round(o.timeOrigin + performance.now())];
+  o.numbers.scroll_fps = per.length ? Math.min(...per.map((p) => p.fps)) : -1;
+  o.numbers.scroll_longest_frame_ms = per.length ? Math.max(...per.map((p) => p.longestFrameMs)) : -1;
+  if (!per.length) o.errors.push(`no board column was scrolled (${names.length} open: ${skipped.join("; ") || "none found"})`);
+  await sleep(500);
+  // the drag, the way a mouse does it (dragProbe), without asking the backend anything itself
+  const card = document.querySelector<HTMLElement>('[data-col="To do"] .card');
+  const target = document.querySelector<HTMLElement>('[data-col="In progress"] .col-body');
+  if (!card || !target) throw new Error("no To do card or no In progress column");
+  const id = card.dataset.card ?? "";
+  const r = card.getBoundingClientRect(), cr = target.getBoundingClientRect();
+  const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2, x1 = cr.left + cr.width / 2, y1 = cr.top + 40;
+  card.dispatchEvent(pe("pointerdown", x0, y0));
+  for (let i = 1; i <= 40; i++) { document.dispatchEvent(pe("pointermove", x0 + ((x1 - x0) * i) / 40, y0 + ((y1 - y0) * i) / 40)); await nextFrame(); }
+  for (let i = 0; i < 10; i++) { document.dispatchEvent(pe("pointermove", x1, y1 + i)); await nextFrame(); }
+  const drop = performance.now();
+  document.dispatchEvent(pe("pointerup", x1, y1 + 10));
+  const moved = await shown(() => !!document.querySelector(`[data-col="In progress"] [data-card="${id}"]`) && !document.querySelector(`[data-col="To do"] [data-card="${id}"]`), 5000);
+  o.numbers.drag_drawn_ms = moved ? ms(performance.now() - drop) : -1;
+  if (!moved) o.errors.push(`the dragged card ${id} was not drawn in In progress`);
+  await sleep(Math.max(0, drop + 2000 - performance.now()));
+  counted(o, "drag", drop);
+}
+
+/** `chat` (the 1,000-message chat): its first screen (ms from opening it); scrolling to its top (fps, longest frame, ms);
+ *  50 characters typed in the text box, one a frame (longest frame). */
+async function perfChat(o: PerfResult, ids: PerfIds) {
+  if (!ids.chat) throw new Error("no chat id (prep_perf's chat=)");
+  await perfSettle();
+  const t0 = performance.now();
+  location.hash = `#/chat/${encodeURIComponent(ids.chat)}`;
+  if (!(await shown(() => !!document.querySelector(".chat-scroll .chat-row"), 20000))) throw new Error("the chat drew no messages");
+  o.numbers.first_screen_ms = ms(performance.now() - t0);
+  o.numbers.rows_in_page = document.querySelectorAll(".chat-scroll .chat-row").length;
+  await sleep(500);
+  const box = q(".chat-scroll")!;
+  const t1 = performance.now();
+  const top = () => box.scrollTop <= 0 && !!box.querySelector('.chat-row[data-index="0"]');
+  const f = await perfFrames(30000, () => { box.scrollTop -= 400; }, top);
+  o.numbers.top_ms = top() ? ms(performance.now() - t1) : -1;
+  o.numbers.scroll_fps = f.fps;
+  o.numbers.scroll_longest_frame_ms = f.longestFrameMs;
+  if (!top()) o.errors.push("scrolling did not reach the chat's first message within 30 s");
+  const c = composer();
+  if (!c) throw new Error("no text box");
+  c.focus();
+  const text = "Typed in the chat's text box, one character a frame".slice(0, 50).padEnd(50, ".");
+  let typed = 0;
+  const t = await perfFrames(10000, () => { if (typed < 50) document.execCommand("insertText", false, text[typed++]!); }, () => typed >= 50);
+  await nextFrame();
+  o.numbers.typing_fps = t.fps;
+  o.numbers.typing_longest_frame_ms = t.longestFrameMs;
+}
+
+/** `memory` (#/memory, 300 notes): the tree drawn (ms); a search typed one character a frame (longest frame, and ms from
+ *  the last key to the hits); #/memory/graph: the graph probe's load, frames a second while it lays out, settle and a
+ *  frame's work. */
+async function perfMemory(o: PerfResult) {
+  await perfSettle();
+  const t0 = performance.now();
+  location.hash = "#/memory";
+  if (!(await shown(() => !!document.querySelector(".mem-tree [role=treeitem]"), 20000))) throw new Error("the Memory tree was not drawn");
+  o.numbers.tree_ms = ms(performance.now() - t0);
+  await sleep(500);
+  const input = q<HTMLInputElement>('input[aria-label="Search notes"]');
+  if (!input) throw new Error("no Memory search");
+  input.focus();
+  const word = "Note 12";
+  let typed = 0;
+  const f = await perfFrames(10000, () => { if (typed < word.length) typeInto(input, word.slice(0, ++typed)); }, () => typed >= word.length);
+  const last = performance.now();
+  // "Searching…" until the search, 150 ms after the last key, has answered: then the hits, or no match
+  const hits = await shown(() => { const box = q(".mem-results"); return !!box && !(box.textContent ?? "").includes("Searching…"); }, 5000);
+  o.numbers.search_results_ms = hits ? ms(performance.now() - last) : -1;
+  o.numbers.search_hits = document.querySelectorAll(".mem-results .mem-hit").length;
+  o.numbers.search_fps = f.fps;
+  o.numbers.search_longest_frame_ms = f.longestFrameMs;
+  typeInto(input, "");
+  await sleep(300);
+  const t1 = performance.now();
+  location.hash = "#/memory/graph";
+  const notes = () => gdots(globalCanvas()).filter((d) => d.kind === "note").length;
+  if (!(await waitFor(() => (notes() >= 250 ? true : null), 20000))) throw new Error(`the graph showed ${notes()} notes, not 300`);
+  o.numbers.graph_load_ms = ms(performance.now() - t1);
+  o.numbers.graph_notes = notes();
+  const g = await perfFrames(1000);
+  o.numbers.graph_fps = g.fps;
+  o.numbers.graph_longest_frame_ms = g.longestFrameMs;
+  o.numbers.graph_settle_ms = await settledIn(globalCanvas, 15000);
+  o.numbers.graph_frame_ms = Math.round((graphProbe(globalCanvas())?.frameMs ?? -1) * 10) / 10;
+}
+
+/** `runlog` (KADE-1 and its run of 5,000 events): the run's events loaded and its whole log drawn (ms); 3 s of scrolling
+ *  it; then Run with the fake streaming 50 events a second for 20 s: frames a second, the longest frame, and the calls and
+ *  events while it is live. */
+async function perfRunlog(o: PerfResult, ids: PerfIds) {
+  if (!ids.card || !ids.run) throw new Error("no card or run id (prep_perf's card= and run=)");
+  await perfSettle();
+  location.hash = `#/task/${encodeURIComponent(ids.card)}`;
+  const tab = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".tabs .tab")].find((b) => b.textContent?.startsWith("Runs")), 20000);
+  if (!tab) throw new Error("no Runs tab on the card");
+  tab.click();
+  const row = await waitFor(() => document.getElementById(`run-${ids.run}`), 10000);
+  const open = row?.querySelector<HTMLButtonElement>(".run-open");
+  if (!row || !open) throw new Error("the 5,000-event run is not in the card's runs");
+  const t0 = performance.now();
+  open.click();
+  const all = await waitFor(() => [...row.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.startsWith("Show the whole output")), 20000);
+  if (!all) throw new Error("the run's events did not load");
+  o.numbers.events_loaded_ms = ms(performance.now() - t0);
+  o.detail.steps = all.textContent;
+  const t1 = performance.now();
+  all.click();
+  if (!(await shown(() => !!row.querySelector(".run-stream [data-index]"), 20000))) throw new Error("the run's whole log was not drawn");
+  o.numbers.log_drawn_ms = ms(performance.now() - t1);
+  const stream = row.querySelector<HTMLElement>(".run-stream")!;
+  o.numbers.log_rows_in_page = stream.querySelectorAll("[data-index]").length;
+  const f = await scrolling(() => stream, 3000, 200);
+  o.numbers.scroll_fps = f.fps;
+  o.numbers.scroll_longest_frame_ms = f.longestFrameMs;
+  all.click(); // Hide output: the live run's log is what is measured next
+  await sleep(500);
+  const run = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".run-card button")].find((b) => b.textContent?.trim() === "Run"), 10000);
+  if (!run) throw new Error("no Run button");
+  const clicked = performance.now();
+  run.click();
+  if (!(await waitFor(() => document.querySelector(".run-card.live"), 30000))) throw new Error("the run did not start");
+  const from = performance.now();
+  o.numbers.live_start_ms = ms(from - clicked);
+  const l = await perfFrames(60000, undefined, () => !document.querySelector(".run-card.live"));
+  const to = performance.now();
+  o.numbers.live_s = Math.round((to - from) / 100) / 10;
+  o.numbers.live_fps = l.fps;
+  o.numbers.live_longest_frame_ms = l.longestFrameMs;
+  const c = counted(o, "live", from, to);
+  const r = streamed(from, to, "run-events", "run-event");
+  o.numbers.live_run_events = r.messages;
+  o.numbers.live_run_stream_events = r.events;
+  o.numbers.live_rows_changed = c.events["rows-changed"]?.heard ?? 0;
+  if (document.querySelector(".run-card.live")) o.errors.push("the run was still live after 60 s");
+}
+
+/** The cage's window never has the focus (it has no input devices), so Gizai takes it as not in use (lib/windowFocus.ts,
+ *  `away`) and its git checks rest. `idle` and `editor` measure the window in use: from here on it says it has the
+ *  focus, and it gets a focus event as when you come back to it. `had_focus` says whether it had it. */
+function perfInUse(o: PerfResult) {
+  o.numbers.had_focus = document.hasFocus() ? 1 : 0;
+  document.hasFocus = () => true;
+  window.dispatchEvent(new FocusEvent("focus"));
+}
+
+/** `idle` (#/board, nothing happening, the window in use): the calls, bytes and events of 60 s, from 2 s after the board
+ *  was drawn. */
+async function perfIdle(o: PerfResult) {
+  if (!location.hash.startsWith("#/board")) location.hash = "#/board";
+  if (!(await shown(() => perfFirst.board !== undefined, 20000))) o.errors.push("the board's columns were not all drawn");
+  perfInUse(o);
+  await sleep(2000);
+  const from = performance.now();
+  await sleep(60000);
+  counted(o, "idle_60s", from);
+}
+
+/** `editor` (a git repository of 20,000 files, the window in use): its tree drawn (ms from opening the folder); the 5,000-line file opened
+ *  (ms); the calls in a minute while it sits open. */
+async function perfEditor(o: PerfResult, ids: PerfIds) {
+  if (!ids.folder || ids.folder === "-") throw new Error("no Editor folder (prep_perf's folder=, made with --editor)");
+  await perfSettle();
+  perfInUse(o);
+  // every run opens the file anew: the Editor reopens the tabs the run before left (WebKit's storage stays between runs)
+  localStorage.removeItem(TABS_KEY);
+  const t0 = performance.now();
+  location.hash = `#/editor/${encodeURIComponent(ids.folder)}`;
+  if (!(await shown(() => !!document.querySelector(".ed-tree [role=treeitem]"), 30000))) throw new Error("the Editor's tree was not drawn");
+  o.numbers.tree_ms = ms(performance.now() - t0);
+  o.numbers.tree_rows = document.querySelectorAll(".ed-tree [role=treeitem]").length;
+  const file = ids.file ?? "big.ts";
+  const row = await waitFor(() => document.querySelector<HTMLElement>(`.ed-tree [data-path="${CSS.escape(file)}"]`), 10000);
+  if (!row) throw new Error(`${file} is not in the Editor's tree`);
+  await sleep(500);
+  const t1 = performance.now();
+  row.click();
+  const lines = () => { const c = document.querySelector<HTMLElement>(".cm-content"); return (c && EditorView.findFromDOM(c)?.state.doc.lines) || 0; };
+  if (!(await shown(() => lines() >= 5000, 20000))) throw new Error(`${file} did not open with 5,000 lines (${lines()})`);
+  o.numbers.file_ms = ms(performance.now() - t1);
+  const from = performance.now();
+  await sleep(60000);
+  counted(o, "open_60s", from);
+}
+
+/** `lead` (the 1,000-message chat): a message the fake Team Lead answers with about 20 KB of Markdown in small pieces
+ *  (FAKE_CHAT_STREAM): frames a second and the longest frame while it streams, and the calls and events meanwhile. */
+async function perfLead(o: PerfResult, ids: PerfIds) {
+  if (!ids.chat) throw new Error("no chat id (prep_perf's chat=)");
+  await perfSettle();
+  location.hash = `#/chat/${encodeURIComponent(ids.chat)}`;
+  const c = await waitFor(() => { const box = composer(); return box && !document.querySelector(".composer-box .stop-btn") ? box : null; }, 20000);
+  if (!c) throw new Error("no text box that sends");
+  await sleep(1000);
+  typeIn(c, "FAKE_CHAT_STREAM Please write out the whole plan.");
+  await nextFrame();
+  const sent = performance.now();
+  enter(c);
+  if (!(await waitFor(() => document.querySelector(".chat-working"), 20000))) throw new Error("the Team Lead did not start answering");
+  const from = performance.now();
+  o.numbers.answer_start_ms = ms(from - sent);
+  const f = await perfFrames(120000, undefined, () => !document.querySelector(".chat-working"));
+  const to = performance.now();
+  o.numbers.stream_s = Math.round((to - from) / 100) / 10;
+  o.numbers.stream_fps = f.fps;
+  o.numbers.stream_longest_frame_ms = f.longestFrameMs;
+  const n = counted(o, "stream", from, to);
+  const t = streamed(from, to, "chat-events", "chat-event");
+  o.numbers.stream_chat_events = t.messages;
+  o.numbers.stream_chat_stream_events = t.events;
+  o.numbers.stream_rows_changed = n.events["rows-changed"]?.heard ?? 0;
+  if (document.querySelector(".chat-working")) o.errors.push("the answer was still streaming after 120 s");
+}
+
+const PERF_SCENARIOS: Record<string, (o: PerfResult, ids: PerfIds) => Promise<void>> = {
+  start: perfStart, board: perfBoard, chat: perfChat, memory: perfMemory, runlog: perfRunlog, idle: perfIdle, editor: perfEditor, lead: perfLead,
+};
+export const PERF_SCENARIO_NAMES = Object.keys(PERF_SCENARIOS);
+
+/** GIZAI_SELFTEST_MODE=perf:<scenario> [key=value …] (scripts/perf.sh, with prep_perf's ids): one scenario of the
+ *  benchmark harness, measured with the counter (lib/perf.ts), which has seen every call since the page began. Also the
+ *  calls, bytes and events of the whole run. */
+export async function perfProbe(spec: string): Promise<PerfResult> {
+  const [scenario = "", ...rest] = spec.trim().split(/\s+/);
+  const ids: PerfIds = Object.fromEntries(rest.map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]));
+  const o: PerfResult = { scenario, ok: false, errors: [], timeOrigin: performance.timeOrigin, numbers: {}, windows: {}, detail: {} };
+  if (!perfOn) o.errors.push("the counter is off: the backend's perf flag (window.__GIZAI_PERF__) was not set");
+  const run = PERF_SCENARIOS[scenario];
+  if (!run) o.errors.push(`no scenario "${scenario}" (${PERF_SCENARIO_NAMES.join(", ")})`);
+  else {
+    try { await run(o, ids); } catch (e) { o.errors.push(String(e)); }
+  }
+  counted(o, "run", 0);
+  o.numbers.run_s = Math.round(performance.now() / 100) / 10;
+  o.ok = o.errors.length === 0;
+  return o;
 }

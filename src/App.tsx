@@ -93,6 +93,15 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
         }
         document.body.dataset.ready = "1";
         if (i.selftest) {
+          // GA-188: GIZAI_SELFTEST_MODE=perf:<scenario> [ids] (scripts/perf.sh): the benchmark harness's probe and nothing
+          // else, so the counter (lib/perf.ts) sees only what the app itself asks.
+          if (i.selftest_mode?.startsWith("perf:")) {
+            const { perfProbe } = await import("./selftest");
+            const perf = await perfProbe(i.selftest_mode.slice(5));
+            await selftestReport({ ready: true, errors: perf.errors.map((e) => `perf ${perf.scenario}: ${e}`), version: i.version, perf });
+            await exitApp(0);
+            return;
+          }
           const { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, screenshotsProbe, teamProbe, terminalProbe, usageProbe } = await import("./selftest");
           // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the
           // probe types in the editor and reports; the script quits Gizai from outside, so the page doesn't.

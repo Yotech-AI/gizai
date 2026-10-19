@@ -418,8 +418,9 @@ fn the_start_logs_each_parts_time_once() {
         return;
     }
     let tmp = real_tempdir();
+    // its full name in tests/it/'s one test program, module included, so --exact finds it
     let out = Command::new(std::env::current_exe().unwrap())
-        .args(["the_start_logs_each_parts_time_once", "--exact", "--nocapture", "--test-threads=1"])
+        .args(["ga191_perf_test::the_start_logs_each_parts_time_once", "--exact", "--nocapture", "--test-threads=1"])
         .env("GIZAI_GA191_OPEN", tmp.path()).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");

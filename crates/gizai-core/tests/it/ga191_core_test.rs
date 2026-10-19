@@ -13,11 +13,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
-const TASKS_RS: &str = include_str!("../src/tasks.rs");
-const CHAT_RS: &str = include_str!("../src/chat.rs");
-const BOARD_RS: &str = include_str!("../src/board.rs");
-const DB_RS: &str = include_str!("../src/db.rs");
-const HOUSEKEEPING_RS: &str = include_str!("../src/housekeeping.rs");
+const TASKS_RS: &str = include_str!("../../src/tasks.rs");
+const CHAT_RS: &str = include_str!("../../src/chat.rs");
+const BOARD_RS: &str = include_str!("../../src/board.rs");
+const DB_RS: &str = include_str!("../../src/db.rs");
+const HOUSEKEEPING_RS: &str = include_str!("../../src/housekeeping.rs");
 
 fn file_db(dir: &tempfile::TempDir) -> Arc<Db> {
     Arc::new(Db::open(&dir.path().join("gizai.db")).unwrap())

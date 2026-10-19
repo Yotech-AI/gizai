@@ -23,6 +23,7 @@ mod docs_files_test;
 mod editor_test;
 mod folders_test;
 mod folders_windows_test;
+mod ga191_core_test;
 mod ga49_core_test;
 mod ga49_migration_test;
 mod housekeeping_test;

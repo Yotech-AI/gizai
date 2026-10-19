@@ -21,6 +21,7 @@ mod cli_run_flow_test;
 mod commands_off_main_thread_test;
 mod editor_flow_test;
 mod folders_flow_test;
+mod ga191_perf_test;
 mod ga31_flow_test;
 mod ga49_flow_test;
 mod hand_flow_test;

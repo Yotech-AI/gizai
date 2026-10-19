@@ -279,6 +279,11 @@ fn at_a_1_gb_limit_a_command_that_asks_for_2_gb_is_ended_the_watch_sees_it_and_t
     assert_eq!(watch.finish(), 1, "one process ended at the limit");
     assert_eq!(*heard.lock().unwrap(), [1], "heard as it happened");
     assert!(alive(other.id()), "the other process in the slice keeps running");
+    // Linux frees the ended process's memory a moment after the kill, so wait for it (up to 5 s)
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while !s.0.used().is_some_and(|u| u < GB / 2) && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(s.0.used().is_some_and(|u| u < GB / 2), "its memory is free again: {:?}", s.0.used());
     other_tree.end(gizai_agents::os::End::Kill);
     other.wait().unwrap();

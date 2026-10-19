@@ -49,8 +49,18 @@ fn fake_stream_prints_the_set_rate_for_the_set_time_between_run_oks_first_and_la
     let span = events[99].0 - events[0].0;
     assert!(span >= Duration::from_millis(1950), "100 events at 50 a second take 1.98 s; took {span:?}");
     assert!(span < Duration::from_millis(3000), "100 events at 50 a second took {span:?}");
-    let first_second = events.iter().filter(|(at, _)| *at - events[0].0 < Duration::from_secs(1)).count();
-    assert!((48..=52).contains(&first_second), "{first_second} events in the first second");
+    // Each event's moment is i × 20 ms. None comes before it (the fake starts its clock after it has read the prompt, so
+    // after `run_fake`'s start), and the median event is less than 50 ms behind it, counted from the first: at 47 a second
+    // it would be 64 ms behind. A busy machine (CI's macOS runner, with the rest of tests/it beside this test) may hold a
+    // few events up for 100 ms, as a count of the first second's events didn't allow; the fake catches up after.
+    for (i, (at, _)) in events.iter().enumerate() {
+        let moment = Duration::from_millis(20 * i as u64);
+        assert!(*at >= moment, "event {i} came {at:?} after the start, before its moment {moment:?}");
+    }
+    let mut behind: Vec<i64> = events.iter().enumerate()
+        .map(|(i, (at, _))| (*at - events[0].0).as_millis() as i64 - 20 * i as i64).collect();
+    behind.sort();
+    assert!(behind[50] < 50, "the median event is {} ms behind its moment at 50 a second", behind[50]);
     // run-ok's last lines come once the time is up
     assert!(lines[101].0 - events[0].0 >= Duration::from_secs(2));
 }

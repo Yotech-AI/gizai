@@ -6,8 +6,9 @@
 //! with none to find a card, or a project and open cards, then a column or an assignee in Rust), the bin, the Inbox, a
 //! card, its comments and activity, the project list, the team (the window's lean one without the agents' instructions,
 //! and the tools' full one), the chat list, a big chat, Usage, Memory, and the whole board check, the longest read.
-//! --plan: each line also has "plan": every SQL statement the function ran (caught with SQLite's trace hook), how many
-//!   times it ran, and its EXPLAIN QUERY PLAN with its parameters NULL: [{"sql":…,"times":…,"plan":["SCAN …"]}].
+//! --plan: each line also has "plan": every SQL statement the function ran (caught with SQLite's trace hook; not the
+//!   BEGIN and ROLLBACK each read runs in since GA-191), how many times it ran, and its EXPLAIN QUERY PLAN with its
+//!   parameters NULL: [{"sql":…,"times":…,"plan":["SCAN …"]}].
 //! --writer: a writer works beside the reads for the whole bench, as a working agent does: a comment and an update of one
 //!   of KADE's In progress cards every 20 ms, through the core functions; each line says "writer":true. It CHANGES the
 //!   data dir: run it on a copy.
@@ -148,12 +149,12 @@ thread_local! {
 }
 
 /// SQLite's trace hook for SQLITE_TRACE_STMT: `sql` is the statement's text as it was prepared (or a comment, for a
-/// trigger). rusqlite's own `trace_v2` needs its `trace` feature, which Gizai doesn't build, so this is the hook itself
+/// trigger). A read's own transaction (BEGIN, ROLLBACK) has no plan and stays out. rusqlite's own `trace_v2` needs its `trace` feature, which Gizai doesn't build, so this is the hook itself
 /// through rusqlite's ffi.
 unsafe extern "C" fn on_statement(_event: c_uint, _ctx: *mut c_void, _stmt: *mut c_void, sql: *mut c_void) -> c_int {
     // SAFETY: for SQLITE_TRACE_STMT, SQLite passes a NUL-terminated UTF-8 string that lives during the call.
     let sql = unsafe { CStr::from_ptr(sql as *const c_char) }.to_string_lossy().into_owned();
-    if !sql.starts_with("--") {
+    if !sql.starts_with("--") && !matches!(sql.split_whitespace().next(), Some("BEGIN" | "COMMIT" | "ROLLBACK")) {
         SEEN.with(|seen| seen.borrow_mut().as_mut().map(|list| list.push(sql)));
     }
     0

@@ -1,7 +1,9 @@
-//! GA-48: each run gets its worktree's temp folder (`.gizai-tmp`) as TMPDIR, TMP and TEMP, kept out of git status and
-//! emptied when the run ends; every task prompt ends with "How this run works"; the tool calls Claude Code refused are
-//! saved on the run and returned to the Team Lead. Runs use the fake CLIs (FAKE_TEMP=1 makes them print their
-//! environment and prompt), never the real ones.
+//! GA-48: each run gets a temp folder as TMPDIR, TMP and TEMP, emptied when the run ends; every task prompt ends with
+//! "How this run works"; the tool calls Claude Code refused are saved on the run and returned to the Team Lead. GA-210:
+//! that temp folder is short and outside the worktree (`worktree::prepare_run_temp`, in the test's own `temp_base`), and
+//! the worktree's `.gizai-tmp` stays, out of git status, for the screenshots and the preview, and for the run when the
+//! short one can't be used. Runs use the fake CLIs (FAKE_TEMP=1 makes them print their environment and prompt), never
+//! the real ones.
 // Linux and macOS only: these tests run shell or Python scripts as fake programs, which Windows can't start.
 #![cfg(unix)]
 use std::path::{Path, PathBuf};
@@ -64,8 +66,21 @@ fn prompt_of(run: &gizai_core::model::Run) -> String {
     err[start..end].to_string()
 }
 
-fn temp_of(run: &gizai_core::model::Run) -> PathBuf {
+/// The run's temp folder (GA-210): short, outside its worktree, in Gizai's `temp_base`.
+fn temp_of(st: &gizai_lib::AppState, run: &gizai_core::model::Run) -> PathBuf {
+    gizai_agents::worktree::run_temp_in(&st.temp_base, Path::new(run.worktree_path.as_deref().unwrap()))
+}
+
+/// The worktree's own `.gizai-tmp`: the screenshots and the preview, and the run's temp files when the short folder
+/// can't be used.
+fn own_temp_of(run: &gizai_core::model::Run) -> PathBuf {
     Path::new(run.worktree_path.as_deref().unwrap()).join(".gizai-tmp")
+}
+
+/// Gizai's notes in the run's output.
+fn notes_of(st: &gizai_lib::AppState, run: &gizai_core::model::Run) -> Vec<String> {
+    gizai_lib::runs::events_for(st, &run.id).into_iter()
+        .filter_map(|e| match e.event { gizai_agents::stream::RunEvent::Note { text } => Some(text), _ => None }).collect()
 }
 
 fn entries(dir: &Path) -> Vec<String> {
@@ -91,7 +106,7 @@ fn in_progress_manual(st: &gizai_lib::AppState) {
 }
 
 #[tokio::test]
-async fn claude_code_codex_gemini_and_other_clis_get_the_worktrees_temp_folder_as_tmpdir_tmp_and_temp() {
+async fn claude_code_codex_gemini_and_other_clis_get_the_runs_short_temp_folder_as_tmpdir_tmp_and_temp() {
     let tmp = tempfile::tempdir().unwrap();
     let st = gizai_lib::test_state(tmp.path());
     let repo = git_repo(tmp.path());
@@ -111,16 +126,30 @@ async fn claude_code_codex_gemini_and_other_clis_get_the_worktrees_temp_folder_a
         let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
         assert_eq!((s.status.as_str(), s.outcome.as_deref()), ("succeeded", Some("ready_for_testing")), "{name}: {:?}", s.error);
         let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
-        let dir = temp_of(&run);
+        let wt = Path::new(run.worktree_path.as_deref().unwrap());
+        let dir = temp_of(&st, &run);
         let d = dir.display();
         let err = stderr_of(&run);
         assert!(err.contains(&format!("temp: TMPDIR={d} TMP={d} TEMP={d}\n")), "{name}: {err}");
         assert!(err.contains("temp exists: yes"), "{name}: the folder is there when the run starts: {err}");
+        assert!(err.contains("temp entries: \n"), "{name}: empty when the run starts: {err}");
+        // GA-210: outside the worktree and Gizai's data folder, and the CLI may read and change it
+        assert!(!dir.starts_with(wt) && !dir.starts_with(&st.data_dir), "{name}: {d}");
+        let argv = err.lines().find(|l| l.starts_with("argv: ")).unwrap_or_else(|| panic!("{name}: no argv in {err}"));
+        let given = match kind {
+            "claude_code" => argv.contains(&format!("--add-dir {d}")),
+            "codex" => argv.contains(&format!(",\"{d}\"]")),
+            "gemini" => argv.contains(&format!("--include-directories={d}")),
+            _ => !argv.contains(&d.to_string()),
+        };
+        assert!(given, "{name}: {argv}");
         // the fake left a file and a folder in it: the run's end emptied it, and the folder stays
         assert!(dir.is_dir(), "{name}");
         assert!(entries(&dir).is_empty(), "{name}: emptied when the run ended: {:?}", entries(&dir));
-        let wt = Path::new(run.worktree_path.as_deref().unwrap());
-        std::fs::write(dir.join("left-by-hand.txt"), "x").unwrap();
+        // the worktree's .gizai-tmp is still made, for the screenshots and the preview, empty and out of git status
+        let own = own_temp_of(&run);
+        assert!(own.is_dir() && entries(&own).is_empty(), "{name}");
+        std::fs::write(own.join("left-by-hand.txt"), "x").unwrap();
         assert!(!status(wt).contains("gizai-tmp"), "{name}: the worktree's git status doesn't show it: {}", status(wt));
         assert_eq!(std::fs::read_to_string(wt.join(".gitignore")).unwrap(), GITIGNORE, "{name}: .gitignore untouched");
     }
@@ -154,7 +183,7 @@ async fn every_task_prompt_new_and_continued_ends_with_how_this_run_works() {
     let next = gizai_core::runs::get(&st.db, &id).unwrap();
     assert_eq!((next.trigger.as_str(), next.status.as_str()), ("nudge", "succeeded"), "{:?}", next.error);
 
-    let temp = temp_of(&first).display().to_string();
+    let temp = temp_of(&st, &first).display().to_string();
     for (which, run) in [("new", &first), ("continued", &next)] {
         let p = prompt_of(run);
         let at = p.find("## How this run works").unwrap_or_else(|| panic!("{which}: no section in {p}"));
@@ -184,7 +213,7 @@ async fn the_temp_folder_is_emptied_after_stop_and_after_the_tool_call_limit() {
     put_agent_on(&st, &claude, AgentInput::default());
     describe(&st, &task, "FAKE_HANG");
     let (run_id, done) = gizai_lib::runs::start(&st, &task, None, None, "manual").await.unwrap();
-    let dir = temp_of(&gizai_core::runs::get(&st.db, &run_id).unwrap());
+    let dir = temp_of(&st, &gizai_core::runs::get(&st.db, &run_id).unwrap());
     let t0 = std::time::Instant::now();
     while !dir.join("left.txt").exists() {
         assert!(t0.elapsed() < Duration::from_secs(15), "the fake never wrote in {}", dir.display());
@@ -204,8 +233,107 @@ async fn the_temp_folder_is_emptied_after_stop_and_after_the_tool_call_limit() {
     let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
     assert_eq!(run.status, "timed_out", "{:?}", run.error);
     assert!(stderr_of(&run).contains("temp exists: yes"));
-    let dir = temp_of(&run);
+    let dir = temp_of(&st, &run);
     assert!(dir.is_dir() && entries(&dir).is_empty(), "emptied after the limit: {:?}", entries(&dir));
+}
+
+#[tokio::test]
+async fn a_run_starts_with_an_empty_temp_folder_after_a_run_gizai_couldnt_follow_to_its_end() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let claude = add_cli(&st, "Claude Code (temp)", "claude_code", FAKE_CLAUDE, &["FAKE_TEMP=1"]);
+    let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+    put_agent_on(&st, &claude, AgentInput::default());
+    describe(&st, &task, "FAKE_HANG");
+    let (run_id, done) = gizai_lib::runs::start(&st, &task, None, None, "manual").await.unwrap();
+    let dir = temp_of(&st, &gizai_core::runs::get(&st.db, &run_id).unwrap());
+    gizai_lib::runs::stop(&st, &run_id);
+    done.await.unwrap();
+    // what a run Gizai couldn't follow to its end (Gizai quit or crashed) left in it, a link to your files too
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "mine").unwrap();
+    std::fs::create_dir_all(dir.join("cache/deep")).unwrap();
+    std::fs::write(dir.join("cache/deep/db.sqlite"), "x").unwrap();
+    std::fs::write(dir.join("left.txt"), "x").unwrap();
+    std::os::unix::fs::symlink(&outside, dir.join("link")).unwrap();
+    describe(&st, &task, "Go on.");
+    let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+    let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    let err = stderr_of(&run);
+    assert!(err.contains(&format!("temp: TMPDIR={} ", dir.display())), "{err}");
+    assert!(err.contains("temp entries: \n"), "empty when the run started: {err}");
+    assert!(dir.is_dir() && entries(&dir).is_empty(), "and when it ended: {:?}", entries(&dir));
+    assert_eq!(std::fs::read_to_string(outside.join("keep.txt")).unwrap(), "mine", "the link was removed, never followed");
+}
+
+#[tokio::test]
+async fn the_same_card_in_two_data_folders_gets_two_temp_folders() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Gizai's own tests run the same card names in many data folders at once, all with one /var/tmp/gizai-<uid>
+    let shared = tmp.path().join("run-temp");
+    let mut dirs = vec![];
+    for data in ["one", "two"] {
+        let here = tmp.path().join(data);
+        std::fs::create_dir(&here).unwrap();
+        let mut st = gizai_lib::test_state(&here);
+        st.temp_base = shared.clone();
+        let repo = git_repo(&here);
+        let claude = add_cli(&st, "Claude Code (temp)", "claude_code", FAKE_CLAUDE, &["FAKE_TEMP=1"]);
+        let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+        put_agent_on(&st, &claude, AgentInput::default());
+        let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+        let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+        assert!(run.worktree_path.as_deref().unwrap().ends_with("/KADE-1"), "{:?}", run.worktree_path);
+        let dir = temp_of(&st, &run);
+        assert!(stderr_of(&run).contains(&format!("temp: TMPDIR={} ", dir.display())), "{data}: {}", stderr_of(&run));
+        dirs.push(dir);
+    }
+    assert_ne!(dirs[0], dirs[1]);
+    for d in &dirs {
+        assert_eq!(d.parent(), Some(shared.as_path()));
+        assert!(d.file_name().unwrap().to_string_lossy().starts_with("KADE-1-"), "{}", d.display());
+    }
+}
+
+#[tokio::test]
+async fn a_temp_base_that_is_a_link_or_open_to_others_is_never_used_the_run_gets_gizai_tmp_and_its_log_says_why() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let mut st = gizai_lib::test_state(tmp.path());
+    let repo = git_repo(tmp.path());
+    let claude = add_cli(&st, "Claude Code (temp)", "claude_code", FAKE_CLAUDE, &["FAKE_TEMP=1"]);
+    // a link to a private folder of yours, and a folder others may open
+    let mine = tmp.path().join("mine");
+    std::fs::create_dir(&mine).unwrap();
+    std::fs::set_permissions(&mine, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let link = tmp.path().join("base-link");
+    std::os::unix::fs::symlink(&mine, &link).unwrap();
+    let open = tmp.path().join("base-open");
+    std::fs::create_dir(&open).unwrap();
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (base, why) in [(&link, "is a link"), (&open, "is open to other users (mode 755, not 700)")] {
+        st.temp_base = base.clone();
+        let task = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
+        put_agent_on(&st, &claude, AgentInput::default());
+        let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
+        assert_eq!(s.status, "succeeded", "{why}: {:?}", s.error);
+        let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+        let own = own_temp_of(&run);
+        let d = own.display();
+        let err = stderr_of(&run);
+        assert!(err.contains(&format!("temp: TMPDIR={d} TMP={d} TEMP={d}\n")), "{why}: {err}");
+        assert!(err.contains("temp entries: \n"), "{why}: {err}");
+        let said = notes_of(&st, &run);
+        let want = format!("Couldn't use a short temp folder for this run: {} {why}. TMPDIR, TMP and TEMP point at {d} instead", base.display());
+        assert!(said.iter().any(|n| n.starts_with(&want)), "{why}: {want} not in {said:?}");
+        assert!(prompt_of(&run).contains(&format!("Throwaway files go only in `{d}`")), "{why}: {}", prompt_of(&run));
+        // nothing made in it, and .gizai-tmp emptied at the run's end
+        assert!(entries(&mine).is_empty() && entries(&open).is_empty(), "{why}");
+        assert!(own.is_dir() && entries(&own).is_empty(), "{why}: {:?}", entries(&own));
+    }
+    assert_eq!(std::fs::metadata(&open).unwrap().permissions().mode() & 0o777, 0o755, "left as it was");
 }
 
 #[tokio::test]
@@ -218,11 +346,14 @@ async fn a_run_starts_with_an_empty_temp_folder_and_the_folder_goes_with_the_wor
     gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let run = gizai_core::runs::list_for_task(&st.db, &task).unwrap().remove(0);
     let wt = PathBuf::from(run.worktree_path.clone().unwrap());
-    let dir = temp_of(&run);
-    // what a run Gizai couldn't follow to its end (a crash) left behind
-    std::fs::create_dir_all(dir.join("cache/deep")).unwrap();
-    std::fs::write(dir.join("cache/deep/db.sqlite"), "x").unwrap();
-    std::fs::write(dir.join("left.txt"), "x").unwrap();
+    let dir = temp_of(&st, &run);
+    let own = own_temp_of(&run);
+    // what a run Gizai couldn't follow to its end (a crash) left behind, in both
+    for d in [&dir, &own] {
+        std::fs::create_dir_all(d.join("cache/deep")).unwrap();
+        std::fs::write(d.join("cache/deep/db.sqlite"), "x").unwrap();
+        std::fs::write(d.join("left.txt"), "x").unwrap();
+    }
 
     // the card is done: Settings → Data removes its worktree, never by force, and the temp folder goes with it
     let team_id = gizai_core::team::list(&st.db).unwrap()[0].id.clone();
@@ -233,7 +364,8 @@ async fn a_run_starts_with_an_empty_temp_folder_and_the_folder_goes_with_the_wor
     assert_eq!(w.uncommitted, 0, "the temp folder isn't uncommitted work");
     let out = gizai_lib::worktrees::remove(&st, std::slice::from_ref(&task)).unwrap();
     assert!(out[0].removed, "{:?}", out[0]);
-    assert!(!wt.exists() && !dir.exists(), "the worktree and its temp folder are gone");
+    assert!(!wt.exists() && !own.exists(), "the worktree and its .gizai-tmp are gone");
+    assert!(!dir.exists(), "its temp folder outside the worktree is gone too: {}", dir.display());
     assert_eq!(status(&repo), "");
 }
 
@@ -247,22 +379,29 @@ async fn a_link_in_place_of_the_temp_folder_is_removed_never_followed() {
     put_agent_on(&st, &claude, AgentInput::default());
     describe(&st, &task, "FAKE_HANG");
     let (run_id, done) = gizai_lib::runs::start(&st, &task, None, None, "manual").await.unwrap();
-    let dir = temp_of(&gizai_core::runs::get(&st.db, &run_id).unwrap());
+    let first = gizai_core::runs::get(&st.db, &run_id).unwrap();
+    let (dir, own) = (temp_of(&st, &first), own_temp_of(&first));
     gizai_lib::runs::stop(&st, &run_id);
     done.await.unwrap();
-    // a link to a folder outside the worktree, in place of the temp folder
+    // a link to a folder outside the worktree, in place of the temp folder and of the worktree's .gizai-tmp
     let outside = tmp.path().join("outside");
     std::fs::create_dir(&outside).unwrap();
     std::fs::write(outside.join("keep.txt"), "mine").unwrap();
-    std::fs::remove_dir_all(&dir).unwrap();
-    std::os::unix::fs::symlink(&outside, &dir).unwrap();
+    for d in [&dir, &own] {
+        std::fs::remove_dir_all(d).unwrap();
+        std::os::unix::fs::symlink(&outside, d).unwrap();
+    }
     describe(&st, &task, "Go on.");
     let s = gizai_lib::runs::run_once(&st, &task, None, None).await.unwrap();
     let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
+    assert!(stderr_of(&run).contains(&format!("temp: TMPDIR={} ", dir.display())), "{}", stderr_of(&run));
     assert!(stderr_of(&run).contains("temp exists: yes"), "{}", stderr_of(&run));
-    assert!(!std::fs::symlink_metadata(&dir).unwrap().file_type().is_symlink(), "a real folder now");
+    for d in [&dir, &own] {
+        assert!(!std::fs::symlink_metadata(d).unwrap().file_type().is_symlink(), "a real folder now: {}", d.display());
+        assert!(entries(d).is_empty(), "{}", d.display());
+    }
+    assert_eq!(entries(&outside), ["keep.txt"]);
     assert_eq!(std::fs::read_to_string(outside.join("keep.txt")).unwrap(), "mine", "the link's target is left alone");
-    assert!(entries(&dir).is_empty());
 }
 
 #[tokio::test]
@@ -371,7 +510,7 @@ async fn an_answered_continue_also_ends_with_how_this_run_works_with_the_agents_
     done.await.unwrap();
     let first = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
     let answered = gizai_core::runs::get(&st.db, &id).unwrap();
-    let temp = temp_of(&first).display().to_string();
+    let temp = temp_of(&st, &first).display().to_string();
     let p = prompt_of(&answered);
     assert!(p.contains("ended asking for a decision") && p.contains("Use JSON, please"), "the answered prompt: {p}");
     for (which, p) in [("new", prompt_of(&first)), ("answered", p.clone())] {
@@ -400,7 +539,7 @@ async fn codex_gemini_and_other_prompts_end_with_how_this_run_works_with_only_wh
         let run = gizai_core::runs::get(&st.db, &s.run_id).unwrap();
         let p = prompt_of(&run);
         let sec = section(&p);
-        let temp = temp_of(&run).display().to_string();
+        let temp = temp_of(&st, &run).display().to_string();
         assert_eq!(p.matches("## How this run works").count(), 1, "{name}: {p}");
         for want in ["Nobody can approve anything during this run", &format!("`{temp}`"), "never in `/tmp`", "don't try other spellings"] {
             assert!(sec.contains(want), "{name}: {want} missing in {sec}");

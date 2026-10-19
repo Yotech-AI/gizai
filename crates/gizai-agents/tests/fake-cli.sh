@@ -3,8 +3,8 @@
 # environment lines in Settings → Coding CLIs) picks which: codex (codex exec --json), gemini (stream-json) or other
 # (plain text). It writes its argv, FAKE_ACCOUNT and the prompt's size to stderr, then that CLI's output for a card it
 # finished. A prompt containing FAKE_NOT_LOGGED_IN fails the way the CLI does without a login; FAKE_NO_RESULT ends
-# without the GIZAI_RESULT line (gemini and other). FAKE_TEMP=1 (GA-48) also writes TMPDIR, TMP and TEMP, whether that folder is there and
-# the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty. FAKE_LEARNED in the prompt adds a
+# without the GIZAI_RESULT line (gemini and other). FAKE_TEMP=1 (GA-48) also writes TMPDIR, TMP and TEMP, whether that folder is there, what is in
+# it and the whole prompt to stderr, and leaves a file and a folder in it for Gizai to empty. FAKE_LEARNED in the prompt adds a
 # `learned` line to the result line, "Learned on <kind>." (GA-19).
 prompt="$(cat)"   # the prompt on stdin (empty when it came as an argument)
 echo "argv: $*" >&2
@@ -16,6 +16,8 @@ if [ -n "${FAKE_TEMP:-}" ]; then
   echo "temp: TMPDIR=${TMPDIR:-} TMP=${TMP:-} TEMP=${TEMP:-}" >&2
   if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
     echo "temp exists: yes" >&2
+    # what was in it when the run started (GA-210: nothing)
+    echo "temp entries: $(ls -A "$TMPDIR" | tr '\n' ' ')" >&2
     mkdir -p "$TMPDIR/scratch" && echo x > "$TMPDIR/scratch/test.db" && echo y > "$TMPDIR/left.txt"
   else
     echo "temp exists: no" >&2

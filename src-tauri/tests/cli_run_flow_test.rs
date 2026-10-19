@@ -69,8 +69,11 @@ async fn a_codex_agent_runs_codex_exec_and_moves_the_card() {
 
     let err = stderr_of(&run);
     let common = std::fs::canonicalize(repo.join(".git")).unwrap();
+    // GA-210: and the run's temp folder, outside the worktree
+    let temp = gizai_agents::worktree::run_temp_in(&st.temp_base, std::path::Path::new(run.worktree_path.as_deref().unwrap()));
     for want in ["argv: exec --json -m gpt-5-codex -c model_reasoning_effort=\"high\" -c approval_policy=\"never\" -c web_search=\"disabled\" -c sandbox_mode=\"workspace-write\"",
-                 "sandbox_workspace_write.network_access=true", &format!("sandbox_workspace_write.writable_roots=[\"{}\"] -", common.display())] {
+                 "sandbox_workspace_write.network_access=true",
+                 &format!("sandbox_workspace_write.writable_roots=[\"{}\",\"{}\"] -", common.display(), temp.display())] {
         assert!(err.contains(want), "{want} missing in {err}");
     }
     let home = std::env::var("HOME").unwrap();

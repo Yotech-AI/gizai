@@ -149,6 +149,10 @@ async fn a_new_card_takes_over_the_worktree_of_a_done_then_a_cancelled_card() {
     std::fs::create_dir_all(a_wt.join("target/debug")).unwrap();
     std::fs::write(a_wt.join("target/debug/warm.rlib"), "compiled").unwrap();
     std::fs::write(a_wt.join("agent.log"), "the old card's\n").unwrap();
+    // GA-210: its runs' temp folder, named after its place, with something a crashed run left in it
+    let a_temp = gizai_agents::worktree::run_temp_in(&st.temp_base, &a_wt);
+    assert!(a_temp.is_dir(), "{}", a_temp.display());
+    std::fs::write(a_temp.join("left.txt"), "x").unwrap();
     finish(&st, &a, "done");
 
     let b = gizai_lib::test_task(&st, repo.to_str().unwrap(), "backend");
@@ -158,6 +162,9 @@ async fn a_new_card_takes_over_the_worktree_of_a_done_then_a_cancelled_card() {
     let run = gizai_core::runs::list_for_task(&st.db, &b).unwrap().remove(0);
     assert_eq!(run.worktree_path.as_deref(), Some(b_wt.to_str().unwrap()));
     assert!(!a_wt.exists(), "the Done card's folder moved to the new card");
+    assert!(!a_temp.exists(), "the Done card's temp folder is gone: {}", a_temp.display());
+    let b_temp = gizai_agents::worktree::run_temp_in(&st.temp_base, &b_wt);
+    assert!(b_temp.is_dir() && b_temp != a_temp, "the new card has its own: {}", b_temp.display());
     assert!(listed(&repo, &b_wt) && !listed(&repo, &a_wt));
     let b_branch = gizai_core::tasks::get(&st.db, &b).unwrap().branch.unwrap();
     assert_ne!(b_branch, a_branch);

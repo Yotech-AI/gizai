@@ -43,6 +43,7 @@ Background, only when the card needs it:
   - `scripts/ui-test.sh` when the UI changed
 
   The tests use fake Claude Code scripts (`crates/gizai-agents/tests/fake-claude*.{sh,py}`), never the real one.
+  New integration tests go in the crate's `tests/it/` as a module, with a `mod` line in `tests/it/main.rs` (one test program per crate); only a file whose tests change process-wide state (`std::env::set_var`, `set_current_dir`) or count on it goes in `tests/` as a program of its own.
 - **Release build:** always use `npm run tauri build -- --no-bundle`. A plain `cargo build --release -p gizai` can produce a binary that loads the dev URL.
 - **Linux, macOS and Windows:** GizAi builds and runs on all three, and CI (`.github/workflows/ci.yml`) builds and tests each pull request on each. `docs/PLATFORMS.md` lists what differs.
   - Put code for one system behind `cfg(unix)`, `cfg(windows)` or `cfg(target_os = …)`, and leave Linux's behaviour as it is.

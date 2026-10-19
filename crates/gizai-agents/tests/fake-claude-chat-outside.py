@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stands in for `claude` in src-tauri/tests/team_lead_mcp_rules_test.rs (a variant of fake-claude-chat.py, never the
+"""Stands in for `claude` in src-tauri/tests/it/team_lead_mcp_rules_test.rs (a variant of fake-claude-chat.py, never the
 real one). It starts the MCP server named "gizai" in its --mcp-config (the real gizai-mcp shim), prints an init line and
 makes one call to one of Gizai's tools, named in the prompt (stdin):
 

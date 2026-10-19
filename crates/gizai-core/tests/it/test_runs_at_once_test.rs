@@ -83,15 +83,15 @@ fn waiting(code: &str) -> Vec<(String, String)> {
 /// Migrations 0001..0019 on a new file at `path`: a genuine schema 19 database, as the version before GA-212 leaves it.
 fn v19_db(path: &Path) -> Connection {
     let all = [
-        include_str!("../migrations/0001_init.sql"), include_str!("../migrations/0002_agents.sql"), include_str!("../migrations/0003_chat.sql"),
-        include_str!("../migrations/0004_effort.sql"), include_str!("../migrations/0005_pull_requests.sql"),
-        include_str!("../migrations/0006_worktree_prepare.sql"), include_str!("../migrations/0007_card_flow.sql"),
-        include_str!("../migrations/0008_board_check.sql"), include_str!("../migrations/0009_agent_folders.sql"),
-        include_str!("../migrations/0010_run_refusals.sql"), include_str!("../migrations/0011_column_agents.sql"),
-        include_str!("../migrations/0012_chat_runs_on.sql"), include_str!("../migrations/0013_bitbucket.sql"),
-        include_str!("../migrations/0014_memory.sql"), include_str!("../migrations/0015_lead_merges.sql"),
-        include_str!("../migrations/0016_memory_groups.sql"), include_str!("../migrations/0017_pending_actions.sql"),
-        include_str!("../migrations/0018_indexes.sql"), include_str!("../migrations/0019_screenshots.sql"),
+        include_str!("../../migrations/0001_init.sql"), include_str!("../../migrations/0002_agents.sql"), include_str!("../../migrations/0003_chat.sql"),
+        include_str!("../../migrations/0004_effort.sql"), include_str!("../../migrations/0005_pull_requests.sql"),
+        include_str!("../../migrations/0006_worktree_prepare.sql"), include_str!("../../migrations/0007_card_flow.sql"),
+        include_str!("../../migrations/0008_board_check.sql"), include_str!("../../migrations/0009_agent_folders.sql"),
+        include_str!("../../migrations/0010_run_refusals.sql"), include_str!("../../migrations/0011_column_agents.sql"),
+        include_str!("../../migrations/0012_chat_runs_on.sql"), include_str!("../../migrations/0013_bitbucket.sql"),
+        include_str!("../../migrations/0014_memory.sql"), include_str!("../../migrations/0015_lead_merges.sql"),
+        include_str!("../../migrations/0016_memory_groups.sql"), include_str!("../../migrations/0017_pending_actions.sql"),
+        include_str!("../../migrations/0018_indexes.sql"), include_str!("../../migrations/0019_screenshots.sql"),
     ];
     assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
     let mut c = Connection::open(path).unwrap();

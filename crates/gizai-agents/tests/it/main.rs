@@ -16,6 +16,7 @@ mod cli_test;
 mod connection_test;
 mod copies_test;
 mod editor_test;
+mod fake_stream_test;
 mod folders_cli_test;
 mod folders_cli_windows_test;
 mod github_test;

@@ -181,6 +181,14 @@ fn forget_error(st: &AppState, key: &str) {
     st.pulls.errors.lock().unwrap().remove(key);
 }
 
+/// The problems the PR check said in the log that still hold, sorted: each one is said once, until it changes or goes
+/// away (`log_once`).
+pub fn problems(st: &AppState) -> Vec<String> {
+    let mut said: Vec<String> = st.pulls.errors.lock().unwrap().values().cloned().collect();
+    said.sort();
+    said
+}
+
 /// git's own words, without the "git:" prefix.
 pub(crate) fn plain(e: AgentError) -> String {
     match e {

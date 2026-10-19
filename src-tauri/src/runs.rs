@@ -125,6 +125,22 @@ fn pause_pull(st: &AppState, agent_id: &str, why: &str) -> bool {
     true
 }
 
+/// GA-212: why a run on the card waits for its project's Test runs at once (project settings), if it does: the card is in
+/// a Testing column, and as many of the project's other cards in a Testing column have a run live or still starting.
+fn test_runs_full(st: &AppState, task_id: &str) -> Option<String> {
+    // The cards still starting first, then the live ones: a run is live before its card stops starting, so a start that
+    // goes live meanwhile is in one of the two.
+    let mut under_way = starting(st);
+    under_way.extend(live(st).into_iter().map(|l| l.task_id));
+    match workflow::test_runs_full(&st.db, task_id, &under_way) {
+        Ok(full) => full.map(|f| f.message()),
+        Err(e) => {
+            eprintln!("gizai: checking Test runs at once for card {task_id} failed: {e}");
+            None
+        }
+    }
+}
+
 /// Whether the queue may start another card for the agent now: Gizai isn't quitting, agents aren't
 /// paused in Settings and the agent's pull isn't paused. Asked again before each start.
 fn takes_cards(st: &AppState, agent_id: &str) -> bool {
@@ -919,6 +935,10 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     }
     // GA-202: no new run while the runs use most of their memory limit or the computer has little free.
     if let Some(why) = crate::run_memory::wait_reason(st) {
+        return Err(StartError::Wait(why));
+    }
+    // GA-212: nor a test run while its project's other cards fill its Test runs at once, those still starting too.
+    if let Some(why) = test_runs_full(st, task_id) {
         return Err(StartError::Wait(why));
     }
     let (agent_id, role) = match agent_id {
@@ -1828,7 +1848,9 @@ async fn pull_inner(st: &AppState) -> Vec<(String, tokio::task::JoinHandle<RunSu
             }
             // Read again each time: the cards this pull started are claimed now, and others may have moved or been held.
             let busy = |t: &String| st.runs.live.lock().unwrap().values().any(|l| &l.task_id == t) || st.runs.starting.lock().unwrap().contains(t);
-            let Some(task) = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default().into_iter().find(|t| !busy(t)) else { break };
+            // GA-212: a card in Testing waits while its project's Test runs at once is full; the agent takes its next card.
+            let Some(task) = workflow::waiting_for(&st.db, &a.actor_id).unwrap_or_default().into_iter()
+                .find(|t| !busy(t) && test_runs_full(st, t).is_none()) else { break };
             match start_background(st, &task, &a.actor_id, "assigned", None).await {
                 Some(done) => started.push((task, done)),
                 None => break,

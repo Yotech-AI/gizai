@@ -288,12 +288,13 @@ fn a_schema_12_database_upgrades_to_13_after_a_backup() {
         c.query_row("SELECT count(*) FROM sqlite_master WHERE name = 'repos_new'", [], |r| r.get::<_, i64>(0))?))).unwrap();
     assert_eq!((v, broken, leftover), (db::SCHEMA_VERSION, 0, 0), "the current schema, foreign keys intact, no half-done rebuild");
     // 13, and GA-19's 0014 (memory), GA-86's 0015 (Team Lead may merge), GA-96's 0016 (agents share a memory folder),
-    // GA-102's 0017 (pending actions), GA-180's 0018 (indexes) and GA-182's 0019 (screenshots) after it in the same step.
-    assert_eq!(db::SCHEMA_VERSION, 19);
+    // GA-102's 0017 (pending actions), GA-180's 0018 (indexes), GA-182's 0019 (screenshots) and GA-212's 0020 (Test runs at
+    // once) after it in the same step.
+    assert_eq!(db::SCHEMA_VERSION, 20);
 
     let names = backup_names(&f.backups);
     assert_eq!(names.len(), 1, "{names:?}");
-    assert!(names[0].starts_with("gizai-before-v19-") && names[0].ends_with(".db"), "{names:?}");
+    assert!(names[0].starts_with("gizai-before-v20-") && names[0].ends_with(".db"), "{names:?}");
     let old = Connection::open(f.backups.join(&names[0])).unwrap();
     let old_rows = repo_rows(&old);
     assert_eq!(version(&old), 12, "the backup is the schema 12 database as it was");

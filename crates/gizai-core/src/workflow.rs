@@ -200,6 +200,83 @@ pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
     })
 }
 
+/// GA-212: a card held up by its project's Test runs at once (project settings): it is in a Testing column, and that
+/// many of the project's other cards in a Testing column are in a test run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestRunsFull {
+    /// The project's name.
+    pub project: String,
+    /// Its Test runs at once.
+    pub limit: i64,
+    /// The cards in a test run, like GA-211, by number.
+    pub cards: Vec<String>,
+}
+
+impl TestRunsFull {
+    /// "Giz AI tests 1 card at a time (project settings)".
+    fn tests(&self) -> String {
+        format!("{} tests {} {} at a time (project settings)", self.project, self.limit, if self.limit == 1 { "card" } else { "cards" })
+    }
+
+    /// Why a start waits (Run, Continue, the Team Lead's start_agent_run): "Giz AI tests 2 cards at a time (project
+    /// settings): wait for GA-188 or GA-211 to finish testing, or raise the limit on the project page."
+    pub fn message(&self) -> String {
+        format!("{}: wait for {} to finish testing, or raise the limit on the project page.", self.tests(), or_list(&self.cards))
+    }
+
+    /// The board check's reason, once the card has waited over an hour.
+    pub fn waited(&self) -> String {
+        format!("{}: it has waited over an hour for {} to finish testing", self.tests(), or_list(&self.cards))
+    }
+}
+
+/// "GA-1", "GA-1 or GA-2", "GA-1, GA-2 or GA-3".
+fn or_list(items: &[String]) -> String {
+    match items.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        Some((last, _)) => last.clone(),
+        None => String::new(),
+    }
+}
+
+/// Sorts a project's card identifiers by number: GA-99 before GA-188.
+pub(crate) fn by_number(cards: &mut [String]) {
+    cards.sort_by(|a, b| (a.len(), a).cmp(&(b.len(), b)));
+}
+
+/// GA-212: whether a run on `task_id` waits for its project's Test runs at once now. Some when the card is in a column
+/// of kind testing, its project has the setting, and at least that many of `under_way` (the cards with a run live or
+/// starting, of any project or column) are the project's other cards in a column of kind testing: their runs are its
+/// test runs. Cards in other columns never count and never wait, and a project without the setting never waits.
+pub fn test_runs_full(db: &Db, task_id: &str, under_way: &[String]) -> Result<Option<TestRunsFull>> {
+    let others: HashSet<&str> = under_way.iter().map(String::as_str).filter(|t| *t != task_id).collect();
+    if others.is_empty() {
+        return Ok(None);
+    }
+    db.read(|c| {
+        let limited = c.query_row(
+            "SELECT p.id, p.name, p.test_runs_at_once FROM tasks t JOIN workflow_states s ON s.id = t.state_id
+             JOIN projects p ON p.id = t.project_id
+             WHERE t.id = ?1 AND s.category = 'testing' AND p.test_runs_at_once >= 1",
+            [task_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))).optional()?;
+        let Some((project_id, project, limit)) = limited else { return Ok(None) };
+        let mut st = c.prepare(
+            "SELECT t.identifier FROM tasks t JOIN workflow_states s ON s.id = t.state_id
+             WHERE t.id = ?1 AND t.project_id = ?2 AND s.category = 'testing'")?;
+        let mut cards = vec![];
+        for id in others {
+            if let Some(card) = st.query_row(rusqlite::params![id, project_id], |r| r.get::<_, String>(0)).optional()? {
+                cards.push(card);
+            }
+        }
+        if (cards.len() as i64) < limit {
+            return Ok(None);
+        }
+        by_number(&mut cards);
+        Ok(Some(TestRunsFull { project, limit, cards }))
+    })
+}
+
 /// Who would start a card (the board check): the agents that could take it (the pinned agent, else the agent it is
 /// assigned to, else the agents on its column when that is Auto, its builder first; paused ones included, so the check
 /// can say why the card waits), the person it is assigned to, if any, and its column.

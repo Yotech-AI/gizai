@@ -157,7 +157,7 @@ pub(crate) fn list_projects(cx: &Cx, a: &Args) -> Result<Value, String> {
         .filter(|p| client.as_ref().is_none_or(|c| p.client_id.as_ref() == Some(c)))
         .filter(|p| status.as_ref().is_none_or(|s| &p.status == s))
         .map(|p| json!({"id": p.id, "key": p.key, "name": p.name, "client": p.client_name, "status": p.status, "repo_path": p.repo_path,
-                        "open_tasks": p.open_tasks, "done_tasks": p.done_tasks}))
+                        "open_tasks": p.open_tasks, "done_tasks": p.done_tasks, "test_runs_at_once": p.test_runs_at_once}))
         .collect();
     Ok(json!({"count": list.len(), "projects": list}))
 }
@@ -177,6 +177,9 @@ pub(crate) async fn get_project(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
         "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()),
         // GA-86: whether merge_pull_request may merge its pull requests (the user's switch, set in the app)
         "team_lead_may_merge": p.lead_may_merge,
+        // GA-212: how many of its cards may be in a test run (on a card in a Testing column) at the same time; null: no
+        // limit of its own
+        "test_runs_at_once": p.test_runs_at_once,
     }, "tasks_by_column": by_column, "docs": docs, "files": files}))
 }
 

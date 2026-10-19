@@ -15,7 +15,7 @@ fn select() -> String {
     p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
     (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
     (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown}),
-    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs
+    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs, p.test_runs_at_once
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL")
@@ -34,7 +34,20 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         preview_command: r.get(25)?,
         preview_start_secs: r.get::<_, Option<i64>>(26)?.and_then(|s| u32::try_from(s).ok())
             .filter(|s| crate::screenshots::START_SECS.contains(s)).unwrap_or(crate::screenshots::DEFAULT_START_SECS),
+        test_runs_at_once: r.get::<_, Option<i64>>(27)?.and_then(|n| u32::try_from(n).ok()).filter(|n| *n >= 1),
     })
+}
+
+/// Test runs at once (GA-212): how many of a project's cards may be in a test run at the same time.
+pub const TEST_RUNS_AT_ONCE: std::ops::RangeInclusive<i64> = 1..=20;
+
+/// The Test runs at once of `input` to save, checked: None keeps what the project has, 0 removes it, 1 to 20 sets it.
+fn test_runs_field(input: &ProjectInput) -> Result<Option<i64>> {
+    match input.test_runs_at_once {
+        Some(n) if n != 0 && !TEST_RUNS_AT_ONCE.contains(&n) => Err(Error::Invalid(format!(
+            "Test runs at once must be from {} to {}, or empty for no limit.", TEST_RUNS_AT_ONCE.start(), TEST_RUNS_AT_ONCE.end()))),
+        n => Ok(n),
+    }
 }
 
 /// Team Lead may merge (GA-86) is a person's switch, set in the app: a write by anyone else (an agent, Gizai) that gives
@@ -214,6 +227,7 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
     validate_status(&input.status)?;
     let (copy, install, setup) = worktree_fields(&input)?;
     let (shots, preview, start_secs) = preview_fields(&input)?;
+    let test_runs = test_runs_field(&input)?;
     db.write(Some(actor), |w| {
         let c = w.conn();
         person_sets_lead_may_merge(c, actor, &input)?;
@@ -237,12 +251,12 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
         c.execute(
             "INSERT INTO projects(id, created_at, updated_at, created_by, updated_by, org_id, client_id, number, key, name, status,
                color, goal_md, team_id, budget_amount_minor, budget_hours, worktree_copy_json, worktree_install, worktree_setup, lead_may_merge,
-               screenshots_json, preview_command, preview_start_secs)
+               screenshots_json, preview_command, preview_start_secs, test_runs_at_once)
              VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'active'), ?10, ?11, ?12, ?13, ?14,
-               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''), coalesce(?18, 0), ?19, NULLIF(?20, ''), ?21)",
+               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''), coalesce(?18, 0), ?19, NULLIF(?20, ''), ?21, NULLIF(?22, 0))",
             rusqlite::params![id, now, actor, org, clean(&input.client_id), number, key, name, clean(&input.status),
                               clean(&input.color), clean(&input.goal_md), team, input.budget_amount_minor, input.budget_hours,
-                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs],
+                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs, test_runs],
         )?;
         w.insert("projects", &id, serde_json::to_value(&input)?)?;
         upsert_repo(w, actor, &id, &input, now)?;
@@ -259,6 +273,7 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
     validate_status(&input.status)?;
     let (copy, install, setup) = worktree_fields(&input)?;
     let (shots, preview, start_secs) = preview_fields(&input)?;
+    let test_runs = test_runs_field(&input)?;
     db.write(Some(actor), |w| {
         person_sets_lead_may_merge(w.conn(), actor, &input)?;
         person_sets_preview(w.conn(), actor, &input)?;
@@ -270,11 +285,12 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
                worktree_setup=CASE WHEN ?13 IS NULL THEN worktree_setup ELSE NULLIF(?13, '') END,
                lead_may_merge=coalesce(?14, lead_may_merge), screenshots_json=coalesce(?15, screenshots_json),
                preview_command=CASE WHEN ?16 IS NULL THEN preview_command ELSE NULLIF(?16, '') END,
-               preview_start_secs=coalesce(?17, preview_start_secs)
+               preview_start_secs=coalesce(?17, preview_start_secs),
+               test_runs_at_once=CASE WHEN ?18 IS NULL THEN test_runs_at_once ELSE NULLIF(?18, 0) END
              WHERE id=?1 AND deleted_at IS NULL",
             rusqlite::params![id, clean(&input.client_id), name, clean(&input.status), clean(&input.color),
                               clean(&input.goal_md), input.budget_amount_minor, input.budget_hours, now, actor,
-                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs],
+                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs, test_runs],
         )?;
         if n == 0 {
             return Err(Error::NotFound(format!("project {id}")));

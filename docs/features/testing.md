@@ -53,6 +53,7 @@ A run of a project linked to GitHub or Bitbucket gets git settings in its enviro
 
 - **Open pull request** pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh.
 - **A merge on GitHub** moves the card to Review's next column (Deploy; Done for a team without a Deploy column) and removes its worktree. What the card changed stays readable in [its Changes](editor-and-terminal.md#a-cards-changes).
+- **The PR check** asks git every 2 minutes, and GitHub only when something moved there, and at least every 10 minutes: one light call per repository, so it stays far below GitHub's API limit.
 - **Settings → GitHub** shows whether gh is found and logged in and how pushes go, with Check connection for every linked project and Log in with GitHub. GizAi never stores a token or password.
 
 ## Review on Bitbucket Cloud

@@ -227,7 +227,8 @@ pub fn of_run(st: &AppState, run_id: &str) -> Result<CardChanges, String> {
 /// (`gizai_agents::changes::range_at_merge`): the card's latest commit the pull request had, and where it meets the merge
 /// commit's first parent. That shows the whole card after a merge commit, a squash and a rebase alike, offline, once the
 /// worktree and branch are gone. Offline or without the merge commit, main as last fetched counts; nothing is saved when
-/// main had the card's commits already (its merge commit on main shows them then). The refs are never pushed. Never
+/// main had the card's commits already (its merge commit on main shows them then). The refs are never pushed. `tip` is the
+/// branch's latest commit when the pull request has it (the PR check asked once, `pulls::Via::has_tip`), else None. Never
 /// fails the PR check: a problem goes to the log. Blocking.
 pub(crate) fn save_at_merge(st: &AppState, card: &PrCard, pr: &PullRequest, tip: Option<&str>) {
     let repo = Path::new(&card.repo_path);
@@ -248,7 +249,7 @@ pub(crate) fn save_at_merge(st: &AppState, card: &PrCard, pr: &PullRequest, tip:
     };
     // the pull request's latest commit when this repository has it, else the branch's own when the pull request has it
     let head = Some(pr.head_ref_oid.as_str()).filter(|h| git_changes::is_commit_id(h)).and_then(|h| git_changes::commit_of(repo, h))
-        .or_else(|| tip.filter(|t| pr.contains(t)).and_then(|t| git_changes::commit_of(repo, t)));
+        .or_else(|| tip.and_then(|t| git_changes::commit_of(repo, t)));
     let Some(head) = head else {
         eprintln!("gizai: {}'s changes weren't saved at its merge: this repository doesn't have its pull request's latest commit", card.identifier);
         return;

@@ -561,7 +561,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move { code::startup(&st).await });
             }
             // The pull request check: at start and every two minutes, cards in Review (and open pull requests) hear
-            // what happened on GitHub; a merge moves its card to Done.
+            // what happened on GitHub (asked when git shows something moved); a merge moves its card on.
             {
                 let st = state.clone();
                 tauri::async_runtime::spawn(async move {

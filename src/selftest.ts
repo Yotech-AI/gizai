@@ -13,7 +13,7 @@ import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/termin
 import { OPENED_AT_KEY, OPENED_KEY, TABS_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
 import { shotUrlCount } from "./lib/shotUrls";
 import { tellMain } from "./lib/behind";
-import { boardDrawn, perfCalls, perfCount, perfFirst, perfFrames, perfOn } from "./lib/perf";
+import { boardDrawn, perfCalls, perfCount, perfFirst, perfFrames, perfHeard, perfOn } from "./lib/perf";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
 import type { FolderMain } from "./types";
@@ -4266,6 +4266,15 @@ function counted(o: PerfResult, name: string, from: number, to = performance.now
   return c;
 }
 
+/** A stream's messages heard between `from` and `to`, and the stream events in them. Since GA-191 a run's and a chat's
+ *  events come in batches (`run-events`, `chat-events`), before it one message each (`run-event`, `chat-event`), so
+ *  both names count and a result from before GA-191 compares. */
+function streamed(from: number, to: number, ...names: string[]) {
+  let messages = 0, events = 0;
+  for (const h of perfHeard) if (h.at >= from && h.at < to && names.includes(h.event)) { messages += 1; events += h.items; }
+  return { messages, events };
+}
+
 /** Before a scenario opens its page: the start's own work done (the sidebar drawn, then a second). */
 async function perfSettle() {
   await waitFor(() => (perfFirst.sidebar !== undefined ? true : null), 20000);
@@ -4470,7 +4479,9 @@ async function perfRunlog(o: PerfResult, ids: PerfIds) {
   o.numbers.live_fps = l.fps;
   o.numbers.live_longest_frame_ms = l.longestFrameMs;
   const c = counted(o, "live", from, to);
-  o.numbers.live_run_events = c.events["run-event"]?.heard ?? 0;
+  const r = streamed(from, to, "run-events", "run-event");
+  o.numbers.live_run_events = r.messages;
+  o.numbers.live_run_stream_events = r.events;
   o.numbers.live_rows_changed = c.events["rows-changed"]?.heard ?? 0;
   if (document.querySelector(".run-card.live")) o.errors.push("the run was still live after 60 s");
 }
@@ -4545,7 +4556,9 @@ async function perfLead(o: PerfResult, ids: PerfIds) {
   o.numbers.stream_fps = f.fps;
   o.numbers.stream_longest_frame_ms = f.longestFrameMs;
   const n = counted(o, "stream", from, to);
-  o.numbers.stream_chat_events = n.events["chat-event"]?.heard ?? 0;
+  const t = streamed(from, to, "chat-events", "chat-event");
+  o.numbers.stream_chat_events = t.messages;
+  o.numbers.stream_chat_stream_events = t.events;
   o.numbers.stream_rows_changed = n.events["rows-changed"]?.heard ?? 0;
   if (document.querySelector(".chat-working")) o.errors.push("the answer was still streaming after 120 s");
 }

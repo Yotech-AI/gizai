@@ -8,8 +8,9 @@ import { listen as tauriListen, type EventCallback, type EventName, type Options
 /** One backend call: when it started (ms since the page began), how long it took and its answer's size as JSON. Listening
  *  for an event counts as a call to "listen". */
 export type PerfCall = { cmd: string; at: number; ms: number; bytes: number; error: boolean };
-/** One event the page heard, with its payload's size as JSON. */
-export type PerfHeard = { event: string; at: number; bytes: number };
+/** One event the page heard, with its payload's size as JSON and the stream events it brought: a batch's `events`
+ *  (GA-191's `run-events` and `chat-events`), otherwise 1. */
+export type PerfHeard = { event: string; at: number; bytes: number; items: number };
 
 export const perfOn = typeof window !== "undefined" && (window as { __GIZAI_PERF__?: boolean }).__GIZAI_PERF__ === true;
 export const perfCalls: PerfCall[] = [];
@@ -18,6 +19,10 @@ export const perfHeard: PerfHeard[] = [];
 const size = (v: unknown) => {
   if (v == null) return 0;
   try { return JSON.stringify(v)?.length ?? 0; } catch { return 0; }
+};
+const items = (v: unknown) => {
+  const events = (v as { events?: unknown } | null)?.events;
+  return Array.isArray(events) ? events.length : 1;
 };
 
 export const invoke: typeof tauriInvoke = !perfOn ? tauriInvoke : (async (cmd, args, options) => {
@@ -38,7 +43,7 @@ export const invoke: typeof tauriInvoke = !perfOn ? tauriInvoke : (async (cmd, a
 export const listen: typeof tauriListen = !perfOn ? tauriListen : <T>(event: EventName, handler: EventCallback<T>, options?: Options) => {
   perfCalls.push({ cmd: "listen", at: performance.now(), ms: 0, bytes: 0, error: false });
   return tauriListen<T>(event, (e) => {
-    perfHeard.push({ event, at: performance.now(), bytes: size(e.payload) });
+    perfHeard.push({ event, at: performance.now(), bytes: size(e.payload), items: items(e.payload) });
     return handler(e);
   }, options);
 };

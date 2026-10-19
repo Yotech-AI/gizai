@@ -1,6 +1,7 @@
 //! GA-179: on macOS and Windows `runs::command_path` starts no login shell and keeps nothing: macOS took your login
 //! shell's PATH at start (`shell_path`), and a Windows app gets the full PATH. Linux's kept PATH is
-//! `login_path_kept_test.rs`. The count of login shells belongs to the whole process, so this file has a single test.
+//! `login_path_kept_test.rs`. The count of login shells belongs to the whole process, so this file has a single test;
+//! it shares that process with the other tests in tests/it/, and on macOS and Windows none of them may start one either.
 #![cfg(any(windows, target_os = "macos"))]
 use gizai_lib::runs;
 

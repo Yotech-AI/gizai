@@ -110,7 +110,8 @@ pub fn prepare(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: O
 }
 
 /// `prepare` with every command in a scope of its own in `slice`, the slice of Gizai's agent runs (Linux, GA-202): the
-/// memory limit for agent runs covers them too. None: outside it, as `prepare`.
+/// memory limit for agent runs covers them too, and what a command leaves running in its scope ends with it (GA-211).
+/// None: outside it, as `prepare`.
 pub fn prepare_in(main: &Path, wt: &Path, p: &Prepare, since: Option<&str>, path: Option<&OsStr>, slice: Option<&Slice>)
     -> Result<Prepared, PrepareFailed> {
     let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
@@ -262,15 +263,16 @@ fn cp_program(path: Option<&OsStr>) -> Result<(PathBuf, &'static [&'static str])
 
 /// Runs `program args` in `dir` without prompts and returns the end of its output. After `limit` it is ended, with
 /// everything it started (its own process group, a Job Object on Windows: `os::Tree`). With `slice` it starts in a
-/// scope of its own there (`Slice::command`), and a failure says when Linux ended a process in it at the memory limit.
+/// scope of its own there (`Slice::scoped`), a failure says when Linux ended a process in it at the memory limit, and
+/// what it left running in its scope outside its group ends with it (GA-211).
 fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir: &Path, path: Option<&OsStr>, limit: Duration,
                         slice: Option<&Slice>) -> Result<String, PrepareFailed> {
     let program = program.as_ref();
     let fail = |why: String, output: String| PrepareFailed { command: shown.to_string(), why, output };
     // a program that can't be found starts as before, so it fails the usual way
-    let (mut cmd, slice) = match slice.and_then(|s| Some((s.command_for(program, path)?, s))) {
-        Some((c, s)) => (c, Some(s)),
-        None => (os::command(program), None),
+    let (mut cmd, slice, scope) = match slice.and_then(|s| Some((s.scoped_for(program, path)?, s))) {
+        Some(((c, scope), s)) => (c, Some(s), Some(scope)),
+        None => (os::command(program), None, None),
     };
     cmd.args(args).current_dir(dir)
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
@@ -323,6 +325,13 @@ fn run<S: AsRef<OsStr>>(shown: &str, program: impl AsRef<OsStr>, args: &[S], dir
     let ended_at_limit = watch.map(OomWatch::finish).unwrap_or(0) > 0;
     // what it left running in the background would hold its output open
     tree.end(End::Kill);
+    // and so would what it left in its scope in a group of its own (`setsid`, a daemon): SIGTERM, SIGKILL 3 s later
+    if let Some(scope) = scope {
+        let left = scope.end_leftovers(Some(child.id()));
+        if !left.is_empty() {
+            eprintln!("gizai: ended {} in {}", crate::run_memory::leftovers_text(&left, &format!("`{shown}`")), dir.display());
+        }
+    }
     for r in readers {
         let _ = r.join();
     }

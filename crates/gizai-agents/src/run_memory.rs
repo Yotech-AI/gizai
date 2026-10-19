@@ -4,6 +4,12 @@
 //! it, without swap: the runs are slowed down first, and only at the limit does Linux end a process, one inside the
 //! slice, never Gizai. On every system the start check reads what the runs use and what the computer has free
 //! (`Reading`).
+//!
+//! What a run leaves behind in its scope (GA-211): a process it started in a group of its own (a browser started
+//! detached, `setsid`, a daemon) outlives the run's process group, but not its scope. Each scope has a name Gizai picks
+//! (`Slice::scoped`), so its folder is known before the program starts, and when the program has ended what is left in
+//! it ends too (`Scope::end_leftovers`). Quitting ends whatever is still in the slice (`Slice::end_leftovers`), and so
+//! does the next start after a crash (`end_leftovers_in`).
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,6 +27,9 @@ const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
 /// How long systemctl or a slice's first scope may take.
 const QUICK: Duration = Duration::from_secs(15);
+
+/// How long what a run left running in its scope gets after SIGTERM, before SIGKILL (GA-211).
+pub const LEFTOVER_GRACE: Duration = Duration::from_secs(3);
 
 /// This computer's memory in bytes: MemTotal in /proc/meminfo on Linux, hw.memsize on macOS, the physical memory
 /// Windows reports (GlobalMemoryStatusEx). None when the system doesn't say.
@@ -221,8 +230,16 @@ impl Slice {
     /// in the same process once the scope is made, so its pid, process group, priority, environment, folder and open
     /// files stay as they are, and its arguments reach it unchanged, `$` included. Add the program's arguments to it.
     pub fn command(&self, program: &OsStr) -> Command {
+        self.scoped(program).0
+    }
+
+    /// `command`, and the scope it starts in. Gizai names the scope (`gizai-<16 hex digits>.scope`), so its cgroup folder
+    /// is known before the program starts and still after it ended, when its pid is gone: what the program leaves
+    /// running there can be ended then (`Scope::end_leftovers`).
+    pub fn scoped(&self, program: &OsStr) -> (Command, Scope) {
+        let unit = format!("gizai-{}.scope", scope_id());
         let mut cmd = os::command(&self.systemd_run);
-        cmd.args(["--user", "--scope", "--collect", "--quiet"]).arg(format!("--slice={}", self.name));
+        cmd.args(["--user", "--scope", "--collect", "--quiet"]).arg(format!("--unit={unit}")).arg(format!("--slice={}", self.name));
         if self.keep_args {
             cmd.arg("--expand-environment=no");
         }
@@ -230,15 +247,27 @@ impl Slice {
             cmd.args(["-p", "OOMPolicy=continue"]);
         }
         cmd.arg("--").arg(program);
-        cmd
+        (cmd, Scope { dir: self.dir.join(unit) })
     }
 
     /// `command` for `program` (a name, found on `path`, else on Gizai's own PATH; or a path), or None when it can't be
     /// found: then it starts as before, outside the slice, and fails the usual way.
     pub fn command_for(&self, program: &OsStr, path: Option<&OsStr>) -> Option<Command> {
+        self.scoped_for(program, path).map(|(cmd, _)| cmd)
+    }
+
+    /// `command_for`, and the scope it starts in (`scoped`).
+    pub fn scoped_for(&self, program: &OsStr, path: Option<&OsStr>) -> Option<(Command, Scope)> {
         let own = std::env::var_os("PATH").unwrap_or_default();
         let found = os::find_in(&program.to_string_lossy(), path.unwrap_or(own.as_os_str()))?;
-        Some(self.command(found.as_os_str()))
+        Some(self.scoped(found.as_os_str()))
+    }
+
+    /// Ends whatever still runs in the slice, in any of its scopes (Gizai quitting, once its agents have ended): SIGTERM
+    /// to each process, then SIGKILL to what is left `LEFTOVER_GRACE` later. Returns each process it ended, once.
+    /// Gizai itself is outside the slice. Blocks until they have ended: a few seconds at most.
+    pub fn end_leftovers(&self) -> Vec<Leftover> {
+        end_in(&self.dir, None)
     }
 
     /// Tests: stops the slice, with everything still running in it, and removes the limits Gizai set on it, so a test's
@@ -286,13 +315,229 @@ impl Slice {
     /// The cgroup folder of the scope the process `pid` runs in, once it is inside this slice.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn scope_of(&self, pid: u32) -> Option<PathBuf> {
-        let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
-        let at = Path::new(CGROUP_ROOT).join(text.lines().find_map(|l| l.strip_prefix("0::"))?.trim().trim_start_matches('/'));
+        let at = cgroup_of(pid)?;
         (at.starts_with(&self.dir) && at != self.dir).then_some(at)
     }
 }
 
-/// The slice `name`'s cgroup folder, from the cgroup of a scope in it ("/user.slice/…/gizai-runs-1a2b3c4d.slice/run-…").
+/// The cgroup folder the process `pid` runs in now: cgroup v2's `0::` line in /proc/<pid>/cgroup, under /sys/fs/cgroup.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn cgroup_of(pid: u32) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    Some(Path::new(CGROUP_ROOT).join(text.lines().find_map(|l| l.strip_prefix("0::"))?.trim().trim_start_matches('/')))
+}
+
+/// A scope's own part of its name: 16 random hex digits, never the same twice in one Gizai.
+fn scope_id() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        bytes = (now ^ NEXT.fetch_add(1, Ordering::SeqCst).rotate_left(40) ^ u64::from(std::process::id())).to_be_bytes();
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A process Gizai ended because it was left running in a scope of the agent runs' slice (GA-211): its pid, and its
+/// name as the kernel keeps it (/proc/<pid>/comm: "chromium", "node"; at most 15 characters).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leftover {
+    pub pid: u32,
+    pub name: String,
+}
+
+/// What was ended, for a note or a log line, each process once: "1 process {by} left running: chromium (pid 12345)",
+/// "2 processes {by} left running: chromium (pid 12345), node (pid 12346)".
+pub fn leftovers_text(left: &[Leftover], by: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let named: Vec<String> = left.iter().filter(|l| seen.insert(l.pid)).map(|l| format!("{} (pid {})", l.name, l.pid)).collect();
+    let count = if named.len() == 1 { "1 process".to_string() } else { format!("{} processes", named.len()) };
+    format!("{count} {by} left running: {}", named.join(", "))
+}
+
+/// A scope a program starts in through `Slice::scoped`: its cgroup folder, known before the program starts and kept
+/// after it ended, so what the program left running in it can be ended then (GA-211).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scope {
+    dir: PathBuf,
+}
+
+impl Scope {
+    /// Its cgroup folder: the slice's folder and the scope's name, `gizai-<16 hex digits>.scope`. systemd removes it once
+    /// nothing runs in it any more.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Ends what still runs in the scope outside the process group `group` (the program's own, which its caller ends
+    /// first): what the program left behind in a group of its own, such as a browser started detached, or `setsid`.
+    /// SIGTERM to each process, then SIGKILL to what is left `LEFTOVER_GRACE` later. Returns each process it ended, once,
+    /// in the order it found them; none when the scope is empty or gone. Blocks until they have ended: a few seconds at
+    /// most.
+    pub fn end_leftovers(&self, group: Option<u32>) -> Vec<Leftover> {
+        end_in(&self.dir, group)
+    }
+
+    /// SIGKILL to everything in the scope at once, without waiting (Gizai exiting at once, a preview that never got
+    /// going).
+    pub fn kill(&self) {
+        kill_in(&self.dir);
+    }
+}
+
+/// Gizai's start, before it recovers the runs a previous Gizai left (GA-211): ends whatever that Gizai left running in
+/// the slice `name` (it crashed, or was killed), as `Slice::end_leftovers` does, without setting the slice up. It is
+/// looked for where your user's systemd keeps it (`user@<uid>.service/gizai.slice/gizai-runs.slice/<name>`); a slice
+/// that isn't there has nothing in it. Another data folder's slice has another name, and is never touched. Nothing
+/// with `GIZAI_RUNS_SLICE=off`, and nothing outside Linux.
+pub fn end_leftovers_in(name: &str) -> Vec<Leftover> {
+    if std::env::var_os("GIZAI_RUNS_SLICE").is_some_and(|v| v == "off") {
+        return vec![];
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: getuid only reads.
+        let uid = unsafe { libc::getuid() };
+        let dir = Path::new(CGROUP_ROOT).join(format!("user.slice/user-{uid}.slice/user@{uid}.service/gizai.slice/gizai-runs.slice")).join(name);
+        if !dir.join("cgroup.procs").is_file() {
+            return vec![];
+        }
+        end_in(&dir, None)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        vec![]
+    }
+}
+
+/// Whether Gizai may end processes in the cgroup folder `dir`: a slice of agent runs (`gizai-runs-<8 hex digits>.slice`)
+/// under /sys/fs/cgroup, or a cgroup inside one, that the process asking doesn't run in itself. Anything else (an empty
+/// path, a parent of the slice) never is. Gizai always runs outside its own slice; a test runs in the slice of the Gizai
+/// whose agent runs it, so a test that named that slice by mistake would end nothing there.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn may_end_in(dir: &Path) -> bool {
+    let runs_slice = dir.starts_with(CGROUP_ROOT) && dir.components().any(|c| {
+        c.as_os_str().to_str().and_then(|s| s.strip_prefix("gizai-runs-")?.strip_suffix(".slice"))
+            .is_some_and(|hex| hex.len() == 8 && hex.chars().all(|ch| ch.is_ascii_hexdigit()))
+    });
+    runs_slice && !cgroup_of(std::process::id()).is_some_and(|own| own.starts_with(dir))
+}
+
+/// `Scope::end_leftovers` and `Slice::end_leftovers`: in the cgroup folder `dir` and the cgroups below it, every process
+/// that still runs outside the process group `group` gets SIGTERM (one started meanwhile too), with its name read
+/// first; after `LEFTOVER_GRACE` what is left gets SIGKILL (`kill_in`), and then it waits (at most a second) until they
+/// have gone. A pid is signalled only while /proc says it still runs in `dir`, so a pid that went to another process
+/// meanwhile is never hit. Never pid 0 or 1, nor Gizai itself.
+#[cfg(target_os = "linux")]
+fn end_in(dir: &Path, group: Option<u32>) -> Vec<Leftover> {
+    if !may_end_in(dir) {
+        return vec![];
+    }
+    let left = || -> Vec<u32> { running_in(dir).into_iter().filter(|&(_, g)| Some(g) != group).map(|(pid, _)| pid).collect() };
+    let mut ended: Vec<Leftover> = vec![];
+    // named once, while it still runs in `dir`
+    let note = |ended: &mut Vec<Leftover>, pid: u32| -> bool {
+        if ended.iter().any(|l| l.pid == pid) || !still_in(pid, dir) {
+            return false;
+        }
+        ended.push(Leftover { pid, name: os::process_name(pid).unwrap_or_else(|| "unnamed".into()) });
+        true
+    };
+    let until = Instant::now() + LEFTOVER_GRACE;
+    loop {
+        let now = left();
+        if now.is_empty() {
+            return ended;
+        }
+        if Instant::now() >= until {
+            break;
+        }
+        for pid in now {
+            if note(&mut ended, pid) {
+                os::send_signal(pid, false, libc::SIGTERM);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // what is left ignored SIGTERM (or started just now): SIGKILL
+    for pid in left() {
+        note(&mut ended, pid);
+    }
+    kill_in(dir);
+    let gone = Instant::now() + Duration::from_secs(1);
+    while !left().is_empty() && Instant::now() < gone {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    ended
+}
+
+#[cfg(not(target_os = "linux"))]
+fn end_in(dir: &Path, group: Option<u32>) -> Vec<Leftover> {
+    let _ = (dir, group);
+    vec![]
+}
+
+/// SIGKILL to everything in the cgroup folder `dir` and the cgroups below it, at once: its `cgroup.kill` (Linux 5.14 and
+/// newer), which no process in it can escape by starting another; else to each process in it.
+#[cfg(target_os = "linux")]
+fn kill_in(dir: &Path) {
+    if !may_end_in(dir) {
+        return;
+    }
+    if std::fs::write(dir.join("cgroup.kill"), "1").is_ok() {
+        return;
+    }
+    for (pid, _) in running_in(dir) {
+        if still_in(pid, dir) {
+            os::send_signal(pid, false, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kill_in(dir: &Path) {
+    let _ = dir;
+}
+
+/// The processes that still run (a zombie has ended) in the cgroup folder `dir` and the cgroups below it, each with its
+/// process group: from their cgroup.procs and /proc/<pid>/stat. Never pid 0 or 1, nor Gizai itself.
+#[cfg(target_os = "linux")]
+fn running_in(dir: &Path) -> Vec<(u32, u32)> {
+    let me = std::process::id();
+    let (mut out, mut folders) = (vec![], vec![dir.to_path_buf()]);
+    while let Some(folder) = folders.pop() {
+        let procs = std::fs::read_to_string(folder.join("cgroup.procs")).unwrap_or_default();
+        for pid in procs.lines().filter_map(|l| l.trim().parse::<u32>().ok()).filter(|&p| p > 1 && p != me) {
+            if let Some(group) = live_group(pid) {
+                out.push((pid, group));
+            }
+        }
+        let below = std::fs::read_dir(&folder).into_iter().flatten().flatten();
+        folders.extend(below.filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()));
+    }
+    out
+}
+
+/// The process group of `pid` while it runs: from /proc/<pid>/stat, None for a zombie or a process that is gone.
+#[cfg(target_os = "linux")]
+fn live_group(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // after "pid (comm) " come: state, ppid, pgrp, …
+    let fields: Vec<&str> = stat[stat.rfind(')')? + 1..].split_whitespace().collect();
+    if matches!(*fields.first()?, "Z" | "X") {
+        return None;
+    }
+    fields.get(2)?.parse().ok()
+}
+
+/// Whether `pid` still runs in the cgroup folder `dir` or one below it, read just before it is signalled.
+#[cfg(target_os = "linux")]
+fn still_in(pid: u32, dir: &Path) -> bool {
+    cgroup_of(pid).is_some_and(|at| at.starts_with(dir))
+}
+
+/// The slice `name`'s cgroup folder, from the cgroup of a scope in it ("/user.slice/…/gizai-runs-1a2b3c4d.slice/gizai-…").
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn slice_dir(cgroup: &str, name: &str) -> Option<PathBuf> {
     let at = cgroup.find(&format!("/{name}/"))?;
@@ -514,6 +759,22 @@ impl RunsMemory {
             self.enforced.store(set_up.is_ok(), Ordering::SeqCst);
             *made = Some(set_up);
         }
+        made.as_ref()?.as_ref().ok().cloned()
+    }
+
+    /// The slice, once `slice` has set it up. Never sets it up, and waits at most a moment for a set-up under way (Gizai
+    /// quitting: nothing has started in a slice that isn't set up yet).
+    pub fn made(&self) -> Option<Slice> {
+        use std::sync::TryLockError;
+        let until = Instant::now() + Duration::from_millis(200);
+        let made = loop {
+            match self.made.try_lock() {
+                Ok(m) => break m,
+                Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+                Err(TryLockError::WouldBlock) if Instant::now() < until => std::thread::sleep(Duration::from_millis(5)),
+                Err(TryLockError::WouldBlock) => return None,
+            }
+        };
         made.as_ref()?.as_ref().ok().cloned()
     }
 

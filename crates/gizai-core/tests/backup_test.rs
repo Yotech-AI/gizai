@@ -15,7 +15,7 @@ fn previous_version(path: &std::path::Path) {
         include_str!("../migrations/0012_chat_runs_on.sql"), include_str!("../migrations/0013_bitbucket.sql"),
         include_str!("../migrations/0014_memory.sql"), include_str!("../migrations/0015_lead_merges.sql"),
         include_str!("../migrations/0016_memory_groups.sql"), include_str!("../migrations/0017_pending_actions.sql"),
-        include_str!("../migrations/0018_indexes.sql"),
+        include_str!("../migrations/0018_indexes.sql"), include_str!("../migrations/0019_screenshots.sql"),
     ];
     assert_eq!(all.len() as i64, db::SCHEMA_VERSION - 1, "one schema step back");
     let mut c = rusqlite::Connection::open(path).unwrap();

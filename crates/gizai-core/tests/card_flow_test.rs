@@ -567,10 +567,10 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     // Step back to schema 6 as it was: none of 0011's columns, agents on columns or branches, routing rules on a label and
     // on a column, no Deploy column (the seed's has no place in schema 6), workflow_states and runs with 0001's CHECKs,
     // no Testing switch, none of 0008's board check columns, no agent folders (0009), no chat Runs on or queue (0012) and
-    // no memory (0014), no Team Lead may merge (0015), no shared memory folders (0016), no pending actions (0017) and no
-    // screenshot columns (0019).
+    // no memory (0014), no Team Lead may merge (0015), no shared memory folders (0016), no pending actions (0017), no
+    // screenshot columns (0019) and no Test runs at once (0020).
     let c = rusqlite::Connection::open(&path).unwrap();
-    let mut sql = format!("PRAGMA foreign_keys=OFF; BEGIN; {UNDO_0019} {UNDO_0017} {} ALTER TABLE projects DROP COLUMN lead_may_merge; {} DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;", undo_0016(&c), undo_0014());
+    let mut sql = format!("PRAGMA foreign_keys=OFF; BEGIN; {UNDO_0020} {UNDO_0019} {UNDO_0017} {} ALTER TABLE projects DROP COLUMN lead_may_merge; {} DROP TABLE column_agents; ALTER TABLE teams DROP COLUMN branches_json;", undo_0016(&c), undo_0014());
     sql.push_str("
         DELETE FROM workflow_states WHERE category='deploy';
         ALTER TABLE runs DROP COLUMN findings_json; ALTER TABLE tasks DROP COLUMN hold_at;
@@ -640,6 +640,9 @@ fn migration_0007_keeps_every_column_card_rule_run_and_comment_of_an_older_datab
     assert_eq!(tasks::get(&db, &card).unwrap().state_name, "Done");
     assert_eq!(runs::get(&db, &r).unwrap().outcome.as_deref(), Some("deployed"));
 }
+
+/// Undoes GA-212's 0020: no Test runs at once on projects.
+const UNDO_0020: &str = "ALTER TABLE projects DROP COLUMN test_runs_at_once;";
 
 /// Undoes GA-182's 0019: no screenshot columns on files, runs, tasks and projects, and no files_run index.
 const UNDO_0019: &str = "DROP INDEX files_run; ALTER TABLE files DROP COLUMN caption; ALTER TABLE files DROP COLUMN width;

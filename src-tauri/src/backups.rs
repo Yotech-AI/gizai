@@ -173,9 +173,10 @@ pub fn check_schedule(st: &AppState, now_ms: i64) -> Option<Result<Made, String>
 }
 
 /// A request to quit, once the page's unsaved text and the agents at work are settled (`RunEvent::ExitRequested`): when
-/// Quit Gizai completely asked and On quit is on, the quit's snapshot runs first, on a thread of its own, and `exit` is
-/// called when it has ended, or after QUIT_WAIT (a snapshot still running then is left, as an interrupted one). Returns
-/// true while Gizai waits for it. A second request meanwhile quits at once.
+/// Quit Gizai completely asked, a thread of its own reads On quit (no database work on the main thread) and, with it on,
+/// makes the quit's snapshot; then it calls `exit`, at the latest after QUIT_WAIT (a snapshot still running then is left,
+/// as an interrupted one). Returns true while Gizai waits for that thread (also when On quit turns out to be off: then
+/// `exit` comes at once). A second request meanwhile quits at once.
 pub fn on_exit_request(st: &AppState, exit: impl FnOnce() + Send + 'static) -> bool {
     match st.backups.quit.compare_exchange(QUIT_ASKED, QUIT_BACKING_UP, Ordering::SeqCst, Ordering::SeqCst) {
         Ok(_) => {}

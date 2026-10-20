@@ -1,6 +1,6 @@
 # Backups: format 1
 
-GizAi backs up your data as snapshots in a backups folder (GA-216). This page describes that folder as format 1: its layout, a snapshot's name, the manifest field by field, and how a snapshot is made and removed. Gizai Cloud will write its backups in the same format (see [For Gizai Cloud](#for-gizai-cloud)), so one restore reads both. The restore itself comes with GA-218. The code is `gizai_core::backups`, and the app's side is `src-tauri/src/backups.rs`.
+GizAi backs up your data as snapshots in a backups folder (GA-216). This page describes that folder as format 1: its layout, a snapshot's name, the manifest field by field, and how a snapshot is made and removed. GizAi Cloud will write its backups in the same format (see [For GizAi Cloud](#for-gizai-cloud)), so one restore reads both. The restore itself comes with GA-218. The code is `gizai_core::backups`, and the app's side is `src-tauri/src/backups.rs`.
 
 A snapshot holds only the database and the stored files it names (attachments and screenshots). Nothing from the OS keychain, a worktree, the logs (`runs/`, `chat/`), the Team Lead's code copies or `update/` goes into it. Snapshots are not encrypted: whoever can open the folder can read them, and a synced folder gets the data as it is.
 
@@ -123,7 +123,7 @@ This computer's, kept in its database; a restore keeps them. Saving checks Keep 
 | `backup_keep` | 1 to 100 (10 by default) |
 | `backup_last_error` | the last snapshot that failed, `{ "at", "message" }`; `null` once one has been made since |
 
-## For Gizai Cloud
+## For GizAi Cloud
 
 - A cloud snapshot is the daily snapshot of the hosted copy, plus the files. It is written in this format, so the same restore reads it.
 - `last_change` is where a sync continues: the device that restores a snapshot has every change up to it, and asks for the ones after it.

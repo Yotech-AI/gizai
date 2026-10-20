@@ -130,13 +130,15 @@ pub fn back_up_now(st: &AppState) -> Result<BackupStatus, String> {
         return Err(problem);
     }
     let slot = claim(st, Reason::Manual, None)?;
+    // before it starts: a small database's snapshot may be made before the status would be read after
+    let out = status(st);
     std::thread::Builder::new()
         .name("gizai-backup".into())
         .spawn(move || {
             let _ = run(slot, &chosen, Reason::Manual);
         })
         .map_err(|e| format!("Couldn't start the backup: {e}"))?;
-    Ok(status(st))
+    Ok(out)
 }
 
 /// Makes a snapshot now, on this thread, and returns once it is made: in chosen folder `folder` (read as

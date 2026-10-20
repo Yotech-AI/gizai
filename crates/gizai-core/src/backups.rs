@@ -464,7 +464,7 @@ fn check_marker(dir: &Path) -> std::result::Result<(), String> {
         Ok(m) if m.format == FOLDER_FORMAT && m.format_version > FORMAT_VERSION => Err(format!(
             "A newer Gizai made the backups folder {} (format {}): update Gizai to back up there", dir.display(), m.format_version)),
         Ok(m) if m.format == FOLDER_FORMAT => Ok(()),
-        _ => Err(format!("{} isn't a Gizai backups folder's: it says something else", path.display())),
+        _ => Err(format!("{} doesn't say its folder is a Gizai backups folder", path.display())),
     }
 }
 
@@ -851,24 +851,57 @@ fn remove_old_parts(dir: &Path, data_dir: &Path, tag: &str, now_ms: i64) {
 
 // ---- reading a folder ----
 
-/// The manifests in backups folder `dir` (`snapshots/*.json`) that read as a snapshot's (`format` "gizai-backup"),
-/// with their file's name without `.json` (the snapshot's name), newest first. Only one computer's when `tag` is given:
-/// their names end in its device.
-fn manifests(dir: &Path, tag: Option<&str>) -> Vec<(String, Manifest)> {
+/// A manifest in a backups folder: the snapshot's name (its file's, without `.json`), and whether it read whole as format
+/// 1's. One that didn't (a newer Gizai's, or a damaged one) is read field by field (`field_by_field`).
+struct Found {
+    name: String,
+    manifest: Manifest,
+    whole: bool,
+}
+
+/// The manifests in backups folder `dir` (`snapshots/*.json`) that are a snapshot's (`format` "gizai-backup"), newest
+/// first. Only one computer's when `tag` is given: their names end in its device.
+fn manifests(dir: &Path, tag: Option<&str>) -> Vec<Found> {
     let ending = tag.map(|t| format!("-{t}"));
-    let mut out: Vec<(String, Manifest)> = entries(&dir.join("snapshots"))
+    let mut out: Vec<Found> = entries(&dir.join("snapshots"))
         .into_iter()
         .filter_map(|(name, path)| {
             let stem = name.strip_suffix(".json")?;
             if ending.as_ref().is_some_and(|e| !stem.ends_with(e.as_str())) {
                 return None;
             }
-            let m: Manifest = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
-            (m.format == MANIFEST_FORMAT).then(|| (stem.to_string(), m))
+            let raw = fs::read(&path).ok()?;
+            let (manifest, whole) = match serde_json::from_slice::<Manifest>(&raw) {
+                Ok(m) => (m, true),
+                Err(_) => (field_by_field(&serde_json::from_slice(&raw).ok()?), false),
+            };
+            (manifest.format == MANIFEST_FORMAT).then(|| Found { name: stem.to_string(), manifest, whole })
         })
         .collect();
-    out.sort_by(|a, b| (b.1.made_at, &b.0).cmp(&(a.1.made_at, &a.0)));
+    out.sort_by(|a, b| (b.manifest.made_at, &b.name).cmp(&(a.manifest.made_at, &a.name)));
     out
+}
+
+/// A manifest that doesn't read whole as format 1's, field by field: each field that has format 1's shape, the others
+/// empty. So a snapshot a newer Gizai made still lists (as one this Gizai can't restore).
+fn field_by_field(v: &serde_json::Value) -> Manifest {
+    fn field<T: serde::de::DeserializeOwned + Default>(v: &serde_json::Value, key: &str) -> T {
+        v.get(key).and_then(|x| T::deserialize(x).ok()).unwrap_or_default()
+    }
+    Manifest {
+        format: field(v, "format"),
+        format_version: field(v, "format_version"),
+        name: field(v, "name"),
+        reason: field(v, "reason"),
+        made_at: field(v, "made_at"),
+        app_version: field(v, "app_version"),
+        schema_version: field(v, "schema_version"),
+        device: field(v, "device"),
+        db: field(v, "db"),
+        last_change: field(v, "last_change"),
+        files: field(v, "files"),
+        files_missing: field(v, "files_missing"),
+    }
 }
 
 /// Snapshot `name`'s manifest in backups folder `dir`.
@@ -931,8 +964,9 @@ fn blobs_in(dir: &Path) -> HashSet<String> {
 }
 
 /// The snapshots in the backups folder chosen folder `chosen` stands for (`backups_dir`), newest first, each with whether
-/// this Gizai can restore it and why not: a newer Gizai made it (its `format_version` or `schema_version` is higher),
-/// its database file is missing, or files are missing ("3 files are missing", counted in `files/` now). `device_id` is
+/// this Gizai can restore it and why not: a newer Gizai made it (its `format_version` or `schema_version` is higher), its
+/// manifest doesn't read whole, its database file is missing, or files are missing ("3 files are missing", counted in
+/// `files/` now). `device_id` is
 /// this computer's. An error when `chosen` is missing or not a folder; no snapshots when it holds none.
 pub fn list(chosen: &Path, device_id: &str) -> Result<Vec<BackupEntry>> {
     if let Some(why) = not_a_folder(chosen) {
@@ -940,17 +974,20 @@ pub fn list(chosen: &Path, device_id: &str) -> Result<Vec<BackupEntry>> {
     }
     let dir = backups_dir(chosen);
     let found = manifests(&dir, None);
-    let present = if found.iter().any(|(_, m)| !m.files.is_empty()) { blobs_in(&dir) } else { HashSet::new() };
-    Ok(found.into_iter().map(|(name, m)| entry(&dir, name, m, device_id, &present)).collect())
+    let present = if found.iter().any(|f| !f.manifest.files.is_empty()) { blobs_in(&dir) } else { HashSet::new() };
+    Ok(found.into_iter().map(|f| entry(&dir, f, device_id, &present)).collect())
 }
 
-fn entry(dir: &Path, name: String, m: Manifest, device_id: &str, present: &HashSet<String>) -> BackupEntry {
+fn entry(dir: &Path, found: Found, device_id: &str, present: &HashSet<String>) -> BackupEntry {
+    let Found { name, manifest: m, whole } = found;
     let files_missing = m.files.iter().filter(|f| !present.contains(&f.sha256.to_ascii_lowercase())).count() as i64;
     let problem = if m.format_version > FORMAT_VERSION || m.schema_version > db::SCHEMA_VERSION {
         Some(match m.app_version.as_str() {
             "" => "A newer Gizai made it: update Gizai to restore it".to_string(),
             v => format!("A newer Gizai made it ({v}): update Gizai to restore it"),
         })
+    } else if !whole {
+        Some("Its manifest can't be read".to_string())
     } else if !dir.join("snapshots").join(format!("{name}.db.zst")).is_file() {
         Some("Its database file is missing".to_string())
     } else if files_missing > 0 {
@@ -982,12 +1019,13 @@ pub fn newest(dir: &Path, device_id: &str) -> Option<Last> {
     let snaps = dir.join("snapshots");
     manifests(dir, Some(&device_tag(device_id)))
         .into_iter()
-        .find(|(name, m)| {
-            m.device.id == device_id
-                && m.reason != Reason::BeforeRestore.as_str()
-                && snaps.join(format!("{name}.db.zst")).is_file()
+        .find(|f| {
+            f.whole
+                && f.manifest.device.id == device_id
+                && f.manifest.reason != Reason::BeforeRestore.as_str()
+                && snaps.join(format!("{}.db.zst", f.name)).is_file()
         })
-        .map(|(name, m)| Last { name, made_at: m.made_at, bytes: m.db.bytes })
+        .map(|f| Last { name: f.name, made_at: f.manifest.made_at, bytes: f.manifest.db.bytes })
 }
 
 // ---- the schedule ----
@@ -1040,10 +1078,11 @@ pub fn status(db: &Db, running: Option<Running>, now_ms: i64) -> BackupStatus {
 pub fn prune(dir: &Path, device_id: &str, keep: i64, now_ms: i64) -> Result<Pruned> {
     let keep = keep.clamp(1, KEEP_MAX) as usize;
     let snaps = dir.join("snapshots");
+    // only manifests that read whole: one that doesn't may not be what it seems
     let mine: Vec<String> = manifests(dir, None)
         .into_iter()
-        .filter(|(_, m)| m.device.id == device_id && KEPT_REASONS.contains(&m.reason.as_str()))
-        .map(|(name, _)| name)
+        .filter(|f| f.whole && f.manifest.device.id == device_id && KEPT_REASONS.contains(&f.manifest.reason.as_str()))
+        .map(|f| f.name)
         .collect();
     let mut pruned = Pruned::default();
     for name in mine.iter().skip(keep) {

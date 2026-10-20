@@ -109,7 +109,7 @@ After each snapshot:
 
 ## Restorable or not
 
-Listing a folder shows each snapshot, newest first, and whether this GizAi can restore it. It can't, and says why, when a newer GizAi made it (its `format_version` or `schema_version` is higher than this GizAi's), when its database file is missing, or when files it names are missing from `files/` ("3 files are missing").
+Listing a folder shows each snapshot, newest first, and whether this GizAi can restore it. It can't, and says why, when a newer GizAi made it (its `format_version` or `schema_version` is higher than this GizAi's), when its manifest can't be read as format 1's, when its database file is missing, or when files it names are missing from `files/` ("3 files are missing"). A manifest that can't be read whole is read field by field, so a newer GizAi's snapshot still shows; Keep and the schedule only count manifests that read whole.
 
 ## Settings
 

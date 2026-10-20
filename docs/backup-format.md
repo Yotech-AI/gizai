@@ -23,7 +23,7 @@ Gizai backups/
 ```
 
 - `gizai-backups.json` and `README.txt` are written once, by the first GizAi that backs up there. A GizAi whose format is older than the folder's `format_version` doesn't back up there; it says a newer GizAi made the folder.
-- Several computers may share one folder. Each writes and removes only its own snapshots; the files in `files/` are shared by all.
+- Several computers may share one folder. Each writes and removes only its own snapshots; the files in `files/` are shared by all. A computer is known by its `devices.id` (the row with `is_self = 1`), so a restore must keep the restoring computer's own row: two computers with one id would take each other's snapshots for their own.
 - A file in `files/` is named by the SHA-256 of its content, in lowercase hex, inside a folder named by its first two characters, as in the data folder. It only ever arrives whole (renamed from a `.part` file) and never changes.
 
 ## A snapshot's name

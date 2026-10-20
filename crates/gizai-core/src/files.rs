@@ -121,8 +121,8 @@ fn store_from(data_dir: &Path, name: &str, src: &mut dyn Read) -> Result<Blob> {
 }
 
 /// Sets a blob's modified time to now, without writing to it (blobs are read-only): on Windows through a handle that may
-/// only change its attributes.
-fn touch(path: &Path) -> std::io::Result<()> {
+/// only change its attributes. Also for a blob a backup finds in its folder (`backups`).
+pub(crate) fn touch(path: &Path) -> std::io::Result<()> {
     let mut open = std::fs::OpenOptions::new();
     #[cfg(windows)]
     {

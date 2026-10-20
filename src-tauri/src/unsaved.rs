@@ -82,6 +82,8 @@ pub fn quit_waits(app: &AppHandle, code: i32) -> bool {
         Some(Waiting { then: Then::Quit(_), .. }) => {
             *w = None;
             SETTLED.store(true, Ordering::SeqCst);
+            // at once: without the quit's backup too (see `backups`)
+            app.state::<AppState>().backups.quit_without_backup();
             return false;
         }
         // A close the page saves or asks for becomes this quit: its answer quits.
@@ -135,9 +137,11 @@ pub fn close_answer(app: AppHandle, answer: String) {
         _ => {
             let x = w.take();
             drop(w);
-            // A signal marked Gizai as quitting: runs and chat answers start again.
+            // A signal marked Gizai as quitting: runs and chat answers start again. And only another Quit Gizai
+            // completely backs up as it quits (see `backups`).
             if let Some(Waiting { then: Then::Quit(_), .. }) = x {
                 runs::unmark_closing(app.state::<AppState>().inner());
+                app.state::<AppState>().backups.quit_called_off();
             }
             show_main(&app);
         }

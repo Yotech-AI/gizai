@@ -254,6 +254,11 @@ impl Db {
         self.dir.as_deref()
     }
 
+    /// This computer's id: its `devices` row with `is_self = 1`.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
     fn init(mut conn: Connection) -> Result<Db> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // Foreign keys are off while the schema is upgraded: a migration that changes a CHECK rebuilds its table (SQLite's

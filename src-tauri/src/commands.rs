@@ -886,8 +886,33 @@ pub async fn restart_gizai(app: AppHandle, st: State<'_, AppState>) -> R<()> {
         let mut cmd = crate::update::restart_command(st)?;
         cmd.spawn().map(|_| ()).map_err(|e| format!("Couldn't restart Gizai: {e}"))
     }).await?;
+    // the restart after an update doesn't back up on quit
+    st.backups.quit_without_backup();
     app.exit(0);
     Ok(())
+}
+
+// ---- backups (GA-216, contract BK): snapshots in a backups folder, on a schedule ----
+/// The backup settings, the backups folder in use and why it can't be used now, the snapshot that runs, this computer's
+/// newest, the last error and when the next scheduled one is due.
+#[tauri::command]
+pub async fn backup_status(st: State<'_, AppState>) -> R<gizai_core::backups::BackupStatus> {
+    off(&st, |st| Ok(crate::backups::status(st))).await
+}
+/// Saves the backup settings: refuses Keep outside 1 to 100 and a folder Gizai can't write in, saying why.
+#[tauri::command]
+pub async fn save_backup_settings(st: State<'_, AppState>, settings: gizai_core::backups::BackupSettings) -> R<gizai_core::backups::BackupStatus> {
+    off(&st, move |st| crate::backups::save_settings(st, settings)).await
+}
+/// The snapshots in a folder, newest first; null: the folder in Settings.
+#[tauri::command]
+pub async fn list_backups(st: State<'_, AppState>, folder: Option<String>) -> R<Vec<gizai_core::backups::BackupEntry>> {
+    off(&st, move |st| crate::backups::list(st, folder)).await
+}
+/// Back up now: starts a snapshot in the background; refused without a folder or while one runs.
+#[tauri::command]
+pub async fn back_up_now(st: State<'_, AppState>) -> R<gizai_core::backups::BackupStatus> {
+    off(&st, crate::backups::back_up_now).await
 }
 
 // ---- MCP servers (Settings → MCP servers, agent form → Tools) ----

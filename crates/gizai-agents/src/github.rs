@@ -1,5 +1,5 @@
-//! Pull requests through the user's own GitHub CLI (`gh`, logged in as them): find a branch's pull requests and open
-//! one. Never prompts: a missing login is an error, never a question.
+//! Pull requests through the user's own GitHub CLI (`gh`, logged in as them): find a repository's or a branch's pull
+//! requests and open one. Never prompts: a missing login is an error, never a question.
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -17,9 +17,14 @@ pub struct PullRequest {
     pub state: String,
     #[serde(default)]
     pub is_draft: bool,
+    /// The branch it comes from (a repository's list of pull requests is matched to cards by it).
+    #[serde(default)]
+    pub head_ref_name: String,
     /// Its latest commit.
     #[serde(default)]
     pub head_ref_oid: String,
+    /// Its commits: Bitbucket's for a merged one, and GitHub's only when asked for one pull request (`pull_commits`);
+    /// gh's list never asks for them (they cost about 20 times as much of GitHub's API limit).
     #[serde(default)]
     pub commits: Vec<Commit>,
     /// The commit that merged it into its base branch, once merged: after a squash the squashed commit, after a rebase
@@ -52,8 +57,11 @@ impl PullRequest {
     }
 }
 
-/// The fields Gizai asks gh for.
-pub const FIELDS: &str = "number,url,state,isDraft,headRefOid,commits,mergeCommit";
+/// The fields Gizai asks gh for: no connections (like `commits`) in them, so a list of up to 100 pull requests costs
+/// one point of GitHub's API limit (5,000 an hour, shared with every gh on this computer).
+pub const FIELDS: &str = "number,url,state,isDraft,headRefName,headRefOid,mergeCommit";
+/// How many pull requests one look at a repository takes: its newest, in any state.
+pub const REPO_LIMIT: u32 = 100;
 const LIMIT: Duration = Duration::from_secs(60);
 
 /// What the Team Lead's merge_pull_request (GA-86) checks before a merge, as `gh pr view --json` gives it.
@@ -172,10 +180,36 @@ pub fn merge_pull(gh: &Path, dir: &Path, repo: &str, number: u64, head: &str) ->
 /// (the project's repository).
 pub fn pulls_for_branch(gh: &Path, dir: &Path, repo: &str, branch: &str) -> Result<Vec<PullRequest>, String> {
     let out = run_gh(gh, dir, &["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--limit", "20", "--json", FIELDS], None)?;
+    pulls_from(&out)
+}
+
+/// The newest pull requests of `repo` ("owner/name"), in any state, newest first: `REPO_LIMIT` of them in one call, for
+/// every branch (`head_ref_name` says whose). `dir` is where gh runs (the project's repository).
+pub fn pulls_of_repo(gh: &Path, dir: &Path, repo: &str) -> Result<Vec<PullRequest>, String> {
+    let limit = REPO_LIMIT.to_string();
+    let out = run_gh(gh, dir, &["pr", "list", "--repo", repo, "--state", "all", "--limit", &limit, "--json", FIELDS], None)?;
+    pulls_from(&out)
+}
+
+fn pulls_from(out: &str) -> Result<Vec<PullRequest>, String> {
     if out.trim().is_empty() {
         return Ok(vec![]);
     }
-    serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))
+    serde_json::from_str(out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))
+}
+
+/// The commits of pull request `number` of `repo` ("owner/name"), as GitHub lists them (at most 100). `dir` is where
+/// gh runs.
+pub fn pull_commits(gh: &Path, dir: &Path, repo: &str, number: u64) -> Result<Vec<Commit>, String> {
+    #[derive(Deserialize)]
+    struct Commits {
+        #[serde(default)]
+        commits: Vec<Commit>,
+    }
+    let n = number.to_string();
+    let out = run_gh(gh, dir, &["pr", "view", &n, "--repo", repo, "--json", "commits"], None)?;
+    let listed: Commits = serde_json::from_str(&out).map_err(|e| format!("gh gave an answer Gizai can't read ({e})"))?;
+    Ok(listed.commits)
 }
 
 /// The commit that merged pull request `number` of `repo` ("owner/name"), as GitHub has it (`mergeCommit`); None while

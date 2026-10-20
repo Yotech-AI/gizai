@@ -81,16 +81,70 @@ fn the_pull_requests_of_a_branch_are_asked_in_every_state_without_prompts() {
     let tmp = tempfile::tempdir().unwrap();
     let gh = fake_gh(tmp.path());
     assert_eq!(github::pulls_for_branch(&gh, tmp.path(), "acme/shop", "gizai/sh-1-x").unwrap(), vec![], "no answer: no pull requests");
+    // GA-214: the light fields, no commits (a connection, which costs about 20 times as much of GitHub's API limit)
     assert_eq!(read(tmp.path().join("gh-args")).trim(),
-               "pr list --repo acme/shop --head gizai/sh-1-x --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits,mergeCommit");
+               "pr list --repo acme/shop --head gizai/sh-1-x --state all --limit 20 --json number,url,state,isDraft,headRefName,headRefOid,mergeCommit");
     assert_eq!(read(tmp.path().join("gh-env")).trim(), "prompt=1");
     std::fs::write(tmp.path().join("list.json"),
-        r#"[{"number":9,"url":"https://github.com/acme/shop/pull/9","state":"MERGED","isDraft":false,"headRefOid":"abc","commits":[{"oid":"abc"}]}]"#).unwrap();
+        r#"[{"number":9,"url":"https://github.com/acme/shop/pull/9","state":"MERGED","isDraft":false,"headRefName":"gizai/sh-1-x","headRefOid":"abc"}]"#).unwrap();
     let prs = github::pulls_for_branch(&gh, tmp.path(), "acme/shop", "gizai/sh-1-x").unwrap();
-    assert_eq!((prs.len(), prs[0].number, prs[0].state()), (1, 9, "merged"));
+    assert_eq!((prs.len(), prs[0].number, prs[0].state(), prs[0].head_ref_name.as_str()), (1, 9, "merged", "gizai/sh-1-x"));
+    assert!(prs[0].commits.is_empty() && prs[0].contains("abc"), "its latest commit, without a list of commits");
     std::fs::write(tmp.path().join("list.json"), "not json").unwrap();
     let e = github::pulls_for_branch(&gh, tmp.path(), "acme/shop", "gizai/sh-1-x").unwrap_err();
     assert!(e.contains("gh gave an answer Gizai can't read"), "{e}");
+}
+
+#[test]
+fn the_fields_gizai_asks_for_are_light() {
+    // GA-214: no connection (commits, reviews, labels, ...) in the list's fields, and the branch each one comes from
+    assert_eq!(github::FIELDS, "number,url,state,isDraft,headRefName,headRefOid,mergeCommit");
+    for heavy in ["commits", "reviews", "labels", "assignees", "files", "comments", "statusCheckRollup"] {
+        assert!(!github::FIELDS.split(',').any(|f| f == heavy), "{heavy} in {}", github::FIELDS);
+    }
+    assert_eq!(github::REPO_LIMIT, 100);
+}
+
+#[test]
+fn a_repositorys_newest_pull_requests_come_in_one_light_call_for_every_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let gh = fake_gh(tmp.path());
+    assert_eq!(github::pulls_of_repo(&gh, tmp.path(), "acme/shop").unwrap(), vec![], "no answer: no pull requests");
+    std::fs::write(tmp.path().join("list.json"), r#"[
+        {"number":12,"url":"https://github.com/acme/shop/pull/12","state":"OPEN","isDraft":true,"headRefName":"gizai/sh-2-y","headRefOid":"bbb","mergeCommit":null},
+        {"number":11,"url":"https://github.com/acme/shop/pull/11","state":"MERGED","isDraft":false,"headRefName":"gizai/sh-1-x","headRefOid":"aaa","mergeCommit":{"oid":"mmm"}},
+        {"number":10,"url":"https://github.com/acme/shop/pull/10","state":"CLOSED","isDraft":false,"headRefName":"gizai/sh-1-x","headRefOid":"999"}
+    ]"#).unwrap();
+    let prs = github::pulls_of_repo(&gh, tmp.path(), "acme/shop").unwrap();
+    let seen: Vec<(u64, &str, &str)> = prs.iter().map(|p| (p.number, p.head_ref_name.as_str(), p.state())).collect();
+    assert_eq!(seen, [(12, "gizai/sh-2-y", "draft"), (11, "gizai/sh-1-x", "merged"), (10, "gizai/sh-1-x", "closed")], "newest first, as gh gives them");
+    assert_eq!(prs[1].merge_commit.as_ref().map(|c| c.oid.as_str()), Some("mmm"));
+    let calls: Vec<String> = read(tmp.path().join("gh-args")).lines().map(String::from).collect();
+    let once = "pr list --repo acme/shop --state all --limit 100 --json number,url,state,isDraft,headRefName,headRefOid,mergeCommit";
+    assert_eq!(calls, [once, once], "the 100 newest in any state, without --head and without commits");
+    assert!(read(tmp.path().join("gh-env")).lines().all(|l| l == "prompt=1"), "never prompts");
+    std::fs::write(tmp.path().join("list.json"), "not json").unwrap();
+    let e = github::pulls_of_repo(&gh, tmp.path(), "acme/shop").unwrap_err();
+    assert!(e.contains("gh gave an answer Gizai can't read"), "{e}");
+    let e = github::pulls_of_repo(Path::new("/nonexistent/gh"), tmp.path(), "acme/shop").unwrap_err();
+    assert!(e.starts_with("GitHub CLI not found at /nonexistent/gh"), "{e}");
+}
+
+#[test]
+fn one_pull_requests_commits_come_from_gh_pr_view() {
+    // GA-214: only for a merged pull request whose latest commit this repository doesn't have
+    let tmp = tempfile::tempdir().unwrap();
+    let gh = fake_gh(tmp.path());
+    std::fs::write(tmp.path().join("view.json"), r#"{"commits":[{"oid":"aaa","authors":[{"login":"x"}]},{"oid":"bbb"}]}"#).unwrap();
+    let commits = github::pull_commits(&gh, tmp.path(), "acme/shop", 9).unwrap();
+    assert_eq!(commits.iter().map(|c| c.oid.as_str()).collect::<Vec<_>>(), ["aaa", "bbb"]);
+    std::fs::write(tmp.path().join("view.json"), r#"{}"#).unwrap();
+    assert_eq!(github::pull_commits(&gh, tmp.path(), "acme/shop", 9).unwrap(), vec![], "none listed");
+    std::fs::write(tmp.path().join("view.json"), "not json").unwrap();
+    let e = github::pull_commits(&gh, tmp.path(), "acme/shop", 9).unwrap_err();
+    assert!(e.contains("gh gave an answer Gizai can't read"), "{e}");
+    let calls: Vec<String> = read(tmp.path().join("gh-args")).lines().map(String::from).collect();
+    assert_eq!(calls, ["pr view 9 --repo acme/shop --json commits"; 3]);
 }
 
 #[test]

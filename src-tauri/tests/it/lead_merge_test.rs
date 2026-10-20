@@ -71,9 +71,10 @@ echo "unknown command: $*" >&2; exit 1
     gh
 }
 
-/// gh's `pr list` answer for pull request #7 from the card's branch.
-fn list_json(state: &str, head: &str) -> String {
-    json!([{"number": 7, "url": format!("{LINK}/pull/7"), "state": state, "isDraft": false, "headRefOid": head, "commits": [{"oid": head}]}]).to_string()
+/// gh's `pr list` answer for pull request #7 from `branch`, the card's, with the light fields only (GA-214: no
+/// `commits`).
+fn list_json(state: &str, head: &str, branch: &str) -> String {
+    json!([{"number": 7, "url": format!("{LINK}/pull/7"), "state": state, "isDraft": false, "headRefName": branch, "headRefOid": head}]).to_string()
 }
 
 /// A check run of GitHub Actions, as `gh pr view --json statusCheckRollup` gives it.
@@ -133,8 +134,8 @@ async fn setup_with(qa: Option<&str>) -> T {
         let head = t.head.clone();
         t.qa_run(outcome, &head);
     }
-    std::fs::write(t.gh.join("list.json"), list_json("OPEN", &t.head)).unwrap();
-    std::fs::write(t.gh.join("merged.json"), list_json("MERGED", &t.head)).unwrap();
+    std::fs::write(t.gh.join("list.json"), list_json("OPEN", &t.head, &t.branch)).unwrap();
+    std::fs::write(t.gh.join("merged.json"), list_json("MERGED", &t.head, &t.branch)).unwrap();
     t.view(|_| {});
     t
 }
@@ -231,11 +232,14 @@ async fn a_pull_request_that_meets_every_rule_is_merged_with_a_merge_commit_and_
     // gh: the card's pull request, read, then merged with a merge commit at the commit QA passed; nothing else
     let calls = t.gh_calls();
     assert_eq!(calls[..3], [
-        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits,mergeCommit", t.branch),
+        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefName,headRefOid,mergeCommit", t.branch),
         format!("pr view 7 --repo acme/shop --json {}", gizai_agents::github::DETAIL_FIELDS),
         format!("pr merge 7 --repo acme/shop --merge --match-head-commit {}", t.head),
     ], "{calls:?}");
     assert_eq!(calls.iter().filter(|c| c.starts_with("pr merge")).count(), 1, "{calls:?}");
+    // GA-214: the lookup and the check after the merge are light (no commits), and the merged pull request has the
+    // branch's latest commit as its own, so nothing asks for its commits
+    assert!(!calls.iter().any(|c| c.contains("commits")), "{calls:?}");
     for never in ["--squash", "--rebase", "--admin", "--auto", "--delete-branch", "-d "] {
         assert!(!calls.iter().any(|c| c.contains(never)), "{never}: {calls:?}");
     }
@@ -386,7 +390,7 @@ async fn refused_when_a_commit_was_pushed_after_qa() {
                            &t.head[..7], &new_head[..7]), "Review");
     // QA passes the new commit: then it merges, at that commit
     t.qa_run("qa_pass", &new_head);
-    std::fs::write(t.gh.join("merged.json"), list_json("MERGED", &new_head)).unwrap();
+    std::fs::write(t.gh.join("merged.json"), list_json("MERGED", &new_head, &t.branch)).unwrap();
     t.merge().await.unwrap();
     assert!(t.gh_calls().contains(&format!("pr merge 7 --repo acme/shop --merge --match-head-commit {new_head}")), "{:?}", t.gh_calls());
 }
@@ -434,7 +438,7 @@ async fn refused_when_the_pull_request_is_not_open_a_draft_or_not_into_the_main_
     let e = t.merge().await.unwrap_err();
     t.refused(&e, "isn't from the card's own branch", "Review");
     // no open pull request from the branch
-    std::fs::write(t.gh.join("list.json"), list_json("CLOSED", &t.head)).unwrap();
+    std::fs::write(t.gh.join("list.json"), list_json("CLOSED", &t.head, &t.branch)).unwrap();
     let e = t.merge().await.unwrap_err();
     t.refused(&e, "there is no open pull request from", "Review");
 }

@@ -625,6 +625,31 @@ pub fn push_new_commits(repo: &Path, to: &str, branch: &str, base: &str, over: &
     }
 }
 
+/// What `to` (a remote's name, or a URL) has at `refs` (refs, or patterns like `refs/pull/*/head`, as `git ls-remote`
+/// takes them): (ref, commit id) pairs, in ref order. It asks the way a push to `to` goes (`over`, as `push_new_commits`
+/// does), so a private repository answers too; it never asks for anything, and gives up after `limit`. git's own traffic
+/// doesn't count against GitHub's API limit.
+pub fn ls_remote(repo: &Path, to: &str, refs: &[String], over: &PushOver, limit: Duration) -> Result<Vec<(String, String)>, AgentError> {
+    let mut args = vec!["ls-remote", "--quiet", to];
+    args.extend(refs.iter().map(String::as_str));
+    let listed = quiet(repo, &push_config(repo, to, over), &args, limit)
+        .map_err(|e| AgentError::Git(format!("Couldn't ask {to} for its branches: {}", e.problem(over))))?;
+    let mut out: Vec<(String, String)> = listed.lines().filter_map(|l| l.split_once('\t'))
+        .map(|(sha, r)| (r.trim().to_string(), sha.trim().to_string())).collect();
+    out.sort();
+    Ok(out)
+}
+
+/// Whether commit `ancestor` is commit `of` or comes before it (`git merge-base --is-ancestor`). None when this
+/// repository doesn't have `of`, so git can't tell.
+pub fn is_ancestor(repo: &Path, ancestor: &str, of: &str) -> Option<bool> {
+    let id = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit());
+    if !id(ancestor) || !id(of) || git(repo, &["cat-file", "-e", &format!("{of}^{{commit}}")]).is_err() {
+        return None;
+    }
+    Some(git(repo, &["merge-base", "--is-ancestor", ancestor, of]).is_ok())
+}
+
 /// How many commits the local `branch` has that neither `base` (the main branch it started from, as last fetched,
 /// `start_ref`) nor `pushed` (the remote's copy of the branch as this repository last saw it, such as
 /// `refs/remotes/origin/<branch>`, which a push through that remote updates) has: what a push would still send, as far

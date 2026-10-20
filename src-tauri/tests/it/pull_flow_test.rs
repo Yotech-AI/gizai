@@ -73,11 +73,25 @@ fn gh_calls(dir: &Path) -> Vec<String> {
     std::fs::read_to_string(dir.join("gh-args")).unwrap_or_default().lines().map(String::from).collect()
 }
 
-/// gh's answer to `pr list` for one pull request.
-fn list(dir: &Path, number: u64, state: &str, draft: bool, head: &str) {
-    let pr = json!([{"number": number, "url": format!("{LINK}/pull/{number}"), "state": state, "isDraft": draft, "headRefOid": head,
-                     "commits": [{"oid": head}]}]);
-    std::fs::write(dir.join("list.json"), pr.to_string()).unwrap();
+/// gh's answer to `pr list` for one pull request from the card's branch, with the light fields only (GA-214: no
+/// `commits`).
+fn list(c: &Card, number: u64, state: &str, draft: bool, head: &str) {
+    let pr = json!([{"number": number, "url": format!("{LINK}/pull/{number}"), "state": state, "isDraft": draft, "headRefName": c.branch,
+                     "headRefOid": head}]);
+    std::fs::write(c.gh.join("list.json"), pr.to_string()).unwrap();
+}
+
+/// The light fields Gizai asks gh for (GA-214).
+const FIELDS: &str = "number,url,state,isDraft,headRefName,headRefOid,mergeCommit";
+
+/// GitHub merges the card's pull request: a merge commit of its branch on "GitHub"'s main, made in a clone of its own.
+/// Returns main's new commit.
+fn merge_on_github(tmp: &Path, c: &Card) -> String {
+    let other = tmp.join("other");
+    git(tmp, &["clone", "-q", c.bare.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", &format!("origin/{}", c.branch), "-m", "Merge pull request #7"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    git(&other, &["rev-parse", "HEAD"])
 }
 
 struct Card { st: gizai_lib::AppState, task: String, bare: PathBuf, local: PathBuf, wt: PathBuf, branch: String, gh: PathBuf }
@@ -142,7 +156,7 @@ async fn open_pull_request_pushes_the_cards_branch_and_opens_its_pull_request_wi
     assert_eq!(pr, PullInfo { url: format!("{LINK}/pull/7"), number: Some(7), state: "open".into(), note: None });
     assert_eq!(git(&c.bare, &["rev-parse", &c.branch]), git(&c.wt, &["rev-parse", "HEAD"]), "the branch is on GitHub with its commit");
     assert_eq!(gh_calls(&c.gh), [
-        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json number,url,state,isDraft,headRefOid,commits,mergeCommit", c.branch),
+        format!("pr list --repo acme/shop --head {} --state all --limit 20 --json {FIELDS}", c.branch),
         format!("pr create --repo acme/shop --head {} --base main --title KADE-1: Export invoices as CSV --body-file -", c.branch),
     ]);
     assert_eq!(std::fs::read_to_string(c.gh.join("gh-stdin")).unwrap(),
@@ -160,7 +174,7 @@ async fn a_pull_request_an_agent_opened_shows_on_the_card_and_push_branch_adds_t
     let c = worked_card(tmp.path()).await;
     to_review(&c);
     git(&c.local, &["push", "-q", "origin", &c.branch]); // the agent pushed it and opened a pull request
-    list(&c.gh, 4, "OPEN", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    list(&c, 4, "OPEN", false, &git(&c.wt, &["rev-parse", "HEAD"]));
     let pr = pulls::check(&c.st, &c.task).await.unwrap();
     assert_eq!(pr, Some(PullInfo { url: format!("{LINK}/pull/4"), number: Some(4), state: "open".into(), note: None }));
     let t = task(&c);
@@ -168,7 +182,7 @@ async fn a_pull_request_an_agent_opened_shows_on_the_card_and_push_branch_adds_t
     let last = gizai_core::tasks::activity(&c.st.db, &c.task).unwrap().pop().unwrap();
     assert_eq!((last.actor_name, last.diff), (None, json!({"pullRequest": format!("{LINK}/pull/4"), "prState": "open"})), "seen by Gizai, not opened by you");
     // the agent marks it as a draft: the PR check (every two minutes) sees it
-    list(&c.gh, 4, "OPEN", true, &git(&c.wt, &["rev-parse", "HEAD"]));
+    list(&c, 4, "OPEN", true, &git(&c.wt, &["rev-parse", "HEAD"]));
     let checked = pulls::check_all(&c.st).await;
     assert_eq!((checked.len(), checked[0].changed, checked[0].moved_to.clone()), (1, true, None));
     assert_eq!(task(&c).pr_state.as_deref(), Some("draft"));
@@ -196,13 +210,19 @@ async fn a_merge_on_github_moves_the_card_to_done_and_removes_its_worktree_on_th
     std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
     pulls::open(&c.st, &c.task).await.unwrap();
     // still open on GitHub: nothing moves
-    list(&c.gh, 7, "OPEN", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    list(&c, 7, "OPEN", false, &git(&c.wt, &["rev-parse", "HEAD"]));
     let checked = pulls::check_all(&c.st).await;
     assert_eq!((checked.len(), checked[0].changed), (1, false));
     assert_eq!(task(&c).state_name, "Review");
-    // merged on GitHub
-    list(&c.gh, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    let calls = gh_calls(&c.gh).len();
+    // GA-214: nothing moved in git, so the next round doesn't ask GitHub
+    assert!(pulls::check_all(&c.st).await.is_empty());
+    assert_eq!(gh_calls(&c.gh).len(), calls, "{:?}", gh_calls(&c.gh));
+    // merged on GitHub: main moved there, so the next round asks, once for the repository, without commits
+    merge_on_github(tmp.path(), &c);
+    list(&c, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
     let checked = pulls::check_all(&c.st).await;
+    assert_eq!(gh_calls(&c.gh)[calls..], [format!("pr list --repo acme/shop --state all --limit 100 --json {FIELDS}")]);
     assert_eq!(checked.len(), 1);
     assert_eq!((checked[0].moved_to.as_deref(), checked[0].changed), (Some("Done"), true));
     let said = format!("removed its worktree and deleted branch {} after the merge", c.branch);
@@ -231,7 +251,7 @@ async fn a_merged_card_keeps_a_worktree_with_uncommitted_work() {
     std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
     pulls::open(&c.st, &c.task).await.unwrap();
     std::fs::write(c.wt.join("notes.txt"), "not committed").unwrap();
-    list(&c.gh, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    list(&c, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
     let checked = pulls::check_all(&c.st).await;
     assert_eq!(checked[0].moved_to.as_deref(), Some("Done"));
     assert_eq!(checked[0].pull.as_ref().unwrap().note.as_deref(),
@@ -246,7 +266,7 @@ async fn an_older_merged_pull_request_does_not_move_a_card_with_newer_work() {
     let c = worked_card(tmp.path()).await;
     to_review(&c);
     // the branch's pull request #3 was merged before this card's latest commit
-    list(&c.gh, 3, "MERGED", false, &git(&c.local, &["rev-parse", "main"]));
+    list(&c, 3, "MERGED", false, &git(&c.local, &["rev-parse", "main"]));
     pulls::check_all(&c.st).await;
     let t = task(&c);
     assert_eq!(t.state_name, "Review", "stays for your review");
@@ -305,7 +325,7 @@ async fn with_a_deploy_column_a_merge_moves_the_card_to_deploy_and_nothing_start
     std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
     pulls::open(&c.st, &c.task).await.unwrap();
     let runs_before = gizai_core::runs::list_for_task(&c.st.db, &c.task).unwrap().len();
-    list(&c.gh, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    list(&c, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
     let checked = pulls::check_all(&c.st).await;
     assert_eq!((checked.len(), checked[0].moved_to.as_deref(), checked[0].changed), (1, Some("Deploy"), true));
     let t = task(&c);

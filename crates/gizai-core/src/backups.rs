@@ -357,15 +357,18 @@ pub fn settings(db: &Db) -> BackupSettings {
     .unwrap_or_default()
 }
 
-/// Saves the settings once they check out: Keep is 1 to 100, and a folder is a full path to a folder Gizai can write in
-/// (`folder_problem`). An empty folder is none: backups are off. Choosing another folder clears the last error, which
-/// was the old folder's. Returns them as saved.
+/// Saves the settings once they check out: Keep is 1 to 100, and a newly chosen folder is a full path to a folder Gizai
+/// can write in (`folder_problem`). The folder saved already isn't checked again: a USB disk that isn't plugged in now
+/// doesn't keep the other settings from changing. An empty folder is none: backups are off. Choosing another folder
+/// clears the last error, which was the old folder's. Returns them as saved.
 pub fn save_settings(db: &Db, s: BackupSettings) -> Result<BackupSettings> {
     if !(1..=KEEP_MAX).contains(&s.keep) {
         return Err(Error::Invalid(format!("Keep must be 1 to {KEEP_MAX} snapshots, not {}", s.keep)));
     }
     let folder = s.folder.map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
-    if let Some(f) = &folder {
+    if let Some(f) = &folder
+        && settings(db).folder.as_ref() != Some(f)
+    {
         if !Path::new(f).is_absolute() {
             return Err(Error::Invalid(format!("The backups folder needs a full path, not \"{f}\"")));
         }
@@ -410,6 +413,14 @@ pub fn backups_dir(chosen: &Path) -> PathBuf {
 /// isn't plugged in), it isn't a folder, Gizai can't write in it (or in its backups folder, when it has one), or a newer
 /// Gizai made its backups folder. Writes and removes a small file to find out.
 pub fn folder_problem(chosen: &Path) -> Option<String> {
+    problem(chosen, true)
+}
+
+/// The start of a probe file's name (`folder_problem`); `remove_old_parts` removes one left behind.
+const PROBE: &str = ".gizai-write-check-";
+
+/// `folder_problem`, with or without writing a probe file.
+fn problem(chosen: &Path, write: bool) -> Option<String> {
     if let Some(why) = not_a_folder(chosen) {
         return Some(why);
     }
@@ -425,7 +436,10 @@ pub fn folder_problem(chosen: &Path) -> Option<String> {
         // the first snapshot makes it
         Err(_) => chosen.to_path_buf(),
     };
-    let probe = write_in.join(format!(".gizai-write-check-{}", ids::new_id()));
+    if !write {
+        return None;
+    }
+    let probe = write_in.join(format!("{PROBE}{}", ids::new_id()));
     match fs::write(&probe, b"") {
         Ok(()) => {
             let _ = fs::remove_file(&probe);
@@ -495,8 +509,21 @@ fn write_new(path: &Path, bytes: &[u8], tag: &str) -> Result<()> {
     }
     let part = part_of(path, tag);
     write_synced(&part, bytes)?;
-    fs::rename(&part, path)?;
+    rename(&part, path)?;
     Ok(())
+}
+
+/// Renames a finished file into place. On Windows a few times over a second: a sync program or a virus scanner often
+/// holds a file that was just written for a moment.
+fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    for _ in 0..5 {
+        if fs::rename(from, to).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    fs::rename(from, to)
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -528,14 +555,16 @@ pub fn snapshot_name(reason: Reason, made_at: i64, tag: &str) -> String {
 }
 
 /// Makes a snapshot of the data in `data_dir` (its `gizai.db`, and the blobs it names in `files/`) in the backups folder
-/// chosen folder `chosen` stands for (`backups_dir`), with this reason; then Keep (`prune`, with `keep`). Blocks until it
-/// is done, so run it off the main thread, and one at a time. Gizai stays usable meanwhile.
+/// chosen folder `chosen` stands for (`backups_dir`), with this reason; then Keep (`prune`, with `keep`). `device_id` is
+/// this computer's (`Db::device_id`). Blocks until it is done, so run it off the main thread, and one at a time. Gizai
+/// stays usable meanwhile.
 ///
 /// In the order docs/backup-format.md gives, so an interrupted snapshot leaves no manifest, only `.part` files (and its
 /// temporary copy), which a later one removes once they are an hour old. A failure removes what this one wrote and
 /// hasn't finished, and its temporary copy. `step` hears each step as it starts; an error from it stops the snapshot
 /// there, as a failure would (at Keep the snapshot is made already, and Keep goes on).
-pub fn make(data_dir: &Path, chosen: &Path, reason: Reason, keep: i64, step: &mut dyn FnMut(Step) -> Result<()>) -> Result<Made> {
+pub fn make(data_dir: &Path, device_id: &str, chosen: &Path, reason: Reason, keep: i64,
+            step: &mut dyn FnMut(Step) -> Result<()>) -> Result<Made> {
     let src = data_dir.join("gizai.db");
     if !src.is_file() {
         return Err(Error::Invalid(format!("no Gizai data in {}", data_dir.display())));
@@ -546,12 +575,11 @@ pub fn make(data_dir: &Path, chosen: &Path, reason: Reason, keep: i64, step: &mu
     let dir = backups_dir(chosen);
     let conn = Connection::open(&src)?;
     conn.busy_timeout(Duration::from_secs(10))?;
-    let device = conn
-        .query_row("SELECT id, name FROM devices WHERE is_self = 1 ORDER BY created_at LIMIT 1", [], |r| {
-            Ok(Device { id: r.get(0)?, name: r.get(1)? })
-        })
+    let device_name: String = conn
+        .query_row("SELECT name FROM devices WHERE id = ?1", [device_id], |r| r.get(0))
         .optional()?
-        .ok_or_else(|| Error::Invalid("this computer has no device row in the database".into()))?;
+        .ok_or_else(|| Error::Invalid(format!("this computer ({device_id}) has no row in the database's devices")))?;
+    let device = Device { id: device_id.to_string(), name: device_name };
     let tag = device_tag(&device.id);
     prepare(&dir, &tag)?;
     remove_old_parts(&dir, data_dir, &tag, ids::now_ms());
@@ -624,7 +652,7 @@ pub fn make(data_dir: &Path, chosen: &Path, reason: Reason, keep: i64, step: &mu
     }
     let (db_sha, db_bytes) = input.sum();
     let bytes = fs::metadata(&zst_part)?.len();
-    fs::rename(&zst_part, &zst)?;
+    rename(&zst_part, &zst)?;
     undo.parts.push(zst.clone());
 
     // 4. The manifest: from now on the snapshot exists.
@@ -654,7 +682,7 @@ pub fn make(data_dir: &Path, chosen: &Path, reason: Reason, keep: i64, step: &mu
     let mut json = serde_json::to_vec_pretty(&manifest)?;
     json.push(b'\n');
     write_synced(&json_part, &json)?;
-    fs::rename(&json_part, snaps.join(format!("{name}.json")))?;
+    rename(&json_part, &snaps.join(format!("{name}.json")))?;
     // made: nothing of it goes now but the temporary copy
     undo.done = true;
     drop(undo);
@@ -743,7 +771,7 @@ fn copy_blob(src: &Path, dest: &Path, sha: &str, tag: &str, undo: &mut Unfinishe
         fs::remove_file(&part)?;
         return Ok(None);
     }
-    fs::rename(&part, dest)?;
+    rename(&part, dest)?;
     undo.parts.retain(|p| p != &part);
     Ok(Some(size))
 }
@@ -808,7 +836,8 @@ fn entries(dir: &Path) -> Vec<(String, PathBuf)> {
 /// Removes what this computer's interrupted snapshots left, once it is more than an hour old: their `.part` files in
 /// backups folder `dir` (`snapshots/<name>.db.zst.part` and `<name>.json.part`, a blob's `<sha256>.<device>.part`, the
 /// marker's and README's), a database file whose manifest never came (or went first, as Keep removes them), and their
-/// temporary copies in the data folder's `backups/`. Never another computer's: their names end in its own device.
+/// temporary copies in the data folder's `backups/`. Never another computer's: their names end in its own device. Also
+/// an old probe file (`folder_problem`), whoever left it.
 fn remove_old_parts(dir: &Path, data_dir: &Path, tag: &str, now_ms: i64) {
     let old = |p: &Path| fs::symlink_metadata(p).and_then(|m| m.modified()).is_ok_and(|t| age_ms(t, now_ms) > PART_AGE_MS);
     let mine = format!("-{tag}");
@@ -828,7 +857,8 @@ fn remove_old_parts(dir: &Path, data_dir: &Path, tag: &str, now_ms: i64) {
         }
     }
     for (name, path) in entries(dir) {
-        if name.ends_with(&part) && old(&path) {
+        // and a probe file whose removal failed (any computer's: it is only ever needed for a moment)
+        if (name.ends_with(&part) || name.starts_with(PROBE)) && old(&path) {
             let _ = fs::remove_file(&path);
         }
     }
@@ -906,7 +936,8 @@ fn field_by_field(v: &serde_json::Value) -> Manifest {
 
 /// Snapshot `name`'s manifest in backups folder `dir`.
 pub fn read_manifest(dir: &Path, name: &str) -> Result<Manifest> {
-    if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+    // letters, digits and dashes, as `snapshot_name` makes them: nothing that leaves `snapshots/` (a `C:` on Windows too)
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(Error::Invalid(format!("\"{name}\" isn't a snapshot's name")));
     }
     let raw = fs::read(dir.join("snapshots").join(format!("{name}.json"))).map_err(|e| match e.kind() {
@@ -1014,8 +1045,9 @@ fn entry(dir: &Path, found: Found, device_id: &str, present: &HashSet<String>) -
 }
 
 /// This computer's (`device_id`) newest good snapshot in backups folder `dir`: its manifest reads, its database file is
-/// there, and it wasn't made before a restore. Daily and weekly snapshots are due a day or a week after it.
-pub fn newest(dir: &Path, device_id: &str) -> Option<Last> {
+/// there, and it wasn't made before a restore. Daily and weekly snapshots are due a day or a week after it. One dated
+/// after `now_ms` (made while the clock was ahead) doesn't count: it would hold the schedule off until then.
+pub fn newest(dir: &Path, device_id: &str, now_ms: i64) -> Option<Last> {
     let snaps = dir.join("snapshots");
     manifests(dir, Some(&device_tag(device_id)))
         .into_iter()
@@ -1023,6 +1055,7 @@ pub fn newest(dir: &Path, device_id: &str) -> Option<Last> {
             f.whole
                 && f.manifest.device.id == device_id
                 && f.manifest.reason != Reason::BeforeRestore.as_str()
+                && f.manifest.made_at <= now_ms
                 && snaps.join(format!("{}.db.zst", f.name)).is_file()
         })
         .map(|f| Last { name: f.name, made_at: f.manifest.made_at, bytes: f.manifest.db.bytes })
@@ -1060,9 +1093,10 @@ pub fn status(db: &Db, running: Option<Running>, now_ms: i64) -> BackupStatus {
     if let Some(chosen) = out.settings.folder.as_deref().map(Path::new) {
         let dir = backups_dir(chosen);
         out.folder = Some(dir.to_string_lossy().into_owned());
-        out.folder_problem = folder_problem(chosen);
+        // no probe file while a snapshot runs: it writes there itself, and says so when it can't
+        out.folder_problem = problem(chosen, out.running.is_none());
         if out.folder_problem.is_none() {
-            out.last = newest(&dir, db.device_id());
+            out.last = newest(&dir, db.device_id(), now_ms);
             out.next = next_due(out.settings.every, out.last.as_ref().map(|l| l.made_at), now_ms);
         }
     }
@@ -1073,17 +1107,21 @@ pub fn status(db: &Db, running: Option<Running>, now_ms: i64) -> BackupStatus {
 
 /// Keep, after each snapshot: this computer's (`device_id`) daily, weekly, manual and quit snapshots in backups folder
 /// `dir` past the newest `keep` go, each manifest first, then its database. Never another computer's, never a
-/// before-restore one. Then each blob in `files/` that no manifest names (`.part` ones included) goes, once it hasn't
-/// been modified for 7 days: the blobs a snapshot another computer is making has found stay.
+/// before-restore one. One dated after `now_ms` (made while the clock was ahead) counts as the oldest, so it never takes
+/// the place of the snapshot just made. Then each blob in `files/` that no manifest names (`.part` ones included) goes,
+/// once it hasn't been modified for 7 days: the blobs a snapshot another computer is making has found stay.
 pub fn prune(dir: &Path, device_id: &str, keep: i64, now_ms: i64) -> Result<Pruned> {
     let keep = keep.clamp(1, KEEP_MAX) as usize;
     let snaps = dir.join("snapshots");
     // only manifests that read whole: one that doesn't may not be what it seems
-    let mine: Vec<String> = manifests(dir, None)
+    let mut mine: Vec<(bool, i64, String)> = manifests(dir, None)
         .into_iter()
         .filter(|f| f.whole && f.manifest.device.id == device_id && KEPT_REASONS.contains(&f.manifest.reason.as_str()))
-        .map(|f| f.name)
+        .map(|f| (f.manifest.made_at <= now_ms, f.manifest.made_at, f.name))
         .collect();
+    // newest first, those dated after now last
+    mine.sort_by(|a, b| b.cmp(a));
+    let mine: Vec<String> = mine.into_iter().map(|(_, _, name)| name).collect();
     let mut pruned = Pruned::default();
     for name in mine.iter().skip(keep) {
         if fs::remove_file(snaps.join(format!("{name}.json"))).is_ok() {

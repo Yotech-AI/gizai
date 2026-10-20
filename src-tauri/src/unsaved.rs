@@ -82,6 +82,8 @@ pub fn quit_waits(app: &AppHandle, code: i32) -> bool {
         Some(Waiting { then: Then::Quit(_), .. }) => {
             *w = None;
             SETTLED.store(true, Ordering::SeqCst);
+            // at once: without the quit's backup too (see `backups`)
+            app.state::<AppState>().backups.quit_without_backup();
             return false;
         }
         // A close the page saves or asks for becomes this quit: its answer quits.

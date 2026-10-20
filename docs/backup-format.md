@@ -96,7 +96,7 @@ A failure removes this snapshot's `.part` files, its compressed database and the
 ## When snapshots are made
 
 - **Back up now**, with reason `manual`.
-- **Daily or weekly** (Every in Settings; daily by default): due when this computer's newest good snapshot in the folder is 24 hours or 7 days old. A good snapshot is one whose manifest reads and whose database file is there, of any reason but `before-restore`; with none, the first one is due at once. GizAi checks 2 minutes after it starts and then every hour; a check up to 5 minutes early counts, so the snapshot doesn't move an hour later each day. A folder that can't be reached now (a USB disk that isn't plugged in) is passed over quietly, and Settings shows why.
+- **Daily or weekly** (Every in Settings; daily by default): due when this computer's newest good snapshot in the folder is 24 hours or 7 days old. A good snapshot is one whose manifest reads and whose database file is there, of any reason but `before-restore`, and not dated after now (made while the clock was ahead); with none, the first one is due at once. GizAi checks 2 minutes after it starts and then every hour by the wall clock, which it looks at every 5 minutes, so the hours a computer slept count too. A check up to 5 minutes early counts, so the snapshot doesn't move an hour later each day. A folder that can't be reached now (a USB disk that isn't plugged in) is passed over quietly, and Settings shows why.
 - **On quit** (off by default): Quit GizAi completely (the tray's or Settings' Quit, Cmd+Q on macOS) makes a snapshot with reason `quit` once agents at work have stopped, before GizAi exits, waiting at most 5 minutes. A signal, logging out, shutting down, and the restart after an update or a restore don't back up.
 - **Before a restore** (GA-218), with reason `before-restore`, in a folder of the restore's own: `gizai_lib::backups::back_up`.
 
@@ -104,7 +104,7 @@ A failure removes this snapshot's `.part` files, its compressed database and the
 
 After each snapshot:
 
-1. This computer's snapshots of reasons `daily`, `weekly`, `manual` and `quit`, beyond the newest Keep (1 to 100, 10 by default), are removed: the manifest first, then its `.db.zst`. Never another computer's snapshot, and never a `before-restore` one.
+1. This computer's snapshots of reasons `daily`, `weekly`, `manual` and `quit`, beyond the newest Keep (1 to 100, 10 by default), are removed: the manifest first, then its `.db.zst`. Never another computer's snapshot, and never a `before-restore` one. A snapshot dated after now (made while the clock was ahead) counts as the oldest, so it never takes the place of the one just made.
 2. Then a blob in `files/` is removed when no manifest in the folder names it (`.part` manifests included) and it hasn't been modified for 7 days. So the blobs another computer's snapshot has found while it runs stay. When a manifest can't be read, no blob goes that time (it may name any), unless it is a `.part` manifest more than an hour old.
 
 ## Restorable or not
@@ -113,7 +113,7 @@ Listing a folder shows each snapshot, newest first, and whether this GizAi can r
 
 ## Settings
 
-This computer's, kept in its database; a restore keeps them.
+This computer's, kept in its database; a restore keeps them. Saving checks Keep and a newly chosen folder (a full path GizAi can write in); the folder saved already isn't checked again, so an unplugged USB disk doesn't keep the other settings from changing.
 
 | Key | Value |
 |---|---|

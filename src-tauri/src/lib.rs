@@ -680,16 +680,23 @@ pub fn run() {
                 });
             }
             // Backups (GA-216): 2 minutes after start, then every hour, a daily or weekly snapshot is made when this
-            // computer's newest one in the backups folder is a day or a week old. The ages go by the wall clock.
+            // computer's newest one in the backups folder is a day or a week old. The hour goes by the wall clock, looked
+            // at every 5 minutes, so the hours the computer slept count too.
             {
                 let st = state.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(backups::FIRST_CHECK_AFTER).await;
-                    let mut tick = tokio::time::interval(backups::CHECK_EVERY);
+                    let mut last = None;
+                    let mut tick = tokio::time::interval(backups::TICK);
                     loop {
                         tick.tick().await;
+                        let now = gizai_core::ids::now_ms();
+                        if !backups::check_due(last, now) {
+                            continue;
+                        }
+                        last = Some(now);
                         let st = st.clone();
-                        let _ = tokio::task::spawn_blocking(move || backups::check_schedule(&st, gizai_core::ids::now_ms())).await;
+                        let _ = tokio::task::spawn_blocking(move || backups::check_schedule(&st, now)).await;
                     }
                 });
             }

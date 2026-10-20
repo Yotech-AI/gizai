@@ -22,8 +22,16 @@ use crate::runs::Note;
 
 /// The schedule's first check, after Gizai starts…
 pub const FIRST_CHECK_AFTER: Duration = Duration::from_secs(2 * 60);
-/// …and then how often it checks.
+/// …and then how often it checks, by the wall clock (`check_due`)…
 pub const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
+/// …which it looks at this often: the hours the computer slept count, and the first check after it wakes comes soon.
+pub const TICK: Duration = Duration::from_secs(5 * 60);
+
+/// Whether the schedule checks at `now_ms`, its last check having been at `last` (None: none yet): an hour of wall-clock
+/// time later, or at once when the clock went back.
+pub fn check_due(last: Option<i64>, now_ms: i64) -> bool {
+    last.is_none_or(|l| now_ms < l || now_ms - l >= CHECK_EVERY.as_millis() as i64)
+}
 /// How long quitting waits for its snapshot, and for one that runs already, at most.
 pub const QUIT_WAIT: Duration = Duration::from_secs(5 * 60);
 
@@ -166,7 +174,7 @@ pub fn check_schedule(st: &AppState, now_ms: i64) -> Option<Result<Made, String>
     if st.backups.running().is_some() || core::folder_problem(&chosen).is_some() {
         return None;
     }
-    let newest = core::newest(&core::backups_dir(&chosen), st.db.device_id());
+    let newest = core::newest(&core::backups_dir(&chosen), st.db.device_id(), now_ms);
     if !core::is_due(s.every, newest.map(|n| n.made_at), now_ms) {
         return None;
     }
@@ -276,7 +284,7 @@ fn claim(st: &AppState, reason: Reason, until: Option<Instant>) -> Result<Slot, 
 fn run(slot: Slot, chosen: &Path, reason: Reason) -> Result<Made, String> {
     let st = &slot.st;
     let keep = core::settings(&st.db).keep;
-    let made = core::make(&st.data_dir, chosen, reason, keep, &mut |step| {
+    let made = core::make(&st.data_dir, st.db.device_id(), chosen, reason, keep, &mut |step| {
         if st.backups.fails_at(step) {
             return Err(gizai_core::Error::Invalid(format!("a test stopped the snapshot at its {} step", step.as_str())));
         }

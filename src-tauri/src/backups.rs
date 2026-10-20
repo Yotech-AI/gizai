@@ -208,22 +208,22 @@ pub fn quit_first(app: &AppHandle, code: i32) -> bool {
 }
 
 /// The quit's snapshot, with On quit on and a folder that can be used now (one that can't is passed over quietly, as
-/// the schedule does): it waits for a snapshot that runs already, then makes its own, within QUIT_WAIT in all. No run or
-/// chat answer starts meanwhile: Gizai is quitting.
+/// the schedule does): it waits for a snapshot that runs already, then makes its own. All of it, the look at the
+/// settings and the folder too (a network folder may hang), within QUIT_WAIT. No run or chat answer starts meanwhile:
+/// Gizai is quitting.
 fn quit_backup(st: &AppState) {
-    let s = core::settings(&st.db);
-    let Some(folder) = s.folder.filter(|_| s.on_quit) else { return };
-    let chosen = PathBuf::from(folder);
-    if core::folder_problem(&chosen).is_some() {
-        return;
-    }
-    crate::runs::mark_closing(st);
     let until = Instant::now() + QUIT_WAIT;
     let (done, ended) = std::sync::mpsc::channel();
-    let st2 = st.clone();
+    let st = st.clone();
     let spawned = std::thread::Builder::new().name("gizai-backup".into()).spawn(move || {
-        if let Ok(slot) = claim(&st2, Reason::Quit, Some(until)) {
-            let _ = run(slot, &chosen, Reason::Quit);
+        let s = core::settings(&st.db);
+        if let Some(chosen) = s.folder.filter(|_| s.on_quit).map(PathBuf::from)
+            && core::folder_problem(&chosen).is_none()
+        {
+            crate::runs::mark_closing(&st);
+            if let Ok(slot) = claim(&st, Reason::Quit, Some(until)) {
+                let _ = run(slot, &chosen, Reason::Quit);
+            }
         }
         let _ = done.send(());
     });

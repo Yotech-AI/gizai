@@ -1,6 +1,7 @@
 //! Runs an agent's CLI (`claude`, `codex`, `gemini`, …) as a child in its own process group (a Job Object on Windows,
 //! see `os::Tree`), streams its events, enforces the caps and stops it.
-//! Signals only ever go to that process group (never pid 0 or 1), so nothing else on the machine is touched.
+//! Signals only ever go to that process group (never pid 0 or 1), so nothing else on the machine is touched; in the
+//! slice of the agent runs (Linux), also to what the run left running in its own scope (GA-211).
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use crate::chat_stream::ChatEvent;
 use crate::claude::ClaudeArgs;
 use crate::cli;
 use crate::os::{self, End, Tree};
-use crate::run_memory::{OomWatch, Slice};
+use crate::run_memory::{Leftover, OomWatch, Scope, Slice};
 use crate::stream::RunEvent;
 
 /// A program to start for one run or chat turn.
@@ -45,6 +46,8 @@ pub struct StopHandle {
     /// The run's process group (its leader is the `claude` Gizai started); on Windows its job, which stays open while
     /// a clone of this handle lives.
     tree: Tree,
+    /// Linux, in the slice of the agent runs: the run's scope (GA-211).
+    scope: Option<Scope>,
 }
 
 impl StopHandle {
@@ -54,9 +57,13 @@ impl StopHandle {
         self.notify.notify_one();
     }
 
-    /// SIGKILL to the run's process group at once (on Windows its job ends): Gizai is exiting and can't wait for a stop.
+    /// SIGKILL to the run's process group at once (on Windows its job ends), and in the slice to everything in the run's
+    /// scope (GA-211): Gizai is exiting and can't wait for a stop.
     pub fn kill(&self) {
         self.tree.end(End::Kill);
+        if let Some(s) = &self.scope {
+            s.kill();
+        }
     }
 }
 
@@ -64,13 +71,25 @@ impl StopHandle {
 /// ended in that run so far: `oom_kill:1`.
 pub const OOM_KILL: &str = "oom_kill:";
 
+/// The marker for a process the run left running in its scope outside its process group, which Gizai ended at the
+/// run's end (GA-211, `Scope::end_leftovers`), followed by its pid and name: `leftover:12345 chromium`. One per process,
+/// before `exit:`.
+pub const LEFTOVER: &str = "leftover:";
+
+/// The process a `LEFTOVER` marker names.
+pub fn leftover(raw: &str) -> Option<Leftover> {
+    let (pid, name) = raw.strip_prefix(LEFTOVER)?.split_once(' ')?;
+    Some(Leftover { pid: pid.parse().ok()?, name: name.to_string() })
+}
+
 /// The events a run's stdout turns into: task runs read `RunEvent`s, chat turns `ChatEvent`s.
 pub trait StreamEvent: Clone + Send + 'static {
     fn parse(line: &str) -> Vec<Self>;
     /// An assistant message that calls a tool (counted against the turn cap).
     fn is_tool_call(&self) -> bool;
-    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`, and `oom_kill:<n>` when Linux
-    /// ended a process in the run at the memory limit for agent runs (the n-th in this run, `OOM_KILL`).
+    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`, `oom_kill:<n>` when Linux
+    /// ended a process in the run at the memory limit for agent runs (the n-th in this run, `OOM_KILL`), and
+    /// `leftover:<pid> <name>` for each process Gizai ended that the run left running in its scope (`LEFTOVER`).
     fn other(raw: String) -> Self;
 }
 
@@ -118,6 +137,16 @@ pub struct RunHandle<E = RunEvent> {
 /// else. Linux reads that in /proc, macOS asks the kernel (`getpgid`, `proc_pidinfo`). Returns whether it signalled.
 /// Windows: always false, as nothing is left there: the previous Gizai's Job Objects ended its agents when it exited.
 pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
+    end_orphan(pid, expected_cwd, false)
+}
+
+/// As `end_orphan_group`, for a group whose leader may have changed folder inside the worktree: a run's preview (GA-182),
+/// whose Preview command may start with `cd web && …`. `pid` must work in `worktree` or in a folder inside it.
+pub fn end_orphan_group_within(pid: u32, worktree: &Path) -> bool {
+    end_orphan(pid, worktree, true)
+}
+
+fn end_orphan(pid: u32, expected_cwd: &Path, or_inside: bool) -> bool {
     if pid <= 1 {
         return false;
     }
@@ -125,7 +154,7 @@ pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
     {
         let Some(cwd) = group_leader_cwd(pid) else { return false };
         match (cwd.canonicalize(), expected_cwd.canonicalize()) {
-            (Ok(a), Ok(b)) if a == b => {}
+            (Ok(a), Ok(b)) if a == b || (or_inside && a.starts_with(&b)) => {}
             _ => return false,
         }
         Tree::led_by(pid).end(End::Terminate);
@@ -133,7 +162,7 @@ pub fn end_orphan_group(pid: u32, expected_cwd: &Path) -> bool {
     }
     #[cfg(windows)]
     {
-        let _ = expected_cwd;
+        let _ = (expected_cwd, or_inside);
         false
     }
 }
@@ -180,17 +209,18 @@ pub fn spawn<E: StreamEvent>(args: &ClaudeArgs, cwd: &Path, log_path: &Path, cap
 }
 
 /// Any CLI, its output read by `parser`. Must be called inside a Tokio runtime. With `exec.slice` it starts in a scope
-/// of its own in that slice, and the events get an `OOM_KILL` marker each time Linux ends a process in it at the limit.
+/// of its own in that slice, the events get an `OOM_KILL` marker each time Linux ends a process in it at the limit, and
+/// at its end what it left in its scope ends too, each process with a `LEFTOVER` marker.
 pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log_path: &Path, caps: Caps, mut parser: P)
     -> Result<RunHandle<E>, AgentError> {
     let stderr = std::fs::File::create(log_path.with_extension("stderr.log"))?;
     let mut log = std::fs::OpenOptions::new().create(true).append(true).open(log_path)?;
     // found on the PATH the CLI gets; a CLI that can't be found starts as before, so it fails the usual way
     let path = exec.env.iter().rev().find(|(k, _)| k == "PATH").map(|(_, v)| std::ffi::OsString::from(v));
-    let scoped = exec.slice.as_ref().and_then(|s| Some((s.command_for(exec.bin.as_os_str(), path.as_deref())?, s)));
-    let (mut cmd, slice) = match scoped {
-        Some((c, s)) => (tokio::process::Command::from(c), Some(s)),
-        None => (os::tokio_command(&exec.bin), None),
+    let scoped = exec.slice.as_ref().and_then(|s| Some((s.scoped_for(exec.bin.as_os_str(), path.as_deref())?, s)));
+    let (mut cmd, slice, scope) = match scoped {
+        Some(((c, scope), s)) => (tokio::process::Command::from(c), Some(s), Some(scope)),
+        None => (os::tokio_command(&exec.bin), None, None),
     };
     cmd.args(&exec.args)
         .envs(exec.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
@@ -262,11 +292,12 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
     };
 
     // Waiter: owns the child (so its pid can't be reused while we may still signal it), escalates on stop,
-    // cleans up whatever the run left in its group, then reports the exit and closes the channel.
+    // cleans up whatever the run left in its group, then in its scope, then reports the exit and closes the channel.
     // On Windows every step ends the run's job at once (see `os::End`).
     {
         let stop = stop.clone();
         let tree = tree.clone();
+        let scope = scope.clone();
         tokio::spawn(async move {
             let status = tokio::select! {
                 s = child.wait() => s,
@@ -317,9 +348,17 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
             if let Some(w) = watched {
                 let _ = w.await;
             }
+            // GA-211: then what the run left in its scope outside its group (a browser started detached, `setsid`),
+            // which would outlive it there: SIGTERM, SIGKILL 3 s later. The run hears of each process.
+            if let Some(scope) = scope {
+                let left = tokio::task::spawn_blocking(move || scope.end_leftovers(Some(pid))).await.unwrap_or_default();
+                for l in left {
+                    let _ = tx.send(E::other(format!("{LEFTOVER}{} {}", l.pid, l.name))).await;
+                }
+            }
             let _ = tx.send(E::other(format!("exit:{code}"))).await;
         });
     }
 
-    Ok(RunHandle { pid, events: rx, stop: StopHandle { notify: stop, tree } })
+    Ok(RunHandle { pid, events: rx, stop: StopHandle { notify: stop, tree, scope } })
 }

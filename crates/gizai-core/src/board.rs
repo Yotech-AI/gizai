@@ -17,7 +17,8 @@ use crate::{Error, Result, ids, runs, team, workflow};
 
 /// An agent with a free slot takes a waiting card within this long (the queue pulls every minute).
 pub const FREE_SLOT_GRACE_MS: i64 = 2 * 60_000;
-/// "Runs at once" (Settings) full for this long is a finding.
+/// "Runs at once" (Settings) full for this long is a finding, and so is a card held up this long by its project's Test
+/// runs at once (GA-212).
 pub const RUNS_FULL_MS: i64 = 60 * 60_000;
 /// Failed checks in a row that pause the check.
 pub const MAX_CHECK_FAILURES: i64 = 3;
@@ -61,8 +62,8 @@ pub struct Finding {
     /// answered | held | waiting | stopped | review
     pub kind: String,
     /// Why, as a code. held: the hold. waiting: no_agents, testing_off, agents_paused, paused, budget, pull_paused,
-    /// stopped_run, free_slot, runs_full or memory. stopped: limit, failed, no_result, stopped (by a person) or quit. review:
-    /// may_merge (the Team Lead may merge it, GA-86).
+    /// stopped_run, free_slot, runs_full, memory or test_runs_full (its project's Test runs at once, GA-212). stopped:
+    /// limit, failed, no_result, stopped (by a person) or quit. review: may_merge (the Team Lead may merge it, GA-86).
     pub code: String,
     pub task_id: String,
     /// The card's identifier, like GA-12.
@@ -133,6 +134,10 @@ struct Card {
     lead: Option<String>,
     /// Pinned to a person, who does it by hand (GA-111, `workflow::start_by_hand`).
     by_hand: bool,
+    /// Its project, the project's name and its Test runs at once (GA-212).
+    project_id: Option<String>,
+    project: Option<String>,
+    test_runs_at_once: Option<i64>,
 }
 
 fn usd(micros: i64) -> String {
@@ -184,7 +189,8 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                     CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_extract(r.outcome_json, '$.lead.state') FROM runs r
                       WHERE r.task_id = t.id AND r.deleted_at IS NULL AND json_extract(r.outcome_json, '$.lead') IS NOT NULL
                       ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
-                    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person')
+                    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person'),
+                    p.id, p.name, p.test_runs_at_once
              FROM tasks t JOIN workflow_states s ON s.id = t.state_id LEFT JOIN projects p ON p.id = t.project_id
              WHERE t.deleted_at IS NULL AND s.category IN ('ready','in_progress','testing')
                AND (p.id IS NULL OR (p.deleted_at IS NULL AND p.status NOT IN ('archived','done','paused')))
@@ -192,8 +198,23 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
         let cards = st.query_map([], |r| Ok(Card {
             id: r.get(0)?, identifier: r.get(1)?, title: r.get(2)?, column: r.get(3)?, category: r.get(4)?, hold: r.get(5)?,
             hold_reason: r.get(6)?, hold_at: r.get(7)?, created_at: r.get(8)?, run_for_me: runs::commands_of(r.get(9)?), lead: r.get(10)?,
-            by_hand: r.get::<_, i64>(11)? != 0,
+            by_hand: r.get::<_, i64>(11)? != 0, project_id: r.get(12)?, project: r.get(13)?, test_runs_at_once: r.get(14)?,
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+
+        // GA-212: per project, its cards in a test run (a run at work on a card in a Testing column) and when the latest of
+        // those runs started.
+        let mut testing: HashMap<String, (Vec<String>, i64)> = HashMap::new();
+        let mut st = c.prepare(
+            "SELECT t.project_id, t.identifier, max(COALESCE(r.started_at, r.created_at)) FROM runs r
+             JOIN tasks t ON t.id = r.task_id JOIN workflow_states s ON s.id = t.state_id
+             WHERE r.status IN ('queued','running','waiting_approval') AND s.category = 'testing' AND t.project_id IS NOT NULL
+             GROUP BY t.id")?;
+        for row in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))? {
+            let (project, card, started) = row?;
+            let (cards, latest) = testing.entry(project).or_default();
+            cards.push(card);
+            *latest = (*latest).max(started);
+        }
 
         let mut out = vec![];
         for card in cards {
@@ -331,6 +352,18 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                 }
             }
             let agent_of = |id: &str| Some((id.to_string(), agents.get(id).map(|a| a.name.clone()).unwrap_or_default()));
+            // GA-212: in Testing, its project's Test runs at once is full: the project's cards in a test run, and since when
+            // the card has waited for them (its last change, or the latest of those runs' start when that came later).
+            let test_runs_full = || {
+                let limit = card.test_runs_at_once.filter(|n| *n >= 1 && card.category == "testing")?;
+                let (cards, latest) = testing.get(card.project_id.as_deref()?)?;
+                if (cards.len() as i64) < limit {
+                    return None;
+                }
+                let mut cards = cards.clone();
+                workflow::by_number(&mut cards);
+                Some((workflow::TestRunsFull { project: card.project.clone().unwrap_or_default(), limit, cards }, since.max(*latest)))
+            };
             if let Some((id, free_for)) = free {
                 if runs_full {
                     if cx.now - full_since > RUNS_FULL_MS {
@@ -342,6 +375,10 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
                         let detail = why.strip_prefix("Waiting for memory: ").unwrap_or(why);
                         out.push(base("waiting", "memory", *short_since, agent_of(&id),
                                       format!("Gizai has been waiting for memory for over an hour: {detail}")));
+                    }
+                } else if let Some((full, waits_since)) = test_runs_full() {
+                    if cx.now - waits_since > RUNS_FULL_MS {
+                        out.push(base("waiting", "test_runs_full", waits_since, agent_of(&id), full.waited()));
                     }
                 } else {
                     let name = agents.get(&id).map(|a| a.name.clone()).unwrap_or_default();
@@ -425,14 +462,26 @@ pub fn unsee(db: &Db, run_id: &str, key: &str) -> Result<()> {
     })
 }
 
-/// The card's last change not made by `lead` (its own row, its comments and its runs): (`changes.seq`, Unix ms).
+/// The card's last change not made by `lead` (its own row, its comments and its runs): (`changes.seq`, Unix ms). The
+/// newest of three lookups by index (GA-191): the card's own changes (`changes_row`), its comments' (`comments_task`) and
+/// its runs' (`runs_task`), each newest first.
 fn stamp(c: &Connection, task_id: &str, lead: Option<&str>) -> Result<(i64, i64)> {
-    let row: Option<(i64, String)> = c.query_row(
-        "SELECT ch.seq, ch.hlc FROM changes ch
-         WHERE (ch.row_id = ?1 OR ch.row_id IN (SELECT id FROM comments WHERE task_id = ?1) OR ch.row_id IN (SELECT id FROM runs WHERE task_id = ?1))
-           AND (?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)
-         ORDER BY ch.seq DESC LIMIT 1",
-        rusqlite::params![task_id, lead], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    const NOT_LEAD: &str = "(?2 IS NULL OR ch.actor_id IS NULL OR ch.actor_id <> ?2)";
+    let lookups = [
+        format!("SELECT ch.seq, ch.hlc FROM changes ch WHERE ch.row_id = ?1 AND {NOT_LEAD} ORDER BY ch.seq DESC LIMIT 1"),
+        format!("SELECT ch.seq, ch.hlc FROM comments m JOIN changes ch ON ch.row_id = m.id WHERE m.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1"),
+        format!("SELECT ch.seq, ch.hlc FROM runs r JOIN changes ch ON ch.row_id = r.id WHERE r.task_id = ?1 AND {NOT_LEAD}
+                 ORDER BY ch.seq DESC LIMIT 1"),
+    ];
+    let mut row: Option<(i64, String)> = None;
+    for sql in &lookups {
+        let found: Option<(i64, String)> = c.prepare_cached(sql)?
+            .query_row(rusqlite::params![task_id, lead], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        if let Some(f) = found && row.as_ref().is_none_or(|(seq, _)| f.0 > *seq) {
+            row = Some(f);
+        }
+    }
     Ok(match row {
         Some((seq, hlc)) => (seq, hlc.split('-').next().and_then(|s| s.parse().ok()).unwrap_or(0)),
         None => (0, 0),

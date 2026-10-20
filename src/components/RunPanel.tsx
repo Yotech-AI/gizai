@@ -1,14 +1,16 @@
 // The agent run on a task (design system: RunCard): live transcript with Stop and Open in terminal while it runs;
 // otherwise the last run's result and a Run button with an agent picker.
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Check, CircleAlert, Play, Square, StepForward, Terminal, X } from "lucide-react";
 import { continueAfterRunForMe, continueRun, listRuns, onRunEvent, runEvents, startRun, stopRun, suggestAgent } from "../api";
 import { useData } from "../lib/useData";
+import { useClock } from "../lib/windowFocus";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { usePending } from "../lib/usePending";
 import { badgeOf, canContinue, elapsed, formatCost, formatTokens, mergeEvents, noteIsGood, resumeCommand, runReason, triggerName } from "../lib/runs";
 import { relTime, textEnd } from "../lib/format";
-import type { Refusal, Run, SeqEvent, Task, Team } from "../types";
+import type { Refusal, Run, RunEvent, SeqEvent, Task, Team } from "../types";
 import { Avatar } from "./Avatar";
 import { BusyButton } from "./BusyButton";
 import { MarkdownView } from "./MarkdownView";
@@ -19,35 +21,66 @@ export function outcomeBadge(r: Run) {
   return <span className={`badge ${b.cls}`}>{b.text}</span>;
 }
 
+/** The line an event makes in a run's log; null for one the log doesn't show. */
+function lineOf(e: RunEvent) {
+  switch (e.kind) {
+    case "init": return <div className="faint">Started{e.model ? ` · ${e.model}` : ""}</div>;
+    case "text": { const t = e.text.replace(/^GIZAI_RESULT:.*$/m, "").trim(); return t ? <div style={{ fontFamily: "var(--font-sans)", color: "var(--text)" }}><MarkdownView md={t} /></div> : null; }
+    case "tool_use": return <div className="tool"><b>{e.name}</b> {e.summary}</div>;
+    case "tool_result": return e.is_error ? <div className="err">{e.preview}</div> : null;
+    case "result": return <div className={e.is_error ? "err" : "ok"}>{e.is_error ? `Ended with ${e.subtype}` : "Done"} · {e.num_turns} turns</div>;
+    case "note": return noteIsGood(e.text) ? <div className="ok">{e.text}</div> : <div style={{ color: "var(--warning)" }}>{e.text}</div>;
+    case "refused": return <div className="err">Refused: <b>{e.tool}</b> {e.input}{e.reason ? ` (${e.reason})` : ""}</div>;
+    case "mcp_servers": return <div className="faint">MCP servers: {e.servers.map((s) => `${s.name} (${s.status === "connected" ? "connected" : s.status || "failed"})`).join(", ")}</div>;
+    default: return e.raw_type?.startsWith("cap_exceeded") ? <div className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;
+  }
+}
+
 /** A run's log. Memoised (GA-176): it redraws when an event arrives, not when the panel around it does; an earlier event's
- *  Markdown isn't parsed again then, as MarkdownView is memoised on its text. */
+ *  Markdown isn't parsed again then, as MarkdownView is memoised on its text. It opens at its end and follows new lines
+ *  while you are at its end; scrolled up to read, it stays put. Only its own box scrolls, never the page (GA-208). Only
+ *  the lines in sight, and a margin around them, are in the page (GA-190): each line's height is measured as it shows,
+ *  the lines out of sight are space of the height they had, or are thought to have. */
 export const Stream = memo(function Stream({ events }: { events: SeqEvent[] }) {
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }); }, [events.length]);
+  const box = useRef<HTMLDivElement>(null);
+  // Whether the box is at its end, within 24px: it is at first, and again when the log empties for another run.
+  const atEnd = useRef(true);
+  // the events that make a line (a tool's result that went well doesn't)
+  const shown = useMemo(() => events.filter((x) => lineOf(x.event) !== null), [events]);
+  const virt = useVirtualizer({
+    count: shown.length, getScrollElement: () => box.current, getItemKey: (i) => shown[i]!.seq, overscan: 20,
+    estimateSize: (i) => (shown[i]!.event.kind === "text" ? 60 : 21),
+    // it opens at its end (the virtualizer scrolls there as the box shows); before the box is measured, about two boxes'
+    // worth of lines
+    initialOffset: Number.MAX_SAFE_INTEGER, initialRect: { width: 0, height: 640 },
+  });
+  // Only the box's own scrollTop: scrollIntoView scrolled the card page too, back to the log, on each new line.
+  useLayoutEffect(() => {
+    const b = box.current;
+    if (!events.length) atEnd.current = true;
+    if (b && atEnd.current) b.scrollTop = b.scrollHeight;
+  }, [events.length]);
+  const rows = virt.getVirtualItems();
+  const above = rows.length ? rows[0]!.start : 0;
+  const below = rows.length ? virt.getTotalSize() - rows[rows.length - 1]!.end : 0;
   return (
-    <div className="run-stream" aria-live="polite">
-      {events.map(({ seq, event: e }) => {
-        switch (e.kind) {
-          case "init": return <div key={seq} className="faint">Started{e.model ? ` · ${e.model}` : ""}</div>;
-          case "text": { const t = e.text.replace(/^GIZAI_RESULT:.*$/m, "").trim(); return t ? <div key={seq} style={{ fontFamily: "var(--font-sans)", color: "var(--text)" }}><MarkdownView md={t} /></div> : null; }
-          case "tool_use": return <div key={seq} className="tool"><b>{e.name}</b> {e.summary}</div>;
-          case "tool_result": return e.is_error ? <div key={seq} className="err">{e.preview}</div> : null;
-          case "result": return <div key={seq} className={e.is_error ? "err" : "ok"}>{e.is_error ? `Ended with ${e.subtype}` : "Done"} · {e.num_turns} turns</div>;
-          case "note": return noteIsGood(e.text) ? <div key={seq} className="ok">{e.text}</div> : <div key={seq} style={{ color: "var(--warning)" }}>{e.text}</div>;
-          case "refused": return <div key={seq} className="err">Refused: <b>{e.tool}</b> {e.input}{e.reason ? ` (${e.reason})` : ""}</div>;
-          case "mcp_servers": return <div key={seq} className="faint">MCP servers: {e.servers.map((s) => `${s.name} (${s.status === "connected" ? "connected" : s.status || "failed"})`).join(", ")}</div>;
-          default: return e.raw_type?.startsWith("cap_exceeded") ? <div key={seq} className="err">{e.raw_type.endsWith(":time") ? "Stopped at the time limit" : e.raw_type.endsWith(":tools") ? "Stopped at the tool-call limit" : "Stopped at the time or tool-call limit"}</div> : null;
-        }
-      })}
-      <div ref={end} />
+    <div className="run-stream" aria-live="polite" ref={box}
+      onScroll={(e) => { const b = e.currentTarget; atEnd.current = b.scrollHeight - b.scrollTop - b.clientHeight <= 24; }}>
+      {above > 0 && <div aria-hidden style={{ height: above }} />}
+      {rows.map((r) => (
+        <div key={r.key} data-index={r.index} ref={virt.measureElement} style={{ display: "flow-root" }}>{lineOf(shown[r.index]!.event)}</div>
+      ))}
+      {below > 0 && <div aria-hidden style={{ height: below }} />}
+      {/* An empty last line, as before: StreamParses.test.tsx counts the log's lines. */}
+      <div />
     </div>
   );
 });
 
-/** How long the live run has run, ticking each second: on its own, so the clock redraws only itself (GA-176). */
+/** How long the live run has run, ticking each second: on its own, so the clock redraws only itself (GA-176). It rests
+ *  while the window is hidden, and shows the time at once when it shows again (GA-190). */
 function Elapsed({ since }: { since: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const now = useClock(1000);
   return <>{elapsed(since, now)}</>;
 }
 

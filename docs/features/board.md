@@ -42,7 +42,9 @@ A start that can't work (Claude Code missing or not logged in, a wrong model, no
 
 Settings → Runs sets how many runs go at once, for all agents together. Pause all agents stops the starts from Auto columns; Run still works by hand.
 
-Memory for agent runs, also in Settings → Runs, is how much memory all agent runs may use together: half of the computer's memory until you set it. On Linux the system holds the runs to it, and Gizai stays outside the limit, so a big build can't take Gizai down ([PLATFORMS.md](../PLATFORMS.md#memory-for-agent-runs)). On every system no run starts while the runs use over 80% of it or the computer has under 2 GB free: the card waits with the reason, like Runs at once, and starts by itself once memory frees up.
+Memory for agent runs, also in Settings → Runs, is how much memory all agent runs may use together: half of the computer's memory until you set it. On Linux the system holds the runs to it, and GizAi stays outside the limit, so a big build can't take GizAi down ([PLATFORMS.md](../PLATFORMS.md#memory-for-agent-runs)). On every system no run starts while the runs use over 80% of it or the computer has under 2 GB free: the card waits with the reason, like Runs at once, and starts by itself once memory frees up.
+
+A project can also keep how many of its cards are tested at the same time, so a heavy test suite doesn't run several times at once: [Test runs at once](testing.md#test-runs-at-once).
 
 ## A worktree for every card
 

@@ -10,8 +10,10 @@ import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
 import { hardwareWebgl2, probeView, setWebglAllowed, showIn } from "./lib/terminals";
-import { OPENED_AT_KEY, OPENED_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
+import { OPENED_AT_KEY, OPENED_KEY, TABS_KEY, forgetFolder, openedAtOf, openedOf, rememberFolder } from "./lib/editor";
+import { shotUrlCount } from "./lib/shotUrls";
 import { tellMain } from "./lib/behind";
+import { boardDrawn, perfCalls, perfCount, perfFirst, perfFrames, perfHeard, perfOn } from "./lib/perf";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
 import type { FolderMain } from "./types";
@@ -757,6 +759,9 @@ async function chatPickerAndFilesProbe() {
   const plus = document.querySelector(".composer-box .composer-plus") as HTMLButtonElement | null;
   if (!idle || !plus) return { ok: false, error: "no idle composer or no + button" };
   const threadId = window.location.hash.slice("#/chat/".length);
+  // GA-190: a long chat has only the messages in sight on the page, so what was sent is counted where it is saved
+  const savedUsers = async () => (await chatMessages(threadId)).filter((m) => m.role === "user").length;
+  const savedBefore = await savedUsers();
   // GA-83: the empty text box's height (two lines), which it gets back after a send.
   const cmHeight = () => rectOf(document.querySelector(".composer-editor .cm-editor"))?.height ?? NaN;
   const emptyH = cmHeight();
@@ -831,7 +836,9 @@ async function chatPickerAndFilesProbe() {
   await sleep(200);
   const tall = cm().getBoundingClientRect().height;
   const scroller = document.querySelector(".composer-editor .cm-scroller") as HTMLElement;
-  const grows = oneLine < 60 && tall > 150 && tall <= 201 && scroller.scrollHeight > scroller.clientHeight + 20 && sentCount() === before + 2;
+  const overflow = scroller.scrollHeight - scroller.clientHeight;
+  const sentSaved = (await savedUsers()) - savedBefore;
+  const grows = oneLine < 60 && tall > 150 && tall <= 201 && overflow > 20 && sentSaved === 2;
   const view = EditorView.findFromDOM(box)!;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
   await sleep(100);
@@ -871,7 +878,7 @@ async function chatPickerAndFilesProbe() {
     && dropState === "Drop to add to this message" && JSON.stringify(chips) === '["gizai.db"]' && dropGone && refused.includes("is a folder, not a file") && removed
     && JSON.stringify(again) === '["gizai.db"]' && textOf(sentFile) === "gizai.db" && chipsCleared && saved?.files?.[0]?.name === "gizai.db"
     && !!reopenedChip && reopenedFile === "gizai.db" && !!opened && grows && pausedOk && chipsAbove && shrinks;
-  return { ok, grows: { ok: grows, one_line: oneLine, tall, back_to_two_lines: shrinks, sent_back_to_two_lines: sentBackToTwo, empty: emptyH }, chips_above_text: chipsAbove, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
+  return { ok, grows: { ok: grows, one_line: oneLine, tall, overflow, sent_saved: sentSaved, sent_in_page: sentCount() - before, back_to_two_lines: shrinks, sent_back_to_two_lines: sentBackToTwo, empty: emptyH }, chips_above_text: chipsAbove, paused: { ok: pausedOk, off, plus_off: plusOff, no_menu: noMenu, no_drop_state: noDropState,
     no_drop: noDrop, on_again: on }, menu: items, menu_up: menuUp, menu_closed: menuClosed, kinds, typed_at: typedAt, picker_up: pickerUp, tasks: tasks?.slice(0, 3),
     enter_links_without_sending: enterLinks, chip_in_box: chipInBox, shift_enter_new_line: twoLines, sent_chip: sentChip?.textContent, cleared,
     drop_state: dropState, chips, drop_state_gone: dropGone, refused, removed, dropped_again: again, sent_file: textOf(sentFile), chips_cleared: chipsCleared,
@@ -1561,7 +1568,8 @@ const resultsCount = () => textOf(q(".mem-results > div.faint.mem-pad"));
 const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget: type === "mouseout" ? document.body : null }));
 
 /** GA-68, against prep_memory's notes, starting on Decisions/Use SQLite (`noteId`); `agentId`: the Backend Agent. The
- *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's one. The note
+ *  sidebar's Memory lists the Team Lead first with every note, then the Backend Agent with its own folder's two (its Notes
+ *  and, since GA-172, its note for project KADE, Agents/Backend Agent/KADE) and Backend Agent 2 with its one. The note
  *  reads with its links: Deploy steps and an alias to its #Rollback heading, Backup plan dashed (no such note), Release
  *  checklist embedded, KADE-1 a card chip; the panel has its outgoing links (Backup plan with Make it), outline, properties
  *  and tags. Resting on a link previews the note, which closes when the mouse leaves the link and stays when it moves
@@ -1571,8 +1579,8 @@ const mouse = (el: Element, type: "mouseover" | "mouseout") => el.dispatchEvent(
  *  note follows) and a drag into another folder. The missing link makes the note from the New note drawer, after which
  *  the link finds it; in the new note's editor [[ lists notes, [[Note# their headings, and Ctrl+click opens a link.
  *  KADE-1 opens the card. The agent's page shows only its folder, also when searching (Backend Agent 2's folder starts
- *  the same), and Recently changed says the agent wrote its notes in a run on KADE-1. The Team Lead's page searches every
- *  note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
+ *  the same), and Recently changed says the agent wrote its KADE note in a run on KADE-1. The Team Lead's page searches
+ *  every note (path:"Team Lead" only its own), the shared page lists none of the agents' or the Team Lead's. The Memory page's
  *  prefs are put back at the end. */
 export async function memoryProbe(noteId: string, agentId: string) {
   // GA-69: MODE=memory:graph-a|graph-b|graph-c <agent id> <note id> runs the graph's probe on prep_graph's notes instead.
@@ -1580,13 +1588,14 @@ export async function memoryProbe(noteId: string, agentId: string) {
   const prefs = Object.fromEntries(MEMORY_PREFS.map((k) => [k, localStorage.getItem(k)]));
   const out: Record<string, unknown> = {};
   try {
-    // The sidebar: the Team Lead first (every note, 7), then the Backend Agent and Backend Agent 2 (each its own folder: 1).
+    // The sidebar: the Team Lead first (every note, 8), then the Backend Agent (its own folder: Notes and KADE, 2) and
+    // Backend Agent 2 (its Notes, 1).
     const nav = () => [...document.querySelectorAll('.side .nav-section[aria-label="Memory"] .nav-item')]
       .map((e) => ({ name: textOf(e.querySelector("span")), count: textOf(e.querySelector(".count")), href: e.getAttribute("href") }));
-    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "7" ? true : null), 6000);
+    await waitFor(() => (nav().length === 3 && nav()[0]?.count === "8" ? true : null), 6000);
     out.nav = nav();
     const navOk = JSON.stringify(nav().map((n, i) => (i === 2 ? { ...n, href: "" } : n))) === JSON.stringify([
-      { name: "Team Lead", count: "7", href: "#/memory" }, { name: "Backend Agent", count: "1", href: `#/memory/agent/${agentId}` },
+      { name: "Team Lead", count: "8", href: "#/memory" }, { name: "Backend Agent", count: "2", href: `#/memory/agent/${agentId}` },
       { name: "Backend Agent 2", count: "1", href: "" }]) && (nav()[2]?.href ?? "").startsWith("#/memory/agent/");
     const agentsFirst = textOf(q('.side .nav-section[aria-label="Memory"]')?.previousElementSibling?.querySelector(".nav-label")) === "Agents";
 
@@ -1784,33 +1793,36 @@ export async function memoryProbe(noteId: string, agentId: string) {
     const card = !!(await waitFor(() => (location.hash.startsWith("#/task/") ? true : null), 4000));
     out.card_hash = location.hash;
 
-    // An agent's page: only its folder; Recently changed says it wrote its notes in a run on KADE-1.
+    // An agent's page: only its folder, its Notes and (GA-172) its note for project KADE; Recently changed says it wrote
+    // the KADE note in a run on KADE-1.
+    const sorted = (a: string[]) => [...a].sort();
     location.hash = `#/memory/agent/${encodeURIComponent(agentId)}`;
-    await waitFor(() => (treeNotes().length && q(".mem-change") ? true : null), 5000);
+    await waitFor(() => (treeNotes().length >= 2 && textsOf(".mem-change").length >= 2 ? true : null), 5000);
     out.agent_tree = treeNotes();
     out.agent_recent = textsOf(".mem-change");
-    const agentOk = JSON.stringify(out.agent_tree) === JSON.stringify(["Agents/Backend Agent/Notes"])
-      && (out.agent_recent as string[]).length === 1 && (out.agent_recent as string[])[0]!.includes("Backend Agent in a run on KADE-1")
+    const agentOk = JSON.stringify(sorted(out.agent_tree as string[])) === JSON.stringify(["Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && (out.agent_recent as string[]).length === 2 && (out.agent_recent as string[]).some((t) => t.startsWith("KADEAgents/Backend AgentBackend Agent in a run on KADE-1"))
       && !!q(`.side .nav-section[aria-label="Memory"] a.nav-item.on[href="#/memory/agent/${agentId}"]`);
     // its search keeps to its folder too: Backend Agent 2's notes say "learned" as well
     const agentSearch = q<HTMLInputElement>('input[aria-label="Search notes"]');
     if (agentSearch) typeInto(agentSearch, "learned");
-    await waitFor(() => (q(".mem-hit") ? true : null), 4000);
+    await waitFor(() => (hitPaths().length >= 2 ? true : null), 4000);
     await sleep(400);
     out.agent_search = hitPaths();
     out.agent_search_count = resultsCount();
-    const agentSearchOk = JSON.stringify(out.agent_search) === JSON.stringify(["Agents/Backend Agent/Notes"]) && out.agent_search_count === "1 note";
+    const agentSearchOk = JSON.stringify(sorted(out.agent_search as string[])) === JSON.stringify(["Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && out.agent_search_count === "2 notes";
     if (agentSearch) typeInto(agentSearch, "");
     location.hash = "#/memory";
-    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 8 ? true : null), 5000);
+    await waitFor(() => (location.hash === "#/memory" && !q(".mem-note-bar") && textsOf(".mem-change").length === 9 ? true : null), 5000);
     const everyone = textsOf(".mem-change").length;
     buttonByText(q(".mem-recent") ?? document, "Agents")?.click();
     await sleep(200);
     out.recent = { everyone, agents: textsOf(".mem-change") };
-    // by agents: the Backend Agent's notes (in a run), Backend Agent 2's and the Team Lead's (each made its own)
+    // by agents: the Backend Agent's KADE note (in a run) and Notes, Backend Agent 2's and the Team Lead's (each made its own)
     const byAgents = textsOf(".mem-change");
-    const recentOk = everyone === 8 && byAgents.length === 3 && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent in a run on KADE-1"))
-      && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
+    const recentOk = everyone === 9 && byAgents.length === 4 && byAgents.some((t) => t.startsWith("KADEAgents/Backend AgentBackend Agent in a run on KADE-1"))
+      && byAgents.some((t) => t.startsWith("NotesAgents/Backend AgentBackend Agent")) && byAgents.some((t) => t.startsWith("NotesTeam LeadTeam Lead"));
 
     // The Team Lead's page searches every note: both agents' notes say "learned"; path:"Team Lead" keeps to its folder.
     // The shared notes' page lists no agent's or Team Lead note: they all say "data", as Use SQLite does.
@@ -1821,14 +1833,14 @@ export async function memoryProbe(noteId: string, agentId: string) {
       await sleep(400);
       return { hits: hitPaths(), count: resultsCount() };
     };
-    const sorted = (a: string[]) => [...a].sort();
-    const leadLearned = await searchFor("learned", () => hitPaths().length >= 2);
+    const leadLearned = await searchFor("learned", () => hitPaths().length >= 3);
     const leadPath = await searchFor('path:"Team Lead" data', () => hitPaths().length === 1 && hitPaths()[0] === "Team Lead/Notes");
-    const leadData = await searchFor("data", () => hitPaths().length >= 4);
+    const leadData = await searchFor("data", () => hitPaths().length >= 5);
     out.lead_search = { learned: leadLearned, team_lead: leadPath, data: leadData };
-    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/Notes"]) && leadLearned.count === "2 notes"
+    const leadSearchOk = JSON.stringify(sorted(leadLearned.hits)) === JSON.stringify(["Agents/Backend Agent 2/Notes", "Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes"])
+      && leadLearned.count === "3 notes"
       && JSON.stringify(leadPath.hits) === JSON.stringify(["Team Lead/Notes"]) && leadPath.count === "1 note"
-      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
+      && ["Decisions/Use SQLite", "Team Lead/Notes", "Agents/Backend Agent/KADE", "Agents/Backend Agent/Notes", "Agents/Backend Agent 2/Notes"].every((p) => leadData.hits.includes(p));
     const typed = q<HTMLInputElement>('input[aria-label="Search notes"]');
     if (typed) typeInto(typed, "");
     location.hash = "#/memory/shared";
@@ -2791,7 +2803,9 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
     // each state
     await open(`#/task/${noBranch}/changes`, () => document.querySelector(".chg-empty"));
     out.noBranch = textIn(".chg-empty b");
-    check(out.noBranch === "No changes yet" && !document.querySelector(".task-tabs .diffstat, .task-tabs .n"), `no branch: ${out.noBranch}`);
+    // the Changes tab has no count (GA-185: the Screenshots tab after it says None)
+    const changesTab = [...document.querySelectorAll(".task-tabs .tab")].find((t) => t.textContent?.startsWith("Changes"));
+    check(out.noBranch === "No changes yet" && !!changesTab && !changesTab.querySelector(".diffstat, .n"), `no branch: ${out.noBranch}`);
     await open(`#/task/${branchOnly}/changes`, () => document.querySelector(".chg-sum .src") && document.querySelector(".chg-file"));
     out.branchOnly = textIn(".chg-sum .src");
     check(out.branchOnly === "From branch gizai/kade-changes-branch (its worktree was removed)", `branch only: ${out.branchOnly}`);
@@ -2832,6 +2846,218 @@ export async function changesProbe(part: "a" | "b", ids: string[]) {
       check(editors > 3, `${name}: files load as they come into sight (${editors} editors)`);
     }
   }
+  return { ok: errors.length === 0, errors, ...out };
+}
+
+// ---------- GA-185: a card's Screenshots tab (prep_screenshots' card) ----------
+// GIZAI_SELFTEST_MODE=screenshots:<ids> on route task/<card>/screenshots, <ids> as prep_screenshots prints them: GFW-2,
+// then its six runs, oldest first (the browser mode's fixtures give GFW-2 the same sets). Card | Changes | Screenshots
+// with the newest round's 6; the sets newest first, each with its agent, answer, when and count, its commit and View the
+// run, and its thumbnails with caption, size, theme and file name, drawn from blob: URLs; the four older runs folded, with
+// what was left out, the preview that didn't start and the runs that took none, each with why; Not taken this time; one
+// run's set at …/screenshots/<run>. The larger view from the fix's first picture: Fit | 100% (also 1), Previous and Next
+// (also ← →), Compare (C) side by side and with the slider, paired by file name (Unchanged, New), and Open; Esc closes it
+// and gives the focus back to the picture. Leaving the tab frees every blob: URL. Then the board's sign, only on the card
+// in Review, which opens the tab, and its Inbox row's "6 screenshots", which does too.
+
+/** The newest set's pictures (QA's pass), and the fix's under it: name, caption, format · size · theme, and its pairing
+ *  with the build before it. */
+const PASS_SHOTS = ["01-ac1-slider-filters-desktop-dark.png", "02-ac3-no-bikes-desktop-dark.png"];
+const FIX_SHOTS = [
+  ["01-product-list-desktop-dark.png", "Product list with the price slider below the menu", "Desktop · 1280 × 800 · Dark", "Changed"],
+  ["02-slider-dragged-desktop-dark.png", "Slider dragged to € 400 to € 900: 12 bikes left", "Desktop · 1280 × 800 · Dark", "Changed"],
+  ["03-product-list-mobile-dark.png", "Product list on a phone, the filters folded", "Mobile · 390 × 844 · Dark", "Unchanged"],
+  ["04-product-list-desktop-light.png", "Product list with the price slider, light", "Desktop · 1280 × 800 · Light", "New"],
+];
+
+export async function screenshotsProbe(ids: string[]) {
+  const [card, , , build] = ids;
+  const errors: string[] = [];
+  const out: Record<string, unknown> = {};
+  const check = (ok: unknown, what: string) => { if (!ok) errors.push(what); };
+  const settle = async () => { await nextFrame(); await nextFrame(); };
+  const sets = () => [...document.querySelectorAll<HTMLElement>(".shots .shot-set")];
+  const head = (set: Element | undefined) => ({
+    who: textOf(set?.querySelector(".shot-head .who")), answer: textOf(set?.querySelector(".shot-head > .badge")),
+    meta: textOf(set?.querySelector(".shot-head .meta")), commit: textOf(set?.querySelector(".shot-head .commit")),
+    sum: textOf(set?.querySelector(".shot-head .sum")), viewRun: !!set && !!buttonByText(set, "View the run"),
+  });
+  const shotNames = (set: Element | undefined) => [...(set?.querySelectorAll(".shot") ?? [])].map((s) => s.getAttribute("data-shot"));
+  const notes = (set: Element | undefined) => (set ? textsOf(".shot-note", set) : []);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const tabOpen = () => waitFor(() => (location.hash === `#/task/${card}/screenshots` && sets().length === 2 ? true : null), 5000);
+
+  // Card | Changes | Screenshots, the last with the newest round's count: the fix's 4 and QA's 2 after it
+  check(await waitFor(() => (sets().length >= 2 ? true : null), 10000), "the Screenshots tab shows the card's sets");
+  check(location.hash === `#/task/${card}/screenshots`, `the tab's route: ${location.hash}`);
+  const ident = textOf(q(".crumbs b.mono"));
+  const tabs = [...document.querySelectorAll(".task-tabs .tab")];
+  out.tabs = tabs.map((t) => textOf(t));
+  check(tabs.length === 3 && textOf(tabs[0]) === "Card" && textOf(tabs[1]).startsWith("Changes") && textOf(tabs[2]).startsWith("Screenshots"),
+    `Card | Changes | Screenshots: ${JSON.stringify(out.tabs)}`);
+  check(tabs[2]?.getAttribute("aria-selected") === "true" && textOf(tabs[2]?.querySelector(".n")) === "6",
+    `the Screenshots tab is open with the newest round's 6: ${textOf(tabs[2])}`);
+
+  // the two newest sets: QA's pass, then the fix with its pairing to the build before it
+  const [pass, fix] = sets();
+  const ph = head(pass), fh = head(fix);
+  out.sets = [ph, fh];
+  check(ph.who === "QA Agent" && ph.answer === "QA passed" && / · 2 screenshots$/.test(ph.meta) && /^[0-9a-f]{7}$/.test(ph.commit) && ph.viewRun && !ph.sum
+    && same(shotNames(pass), PASS_SHOTS) && notes(pass).length === 0, `the newest set, QA's pass: ${JSON.stringify(ph)} ${shotNames(pass)}`);
+  check(fh.who === "Frontend Agent" && fh.answer === "Ready for testing" && / · 4 screenshots$/.test(fh.meta) && /^[0-9a-f]{7}$/.test(fh.commit) && fh.viewRun
+    && fh.sum === "2 changed, 1 unchanged, 1 new", `the fix under it: ${JSON.stringify(fh)}`);
+  check(same(notes(fix), ["Not taken this time: 04-filters-open-mobile-dark.png."]), `the fix's note: ${JSON.stringify(notes(fix))}`);
+  const thumbs = [...(fix?.querySelectorAll<HTMLElement>(".shot") ?? [])];
+  out.thumbs = thumbs.map((t) => [textOf(t.querySelector(".shot-cap")), textOf(t.querySelector(".shot-meta")), textOf(t.querySelector(".shot-file"))]);
+  check(thumbs.length === 4 && FIX_SHOTS.every(([name, caption, meta, pairing], k) => {
+    const t = thumbs[k];
+    return t?.getAttribute("data-shot") === name && textOf(t.querySelector(".shot-cap")) === caption && textOf(t.querySelector(".shot-file")) === name
+      && textOf(t.querySelector(".shot-meta")) === meta + pairing && textOf(t.querySelector(".shot-meta .badge")) === pairing;
+  }), `the fix's thumbnails (caption, format · size · theme, pairing, file name): ${JSON.stringify(out.thumbs)}`);
+  // each picture from a blob: URL, once it comes near the screen
+  for (const t of thumbs) t.scrollIntoView({ block: "nearest" });
+  const imgs = () => [...document.querySelectorAll<HTMLImageElement>(".shot-set .shot img")];
+  const drawn = await waitFor(() => (imgs().length === 6 && imgs().every((i) => i.complete && i.naturalWidth > 0 && i.src.startsWith("blob:")) ? true : null), 8000);
+  out.blobUrls = shotUrlCount();
+  check(drawn && shotUrlCount() === 6, `the six pictures drawn from blob: URLs (${imgs().length} pictures, ${shotUrlCount()} URLs)`);
+  pass?.scrollIntoView({ block: "nearest" });
+
+  // the older runs, folded; open: QA's failure, the build (2 files left out), the run whose preview didn't start and the
+  // question (no screen changed)
+  const older = q<HTMLButtonElement>(".shots-older");
+  out.older = textOf(older);
+  check(older?.getAttribute("aria-expanded") === "false" && textOf(older.querySelector("b")) === "4 older runs"
+    && textOf(older.querySelector(".faint")) === "Yesterday and 2 days ago: 2 sets of screenshots and 2 runs that took none", `the four older runs, folded: ${out.older}`);
+  older?.click();
+  check(await waitFor(() => (sets().length === 6 && older?.getAttribute("aria-expanded") === "true" ? true : null), 3000), `the older runs open: ${sets().length} sets`);
+  const [, , failed, built, stopped, asked] = sets();
+  out.olderSets = [failed, built, stopped, asked].map((s) => ({ ...head(s), shots: shotNames(s).length, notes: notes(s) }));
+  check(head(failed).who === "QA Agent" && head(failed).answer === "QA failed" && shotNames(failed).length === 1, "QA's failure, with 1 picture");
+  check(head(built).answer === "Ready for testing" && shotNames(built).length === 4 && same(notes(built),
+    ["Left out 2: notes.txt isn’t a PNG, JPEG or WebP image; 05-product-list-full-desktop-dark.png is over 16,384 pixels high."]), "the build: 4 pictures, and what was left out and why");
+  check(head(stopped).answer === "Stopped at the time limit" && / · no screenshots$/.test(head(stopped).meta) && same(notes(stopped),
+    ["The preview didn’t start: it didn’t answer on port 47130 in 120 s, so the agent took none. Its last lines are in the run."]), "the run whose preview didn't start, and why");
+  check(head(asked).answer === "Needs a decision" && same(notes(asked), ["No screen changed, the agent says, so it took none."]), "the question, which took none, and why");
+  older?.click();
+  await waitFor(() => (sets().length === 2 ? true : null), 3000);
+
+  // one run's set: #/task/<card>/screenshots/<run>, and Show every run
+  location.hash = `#/task/${card}/screenshots/${build}`;
+  const one = await waitFor(() => (q(".shots-one") && sets().length === 1 ? sets()[0] : null), 3000);
+  check(one && shotNames(one).length === 4 && notes(one).length === 1 && textOf(q(".shots-one")) === "One run’s screenshots. Show every run",
+    `one run's set: ${textOf(q(".shots-one"))}, ${sets().length} sets`);
+  q<HTMLAnchorElement>(".shots-one a")?.click();
+  check(await tabOpen(), `Show every run: ${location.hash}`);
+
+  // the larger view, from the fix's first picture
+  const opener = sets()[1]?.querySelector<HTMLElement>(`.shot[data-shot="${FIX_SHOTS[0][0]}"]`) ?? null;
+  opener?.focus();
+  opener?.click();
+  const dialog = await waitFor(() => q<HTMLElement>(".shot-view[role=dialog]"), 3000);
+  await settle();
+  const count = () => textOf(q(".shot-view .sv-count"));
+  const caption = () => textOf(q(".shot-view .sv-cap b"));
+  const badge = () => textOf(q(".shot-view .sv-meta .badge"));
+  const pair = () => textOf(q(".shot-view .sv-pair"));
+  const seg = (label: string) => textsOf(`.shot-view [aria-label="${label}"] button[aria-pressed="true"]`);
+  const compare = () => q<HTMLButtonElement>(".shot-view .sv-cmp button");
+  const pictures = () => waitFor(() => {
+    const i = [...document.querySelectorAll<HTMLImageElement>(".shot-view img.sv-pic")];
+    return i.length > 0 && i.every((x) => x.complete && x.naturalWidth > 0 && x.src.startsWith("blob:")) ? i.length : null;
+  }, 5000);
+  const press = async (k: string, el: Element | null = dialog) => { if (el) key(el, k); await settle(); };
+  if (!dialog) {
+    errors.push("a click on a picture opens the larger view");
+    return { ok: false, errors, ...out };
+  }
+  check(document.activeElement === dialog, `the larger view takes the focus (${document.activeElement?.className})`);
+  check(count() === "1 of 4" && caption() === FIX_SHOTS[0][1] && dialog.getAttribute("aria-label") === `Screenshot 1 of 4: ${FIX_SHOTS[0][1]}` && badge() === "Changed"
+    && textOf(q(".shot-view .sv-meta .shot-file")) === FIX_SHOTS[0][0], `the picture clicked, its caption in the foot: ${count()}, ${caption()}, ${badge()}`);
+  check(await pictures(), "the larger view draws the picture from a blob: URL");
+  check(same(seg("Size"), ["Fit"]) && !q(".shot-view .sv-nav.prev") && q(".shot-view .sv-nav.next") && buttonByText(dialog, "Open"),
+    `Fit, Next without Previous, and Open: ${JSON.stringify(seg("Size"))}`);
+  // Fit | 100%: 1 switches, and so do the buttons
+  await press("1");
+  const full = same(seg("Size"), ["100%"]) && !!q(".shot-view .sv-scroll");
+  await press("1");
+  const fitted = same(seg("Size"), ["Fit"]) && !q(".shot-view .sv-scroll");
+  buttonByText(dialog, "100%")?.click();
+  await settle();
+  const fullByClick = same(seg("Size"), ["100%"]);
+  buttonByText(dialog, "Fit")?.click();
+  await settle();
+  check(full && fitted && fullByClick && same(seg("Size"), ["Fit"]), `Fit | 100%, by 1 and by a click: ${full} ${fitted} ${fullByClick}`);
+  // Previous and Next, and ← →
+  await press("ArrowRight");
+  const second = count() === "2 of 4" && caption() === FIX_SHOTS[1][1] && !!q(".shot-view .sv-nav.prev");
+  q<HTMLElement>(".shot-view .sv-nav.next")?.click();
+  await settle();
+  const third = count() === "3 of 4";
+  q<HTMLElement>(".shot-view .sv-nav.prev")?.click();
+  await settle();
+  await press("ArrowLeft");
+  const first = count() === "1 of 4";
+  await press("ArrowLeft");
+  check(second && third && first && count() === "1 of 4", `→, Next, Previous and ←, and ← stays on the first: ${second} ${third} ${first} ${count()}`);
+  // Compare with the run before on a changed picture: side by side, then with the slider
+  await press("ArrowRight");
+  check(compare() && !compare()!.disabled && compare()!.getAttribute("aria-pressed") === "false", "Compare is on offer for a changed picture");
+  await press("c");
+  out.side = textsOf(".shot-view .sv-side .sv-pane figcaption .badge");
+  check(compare()?.getAttribute("aria-pressed") === "true" && same(seg("How to compare"), ["Side by side"]) && same(out.side, ["The run before", "This run"]),
+    `C: side by side, the run before and this run: ${JSON.stringify(out.side)}`);
+  check(pair() === "Paired by file name with the run before’s picture, captioned “Slider dragged to € 400 to € 900: 12 bikes”.", `paired by file name: ${pair()}`);
+  check((await pictures()) === 2, "both pictures drawn side by side");
+  buttonByText(dialog, "Slider")?.click();
+  await settle();
+  const grip = q<HTMLElement>(".shot-view .sv-slider [role=slider]");
+  const middle = grip?.getAttribute("aria-valuenow");
+  grip?.focus();
+  await press("ArrowRight", grip);
+  const moved = grip?.getAttribute("aria-valuenow");
+  await press("End", grip);
+  check(same(seg("How to compare"), ["Slider"]) && middle === "50" && moved === "52" && grip?.getAttribute("aria-valuenow") === "100" && count() === "2 of 4",
+    `the slider: its line at ${middle}, → ${moved}, End ${grip?.getAttribute("aria-valuenow")}, the picture stays: ${count()}`);
+  // → in Compare goes to the next pair: the same picture as the run before; after it only a new one, so → stays
+  dialog.focus();
+  await press("ArrowRight");
+  check(count() === "3 of 4" && pair() === "Unchanged: the same picture as the run before" && badge() === "Unchanged", `→ in Compare, an unchanged pair: ${count()}, ${pair()}`);
+  await press("ArrowRight");
+  check(count() === "3 of 4" && !q(".shot-view .sv-nav.next"), `→ in Compare stops at the last pair: ${count()}`);
+  await press("c");
+  check(compare()?.getAttribute("aria-pressed") === "false" && same(seg("Size"), ["Fit"]), "C again: Compare off");
+  await press("ArrowRight");
+  const [newName, newCaption, newMeta] = FIX_SHOTS[3];
+  check(count() === "4 of 4" && caption() === newCaption && badge() === "New" && textOf(q(".shot-view .sv-meta")).startsWith(newMeta) && compare()?.disabled
+    && compare()?.title === `New in this run: the run before has no ${newName}` && !q(".shot-view .sv-nav.next"),
+    `the new picture: ${count()}, ${textOf(q(".shot-view .sv-meta"))}, Compare: ${compare()?.title}`);
+  // Esc closes it, and the focus goes back to the picture it opened from
+  await press("Escape");
+  const closed = await waitFor(() => (q(".shot-view") ? null : true), 2000);
+  await settle();
+  check(closed && document.activeElement === opener, `Esc closes the larger view and gives the focus back to the picture (${document.activeElement?.getAttribute("data-shot")})`);
+
+  // leaving the tab frees every blob: URL
+  location.hash = `#/task/${card}`;
+  check(await waitFor(() => (!q(".shots") && shotUrlCount() === 0 ? true : null), 3000), `leaving the tab frees every blob: URL (${shotUrlCount()} left)`);
+
+  // the board's sign: only on the card in Review, "6"; a click opens the tab
+  await showTasks("board");
+  const signs = await waitFor(() => { const s = [...document.querySelectorAll<HTMLElement>("[data-card] .shot-sign")]; return s.length ? s : null; }, 5000);
+  const sign = q<HTMLElement>(`[data-card="${ident}"] .shot-sign`);
+  out.signs = (signs ?? []).map((s) => `${s.closest("[data-card]")?.getAttribute("data-card")}: ${textOf(s)}`);
+  check(signs?.length === 1 && sign && textOf(sign) === "6" && sign.getAttribute("aria-label") === "6 screenshots: open the Screenshots tab"
+    && sign.closest(".col")?.getAttribute("data-col") === "Review", `the board's sign, only on ${ident} in Review: ${JSON.stringify(out.signs)}`);
+  sign?.click();
+  check(await tabOpen(), `the board's sign opens the Screenshots tab: ${location.hash}`);
+  restoreView();
+  // its Inbox row: "6 screenshots", and it opens the tab
+  await goTo("#/inbox", ".task-row");
+  const row = await waitFor(() => { const r = document.getElementById(`row-${card}`); return r?.querySelector(".shot-sign") ? r : null; }, 5000);
+  out.inbox = textOf(row?.querySelector(".shot-sign"));
+  check(row && out.inbox === "6 screenshots" && row.getAttribute("href") === `#/task/${card}/screenshots`, `the Inbox row: ${out.inbox}, ${row?.getAttribute("href")}`);
+  row?.click();
+  check(await tabOpen(), `the Inbox row opens the Screenshots tab: ${location.hash}`);
   return { ok: errors.length === 0, errors, ...out };
 }
 
@@ -3996,4 +4222,367 @@ async function editorOrderProbe(part: "a" | "b") {
   for (const id of openedOf(localStorage.getItem(OPENED_KEY))) forgetFolder(id);
   await sleep(500);
   return done();
+}
+
+// ---- GA-188: the benchmark harness's probe (docs/research/performance.md §7; scripts/perf.sh) ----
+
+/** One scenario's result: its numbers (flat, each a number: scripts/perf.sh takes the median of each over its runs), when
+ *  the page began (`timeOrigin`, ms since 1970: perf.sh measures from its launch to it), the windows it measured in (ms
+ *  since 1970: perf.sh takes the processes' CPU in each from its samples) and what else it saw. */
+export type PerfResult = {
+  scenario: string; ok: boolean; errors: string[]; timeOrigin: number; numbers: Record<string, number>;
+  windows: Record<string, [number, number]>; detail: Record<string, unknown>;
+};
+type PerfIds = Record<string, string | undefined>;
+
+const ms = (n: number | undefined) => (n === undefined ? -1 : Math.round(n));
+const kib = (bytes: number) => Math.round(bytes / 102.4) / 10;
+/** Waits until `drawn` is true, then one more frame: the time it was on screen. */
+async function shown(drawn: () => boolean, timeout: number) {
+  const ok = await waitFor(() => (drawn() ? true : null), timeout);
+  if (ok) await nextFrame();
+  return !!ok;
+}
+/** Scrolls the box `at` finds (again each frame: React may draw it anew) by `step` px a frame for `time` ms, back and
+ *  forth between its ends: frames a second and the longest frame. */
+const scrolling = (at: () => HTMLElement | null, time: number, step = 60) => {
+  let dir = step;
+  return perfFrames(time, () => {
+    const box = at();
+    if (!box) return;
+    if (dir > 0 && box.scrollTop + box.clientHeight >= box.scrollHeight - 1) dir = -step;
+    else if (dir < 0 && box.scrollTop <= 0) dir = step;
+    box.scrollTop += dir;
+  });
+};
+/** The calls and events from `from` until now, as numbers named `<name>_…`. */
+function counted(o: PerfResult, name: string, from: number, to = performance.now()) {
+  const c = perfCount(from, to);
+  o.windows[name] = [Math.round(o.timeOrigin + from), Math.round(o.timeOrigin + to)];
+  o.numbers[`${name}_calls`] = c.calls;
+  o.numbers[`${name}_kb`] = kib(c.bytes);
+  o.numbers[`${name}_events`] = c.heard;
+  o.detail[name] = { calls: c.commands, events: c.events };
+  return c;
+}
+
+/** A stream's messages heard between `from` and `to`, and the stream events in them. Since GA-191 a run's and a chat's
+ *  events come in batches (`run-events`, `chat-events`), before it one message each (`run-event`, `chat-event`), so
+ *  both names count and a result from before GA-191 compares. */
+function streamed(from: number, to: number, ...names: string[]) {
+  let messages = 0, events = 0;
+  for (const h of perfHeard) if (h.at >= from && h.at < to && names.includes(h.event)) { messages += 1; events += h.items; }
+  return { messages, events };
+}
+
+/** Before a scenario opens its page: the start's own work done (the sidebar drawn, then a second). */
+async function perfSettle() {
+  await waitFor(() => (perfFirst.sidebar !== undefined ? true : null), 20000);
+  await sleep(1000);
+}
+
+/** `start` (the default route): when the page's file came and its first script ran, app_info answered, the sidebar and
+ *  the first card were drawn (ms since the page began); the calls and bytes of the first 5 s; the first calls in order. */
+async function perfStart(o: PerfResult) {
+  const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  if (!(await shown(() => perfFirst.card !== undefined, 20000))) o.errors.push("no card was drawn");
+  const wait = 5000 - performance.now();
+  if (wait > 0) await sleep(wait);
+  const info = perfCalls.find((c) => c.cmd === "app_info");
+  Object.assign(o.numbers, {
+    response_start_ms: ms(nav?.responseStart), dom_content_loaded_ms: ms(nav?.domContentLoadedEventEnd),
+    app_info_ms: info ? ms(info.at + info.ms) : -1, sidebar_ms: ms(perfFirst.sidebar), first_card_ms: ms(perfFirst.card),
+  });
+  const c = counted(o, "first_5s", 0, 5000);
+  o.numbers.first_5s_listens = c.commands.find((x) => x.cmd === "listen")?.calls ?? 0;
+  o.detail.first_calls = perfCalls.slice(0, 40).map((x) => `${x.cmd} @${ms(x.at)}`);
+  if (!info) o.errors.push("the counter did not see app_info");
+}
+
+/** Waits until the whole board is drawn and has stayed so for `steady` ms (false after `timeout` ms). A start on #/board
+ *  may draw it twice: the default route's board first, then, when app_info has sent the app to #/board, that page's own,
+ *  with no board between the two while its cards load. */
+async function boardSteady(timeout: number, steady = 500) {
+  const end = performance.now() + timeout;
+  let since: number | null = null;
+  while (performance.now() < end) {
+    if (!boardDrawn()) since = null;
+    else if (since === null) since = performance.now();
+    else if (performance.now() - since >= steady) return true;
+    await nextFrame();
+  }
+  return false;
+}
+
+/** `board` (#/board, 500 cards): all columns drawn (ms since the page began); 3 s of scrolling in each column; the first
+ *  To do card dragged into In progress: ms until it is drawn there, and the calls in the 2 s after the drop. */
+async function perfBoard(o: PerfResult) {
+  if (!location.hash.startsWith("#/board")) location.hash = "#/board";
+  if (!(await shown(() => perfFirst.board !== undefined, 20000))) throw new Error("the board's columns were not all drawn");
+  o.numbers.columns_drawn_ms = ms(perfFirst.board);
+  // the columns are read only once the board stays on the page (boardSteady), and each again by its name
+  if (!(await boardSteady(20000))) throw new Error("the board did not stay on the page for 500 ms within 20 s");
+  const per: { column: string; fps: number; longestFrameMs: number }[] = [];
+  const skipped: string[] = [];
+  const scrolled = performance.now();
+  const names = [...document.querySelectorAll<HTMLElement>(".board .col:not(.rail)")].map((c) => c.dataset.col ?? "");
+  o.detail.open_columns = names;
+  for (const name of names) {
+    const body = () => document.querySelector<HTMLElement>(`.board .col[data-col="${CSS.escape(name)}"] .col-body`);
+    const b = await waitFor(body, 2000);
+    if (!b) o.errors.push(`the ${name} column left the page before it was scrolled`);
+    if (!b || b.scrollHeight <= b.clientHeight + 1) {
+      skipped.push(b ? `${name}: ${b.querySelectorAll(".card").length} cards in ${b.scrollHeight} of ${b.clientHeight} px` : `${name}: gone`);
+      continue;
+    }
+    b.scrollTop = 0;
+    await nextFrame();
+    const f = await scrolling(body, 3000);
+    const after = body();
+    if (after) after.scrollTop = 0;
+    per.push({ column: name, fps: f.fps, longestFrameMs: f.longestFrameMs });
+  }
+  o.detail.columns = per;
+  if (skipped.length) o.detail.not_scrolled = skipped;
+  o.windows.scroll = [Math.round(o.timeOrigin + scrolled), Math.round(o.timeOrigin + performance.now())];
+  o.numbers.scroll_fps = per.length ? Math.min(...per.map((p) => p.fps)) : -1;
+  o.numbers.scroll_longest_frame_ms = per.length ? Math.max(...per.map((p) => p.longestFrameMs)) : -1;
+  if (!per.length) o.errors.push(`no board column was scrolled (${names.length} open: ${skipped.join("; ") || "none found"})`);
+  await sleep(500);
+  // the drag, the way a mouse does it (dragProbe), without asking the backend anything itself
+  const card = document.querySelector<HTMLElement>('[data-col="To do"] .card');
+  const target = document.querySelector<HTMLElement>('[data-col="In progress"] .col-body');
+  if (!card || !target) throw new Error("no To do card or no In progress column");
+  const id = card.dataset.card ?? "";
+  const r = card.getBoundingClientRect(), cr = target.getBoundingClientRect();
+  const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2, x1 = cr.left + cr.width / 2, y1 = cr.top + 40;
+  card.dispatchEvent(pe("pointerdown", x0, y0));
+  for (let i = 1; i <= 40; i++) { document.dispatchEvent(pe("pointermove", x0 + ((x1 - x0) * i) / 40, y0 + ((y1 - y0) * i) / 40)); await nextFrame(); }
+  for (let i = 0; i < 10; i++) { document.dispatchEvent(pe("pointermove", x1, y1 + i)); await nextFrame(); }
+  const drop = performance.now();
+  document.dispatchEvent(pe("pointerup", x1, y1 + 10));
+  const moved = await shown(() => !!document.querySelector(`[data-col="In progress"] [data-card="${id}"]`) && !document.querySelector(`[data-col="To do"] [data-card="${id}"]`), 5000);
+  o.numbers.drag_drawn_ms = moved ? ms(performance.now() - drop) : -1;
+  if (!moved) o.errors.push(`the dragged card ${id} was not drawn in In progress`);
+  await sleep(Math.max(0, drop + 2000 - performance.now()));
+  counted(o, "drag", drop);
+}
+
+/** `chat` (the 1,000-message chat): its first screen (ms from opening it); scrolling to its top (fps, longest frame, ms);
+ *  50 characters typed in the text box, one a frame (longest frame). */
+async function perfChat(o: PerfResult, ids: PerfIds) {
+  if (!ids.chat) throw new Error("no chat id (prep_perf's chat=)");
+  await perfSettle();
+  const t0 = performance.now();
+  location.hash = `#/chat/${encodeURIComponent(ids.chat)}`;
+  if (!(await shown(() => !!document.querySelector(".chat-scroll .chat-row"), 20000))) throw new Error("the chat drew no messages");
+  o.numbers.first_screen_ms = ms(performance.now() - t0);
+  o.numbers.rows_in_page = document.querySelectorAll(".chat-scroll .chat-row").length;
+  await sleep(500);
+  const box = q(".chat-scroll")!;
+  const t1 = performance.now();
+  const top = () => box.scrollTop <= 0 && !!box.querySelector('.chat-row[data-index="0"]');
+  const f = await perfFrames(30000, () => { box.scrollTop -= 400; }, top);
+  o.numbers.top_ms = top() ? ms(performance.now() - t1) : -1;
+  o.numbers.scroll_fps = f.fps;
+  o.numbers.scroll_longest_frame_ms = f.longestFrameMs;
+  if (!top()) o.errors.push("scrolling did not reach the chat's first message within 30 s");
+  const c = composer();
+  if (!c) throw new Error("no text box");
+  c.focus();
+  const text = "Typed in the chat's text box, one character a frame".slice(0, 50).padEnd(50, ".");
+  let typed = 0;
+  const t = await perfFrames(10000, () => { if (typed < 50) document.execCommand("insertText", false, text[typed++]!); }, () => typed >= 50);
+  await nextFrame();
+  o.numbers.typing_fps = t.fps;
+  o.numbers.typing_longest_frame_ms = t.longestFrameMs;
+}
+
+/** `memory` (#/memory, 300 notes): the tree drawn (ms); a search typed one character a frame (longest frame, and ms from
+ *  the last key to the hits); #/memory/graph: the graph probe's load, frames a second while it lays out, settle and a
+ *  frame's work. */
+async function perfMemory(o: PerfResult) {
+  await perfSettle();
+  const t0 = performance.now();
+  location.hash = "#/memory";
+  if (!(await shown(() => !!document.querySelector(".mem-tree [role=treeitem]"), 20000))) throw new Error("the Memory tree was not drawn");
+  o.numbers.tree_ms = ms(performance.now() - t0);
+  await sleep(500);
+  const input = q<HTMLInputElement>('input[aria-label="Search notes"]');
+  if (!input) throw new Error("no Memory search");
+  input.focus();
+  const word = "Note 12";
+  let typed = 0;
+  const f = await perfFrames(10000, () => { if (typed < word.length) typeInto(input, word.slice(0, ++typed)); }, () => typed >= word.length);
+  const last = performance.now();
+  // "Searching…" until the search, 150 ms after the last key, has answered: then the hits, or no match
+  const hits = await shown(() => { const box = q(".mem-results"); return !!box && !(box.textContent ?? "").includes("Searching…"); }, 5000);
+  o.numbers.search_results_ms = hits ? ms(performance.now() - last) : -1;
+  o.numbers.search_hits = document.querySelectorAll(".mem-results .mem-hit").length;
+  o.numbers.search_fps = f.fps;
+  o.numbers.search_longest_frame_ms = f.longestFrameMs;
+  typeInto(input, "");
+  await sleep(300);
+  const t1 = performance.now();
+  location.hash = "#/memory/graph";
+  const notes = () => gdots(globalCanvas()).filter((d) => d.kind === "note").length;
+  if (!(await waitFor(() => (notes() >= 250 ? true : null), 20000))) throw new Error(`the graph showed ${notes()} notes, not 300`);
+  o.numbers.graph_load_ms = ms(performance.now() - t1);
+  o.numbers.graph_notes = notes();
+  const g = await perfFrames(1000);
+  o.numbers.graph_fps = g.fps;
+  o.numbers.graph_longest_frame_ms = g.longestFrameMs;
+  o.numbers.graph_settle_ms = await settledIn(globalCanvas, 15000);
+  o.numbers.graph_frame_ms = Math.round((graphProbe(globalCanvas())?.frameMs ?? -1) * 10) / 10;
+}
+
+/** `runlog` (KADE-1 and its run of 5,000 events): the run's events loaded and its whole log drawn (ms); 3 s of scrolling
+ *  it; then Run with the fake streaming 50 events a second for 20 s: frames a second, the longest frame, and the calls and
+ *  events while it is live. */
+async function perfRunlog(o: PerfResult, ids: PerfIds) {
+  if (!ids.card || !ids.run) throw new Error("no card or run id (prep_perf's card= and run=)");
+  await perfSettle();
+  location.hash = `#/task/${encodeURIComponent(ids.card)}`;
+  const tab = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".tabs .tab")].find((b) => b.textContent?.startsWith("Runs")), 20000);
+  if (!tab) throw new Error("no Runs tab on the card");
+  tab.click();
+  const row = await waitFor(() => document.getElementById(`run-${ids.run}`), 10000);
+  const open = row?.querySelector<HTMLButtonElement>(".run-open");
+  if (!row || !open) throw new Error("the 5,000-event run is not in the card's runs");
+  const t0 = performance.now();
+  open.click();
+  const all = await waitFor(() => [...row.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.startsWith("Show the whole output")), 20000);
+  if (!all) throw new Error("the run's events did not load");
+  o.numbers.events_loaded_ms = ms(performance.now() - t0);
+  o.detail.steps = all.textContent;
+  const t1 = performance.now();
+  all.click();
+  if (!(await shown(() => !!row.querySelector(".run-stream [data-index]"), 20000))) throw new Error("the run's whole log was not drawn");
+  o.numbers.log_drawn_ms = ms(performance.now() - t1);
+  const stream = row.querySelector<HTMLElement>(".run-stream")!;
+  o.numbers.log_rows_in_page = stream.querySelectorAll("[data-index]").length;
+  const f = await scrolling(() => stream, 3000, 200);
+  o.numbers.scroll_fps = f.fps;
+  o.numbers.scroll_longest_frame_ms = f.longestFrameMs;
+  all.click(); // Hide output: the live run's log is what is measured next
+  await sleep(500);
+  const run = await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>(".run-card button")].find((b) => b.textContent?.trim() === "Run"), 10000);
+  if (!run) throw new Error("no Run button");
+  const clicked = performance.now();
+  run.click();
+  if (!(await waitFor(() => document.querySelector(".run-card.live"), 30000))) throw new Error("the run did not start");
+  const from = performance.now();
+  o.numbers.live_start_ms = ms(from - clicked);
+  const l = await perfFrames(60000, undefined, () => !document.querySelector(".run-card.live"));
+  const to = performance.now();
+  o.numbers.live_s = Math.round((to - from) / 100) / 10;
+  o.numbers.live_fps = l.fps;
+  o.numbers.live_longest_frame_ms = l.longestFrameMs;
+  const c = counted(o, "live", from, to);
+  const r = streamed(from, to, "run-events", "run-event");
+  o.numbers.live_run_events = r.messages;
+  o.numbers.live_run_stream_events = r.events;
+  o.numbers.live_rows_changed = c.events["rows-changed"]?.heard ?? 0;
+  if (document.querySelector(".run-card.live")) o.errors.push("the run was still live after 60 s");
+}
+
+/** The cage's window never has the focus (it has no input devices), so Gizai takes it as not in use (lib/windowFocus.ts,
+ *  `away`) and its git checks rest. `idle` and `editor` measure the window in use: from here on it says it has the
+ *  focus, and it gets a focus event as when you come back to it. `had_focus` says whether it had it. */
+function perfInUse(o: PerfResult) {
+  o.numbers.had_focus = document.hasFocus() ? 1 : 0;
+  document.hasFocus = () => true;
+  window.dispatchEvent(new FocusEvent("focus"));
+}
+
+/** `idle` (#/board, nothing happening, the window in use): the calls, bytes and events of 60 s, from 2 s after the board
+ *  was drawn. */
+async function perfIdle(o: PerfResult) {
+  if (!location.hash.startsWith("#/board")) location.hash = "#/board";
+  if (!(await shown(() => perfFirst.board !== undefined, 20000))) o.errors.push("the board's columns were not all drawn");
+  perfInUse(o);
+  await sleep(2000);
+  const from = performance.now();
+  await sleep(60000);
+  counted(o, "idle_60s", from);
+}
+
+/** `editor` (a git repository of 20,000 files, the window in use): its tree drawn (ms from opening the folder); the 5,000-line file opened
+ *  (ms); the calls in a minute while it sits open. */
+async function perfEditor(o: PerfResult, ids: PerfIds) {
+  if (!ids.folder || ids.folder === "-") throw new Error("no Editor folder (prep_perf's folder=, made with --editor)");
+  await perfSettle();
+  perfInUse(o);
+  // every run opens the file anew: the Editor reopens the tabs the run before left (WebKit's storage stays between runs)
+  localStorage.removeItem(TABS_KEY);
+  const t0 = performance.now();
+  location.hash = `#/editor/${encodeURIComponent(ids.folder)}`;
+  if (!(await shown(() => !!document.querySelector(".ed-tree [role=treeitem]"), 30000))) throw new Error("the Editor's tree was not drawn");
+  o.numbers.tree_ms = ms(performance.now() - t0);
+  o.numbers.tree_rows = document.querySelectorAll(".ed-tree [role=treeitem]").length;
+  const file = ids.file ?? "big.ts";
+  const row = await waitFor(() => document.querySelector<HTMLElement>(`.ed-tree [data-path="${CSS.escape(file)}"]`), 10000);
+  if (!row) throw new Error(`${file} is not in the Editor's tree`);
+  await sleep(500);
+  const t1 = performance.now();
+  row.click();
+  const lines = () => { const c = document.querySelector<HTMLElement>(".cm-content"); return (c && EditorView.findFromDOM(c)?.state.doc.lines) || 0; };
+  if (!(await shown(() => lines() >= 5000, 20000))) throw new Error(`${file} did not open with 5,000 lines (${lines()})`);
+  o.numbers.file_ms = ms(performance.now() - t1);
+  const from = performance.now();
+  await sleep(60000);
+  counted(o, "open_60s", from);
+}
+
+/** `lead` (the 1,000-message chat): a message the fake Team Lead answers with about 20 KB of Markdown in small pieces
+ *  (FAKE_CHAT_STREAM): frames a second and the longest frame while it streams, and the calls and events meanwhile. */
+async function perfLead(o: PerfResult, ids: PerfIds) {
+  if (!ids.chat) throw new Error("no chat id (prep_perf's chat=)");
+  await perfSettle();
+  location.hash = `#/chat/${encodeURIComponent(ids.chat)}`;
+  const c = await waitFor(() => { const box = composer(); return box && !document.querySelector(".composer-box .stop-btn") ? box : null; }, 20000);
+  if (!c) throw new Error("no text box that sends");
+  await sleep(1000);
+  typeIn(c, "FAKE_CHAT_STREAM Please write out the whole plan.");
+  await nextFrame();
+  const sent = performance.now();
+  enter(c);
+  if (!(await waitFor(() => document.querySelector(".chat-working"), 20000))) throw new Error("the Team Lead did not start answering");
+  const from = performance.now();
+  o.numbers.answer_start_ms = ms(from - sent);
+  const f = await perfFrames(120000, undefined, () => !document.querySelector(".chat-working"));
+  const to = performance.now();
+  o.numbers.stream_s = Math.round((to - from) / 100) / 10;
+  o.numbers.stream_fps = f.fps;
+  o.numbers.stream_longest_frame_ms = f.longestFrameMs;
+  const n = counted(o, "stream", from, to);
+  const t = streamed(from, to, "chat-events", "chat-event");
+  o.numbers.stream_chat_events = t.messages;
+  o.numbers.stream_chat_stream_events = t.events;
+  o.numbers.stream_rows_changed = n.events["rows-changed"]?.heard ?? 0;
+  if (document.querySelector(".chat-working")) o.errors.push("the answer was still streaming after 120 s");
+}
+
+const PERF_SCENARIOS: Record<string, (o: PerfResult, ids: PerfIds) => Promise<void>> = {
+  start: perfStart, board: perfBoard, chat: perfChat, memory: perfMemory, runlog: perfRunlog, idle: perfIdle, editor: perfEditor, lead: perfLead,
+};
+export const PERF_SCENARIO_NAMES = Object.keys(PERF_SCENARIOS);
+
+/** GIZAI_SELFTEST_MODE=perf:<scenario> [key=value …] (scripts/perf.sh, with prep_perf's ids): one scenario of the
+ *  benchmark harness, measured with the counter (lib/perf.ts), which has seen every call since the page began. Also the
+ *  calls, bytes and events of the whole run. */
+export async function perfProbe(spec: string): Promise<PerfResult> {
+  const [scenario = "", ...rest] = spec.trim().split(/\s+/);
+  const ids: PerfIds = Object.fromEntries(rest.map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]));
+  const o: PerfResult = { scenario, ok: false, errors: [], timeOrigin: performance.timeOrigin, numbers: {}, windows: {}, detail: {} };
+  if (!perfOn) o.errors.push("the counter is off: the backend's perf flag (window.__GIZAI_PERF__) was not set");
+  const run = PERF_SCENARIOS[scenario];
+  if (!run) o.errors.push(`no scenario "${scenario}" (${PERF_SCENARIO_NAMES.join(", ")})`);
+  else {
+    try { await run(o, ids); } catch (e) { o.errors.push(String(e)); }
+  }
+  counted(o, "run", 0);
+  o.numbers.run_s = Math.round(performance.now() / 100) / 10;
+  o.ok = o.errors.length === 0;
+  return o;
 }

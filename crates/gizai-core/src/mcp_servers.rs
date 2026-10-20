@@ -124,6 +124,74 @@ impl CliTools {
     }
 }
 
+/// An agent's CLI tools as the app shows them (`T.CliTools`: its `team::Member`, the agent form): its saved switches, and
+/// its Take screenshots of what it built (GA-182), saved next to them and shown as it is, its role's default until set.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedCliTools {
+    #[serde(flatten)]
+    pub tools: CliTools,
+    /// Take screenshots of what it built: only with the browser on.
+    #[serde(default)]
+    pub screenshots: bool,
+}
+
+impl SavedCliTools {
+    /// From an agent's `mcp_extra_json` and its role.
+    pub fn parse(raw: Option<&str>, role: &str) -> SavedCliTools {
+        SavedCliTools { tools: parse_cli_tools(raw), screenshots: takes_screenshots(parse_screenshots(raw), role) }
+    }
+}
+
+impl std::ops::Deref for SavedCliTools {
+    type Target = CliTools;
+    fn deref(&self) -> &CliTools {
+        &self.tools
+    }
+}
+
+/// The agent's switches are these CLI tools (Take screenshots aside, which `CliTools` doesn't have).
+impl PartialEq<CliTools> for SavedCliTools {
+    fn eq(&self, other: &CliTools) -> bool {
+        self.tools == *other
+    }
+}
+
+/// Take screenshots of what it built (GA-182, agent form → Tools, under the browser), for an agent that never set it: on
+/// for the frontend, design and qa roles (also agents made before it existed), off for the rest.
+pub fn screenshots_default(role: &str) -> bool {
+    matches!(role, "frontend" | "design" | "qa")
+}
+
+/// Whether an agent in `role` takes screenshots of what it built: its own switch as saved (`agent_screenshots`), else
+/// its role's default. Its runs take them only with the browser on, too.
+pub fn takes_screenshots(saved: Option<bool>, role: &str) -> bool {
+    saved.unwrap_or_else(|| screenshots_default(role))
+}
+
+/// The agent's Take screenshots of what it built as saved in its `mcp_extra_json`, under `screenshots` next to `mcp` and
+/// `cli`; None until it is set (or when it can't be read).
+pub fn parse_screenshots(raw: Option<&str>) -> Option<bool> {
+    raw.and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| v.get("screenshots").and_then(Value::as_bool))
+}
+
+/// The agent's Take screenshots of what it built as saved (`parse_screenshots`).
+pub fn agent_screenshots(db: &Db, agent_id: &str) -> Result<Option<bool>> {
+    db.read(|c| {
+        let raw: Option<Option<String>> = c.query_row("SELECT mcp_extra_json FROM agent_configs WHERE actor_id=?1", [agent_id], |r| r.get(0)).optional()?;
+        match raw {
+            None => Err(Error::NotFound(format!("agent {agent_id}"))),
+            Some(j) => Ok(parse_screenshots(j.as_deref())),
+        }
+    })
+}
+
+/// Saves the agent's Take screenshots of what it built (agent form → Tools; never the Team Lead), keeping its other
+/// switches.
+pub fn set_agent_screenshots(db: &Db, actor: &str, agent_id: &str, on: bool) -> Result<()> {
+    write_extra(db, actor, agent_id, "screenshots", Value::Bool(on), serde_json::json!({"screenshots": on}))
+}
+
 /// The built-in browser in Settings → MCP servers: Chrome DevTools MCP, always hidden (`--headless`) with a throwaway profile
 /// (`--isolated`). Only its version and the browser program can change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

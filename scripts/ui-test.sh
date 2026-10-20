@@ -46,9 +46,10 @@
 #     see-through), in light too; "Show mountains along the bottom" turns them off and on at once, and leaves them off for the
 #     second start, where they are still off and Reset to defaults turns them on. Then a second start: Geist, light, compact and
 #     the sizes are still there, and Reset to defaults brings everything back (so later starts begin at the defaults).
-# 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note and the
-#     Backend Agent with its own folder's. Decisions/Use SQLite reads with its wikilinks (one to a heading, by an alias), a
-#     dashed one to a note that doesn't exist, an embedded note and KADE-1 as a card chip; the panel has its outgoing links,
+# 12. memory (GA-68), against prep_memory's notes: the sidebar's Memory lists the Team Lead first with every note (8) and the
+#     Backend Agent with its own folder's (2: its Notes and, since GA-172, Agents/Backend Agent/KADE, its note for project
+#     KADE with the line it learned in a run on KADE-1). Decisions/Use SQLite reads with its wikilinks (one to a heading,
+#     by an alias), a dashed one to a note that doesn't exist, an embedded note and KADE-1 as a card chip; the panel has its outgoing links,
 #     outline, properties and tags. Resting on a link previews the note (or offers to make it), which closes when the
 #     mouse leaves the link and stays while it moves into the preview; clicking it opens Deploy
 #     steps, with a linked and an unlinked mention, which Link makes a link. Search by tag: and by words with path:,
@@ -119,6 +120,14 @@
 #     the sidebar's + each join the Editor list at the bottom; a click on each row opens its page and marks it, no row
 #     moving; a listed folder picked again stays put; a ninth: the one opened longest ago leaves, the others keep their
 #     order. Then a restart: the same list in the same order, a click moves nothing, and Remove from the list takes one off.
+# 20. screenshots (GA-185), against prep_screenshots' GFW-2 in Review with six runs' sets (the browser mode's): Card |
+#     Changes | Screenshots with the newest round's 6; the sets newest first with agent, answer, when, count, commit and
+#     View the run; thumbnails with caption, size, theme and file name, drawn from blob: URLs; the four older runs folded,
+#     with what was left out, the preview that didn't start and the runs that took none, each with why; Not taken this
+#     time; one run's set at …/screenshots/<run>. The larger view: Fit | 100% (and 1), Previous and Next (and ← →), Compare
+#     (C) side by side and with the slider, Unchanged and New, Open; Esc closes it and the focus goes back to the picture.
+#     Leaving the tab frees every blob: URL; the board's sign (only on GFW-2 in Review: 6) and the Inbox row's
+#     "6 screenshots" open the tab.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -235,4 +244,8 @@ DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:rows GZ_HOME=$PWD/.devdat
 mkdir -p .devdata/uitest-home/Herd/order-g .devdata/uitest-home/Herd/order-h .devdata/uitest-home/Herd/order-i
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-a GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=90 scripts/smoke-cage.sh || fail=1
 DATA=$PWD/.devdata/uitest ROUTE=terminal MODE=terminal:order-b GZ_HOME=$PWD/.devdata/uitest-home TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+fresh
+# GA-185: GFW-2's screenshot sets; prep_screenshots prints its id and its six runs', which the probe gets
+SHOTS=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_screenshots -- .devdata/uitest)
+DATA=$PWD/.devdata/uitest ROUTE="task/${SHOTS%% *}/screenshots" MODE="screenshots:$SHOTS" TIMEOUT=60 scripts/smoke-cage.sh || fail=1
 exit $fail

@@ -1,11 +1,11 @@
-# Gizai: paid features and how to build them
+# GizAi: paid features and how to build them
 
 Plan, 2026-10-07. No code yet. The market research behind it, with sources and dates, is in `docs/research/paid-offering-2026-10.md`. **[V]** = verified on a primary page on 2026-10-06; **[I]** = my judgement.
 
 ## In one minute
 
 - **The app stays open source (Apache-2.0), free and complete.** It works without an account or network. No licence check ever goes into the open code.
-- **Gizai sells hosted services only:**
+- **GizAi sells hosted services only:**
   1. encrypted off-site backup;
   2. sync between your own devices;
   3. shared team workspaces with logins, roles and an audit log;
@@ -19,7 +19,7 @@ Plan, 2026-10-07. No code yet. The market research behind it, with sources and d
   | Team | €10 per user a month yearly, €12 monthly, minimum 2 users | teams |
   | Business | on request | SSO and SCIM |
 
-- **Gizai never sells Claude usage.** Anthropic's terms forbid paying for, reselling or intermediating Claude usage for users [V]. Agents keep running on each user's own Claude Code login or API key.
+- **GizAi never sells Claude usage.** Anthropic's terms forbid paying for, reselling or intermediating Claude usage for users [V]. Agents keep running on each user's own Claude Code login or API key.
 - **The order:**
   1. a free local snapshot first;
   2. paid backup (it tests whether anyone pays before the big build);
@@ -34,16 +34,17 @@ Everything in the desktop app:
 - clients, projects, tasks, docs, files;
 - agents, the Team Lead chat, worktrees and gates;
 - the code editor, a card's changes and the terminal;
+- screenshots of what agents built, and the previews they're taken from;
 - local snapshots to any folder (including a Dropbox or Syncthing folder) and export.
 
-Anyone may build their own sync server against the open-source code. Gizai's edge is that the hosted one is convenient, reliable and trustworthy.
+Anyone may build their own sync server against the open-source code. GizAi's edge is that the hosted one is convenient, reliable and trustworthy.
 
 ## Plans
 
 | | Free | Personal | Team | Business |
 |---|---|---|---|---|
 | Price (excl. VAT) | €0, no account | €5/month or €48/year | €10/user/month yearly, €12 monthly, min. 2 | from ~€18/user or a quote, min. 10 |
-| The desktop app, agents, chat, the code editor, a card's changes and the terminal | ✓ | ✓ | ✓ | ✓ |
+| The desktop app, agents, chat, the code editor, a card's changes and screenshots, and the terminal | ✓ | ✓ | ✓ | ✓ |
 | Local snapshots, export | ✓ | ✓ | ✓ | ✓ |
 | Encrypted off-site backup, 90-day history, restore on a new machine | | ✓ (10 GB) | ✓ (25 GB per seat, pooled) | ✓ |
 | Sync between your own devices | | ✓ (when it ships, same price) | ✓ | ✓ |
@@ -56,7 +57,7 @@ Why these prices:
 
 - **Personal** sits between Obsidian Sync Standard ($4–5) and Plus ($8–10) [V].
 - **Team** matches Linear Basic ($10), AFFiNE Team ($10) and Plane ($6–8) [V].
-- **The $20–50 seats of Cursor and Warp include AI inference**, which Gizai can't bundle.
+- **The $20–50 seats of Cursor and Warp include AI inference**, which GizAi can't bundle.
 - **Below €5 a month, payment fees take more than 15%.** At €48 a year they take 7–9% [I, computed].
 
 Optional, your call: a **supporter licence** (€25–50 once, like Obsidian Catalyst) for early funding. Don't sell lifetime cloud plans: server costs never end.
@@ -64,12 +65,12 @@ Optional, your call: a **supporter licence** (€25–50 once, like Obsidian Cat
 ## How it fits together
 
 ```
-Gizai desktop (Apache-2.0)                  Gizai Cloud (hosted, EU)
+GizAi desktop (Apache-2.0)                  GizAi Cloud (hosted, EU)
 ├─ crates/gizai-cloud-client   ── HTTPS ──► api.gizai.app  (Rust, axum)
 │   sign-in, keychain, snapshot,             ├─ accounts, devices, entitlements (signed)
 │   encrypt, upload, restore,                ├─ backups: encrypted blobs → object storage (EU)
 │   push/pull changes                        ├─ sync: encrypted change log, ordered per workspace
-├─ Settings → Gizai Cloud                    ├─ teams: members, roles, invitations, audit
+├─ Settings → GizAi Cloud                    ├─ teams: members, roles, invitations, audit
 └─ (later) gizai serve: headless core        ├─ billing webhooks from the merchant of record
                                              └─ relay: websocket to your own runners
 ```
@@ -84,7 +85,7 @@ Gizai desktop (Apache-2.0)                  Gizai Cloud (hosted, EU)
   - the server sees ciphertext, sizes and times only.
 
   Team sync encryption is decision P5.
-- **No inference on Gizai's servers.** No Claude or Codex credentials ever leave the user's machine.
+- **No inference on GizAi's servers.** No Claude or Codex credentials ever leave the user's machine.
 
 ## Phases
 
@@ -100,7 +101,7 @@ What it gives the user:
 
 Why first: it is the backup format the paid service will upload. Users trust it because it works without an account. It also fixes a real gap today: there is no backup at all.
 
-### Phase 1: Gizai Cloud account and encrypted backup (Personal): 10–15 days
+### Phase 1: GizAi Cloud account and encrypted backup (Personal): 10–15 days
 
 **Server** (new private repository, Rust + axum + Postgres + EU object storage such as Cloudflare R2 EU or Backblaze B2 EU):
 
@@ -116,7 +117,7 @@ Why first: it is the backup format the paid service will upload. Users trust it 
 - New crate `crates/gizai-cloud-client` (no Tauri): sign-in, token refresh, the keychain, encrypt and decrypt, upload and download.
 - A scheduler in `src-tauri`: back up on change (debounced), daily and on quit, and only when the plan allows.
 - A local-only table `cloud_link` (account id, workspace id = `orgs.id`, keychain entry, last cursor). It is never synced.
-- Settings → **Gizai Cloud**: sign in or out, plan badge, *Back up now*, history, *Restore on this machine*, *Manage plan* (opens the web account page; there is no payment UI in the app).
+- Settings → **GizAi Cloud**: sign in or out, plan badge, *Back up now*, history, *Restore on this machine*, *Manage plan* (opens the web account page; there is no payment UI in the app).
 
 **Done when:** a backup made on one machine restores on a clean machine, and a lapsed plan stops uploads but not restores.
 
@@ -145,10 +146,10 @@ Why first: it is the backup format the paid service will upload. Users trust it 
 
 ### Phase 4: agent runner relay (Team): 10–15 days
 
-Some teams want agents running on a server, not a laptop. Gizai Cloud must never run Claude on its own account, so:
+Some teams want agents running on a server, not a laptop. GizAi Cloud must never run Claude on its own account, so:
 
 - **`gizai serve`:** a headless core, without the UI, on the customer's own server, logged in to their own `claude`.
-- **The relay:** it connects out to Gizai Cloud over a websocket. Cards routed to its agents start there; events and logs come back to everyone's app.
+- **The relay:** it connects out to GizAi Cloud over a websocket. Cards routed to its agents start there; events and logs come back to everyone's app.
 - **Vendor terms:** unchanged, because it is the customer's machine and the customer's login.
 - **Hosted sandboxes:** only if customers ask, metered, and only with the customer's own Anthropic API key passed to an unmodified `claude`. That needs Anthropic's Commercial Terms and security work. It is not planned.
 
@@ -164,7 +165,7 @@ Some teams want agents running on a server, not a laptop. Gizai Cloud must never
   - Polar charges an extra 1.5% on non-US cards [V].
 - **Prices** are shown in EUR excluding VAT ("excl. btw"); consumers see VAT added at checkout. Push yearly billing.
 - **Entity:** decide between eenmanszaak and BV before selling (liability for data loss, VAT, merchant-of-record onboarding). Ask the accountant about KOR and OSS and about invoicing the merchant of record.
-- **GDPR:** Gizai Cloud would hold customers' client and contact data, so you become a processor. You need:
+- **GDPR:** GizAi Cloud would hold customers' client and contact data, so you become a processor. You need:
   - a DPA (verwerkersovereenkomst);
   - EU hosting;
   - a list of sub-processors (host, storage, merchant of record);
@@ -175,7 +176,7 @@ Some teams want agents running on a server, not a laptop. Gizai Cloud must never
   - The app runs the user's own unmodified `claude` under their own login, which the terms allow [V].
   - Ask Anthropic whether a desktop app that runs the user's Claude Code counts as "running Claude Code in your products", which would need the Commercial Terms. The research lists this grey area.
   - Never use "Claude" in a product or feature name. "Runs Claude Code" as a description is fine [V].
-- **Shutdown promise:** if Gizai Cloud ever stops, your local SQLite stays complete and you get 90 days to download backups. Say so on the pricing page.
+- **Shutdown promise:** if GizAi Cloud ever stops, your local SQLite stays complete and you get 90 days to download backups. Say so on the pricing page.
 
 ## Rough economics [I]
 
@@ -199,7 +200,7 @@ Some teams want agents running on a server, not a laptop. Gizai Cloud must never
 | P3 | Entity | Decide eenmanszaak or BV before selling; check KOR/OSS with the accountant |
 | P4 | Sync server source | Hosted and closed at first, with a published protocol; reconsider a licensed self-host server when a customer asks |
 | P5 | Team sync encryption | Managed server-side encryption with EU hosting for Team v1; end-to-end for backups and Personal |
-| P6 | Hosted agents | Never Gizai-paid inference; a runner relay in Team; sandboxes only with the customer's own key, if asked |
+| P6 | Hosted agents | Never GizAi-paid inference; a runner relay in Team; sandboxes only with the customer's own key, if asked |
 | P7 | After a lapsed plan | Restore read-only for 60 days, then deletion after an email notice |
 | P8 | Supporter licence | Optional, €25–50 once, as a perk (early builds, a badge) |
 | P9 | Start Phase 0 now? | Yes: local snapshots help every user today and define the backup format |

@@ -24,6 +24,20 @@ export type Project = {
   worktreeCopy: string[]; worktreeInstall: boolean; worktreeSetup?: string | null;
   /** Team Lead may merge (GA-86): the Team Lead may merge a pull request QA passed, once its checks are green. Off by default. */
   leadMayMerge?: boolean;
+  /** Screenshots (GA-182, contract CP; project form → Preview). */
+  screenshots: ProjectScreenshots;    // (SB1)
+  previewCommand: string | null;      // null or "": no preview          (SB2)
+  previewStartSecs: number;           // 120, 10–600                     (SB2)
+  /** Test runs at once (GA-212): how many of its cards may be in a test run (a run on a card in a Testing column) at the
+   *  same time, 1–20. null: no limit of its own. */
+  testRunsAtOnce?: number | null;
+};
+export type ProjectScreenshots = {
+  on: boolean;                                                // true
+  sizes: { name: string; width: number; height: number }[];   // 1–4 sizes; width 320–3840, height 320–2400;
+                                                              // default Desktop 1280×800 and Mobile 390×844
+  bothThemes: boolean;                                        // false
+  fullPage: boolean;                                          // false
 };
 export type ProjectInput = {
   clientId?: string | null; name: string; key: string; status?: string | null; goalMd?: string | null; repoPath?: string | null; repoUrl?: string | null;
@@ -32,6 +46,13 @@ export type ProjectInput = {
   worktreeCopy?: string[] | null; worktreeInstall?: boolean | null; worktreeSetup?: string | null;
   /** Left out (null): kept as it is. Only a person sets it (here, in the app). */
   leadMayMerge?: boolean | null;
+  /** Screenshots (GA-182, contract CP; project form → Preview). Left out (null): kept as they are. The Preview command is
+   *  set only by a person, in the app; "" removes it. */
+  screenshots?: ProjectScreenshots | null;  // (SB1)
+  previewCommand?: string | null;     // null or "": no preview          (SB2)
+  previewStartSecs?: number | null;   // 120, 10–600                     (SB2)
+  /** Test runs at once (GA-212): 1–20; 0 removes it (no limit of its own). Left out (null): kept as it is. */
+  testRunsAtOnce?: number | null;
 };
 export type Label = { id: string; name: string; color?: string | null };
 export type Task = {
@@ -52,6 +73,8 @@ export type Task = {
   /** On hold for a decision, and the question is with the Team Lead (GA-70): it answers, or asks you. Not in the Inbox meanwhile. */
   withLead?: boolean;
   byHand: boolean;         // pinned to a person: agents leave it alone
+  /** Screenshots before Review (GA-182, contract CP; the card's Properties). */
+  screenshots: boolean | null;        // null: the project's switch       (SB1)
 };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
@@ -68,6 +91,8 @@ export type TaskPatch = Partial<{
   dueOn: string; hold: string; holdReason: string;
   /** The Testing switch. */
   testing: boolean;
+  /** Screenshots before Review (GA-182, contract CP): left out keeps it. */
+  screenshots: boolean | null;        // null: the project's switch       (SB1)
 }>;
 export type TaskFilter = { projectId?: string | null; openOnly?: boolean };
 export type Comment = { id: string; authorId: string; authorName: string; authorKind: string; bodyMd: string; runId?: string | null; createdAt: number };
@@ -167,6 +192,30 @@ export type Doc = { id: string; projectId?: string | null; title: string; bodyMd
 export type DocVersion = { version: number; authorName?: string | null; createdAt: number };
 export type FileRow = { id: string; name: string; mime?: string | null; sizeBytes: number; sha256: string; createdAt: number };
 export type FileOwner = "client" | "project" | "task" | "comment" | "doc";
+
+// ---- Screenshots (GA-182, contract CS) ----
+export type ScreenshotSet = {
+  runId: string;
+  agentId: string;
+  agentName: string;
+  role: string | null;           // "frontend", "design", "qa", …
+  outcome: string | null;        // "ready_for_testing", "qa_pass", "qa_fail", "needs_decision"; null without a result line
+  status: "succeeded" | "failed" | "cancelled" | "timed_out";
+  endedAt: number;               // ms since 1970
+  commit: string | null;  // the run's head_sha: the commit in each run's heading
+  shots: Screenshot[];           // by file name
+  leftOut: string[];             // "13-board.png: over the limit of 12 a run", "notes.txt: not an image"
+  preview: string | null;        // why there was no preview, when there wasn't: "It didn't answer on port 47130 in 120 s"
+};
+export type Screenshot = {
+  fileId: string;
+  name: string;                  // "01-board-with-cards-desktop-dark.png"
+  caption: string;               // from captions.json, else made from the name
+  width: number;
+  height: number;
+  sizeBytes: number;
+  sha256: string;                // the same picture in two runs has the same hash: Compare says "Unchanged"
+};
 export type AddFilesResult = { added: FileRow[]; failed: string[] };
 
 export type RunEvent =
@@ -300,6 +349,13 @@ export type Settings = { claudeBin?: string | null; dataDir: string; maxConcurre
   /** Settings → Notifications: a desktop notification per kind, on or off. */
   notifications: NotificationSwitches;
   editorRoots: string[];   // Settings → General → Editor folders; default ["~/Herd"]
+  // Settings → Agents and runs → Screenshots (GA-182, contract CP); save_settings refuses values outside the ranges.
+  screenshotsPerRun: number;          // 12, 1–30                        (SB1)
+  screenshotMaxMb: number;            // 10, 1–50                        (SB1)
+  screenshotsKeepSets: number;        // 3, 1–20                         (SB3)
+  screenshotsKeepDays: number;        // 30, 0–365; 0 keeps them         (SB3)
+  previewPortFrom: number;            // 47100                           (SB2)
+  previewPortTo: number;              // 47999; 1024–65535, at least 10 × maxConcurrentRuns ports (SB2)
 };
 /** The kinds of desktop notification: a card on hold, a card waiting for your review or deploy, the Team Lead asking
  *  (a Question or Approval chat), and the Team Lead's answer in a chat while Gizai is out of sight. All on by default. */
@@ -619,7 +675,12 @@ export type CliTools = {
   builtin: string[];
   /** Slash commands and skills (Claude Code's SlashCommand and Skill, one switch): on, its task runs may use them. */
   slashCommands: boolean;
+  /** Take screenshots of what it built (GA-182, contract CP; agent form → Tools, under the browser). An agent's saved
+   *  tools carry it (its role's default until set). */
+  screenshots: boolean;               // only with the browser on; a new agent's default: true for frontend, design and qa (SB1)
 };
+/** What saving an agent's CLI tools sends: Take screenshots left out keeps the saved switch (its role's default until set). */
+export type CliToolsSave = Omit<CliTools, "screenshots"> & { screenshots?: boolean };
 /** One of a CLI's own tools: Gizai's catalog merged with what the CLI reported. `how`: web | slash | switch | always | elsewhere | off. */
 export type CatalogTool = { id: string; label: string; group: string; description: string; risk: string; how: string; note: string; reported: boolean };
 /** What the hidden browser needs, found or not; `missing` says what to install. */

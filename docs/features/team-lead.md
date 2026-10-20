@@ -9,6 +9,7 @@ The Team Lead manages clients, projects, cards and agents with GizAi's own tools
 - make and change clients, projects, cards and docs, and comment on and move cards;
 - start and continue agents' runs, and add or change agents and columns;
 - attach a file you gave it to a card, project or client;
+- read the files on a client, project or card, in a copy of each in its own folder: text, PDFs and images, not Word or Excel files, and not a file over 100 MB;
 - read and keep notes in [memory](memory.md);
 - update a project's linked folder, after your yes;
 - merge a pull request that QA passed, in a project where you allow it ([The Team Lead may merge](testing.md#the-team-lead-may-merge)).
@@ -22,6 +23,7 @@ On a new install, the first start ends in a welcome chat: the Team Lead welcomes
 - **Runs on**, under the text box, moves one chat to another Claude Code account (Settings → Coding CLIs), for example when one is near its weekly limit. The new account gets the conversation handed over, and the chat notes the switch. An answer that hits a usage limit offers Answer on another account.
 - **A queue:** messages you send while the Team Lead answers wait in a queue and go together when the answer is done. After a stopped or failed answer they wait for Send now.
 - **Recent and Archive:** Recent shows the 30 chats with the newest activity. Archive, under the list, shows every chat, newest first, and searches their titles and the messages you and the Team Lead wrote. No chat is hidden or deleted: a new message in an old chat moves it back to the top of Recent.
+- **A long chat** opens and scrolls like a short one: only the messages in sight, and a few around them, are on the page. So the window's Find (Ctrl+F) only finds words in those; to find a message further up or down, search in Archive.
 - **Files:** + next to the text box adds files to a message (Add files, or drop them on the Chat page) or links an item. A message's files are kept with it; the Team Lead reads a copy of each in its own folder and can attach one to a task, project or client.
 
 ## Link anything with @

@@ -15,6 +15,17 @@ What QA checks and writes comes from the QA Agent's starting instructions, which
 - A DevOps run never sends a card to QA.
 - A card you build yourself is tested the same way after you hand it over, and a failed test sends it back to you ([Work on a card yourself](editor-and-terminal.md#work-on-a-card-yourself)).
 
+## Test runs at once
+
+A test run builds and runs the project's whole test suite in the card's own worktree. On a big project (Rust, a large monorepo) a few at the same time can fill the disk and slow your computer down. So a project can keep them to a number: project form → New worktrees → **Test runs at once**, 1 to 20. Empty, the default, is no limit of its own.
+
+- A test run is a run on a card in a Testing column. Runs on cards in other columns never count and never wait.
+- While the project has that many test runs live or starting, the queue passes over its other cards in Testing and the agent takes its next card, so other projects' cards aren't held up. A card that waits starts by itself once one of those runs has ended.
+- Run, Continue and the Team Lead's `start_agent_run` and `continue_agent_run` wait too, and say why: "Giz AI tests 1 card at a time (project settings): wait for GA-211 to finish testing, or raise the limit on the project page."
+- Runs at once (Settings → Runs), each agent's cards at once and the wait for memory still hold: this is one more limit.
+- A card that has waited over an hour only for it is a finding of the Team Lead's board check (`test_runs_full`).
+- The Team Lead's `get_project` and `list_projects` show it, and `update_project` sets it (`test_runs_at_once`; 0 clears it).
+
 ## GizAi pushes after every run
 
 When a run on a card ends (also after Stop or a limit) and its project is linked to GitHub, Bitbucket or a git URL, GizAi pushes the card's branch itself when it has commits the remote doesn't have. It pushes before the card moves on, so the next agent (QA, for its pull request) finds the branch.
@@ -42,6 +53,7 @@ A run of a project linked to GitHub or Bitbucket gets git settings in its enviro
 
 - **Open pull request** pushes a card's branch over SSH with your keys (or HTTPS with gh's login) and opens its pull request with gh.
 - **A merge on GitHub** moves the card to Review's next column (Deploy; Done for a team without a Deploy column) and removes its worktree. What the card changed stays readable in [its Changes](editor-and-terminal.md#a-cards-changes).
+- **The PR check** asks git every 2 minutes, and GitHub only when something moved there, and at least every 10 minutes: one light call per repository, so it stays far below GitHub's API limit.
 - **Settings → GitHub** shows whether gh is found and logged in and how pushes go, with Check connection for every linked project and Log in with GitHub. GizAi never stores a token or password.
 
 ## Review on Bitbucket Cloud

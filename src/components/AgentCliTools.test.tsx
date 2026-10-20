@@ -255,12 +255,15 @@ describe("the Slash commands and skills switch", () => {
 
 describe("the switches' helpers", () => {
   it("keep only what each CLI takes", () => {
-    const all: CliTools = { webSearch: true, webFetch: true, fetchDomains: ["docs.rs"], insecureCerts: true, builtin: ["FancyNewTool"], slashCommands: true };
+    const all: CliTools = { webSearch: true, webFetch: true, fetchDomains: ["docs.rs"], insecureCerts: true, builtin: ["FancyNewTool"], slashCommands: true,
+      screenshots: true };
     expect(fitCliTools(all, "claude_code")).toEqual(all);
     expect(fitCliTools(all, "codex")).toEqual({ ...all, webFetch: false, fetchDomains: [], builtin: [], slashCommands: false });
     expect(fitCliTools(all, "gemini")).toEqual({ ...all, webSearch: false, fetchDomains: [], builtin: [], slashCommands: false });
-    expect(fitCliTools(all, "other")).toEqual(NO_CLI_TOOLS);
-    expect(NO_CLI_TOOLS).toEqual({ webSearch: false, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [], slashCommands: false });
+    // Take screenshots (GA-182) goes with the browser, which waits on another CLI: kept
+    expect(fitCliTools(all, "other")).toEqual({ ...NO_CLI_TOOLS, screenshots: true });
+    expect(NO_CLI_TOOLS).toEqual({ webSearch: false, webFetch: false, fetchDomains: [], insecureCerts: false, builtin: [], slashCommands: false,
+      screenshots: false });
   });
 
   it("read domains, compare and switch", () => {

@@ -2,11 +2,12 @@
 // composer. The composer is one box: a Markdown editor without a toolbar (@ links a Gizai item), and under the text a row
 // with + (add files, or link an item; a drop on the Chat page adds files too), the tips, Runs on (the coding CLI the
 // chat's answers run on) and Send, or Stop while the Team Lead answers.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, AtSign, Paperclip, Pencil, Plus, Square, X } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { answerChatOn, chatClis, checkFiles, editQueuedChat, removeQueuedChat, sendChat, sendChatQueue, setAgentStatus, setChatCli, stopChat } from "../../api";
 import { go } from "../../router";
-import { chatRunsOn, groupMessages, SUGGESTIONS, toolName } from "../../lib/chat";
+import { chatRunsOn, groupMessages, SUGGESTIONS, toolName, type Group } from "../../lib/chat";
 import { addPaths } from "../../lib/files";
 import { placePending } from "../../lib/pending";
 import { usePending, type Pending } from "../../lib/usePending";
@@ -25,13 +26,21 @@ import { useChat } from "./useChat";
 /** Stop, Send now and Answer on <CLI>: each spins from its click until the chat shows what it did. */
 type ChatButtons = Pending<"stop" | "send" | `answer:${string}`>;
 
+/** What the thread asks of the composer's text: it reads it to send, puts a suggestion in, and empties it once sent. */
+type ComposerText = { text: () => string; set: (text: string) => void; clear: () => void };
+
 /** The text box on top; under it, in the same box, + on the left, the tips, `picker` (Runs on), and Send (Stop while the
- *  Team Lead answers) on the right. */
-function Composer({ value, setValue, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor, picker }: {
-  value: string; setValue: (v: string) => void; files: string[]; onAddFiles: (paths: string[]) => void; onRemoveFile: (path: string) => void;
+ *  Team Lead answers) on the right. The text being typed is the composer's own state, so a keystroke redraws the composer
+ *  and not the thread (GA-190); the thread reaches it through `box`. */
+function Composer({ box, files, onAddFiles, onRemoveFile, onSend, onStop, working, disabled, busy, pending, editor, picker }: {
+  box: React.Ref<ComposerText>; files: string[]; onAddFiles: (paths: string[]) => void; onRemoveFile: (path: string) => void;
   onSend: (text?: string) => void; onStop: () => void; working: boolean; disabled: boolean; busy: boolean; pending: ChatButtons;
   editor: React.MutableRefObject<EditorHandle | null>; picker: ReactNode;
 }) {
+  const [value, setValue] = useState("");
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  useImperativeHandle(box, () => ({ text: () => valueRef.current, set: setValue, clear: () => { setValue(""); editor.current?.clear(); } }), [editor]);
   useEffect(() => { if (!disabled) editor.current?.focus(); }, [disabled, editor]);
   const ready = !!value.trim() || files.length > 0;
   // A click in the box around the text (its edges, the tips) puts the cursor in the text, as in one big text field.
@@ -127,11 +136,17 @@ function Queued({ q, waiting, onError }: { q: QueuedMessage; waiting: boolean; o
   );
 }
 
+/** About how tall a group of messages draws, before it is measured: a header, and a line per 90 characters. */
+function groupHeight(g: Group): number {
+  if (g.side === "system") return 52;
+  return g.items.reduce((h, m) => h + 30 + 22 * Math.ceil(Math.max(1, (m.bodyMd ?? "").length) / 90), 50);
+}
+
 export function ChatThread({ threadId, thread, agent }: { threadId: string | null; thread?: Thread; agent: Member }) {
   const { messages, draft, tool, working, queue, error, setWorking, pending: calls } = useChat(threadId);
   // GA-102: the Team Lead's calls that wait for your approval in this chat, each under the answer that tried it.
   const waitingCalls = useMemo(() => (calls ?? []).filter((a) => a.threadId === threadId), [calls, threadId]);
-  const [value, setValue] = useState("");
+  const box = useRef<ComposerText>(null);
   // Files added to the message (+ → Add files, or dropped on the Chat page): their paths, until it is sent.
   const [files, setFiles] = useState<string[]>([]);
   const [fileNote, setFileNote] = useState<string | null>(null);
@@ -183,14 +198,13 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
 
   // `typed`: the text as Enter saw it.
   const send = async (typed?: string) => {
-    const text = (typed ?? value).trim();
+    const text = (typed ?? box.current?.text() ?? "").trim();
     if ((!text && files.length === 0) || busy) return;
     setBusy(true);
     setSendError(null);
     try {
       const id = await sendChat(threadId, text, threadId ? null : newCli, files);
-      setValue("");
-      editor.current?.clear();
+      box.current?.clear();
       setFiles([]);
       setFileNote(null);
       if (!working) setWorking(true);
@@ -234,6 +248,27 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
 
   // Worked out again only when the messages or the waiting calls change, not for each streamed piece (GA-176).
   const groups = useMemo(() => groupMessages(messages), [messages]);
+  // Only the groups in sight, and a margin around them, are in the page (GA-190): a long chat opens and scrolls like a
+  // short one. Each group's height is measured as it shows; the others are space of the height they had, or are thought
+  // to have. The list starts below what comes before it in the column (its padding, an error).
+  const list = useRef<HTMLDivElement>(null);
+  const [above, setAbove] = useState(0);
+  // the same functions until the groups change, so a streamed piece doesn't make the list work out every group's place
+  const keyOf = useCallback((i: number) => groups[i]!.key, [groups]);
+  const sizeOf = useCallback((i: number) => groupHeight(groups[i]!), [groups]);
+  const virt = useVirtualizer({
+    count: groups.length, getScrollElement: () => scroller.current, getItemKey: keyOf, estimateSize: sizeOf,
+    overscan: 6, scrollMargin: above,
+    // it opens at its end (the virtualizer scrolls there as the chat shows); before the chat is measured, about a screen
+    // and a half of groups
+    initialOffset: Number.MAX_SAFE_INTEGER, initialRect: { width: 0, height: 1200 },
+  });
+  useLayoutEffect(() => {
+    const s = scroller.current, l = list.current;
+    if (!s || !l || typeof l.getBoundingClientRect !== "function") return;
+    const at = Math.round(l.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop);
+    if (at !== above) setAbove(at);
+  });
   const last = groups[groups.length - 1];
   const placed = useMemo(() => placePending(groups, waitingCalls), [groups, waitingCalls]);
   const under = useMemo(() => new Map([...placed].map(([key, actions]) => [key, <PendingActions actions={actions} onError={setSendError} />])), [placed]);
@@ -244,6 +279,9 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
       <div className="chat-working" role="status"><span className="pulse" />{tool ? `Using ${toolName(tool).replace(/_/g, " ")}` : draft ? "Writing" : "Thinking"}…</div>
     </>
   ) : null;
+
+  const rows = virt.getVirtualItems();
+  const below = rows.length ? virt.getTotalSize() - (rows[rows.length - 1]!.end - above) : 0;
 
   return (
     <section className={`chat-main${dropping ? " dropping" : ""}`} ref={zone}>
@@ -257,12 +295,23 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
               <h2>Ask {agent.name}</h2>
               <p className="muted">It can add clients, projects and tasks, set up agents, write docs and read your inbox. It looks things up before it changes them, and links what it made.</p>
               <div className="suggestions">
-                {SUGGESTIONS.map((s) => <button key={s.label} className="btn" onClick={() => setValue(s.text)}>{s.label}</button>)}
+                {SUGGESTIONS.map((s) => <button key={s.label} className="btn" onClick={() => box.current?.set(s.text)}>{s.label}</button>)}
               </div>
             </div>
           )}
-          {groups.map((g, i) => <MessageGroup key={g.key} g={g} agentRole={agent.roleKey} noteActions={noteActions}
-            live={i === groups.length - 1 && g.side === "agent" ? liveBits : undefined} after={g.side === "agent" ? callsUnder(g.key) : undefined} />)}
+          <div ref={list}>
+            {rows.length > 0 && rows[0]!.start > above && <div aria-hidden style={{ height: rows[0]!.start - above }} />}
+            {rows.map((r) => {
+              const g = groups[r.index]!;
+              return (
+                <div key={r.key} className="chat-row" data-index={r.index} ref={virt.measureElement}>
+                  <MessageGroup g={g} agentRole={agent.roleKey} noteActions={noteActions}
+                    live={r.index === groups.length - 1 && g.side === "agent" ? liveBits : undefined} after={g.side === "agent" ? callsUnder(g.key) : undefined} />
+                </div>
+              );
+            })}
+            {below > 0 && <div aria-hidden style={{ height: below }} />}
+          </div>
           {working && last?.side !== "agent" && (
             <MessageGroup g={{ side: "agent", key: "live", at: Date.now(), author: agent.name, items: [] }} agentRole={agent.roleKey} live={liveBits} />
           )}
@@ -281,7 +330,7 @@ export function ChatThread({ threadId, thread, agent }: { threadId: string | nul
             <div className="chat-banner warn" role="alert"><span>{fileNote}</span>
               <button className="btn ghost sm icon-only" aria-label="Close" title="Close" onClick={() => setFileNote(null)}><X className="icon sm" /></button></div>
           )}
-          <Composer value={value} setValue={setValue} files={files} onAddFiles={addFiles} onRemoveFile={(p) => setFiles((f) => f.filter((x) => x !== p))}
+          <Composer box={box} files={files} onAddFiles={addFiles} onRemoveFile={(p) => setFiles((f) => f.filter((x) => x !== p))}
             onSend={send} onStop={() => { if (threadId) pending.act("stop", () => stopChat(threadId), fail); }}
             working={working} disabled={paused} busy={busy} pending={pending} editor={editor}
             picker={<RunsOn value={runsOn} clis={clis} disabled={working} onChange={pickCli} />} />

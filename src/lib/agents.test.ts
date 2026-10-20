@@ -130,7 +130,7 @@ describe("a Team Lead with both a board check and folders (GA-35 and GA-45, merg
 
 describe("DEFAULT_TOOLS", () => {
   // GA-48: new agents also get the read-only helpers agents use in pipes (the same list as src-tauri/src/runs.rs,
-  // checked in src-tauri/tests/agent_runs_test.rs)
+  // checked in src-tauri/tests/it/agent_runs_test.rs)
   it("has the read-only helpers, after the usual commands, each once", () => {
     for (const h of ["head", "tail", "wc", "sort", "uniq", "cut", "diff", "grep", "jq", "pwd", "which", "tree"]) {
       expect(DEFAULT_TOOLS).toContain(`Bash(${h}:*)`);

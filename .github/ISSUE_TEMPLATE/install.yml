@@ -1,0 +1,86 @@
+name: Install or update problem
+description: GizAi doesn't install, build or update.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        What each system needs, and what to do when macOS or Windows warns, is in
+        [docs/install.md](https://github.com/Yotech-AI/gizai/blob/main/docs/install.md).
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Linux
+        - macOS (Apple silicon)
+        - Windows 11
+    validations:
+      required: true
+  - type: input
+    id: system-version
+    attributes:
+      label: Its version
+      description: On Linux the distribution and its version, else the version of macOS or Windows.
+      placeholder: Ubuntu 24.04, macOS 15.1, Windows 11 24H2
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you installed
+      options:
+        - "The one-line install (curl … | sh, or irm … | iex)"
+        - install.sh from a clone
+        - install.ps1 from a clone
+        - An update from inside GizAi
+    validations:
+      required: true
+  - type: input
+    id: gizai-version
+    attributes:
+      label: GizAi version
+      description: The release you installed, or for an update the version you had and the one it offered (Settings → Updates).
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      render: shell
+  - type: textarea
+    id: check
+    attributes:
+      label: What the check says
+      description: >-
+        The output of `./install.sh --check` in your clone (on Windows `.\install.ps1 -Check`): it shows what is missing.
+        After the one-line install, run `curl -fsSL https://gizai.app/install.sh | sh -s -- --check`,
+        or on Windows `& ([scriptblock]::Create((irm https://gizai.app/install.ps1))) -Check`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: The end of the output
+      description: >-
+        The last lines the install printed. For an update from inside GizAi, the end of `update/update.log`
+        in your data folder (`~/.local/share/gizai` on Linux, `~/Library/Application Support/Gizai` on macOS,
+        `%APPDATA%\Gizai` on Windows).
+      render: text
+  - type: textarea
+    id: tools
+    attributes:
+      label: Rust and Node.js
+      description: What `rustc --version` and `node --version` print.
+      render: text
+  - type: input
+    id: webkitgtk
+    attributes:
+      label: WebKitGTK version
+      description: On Linux, what `pkg-config --modversion webkit2gtk-4.1` prints.
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Before you send it
+      options:
+        - label: I removed tokens, keys, client names and private code from what I pasted
+          required: true

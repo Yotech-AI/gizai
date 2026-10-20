@@ -38,10 +38,12 @@ pub async fn tour_still(name: String) -> Result<(), String> {
 /// Writes the steps, their stills and the boxes of what they clicked, as `steps.json` in the tour's folder: the capture
 /// waits for this file, then quits Gizai.
 #[tauri::command]
-pub fn tour_steps(json: String) -> Result<(), String> {
+pub async fn tour_steps(json: String) -> Result<(), String> {
     let dir = dir()?;
-    let tmp = dir.join("steps.json.part");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, dir.join("steps.json")).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let tmp = dir.join("steps.json.part");
+        std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, dir.join("steps.json")).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
 }
 

@@ -317,6 +317,15 @@ fn commit(dir: &Path, name: &str) {
     git(dir, &["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", name]);
 }
 
+/// Bitbucket merges the card's pull request: a merge commit of its branch on "Bitbucket"'s master, made in a clone of
+/// its own (GA-214: the PR check sees master move in git).
+fn merge_on_bitbucket(tmp: &Path, c: &Card) {
+    let other = tmp.join("other");
+    git(tmp, &["clone", "-q", c.bare.to_str().unwrap(), other.to_str().unwrap()]);
+    git(&other, &["-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", &format!("origin/{}", c.branch), "-m", "Merged in branch"]);
+    git(&other, &["push", "-q", "origin", "master"]);
+}
+
 fn team(st: &gizai_lib::AppState) -> gizai_core::team::Team {
     gizai_core::team::get(&st.db, &gizai_core::team::list(&st.db).unwrap()[0].id).unwrap()
 }
@@ -456,9 +465,15 @@ async fn a_merge_on_bitbucket_moves_the_card_to_deploy_removes_its_worktree_and_
     let checked = pulls::check_all(&c.st).await;
     assert_eq!((checked.len(), checked[0].changed, checked[0].moved_to.clone()), (1, false, None));
     assert_eq!(task(&c).state_name, "Review");
+    // GA-214: nothing moved in git (asked over the fake ssh), so the next round doesn't ask Bitbucket's API
+    let asked = requests(repo).len();
+    assert!(pulls::check_all(&c.st).await.is_empty());
+    assert_eq!(requests(repo).len(), asked, "{:?}", requests(repo));
 
-    // merged on Bitbucket: its latest commit is the branch's (short, as Bitbucket gives it); no commit list
+    // merged on Bitbucket: master moved there; its latest commit is the branch's (short, as Bitbucket gives it); no
+    // commit list
     let head = tip(&c);
+    merge_on_bitbucket(tmp.path(), &c);
     set_pulls(repo, vec![pr(repo, 1, "MERGED", false, &c.branch, Some(&head[..12]))]);
     let checked = pulls::check_all(&c.st).await;
     assert_eq!((checked.len(), checked[0].moved_to.as_deref(), checked[0].changed), (1, Some("Deploy"), true));
@@ -597,8 +612,9 @@ async fn without_a_bitbucket_login_open_pull_request_says_to_log_in_and_the_pr_c
     let checked = pulls::check_all(&c.st).await;
     assert_eq!(checked.iter().map(|c| c.task_id.as_str()).collect::<Vec<_>>(), [gh_task.as_str()], "{checked:?}");
     assert_eq!((checked[0].changed, checked[0].pull.clone()), (false, None));
+    // GA-214: one light call for the GitHub card's repository (git can't reach it here, so it asks every round)
     let gh_args = std::fs::read_to_string(gh_dir.join("gh-args")).unwrap_or_default();
-    assert!(gh_args.contains("pr list --repo acme/hub --head gizai/hub-1-ship-the-hub"), "{gh_args}");
+    assert_eq!(gh_args.trim(), "pr list --repo acme/hub --state all --limit 100 --json number,url,state,isDraft,headRefName,headRefOid,mergeCommit");
     assert!(requests(repo).is_empty(), "{:?}", requests(repo));
 
     // with a login, the next round follows both

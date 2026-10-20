@@ -202,7 +202,7 @@ vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, se
 vi.stubGlobal("navigator", { userAgent: "Linux", platform: "Linux x86_64" });
 const win = new EventTarget();
 vi.stubGlobal("window", win);
-vi.stubGlobal("document", { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} } });
+vi.stubGlobal("document", { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} }, addEventListener: () => {}, removeEventListener: () => {} });
 vi.stubGlobal("requestAnimationFrame", (f: () => void) => setTimeout(f, 0));
 
 const { EditorPage } = await import("./EditorPage");
@@ -514,11 +514,11 @@ describe("a file changed outside shows within 3 seconds (GA-113)", () => {
     await open();
     await clickRow("README.md");
     outside("README.md", "Theirs.\n");
-    vi.stubGlobal("document", { hidden: true, querySelector: () => null, body: { style: {} }, documentElement: { style: {} } });
+    vi.stubGlobal("document", { hidden: true, querySelector: () => null, body: { style: {} }, documentElement: { style: {} }, addEventListener: () => {}, removeEventListener: () => {} });
     try {
       await wait(9000);
       expect(view().state.doc.toString()).toBe("# Kade portal\n");
-    } finally { vi.stubGlobal("document", { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} } }); }
+    } finally { vi.stubGlobal("document", { hidden: false, querySelector: () => null, body: { style: {} }, documentElement: { style: {} }, addEventListener: () => {}, removeEventListener: () => {} }); }
     await wait(3000);
     expect(view().state.doc.toString()).toBe("Theirs.\n");
   });

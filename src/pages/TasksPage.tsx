@@ -14,6 +14,7 @@ import { filterCount, filterTasks, groupTasks, sortTasks, type Filter, type Grou
 import type { Task } from "../types";
 import { Board } from "../components/Board";
 import { TaskList } from "../components/TaskList";
+import { useReviewShots } from "../components/screenshots/ShotSign";
 import { Popover } from "../components/Popover";
 import { ArchivedCards } from "../components/ArchivedCards";
 import { RunForMe } from "../components/RunForMe";
@@ -27,6 +28,40 @@ function writePref(k: string, v: unknown) { try { localStorage.setItem(k, JSON.s
 function usePref<T>(k: string, fallback: T): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => readPref(k, fallback));
   return [v, (n: T) => { setV(n); writePref(k, n); }];
+}
+
+/** How long typing in the search pauses before the filter is written on this device. */
+export const KEEP_AFTER_MS = 400;
+
+function writeFilter(f: Filter) {
+  writePref("gizai-task-filter", { ...f, projectId: undefined, text: undefined });
+  try { if (f.projectId) localStorage.setItem("gizai-task-project", f.projectId); else localStorage.removeItem("gizai-task-project"); } catch { /* ignore */ }
+}
+
+/** The filter, kept on this device (its search text only while the page shows). Typing in the search writes it once the
+ *  typing pauses, not per keystroke (GA-190); a pick in Filters writes it at once, and leaving the page writes what
+ *  still waits. */
+function useKeptFilter(): [Filter, (f: Filter) => void] {
+  const [filter, setFilterState] = useState<Filter>(() => ({ ...readPref<Filter>("gizai-task-filter", {}), projectId: (() => { try { return localStorage.getItem("gizai-task-project"); } catch { return null; } })() }));
+  const shown = useRef(filter);
+  const waiting = useRef<{ f: Filter; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const flush = useCallback(() => {
+    const w = waiting.current;
+    if (!w) return;
+    clearTimeout(w.timer);
+    waiting.current = null;
+    writeFilter(w.f);
+  }, []);
+  useEffect(() => flush, [flush]);
+  const setFilter = useCallback((f: Filter) => {
+    const typed = JSON.stringify({ ...f, text: undefined }) === JSON.stringify({ ...shown.current, text: undefined });
+    shown.current = f;
+    setFilterState(f);
+    if (waiting.current) clearTimeout(waiting.current.timer);
+    waiting.current = { f, timer: setTimeout(flush, KEEP_AFTER_MS) };
+    if (!typed) flush();
+  }, [flush]);
+  return [filter, setFilter];
 }
 
 /** The top of the Inbox: the chats that wait for you (the Team Lead's questions and approvals, and chats with calls of the Team
@@ -94,15 +129,10 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const view: View = inbox ? "list" : pickedView;
   const [sort, setSort] = usePref<SortBy>("gizai-task-sort", "updated");
   const [group, setGroup] = usePref<GroupBy>("gizai-task-group", "status");
-  const [filter, setFilterState] = useState<Filter>(() => ({ ...readPref<Filter>("gizai-task-filter", {}), projectId: (() => { try { return localStorage.getItem("gizai-task-project"); } catch { return null; } })() }));
-  const setFilter = (f: Filter) => {
-    setFilterState(f);
-    writePref("gizai-task-filter", { ...f, projectId: undefined, text: undefined });
-    try { if (f.projectId) localStorage.setItem("gizai-task-project", f.projectId); else localStorage.removeItem("gizai-task-project"); } catch { /* ignore */ }
-  };
+  const [filter, setFilter] = useKeptFilter();
   const { data: team, error: teamErr } = useData(() => getTeam());
-  const { data: projects } = useData(() => listProjects());
-  const { data: people } = useData(() => listUsers());
+  const { data: projects } = useData(() => listProjects(), [], { counts: false });
+  const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: fetched, error } = useData(() => listTasks({}));
   const { data: threads, reload: reloadThreads } = useData(() => (inbox ? listChatThreads() : Promise.resolve([] as ChatThread[])), [inbox]);
   const chats = useMemo(() => (inbox ? waitingChats(threads ?? []) : []), [inbox, threads]);
@@ -134,6 +164,8 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
     return sortTasks(filterTasks(base, filter), sort);
   }, [tasks, filter, sort, inbox, inboxFor]);
   const groups = useMemo(() => groupTasks(shown, group, states), [shown, group, states]);
+  // GA-185: a Review card with screenshots has the sign on the board, and says "6 screenshots" in the Inbox.
+  const shots = useReviewShots(inbox || view === "board" ? tasks : null);
 
   const onMove = useCallback(async (id: string, stateId: string, sortKey: string) => {
     const before = tasksRef.current;
@@ -156,6 +188,9 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       setToast({ text: `${t.identifier} archived`, undo });
     } catch (e) { setTasks(before); setToast({ text: `Couldn't archive ${t.identifier}: ${e}` }); }
   }, []);
+
+  // the same function on each render, so the board's memoised cards that didn't change don't draw again (GA-190)
+  const openCard = useCallback((id: string) => go({ page: "task", id }), []);
 
   const project = projects?.find((p) => p.id === filter.projectId);
   const nFilters = filterCount(filter);
@@ -211,15 +246,15 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <div className="content">
           {chats.length > 0 && <div className="page-pad lead-chats-pad"><LeadChats chats={chats} onDismiss={dismiss} /></div>}
           {asks.length > 0 && <div className="page-pad lead-chats-pad"><RunForMeCards tasks={asks} agentOf={(t) => (t.assigneeKind === "agent" ? t.assigneeName ?? null : null)} /></div>}
-          <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
+          <TaskList key={`${group}-${inbox}`} groups={groups} showHeads={group !== "none"} live={working} shots={inbox ? shots : undefined} onAdd={group === "status" && !inbox ? (key) => onNewTask(key) : undefined}
             empty={inbox ? (chats.length + asks.length > 0 ? null : <div className="empty"><b>Nothing needs you.</b><span>Cards on hold, cards waiting for your review or deploy, the Team Lead's questions and the calls it waits for your OK on show up here.</span></div>)
               : <div className="empty"><b>No tasks here.</b><span>{nFilters ? "Nothing matches these filters." : "Press N to add one."}</span></div>} />
         </div>
       ) : (
         <div className="board-wrap">
           {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
-          {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={(id) => go({ page: "task", id })} onAdd={(sid) => onNewTask(sid)}
-            onArchive={onArchive} working={working} members={team.members} />}
+          {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={openCard} onAdd={(sid) => onNewTask(sid)}
+            onArchive={onArchive} working={working} members={team.members} shots={shots} />}
         </div>
       )}
       {bin && <ArchivedCards projectId={filter.projectId} projectName={project?.name} onClose={() => setBin(false)} />}

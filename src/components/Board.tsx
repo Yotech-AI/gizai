@@ -17,14 +17,17 @@ import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
 import { byHandTip } from "../lib/hand";
 import { Archive, Keyboard, Plus } from "lucide-react";
+import { BoardShotSign } from "./screenshots/ShotSign";
 
 const CAP = 50;
 const RAIL_CATEGORIES = new Set(["backlog", "done", "cancelled"]);
 
 type Cols = Record<string, string[]>;
 
-const Card = memo(function Card({ task, onOpen, onArchive, working }: {
+const Card = memo(function Card({ task, onOpen, onArchive, working, shots }: {
   task: Task; onOpen: (id: string) => void; working?: string;
+  /** In Review, its newest round's screenshots (GA-185): the sign after the pull request's. */
+  shots?: number;
   /** Cards in a Done column: the Archive button, shown on hover and focus. */
   onArchive?: (task: Task) => void;
 }) {
@@ -35,6 +38,7 @@ const Card = memo(function Card({ task, onOpen, onArchive, working }: {
       onClick={() => onOpen(task.id)} onKeyDown={(e) => { if (e.key === "Enter") onOpen(task.id); }}>
       <div className="top"><span className="id">{task.identifier}</span>
         {task.prUrl && <span className={`badge ${pullBadge(task.prState).cls}`} title={`Pull request: ${pullBadge(task.prState).text.toLowerCase()} on ${hostName(task.prUrl)}`}>{pullLabel(task.prUrl)}</span>}
+        {!!shots && task.stateCategory === "review" && <BoardShotSign taskId={task.id} count={shots} />}
         {task.hold && (task.withLead ? <span className="badge live" title="Its question is with the Team Lead">Team Lead</span>
           : <span className="badge needs">On hold</span>)}{task.priority > 0 && <PriorityIcon priority={task.priority} />}
         {onArchive && (
@@ -56,8 +60,8 @@ const Card = memo(function Card({ task, onOpen, onArchive, working }: {
   );
 });
 
-function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working, members }: {
-  state: WorkflowState; ids: string[]; byId: Map<string, Task>; rail: boolean; working: Map<string, string>; members?: Member[];
+function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working, members, shots }: {
+  state: WorkflowState; ids: string[]; byId: Map<string, Task>; rail: boolean; working: Map<string, string>; members?: Member[]; shots?: Map<string, number>;
   onToggleRail: (id: string) => void; onOpen: (id: string) => void; onAdd?: (stateId: string) => void; onArchive?: (task: Task) => void;
 }) {
   // Only a card in Done can be archived (not Deploy, not Cancelled).
@@ -87,7 +91,7 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive
       {note && <div className="col-note">{note}</div>}
       <SortableContext id={state.id} items={visible} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="col-body">
-          {visible.map((id) => { const t = byId.get(id); return t ? <Card key={id} task={t} onOpen={onOpen} onArchive={archive} working={working.get(id)} /> : null; })}
+          {visible.map((id) => { const t = byId.get(id); return t ? <Card key={id} task={t} onOpen={onOpen} onArchive={archive} working={working.get(id)} shots={shots?.get(id)} /> : null; })}
           {ids.length > shown && (
             <button className="show-more" onClick={() => setShown((s) => s + CAP)}>Show {Math.min(CAP, ids.length - shown)} more of {ids.length - shown}</button>
           )}
@@ -98,8 +102,10 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive
   );
 }
 
-export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working = new Map(), members }: {
+export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working = new Map(), members, shots }: {
   tasks: Task[]; states: WorkflowState[];
+  /** task id → the newest round's screenshots of a card in Review (GA-185); the other columns show none. */
+  shots?: Map<string, number>;
   /** The team's members, so an Auto column's note names its agents. */
   members?: Member[];
   /** task id → name of the agent working on it now */
@@ -203,7 +209,7 @@ export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working
       onDragEnd={onDragEnd}>
       <div className="board">
         {states.map((s) => (
-          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} members={members} />
+          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} members={members} shots={shots} />
         ))}
       </div>
     </DndContext>

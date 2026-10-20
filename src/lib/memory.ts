@@ -150,26 +150,65 @@ export function wikilinks(body: string, local = false): WikiLink[] {
   return out;
 }
 
+/** Notes by title, by path and by the end of a path, for finding many links in one list (GA-190): built once per list,
+ *  so a link is found without reading every note's title, and with each note's links found once. */
+export type NoteIndex<N extends Pick<MemoryNote, "path"> = Pick<MemoryNote, "path">> = {
+  notes: readonly N[];
+  /** Note numbers by lower-case title, by lower-case path, and by each lower-case end of a path after one of its "/". */
+  byTitle: Map<string, number[]>;
+  byPath: Map<string, number[]>;
+  byEnd: Map<string, number[]>;
+  /** Filled on first use: the links that find each note, by its id; each note's text in lower case and where it can't
+   *  take a link. */
+  linksTo?: Map<string, Mention[]>;
+  low?: (string | undefined)[];
+  blocks?: ([number, number][] | undefined)[];
+};
+
+const add = (m: Map<string, number[]>, k: string, i: number) => { const l = m.get(k); if (l) l.push(i); else m.set(k, [i]); };
+
+/** The index of `notes` (see NoteIndex). */
+export function noteIndex<N extends Pick<MemoryNote, "path">>(notes: readonly N[]): NoteIndex<N> {
+  const byTitle = new Map<string, number[]>(), byPath = new Map<string, number[]>(), byEnd = new Map<string, number[]>();
+  notes.forEach((n, i) => {
+    const p = lower(n.path);
+    add(byTitle, lower(titleOf(n.path)), i);
+    add(byPath, p, i);
+    // the ends a link with a "/" can name: "b/c" of "a/b/c" (a link without one is a title)
+    for (let k = p.indexOf("/"); k >= 0; k = p.indexOf("/", k + 1)) { const end = p.slice(k + 1); if (end.includes("/")) add(byEnd, end, i); }
+  });
+  return { notes, byTitle, byPath, byEnd };
+}
+
 /** Which note a link's note part finds, as Gizai does (and Obsidian): by title, case ignored; a path, or the end of
  *  one, picks between notes with the same title. Of several, the one in `folder` (the linking note's), else the
  *  shortest path. -1 when none does. */
-export function resolve(notes: readonly Pick<MemoryNote, "path">[], target: string, folder: string): number {
+export function resolveIn(ix: NoteIndex, target: string, folder: string): number {
   let t = lower(target.trim()).replace(/^\/+|\/+$/g, "");
   if (t.endsWith(".md")) t = t.slice(0, -3);
   if (!t) return -1;
-  let cands: number[];
-  if (t.includes("/")) {
-    cands = notes.flatMap((n, i) => (lower(n.path) === t ? [i] : []));
-    if (!cands.length) cands = notes.flatMap((n, i) => (lower(n.path).endsWith(`/${t}`) ? [i] : []));
-  } else {
-    cands = notes.flatMap((n, i) => (lower(titleOf(n.path)) === t ? [i] : []));
-  }
+  const found = t.includes("/") ? ix.byPath.get(t) ?? ix.byEnd.get(t) : ix.byTitle.get(t);
+  if (!found) return -1;
+  if (found.length === 1) return found[0]!;
+  const notes = ix.notes;
   const f = lower(folder);
-  cands.sort((a, b) => {
+  return [...found].sort((a, b) => {
     const pa = notes[a]!.path, pb = notes[b]!.path;
     return Number(lower(folderOf(pa)) !== f) - Number(lower(folderOf(pb)) !== f) || pa.length - pb.length || (lower(pa) < lower(pb) ? -1 : lower(pa) > lower(pb) ? 1 : 0);
-  });
-  return cands[0] ?? -1;
+  })[0]!;
+}
+
+const indexes = new WeakMap<object, NoteIndex<never>>();
+/** The index of a list, made once for each list (lists aren't changed in place: a change is a new list). */
+export function indexOf<N extends Pick<MemoryNote, "path">>(notes: readonly N[]): NoteIndex<N> {
+  let ix = indexes.get(notes) as NoteIndex<N> | undefined;
+  if (!ix) { ix = noteIndex(notes); indexes.set(notes, ix as NoteIndex<never>); }
+  return ix;
+}
+
+/** resolveIn, with the list's own index. */
+export function resolve(notes: readonly Pick<MemoryNote, "path">[], target: string, folder: string): number {
+  return resolveIn(indexOf(notes), target, folder);
 }
 
 /** The note a link finds from `from` (the linking note), or null. */
@@ -353,16 +392,28 @@ const lineAround = (body: string, start: number, end: number) => {
 };
 
 /** Linked mentions: the links in other notes that find `target`, each with its line, by note path. */
-export function backlinks(notes: readonly MemoryNote[], target: Pick<MemoryNote, "id">): Mention[] {
-  const out: Mention[] = [];
-  for (const n of notes) {
-    if (n.id === target.id) continue;
-    for (const l of wikilinks(n.bodyMd)) {
-      const i = resolve(notes, l.target, folderOf(n.path));
-      if (i >= 0 && notes[i]!.id === target.id) out.push({ note: n, line: lineAround(n.bodyMd, l.start, l.end), start: l.start, end: l.end });
+export function backlinksIn(ix: NoteIndex<MemoryNote>, target: Pick<MemoryNote, "id">): Mention[] {
+  if (!ix.linksTo) {
+    const to = new Map<string, Mention[]>();
+    for (const n of ix.notes) {
+      const folder = folderOf(n.path);
+      for (const l of wikilinks(n.bodyMd)) {
+        const i = resolveIn(ix, l.target, folder);
+        if (i < 0) continue;
+        const m: Mention = { note: n, line: lineAround(n.bodyMd, l.start, l.end), start: l.start, end: l.end };
+        const id = ix.notes[i]!.id;
+        const list = to.get(id);
+        if (list) list.push(m); else to.set(id, [m]);
+      }
     }
+    ix.linksTo = to;
   }
-  return out;
+  return (ix.linksTo.get(target.id) ?? []).filter((m) => m.note.id !== target.id);
+}
+
+/** backlinksIn, with the list's own index. */
+export function backlinks(notes: readonly MemoryNote[], target: Pick<MemoryNote, "id">): Mention[] {
+  return backlinksIn(indexOf(notes), target);
 }
 
 /** Where a text has parts that can't take a link: its frontmatter, code blocks and inline code, and links. */
@@ -380,25 +431,31 @@ const WORD = /[\p{L}\p{N}_]/u;
 
 /** Unlinked mentions: other notes that name `target`'s title (case ignored, a whole word or words) where it isn't a
  *  link, nor in their properties or code. One entry per place. */
-export function unlinkedMentions(notes: readonly MemoryNote[], target: Pick<MemoryNote, "id" | "path">): Mention[] {
+export function unlinkedMentionsIn(ix: NoteIndex<MemoryNote>, target: Pick<MemoryNote, "id" | "path">): Mention[] {
   const title = titleOf(target.path).trim();
   if (title.length < 2) return [];
   const want = lower(title);
+  const low = (ix.low ??= []), blocks = (ix.blocks ??= []);
   const out: Mention[] = [];
-  for (const n of notes) {
-    if (n.id === target.id) continue;
+  ix.notes.forEach((n, k) => {
+    if (n.id === target.id) return;
     const body = n.bodyMd;
-    const low = lower(body);
-    if (!low.includes(want)) continue;
-    const skip = blocked(body);
-    for (let i = low.indexOf(want); i >= 0; i = low.indexOf(want, i + 1)) {
+    const text = (low[k] ??= lower(body));
+    if (!text.includes(want)) return;
+    const skip = (blocks[k] ??= blocked(body));
+    for (let i = text.indexOf(want); i >= 0; i = text.indexOf(want, i + 1)) {
       const end = i + want.length;
       if ((i > 0 && WORD.test(body[i - 1]!)) || (end < body.length && WORD.test(body[end]!))) continue;
       if (skip.some(([a, b]) => i < b && end > a)) continue;
       out.push({ note: n, line: lineAround(body, i, end), start: i, end });
     }
-  }
+  });
   return out;
+}
+
+/** unlinkedMentionsIn, with the list's own index. */
+export function unlinkedMentions(notes: readonly MemoryNote[], target: Pick<MemoryNote, "id" | "path">): Mention[] {
+  return unlinkedMentionsIn(indexOf(notes), target);
 }
 
 /** `body` with the unlinked mention at `start`–`end` made a link to `target`: `[[Title]]` when it reads as the title,
@@ -410,12 +467,15 @@ export function linkMention(body: string, start: number, end: number, notes: rea
   return body.slice(0, start) + link + body.slice(end);
 }
 
-/** Outgoing links: each link in a text once, with the note it finds (null: none yet, a link to make it). */
-export function outgoing<N extends MemoryNote>(body: string, notes: readonly N[], from: Pick<MemoryNote, "path"> | null): { link: WikiLink; note: N | null }[] {
+/** Outgoing links: each link in a text once, with the note it finds (null: none yet, a link to make it). `ix`: the
+ *  notes' index, when the caller keeps one. */
+export function outgoing<N extends MemoryNote>(body: string, notes: readonly N[], from: Pick<MemoryNote, "path"> | null, ix: NoteIndex = indexOf(notes)): { link: WikiLink; note: N | null }[] {
   const seen = new Set<string>();
   const out: { link: WikiLink; note: N | null }[] = [];
+  const folder = from ? folderOf(from.path) : "";
   for (const l of wikilinks(body)) {
-    const note = linkedNote(notes, l.target, from);
+    const i = resolveIn(ix, l.target, folder);
+    const note = i < 0 ? null : (ix.notes[i] as N | undefined) ?? null;
     const key = note ? `id:${note.id}` : `new:${lower(l.target)}`;
     if (seen.has(key)) continue;
     seen.add(key);

@@ -105,6 +105,10 @@ pub fn take_over(st: &AppState, project: &Project, task: &Task, repo: &Path, bas
         let plan = take_over_plan(project, &from, limit);
         match worktree::reuse(repo, &from, base_dir, &task.identifier, &task.title, start, &plan.keep) {
             Ok(wt) => {
+                // GA-210: the finished card's runs' temp folder is named after its old place; the new card gets its own
+                if let Err(e) = worktree::remove_run_temp(&st.temp_base, &from) {
+                    eprintln!("gizai: couldn't remove the temp folder of {}'s worktree: {e}", card.identifier);
+                }
                 if let Some(bytes) = plan.emptied {
                     let said = format!("took over {}'s worktree and emptied its build folder (target/, {}): it was over {}",
                                        card.identifier, size(bytes), size(limit));
@@ -208,7 +212,7 @@ fn remove_cards(st: &AppState, task_ids: &[String], stash: bool) -> Result<Vec<R
         // main here, or main as last fetched from GitHub (a run fetches it into one of these)
         let mains = [c.default_branch.clone(), format!("refs/gizai/base/{}", c.default_branch), format!("refs/remotes/origin/{}", c.default_branch)];
         let merged = mains.iter().any(|m| worktree::merged(repo, &c.branch, m));
-        let removal = worktree::remove_card_worktree(repo, &dir, &c.branch, merged);
+        let removal = worktree::remove_card_worktree_with(repo, &dir, &st.temp_base, &c.branch, merged);
         said.extend(removal.phrases(&c.branch));
         if !merged && removal.kept.is_none() {
             said.push(format!("kept branch {}, which has commits {} doesn't", c.branch, c.default_branch));

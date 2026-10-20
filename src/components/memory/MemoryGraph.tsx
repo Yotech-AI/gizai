@@ -19,9 +19,10 @@ import { GraphPanel, KindIcon } from "./GraphPanel";
 function useGraphSources() {
   const [teamId] = useCurrentTeam();
   const cards = useData(() => listTasks({ openOnly: false }).catch(() => []));
-  const projects = useData(() => listProjects().catch(() => []));
-  const clients = useData(() => listClients().catch(() => []));
-  const people = useData(() => listUsers().catch(() => []));
+  // the dots show names, not the counts in these lists, so a card's write doesn't reload them (GA-190)
+  const projects = useData(() => listProjects().catch(() => []), [], { counts: false });
+  const clients = useData(() => listClients().catch(() => []), [], { counts: false });
+  const people = useData(() => listUsers().catch(() => []), [], { counts: false });
   const team = useData(() => getTeam(teamId).catch(() => null), [teamId]);
   return {
     cards: cards.data ?? [], projects: projects.data ?? [], clients: clients.data ?? [], people: people.data ?? [],

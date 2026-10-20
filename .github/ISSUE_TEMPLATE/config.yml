@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Q&A in Discussions
+    url: https://github.com/Yotech-AI/gizai/discussions/categories/q-a
+    about: Questions go here.
+  - name: Security policy
+    url: https://github.com/Yotech-AI/gizai/security/policy
+    about: Report a security problem privately, never in an issue.
+  - name: Docs
+    url: https://gizai.app/docs
+    about: How to install GizAi, its settings and each feature.

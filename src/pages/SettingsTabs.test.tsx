@@ -59,6 +59,7 @@ const SETTINGS: Settings = {
   claudeBin: "/usr/bin/claude", dataDir: "/home/you/.local/share/gizai", maxConcurrentRuns: 4, agentsPaused: false, maxRunUsd: null,
   maxRunMinutes: 45, maxRunToolCalls: 400, maxChatMinutes: 15, maxChatToolCalls: 60, pushOver: "ssh",
   notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true }, editorRoots: ["~/Herd"],
+  screenshotsPerRun: 12, screenshotMaxMb: 10, screenshotsKeepSets: 3, screenshotsKeepDays: 30, previewPortFrom: 47100, previewPortTo: 47999,
 };
 const states = (s: Settings = SETTINGS, budget = "") => [s, budget, null, false, 0, []];
 

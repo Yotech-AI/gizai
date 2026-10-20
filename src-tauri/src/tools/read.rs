@@ -1,5 +1,7 @@
 //! Tools that only look: compact JSON the model can scan, never whole tables of text.
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::Mutex;
 
 use gizai_core::model::{FileRow, Task, TaskFilter};
 use gizai_core::{clients, comments, docs, files, ids, projects, runs, tasks, team, users};
@@ -25,8 +27,55 @@ fn task_line(t: &Task) -> Value {
     v
 }
 
-fn file_lines(list: Vec<FileRow>) -> Vec<Value> {
-    list.into_iter().map(|f| json!({"name": f.name, "size_bytes": f.size_bytes, "added": ymd(f.created_at)})).collect()
+/// A file on a client, project or task larger than this isn't copied into the Team Lead's folder (GA-207).
+const LEAD_COPY_MAX_BYTES: i64 = 100 << 20;
+
+/// One copy into the Team Lead's folder at a time: two calls at once would both write the same copy, and the second
+/// can't open it (a copy is read-only, as its blob is).
+static LEAD_COPYING: Mutex<()> = Mutex::new(());
+
+/// The files of a client, project or task, each with `path`: a copy in the Team Lead's own folder to read with Read
+/// (`chat::lead_file_path`, GA-207), made off the async threads the first time and reused after that. A file larger
+/// than 100 MB isn't copied (`note`), and one that can't be copied says why (`error`): both have no path, and the
+/// other files still come.
+async fn file_lines(cx: &Cx<'_>, list: Vec<FileRow>) -> Vec<Value> {
+    if list.is_empty() {
+        return vec![];
+    }
+    let (data, dir) = (cx.st.data_dir.clone(), crate::chat::lead_files_dir(cx.st));
+    let rows = list.clone();
+    let copied = tokio::task::spawn_blocking(move || {
+        let _one = LEAD_COPYING.lock().unwrap_or_else(|e| e.into_inner());
+        rows.iter().map(|f| file_line(&data, &dir, f)).collect::<Vec<_>>()
+    }).await;
+    copied.unwrap_or_else(|e| list.iter().map(|f| {
+        let mut v = file_json(f);
+        v["error"] = json!(format!("couldn't be copied into your folder: {e}"));
+        v
+    }).collect())
+}
+
+/// One file's line for `file_lines`, with its copy in `dir` (made when it isn't there yet).
+fn file_line(data: &Path, dir: &Path, f: &FileRow) -> Value {
+    let mut v = file_json(f);
+    if f.size_bytes > LEAD_COPY_MAX_BYTES {
+        v["note"] = json!("larger than 100 MB: not copied");
+        return v;
+    }
+    match files::copy_out(data, f, dir) {
+        Ok(p) => v["path"] = json!(p.display().to_string()),
+        Err(e) => v["error"] = json!(if files::blob_path(data, &f.sha256).is_file() {
+            format!("couldn't be copied into your folder: {e}")
+        } else {
+            "couldn't be copied into your folder: its stored file is missing from Gizai's data folder".to_string()
+        }),
+    }
+    v
+}
+
+/// A file's line before its copy is made: no path yet.
+fn file_json(f: &FileRow) -> Value {
+    json!({"id": f.id, "name": f.name, "mime": f.mime, "size_bytes": f.size_bytes, "added": ymd(f.created_at), "path": null})
 }
 
 fn usd(micros: i64) -> f64 {
@@ -87,13 +136,13 @@ pub(crate) fn list_clients(cx: &Cx, a: &Args) -> Result<Value, String> {
     Ok(json!({"count": list.len(), "clients": list}))
 }
 
-pub(crate) fn get_client(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn get_client(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let c = resolve::client(cx, &a.req("client")?)?;
     let contacts: Vec<Value> = clients::contacts(cx.db(), &c.id).map_err(err)?.into_iter()
         .map(|k| json!({"name": k.name, "role": k.role, "email": k.email, "phone": k.phone, "primary": k.is_primary})).collect();
     let projects: Vec<Value> = projects::list(cx.db()).map_err(err)?.into_iter().filter(|p| p.client_id.as_deref() == Some(&c.id))
         .map(|p| json!({"key": p.key, "name": p.name, "status": p.status, "open_tasks": p.open_tasks})).collect();
-    let files = file_lines(files::list(cx.db(), "client", &c.id).map_err(err)?);
+    let files = file_lines(cx, files::list(cx.db(), "client", &c.id).map_err(err)?).await;
     Ok(json!({"client": {
         "id": c.id, "name": c.name, "legal_name": c.legal_name, "kind": c.kind, "status": c.status, "email": c.email, "phone": c.phone,
         "website": c.website, "street": c.street, "postal_code": c.postal_code, "city": c.city, "country": c.country,
@@ -108,12 +157,12 @@ pub(crate) fn list_projects(cx: &Cx, a: &Args) -> Result<Value, String> {
         .filter(|p| client.as_ref().is_none_or(|c| p.client_id.as_ref() == Some(c)))
         .filter(|p| status.as_ref().is_none_or(|s| &p.status == s))
         .map(|p| json!({"id": p.id, "key": p.key, "name": p.name, "client": p.client_name, "status": p.status, "repo_path": p.repo_path,
-                        "open_tasks": p.open_tasks, "done_tasks": p.done_tasks}))
+                        "open_tasks": p.open_tasks, "done_tasks": p.done_tasks, "test_runs_at_once": p.test_runs_at_once}))
         .collect();
     Ok(json!({"count": list.len(), "projects": list}))
 }
 
-pub(crate) fn get_project(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn get_project(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let p = resolve::project(cx, &a.req("project")?)?;
     let mut by_column: BTreeMap<String, i64> = BTreeMap::new();
     for t in tasks::list(cx.db(), &TaskFilter { project_id: Some(p.id.clone()), open_only: false }).map_err(err)? {
@@ -121,13 +170,17 @@ pub(crate) fn get_project(cx: &Cx, a: &Args) -> Result<Value, String> {
     }
     let docs: Vec<Value> = docs::list(cx.db(), &p.id).map_err(err)?.into_iter()
         .map(|d| json!({"title": d.title, "version": d.current_version, "updated": ymd(d.updated_at)})).collect();
+    let files = file_lines(cx, files::list(cx.db(), "project", &p.id).map_err(err)?).await;
     Ok(json!({"project": {
         "id": p.id, "key": p.key, "number": p.number, "name": p.name, "client": p.client_name, "status": p.status, "goal_md": p.goal_md,
         "repo_path": p.repo_path, "default_branch": p.default_branch, "color": p.color,
         "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()),
         // GA-86: whether merge_pull_request may merge its pull requests (the user's switch, set in the app)
         "team_lead_may_merge": p.lead_may_merge,
-    }, "tasks_by_column": by_column, "docs": docs, "files": file_lines(files::list(cx.db(), "project", &p.id).map_err(err)?)}))
+        // GA-212: how many of its cards may be in a test run (on a card in a Testing column) at the same time; null: no
+        // limit of its own
+        "test_runs_at_once": p.test_runs_at_once,
+    }, "tasks_by_column": by_column, "docs": docs, "files": files}))
 }
 
 pub(crate) fn list_tasks(cx: &Cx, a: &Args) -> Result<Value, String> {
@@ -162,7 +215,7 @@ pub(crate) fn list_tasks(cx: &Cx, a: &Args) -> Result<Value, String> {
     Ok(json!({"count": list.len(), "shown": shown.len(), "tasks": shown}))
 }
 
-pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn get_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     let t = resolve::task(cx, &a.req("task")?)?;
     let all = comments::list(cx.db(), &t.id).map_err(err)?;
     let skip = all.len().saturating_sub(20);
@@ -171,6 +224,7 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
         "agent": r.agent_name, "status": r.status, "outcome": r.outcome, "trigger": r.trigger, "at": ymd(r.created_at), "summary": r.summary_md, "error": r.error,
         "refused": r.refused,
     })).collect();
+    let files = file_lines(cx, files::list(cx.db(), "task", &t.id).map_err(err)?).await;
     Ok(json!({"task": {
         "id": t.id, "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
@@ -181,7 +235,7 @@ pub(crate) fn get_task(cx: &Cx, a: &Args) -> Result<Value, String> {
         "by_hand": t.by_hand,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
         "archived": t.archived_at.is_some(), "archived_on": t.archived_at.map(ymd), "archived_by": t.archived_by,
-    }, "comments": comments, "runs": runs, "files": file_lines(files::list(cx.db(), "task", &t.id).map_err(err)?)}))
+    }, "comments": comments, "runs": runs, "files": files}))
 }
 
 fn agent_json(cx: &Cx, m: &team::Member, live: &[crate::runs::LiveRun]) -> Value {

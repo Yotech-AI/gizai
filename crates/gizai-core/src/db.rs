@@ -1,20 +1,82 @@
-//! One SQLite connection owned by the app. Every write runs in one IMMEDIATE transaction
-//! and appends to `changes` (the activity feed, audit log and future sync oplog).
+//! One SQLite connection owned by the app writes. Every write runs in one IMMEDIATE transaction
+//! and appends to `changes` (the activity feed, audit log and future sync oplog). Reads of a database file go through a
+//! few read-only connections of their own (`READERS`), so they go on while a write runs (WAL lets one writer and many
+//! readers work at the same time, each on its own connection).
 use crate::{ids, Result};
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 use rusqlite_migration::{M, Migrations};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const SCHEMA_VERSION: i64 = 18;
+pub const SCHEMA_VERSION: i64 = 20;
+
+/// The read-only connections a database file gets for `read`: reads beside the writer and beside each other (a board
+/// check's long read doesn't hold up the window's lists).
+pub const READERS: usize = 4;
 
 pub struct Db {
+    /// The read-only connections for `read`; None in memory (an in-memory database is one connection's own), or when
+    /// they couldn't be opened: then reads take turns with writes on `conn`, as before. Declared before `conn`, so they
+    /// close first and the writer, closing last, folds the WAL back into the database file as before.
+    readers: Option<Readers>,
     conn: Mutex<Connection>,
     device_id: String,
     counter: AtomicU32,
     /// The folder the database file is in (Gizai's data folder); None in memory.
     dir: Option<PathBuf>,
+}
+
+/// The read-only connections not in use now, and a wake-up for a read that waits for one.
+struct Readers {
+    free: Mutex<Vec<Connection>>,
+    returned: Condvar,
+}
+
+impl Readers {
+    /// `READERS` read-only connections to the database file at `path`, which the writer has open in WAL mode.
+    fn open(path: &Path) -> Result<Readers> {
+        let mut free = Vec::with_capacity(READERS);
+        for _ in 0..READERS {
+            let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))?;
+            // as the writer has them, so a read sees the same settings (PRAGMA foreign_keys says 1)
+            conn.pragma_update(None, "foreign_keys", "ON")?;
+            free.push(conn);
+        }
+        Ok(Readers { free: Mutex::new(free), returned: Condvar::new() })
+    }
+
+    /// A free connection, waiting for one when all are in use. It goes back when the `Reader` is dropped, also when the
+    /// read panicked.
+    fn take(&self) -> Reader<'_> {
+        let mut free = lock(&self.free);
+        loop {
+            if let Some(conn) = free.pop() {
+                return Reader { readers: self, conn: Some(conn) };
+            }
+            free = self.returned.wait(free).unwrap_or_else(|p| p.into_inner());
+        }
+    }
+}
+
+/// A connection taken from `Readers`, given back when dropped.
+struct Reader<'a> {
+    readers: &'a Readers,
+    conn: Option<Connection>,
+}
+
+impl Drop for Reader<'_> {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            lock(&self.readers.free).push(conn);
+            self.readers.returned.notify_one();
+        }
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn migrations() -> Migrations<'static> {
@@ -37,6 +99,8 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../migrations/0016_memory_groups.sql")),
         M::up(include_str!("../migrations/0017_pending_actions.sql")),
         M::up(include_str!("../migrations/0018_indexes.sql")),
+        M::up(include_str!("../migrations/0019_screenshots.sql")),
+        M::up(include_str!("../migrations/0020_test_runs_at_once.sql")),
     ])
 }
 
@@ -165,6 +229,19 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         let mut db = Self::init(conn)?;
         db.dir = path.parent().map(|d| std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()));
+        // The query planner's statistics for every table that needs them, as SQLite advises for a connection that has just
+        // opened; the daily housekeeping keeps them fresh (`optimize`). A failure only costs plans: Gizai opens anyway.
+        if let Err(e) = lock(&db.conn).execute_batch("PRAGMA optimize=0x10002") {
+            eprintln!("gizai: PRAGMA optimize at open failed: {e}");
+        }
+        // After the migrations and the statistics: the readers see the schema as it is now.
+        db.readers = match Readers::open(path) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                eprintln!("gizai: the database's read connections couldn't open, so reads wait for writes: {e}");
+                None
+            }
+        };
         Ok(db)
     }
 
@@ -199,16 +276,36 @@ impl Db {
                 id
             }
         };
-        Ok(Db { conn: Mutex::new(conn), device_id, counter: AtomicU32::new(0), dir: None })
+        Ok(Db { conn: Mutex::new(conn), readers: None, device_id, counter: AtomicU32::new(0), dir: None })
     }
 
+    /// Reads with `f`. On a database file it runs on one of the read-only connections, beside a write that is under way
+    /// and beside other reads, in one transaction: it sees the database as it was when it began, and a write that commits
+    /// meanwhile doesn't show halfway through (as when reads and writes took turns). So `f` can't write: that is `write`.
+    /// In memory it takes turns with writes on the one connection.
     pub fn read<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
-        let conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
-        f(&conn)
+        let Some(readers) = &self.readers else {
+            let conn = lock(&self.conn);
+            return f(&conn);
+        };
+        let mut reader = readers.take();
+        let conn = reader.conn.as_mut().expect("a reader holds its connection until dropped");
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let out = f(&tx);
+        // it only read: the transaction ends with nothing to keep (dropping it rolls back)
+        drop(tx);
+        out
+    }
+
+    /// SQLite's `PRAGMA optimize` on the writer: it gathers the query planner's statistics again (ANALYZE) for the tables
+    /// that have changed much since (the daily housekeeping). Quick when nothing has.
+    pub fn optimize(&self) -> Result<()> {
+        lock(&self.conn).execute_batch("PRAGMA optimize")?;
+        Ok(())
     }
 
     pub fn write<T>(&self, actor: Option<&str>, f: impl FnOnce(&mut Writer) -> Result<T>) -> Result<T> {
-        let mut conn = self.conn.lock().unwrap_or_else(|p| p.into_inner());
+        let mut conn = lock(&self.conn);
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut w = Writer {
             tx,

@@ -28,6 +28,7 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::runs::Note;
+use crate::stream::Draft;
 
 /// The limits of an answer of the Team Lead that starts now (Settings → Runs, Minutes and Tool calls per chat answer): a
 /// chat answer, a board check, its look at an agent's question. Each answer reads them once as it starts and keeps them
@@ -344,8 +345,9 @@ pub fn kill_all(st: &AppState) -> usize {
     live.len() + check as usize + questions.len()
 }
 
+/// Queues the event for the window (`stream`): it goes with the chat's next batch.
 fn emit(st: &AppState, thread_id: &str, event: ChatUiEvent) {
-    (st.notify)(Note::Chat { thread_id: thread_id.to_string(), event });
+    crate::stream::chat_event(st, thread_id, event);
 }
 
 fn save(st: &AppState, m: NewMessage) -> Option<ChatMessage> {
@@ -572,12 +574,13 @@ async fn store_files(st: &AppState, paths: Vec<String>) -> Result<Vec<Blob>, Str
 }
 
 /// The folder in the Team Lead's own folder (its working folder in chat, which its file tools read) where the files you
-/// add to chat messages are copied: `<data>/lead/files/<file id>/<name>`.
+/// add to chat messages are copied, and the files on a client, project or task that its gets list (GA-207):
+/// `<data>/lead/files/<file id>/<name>`.
 pub fn lead_files_dir(st: &AppState) -> PathBuf {
     st.data_dir.join("lead").join("files")
 }
 
-/// Where the Team Lead reads one of the files you added to a message (`lead_files_dir`).
+/// Where the Team Lead reads one of the files you added to a message, or one on a client, project or task (`lead_files_dir`).
 pub fn lead_file_path(st: &AppState, f: &FileRow) -> PathBuf {
     gizai_core::files::copy_path(&lead_files_dir(st), f)
 }
@@ -993,6 +996,7 @@ fn system_prompt(st: &AppState, agent: &Member) -> String {
          - After a tool from outside Gizai, a call of yours that acts (runs, agents, columns, attach_file, update_checkout, memory's writes, merge_pull_request) isn't run: Gizai keeps it under your answer for {you} to approve with one click or discard. Say in a sentence what each such call does; don't make it again. A later message starts with what {you} decided, in square brackets.\n\
          - {you} links Gizai items in a message as Markdown links with a gizai: target: [GA-12 - Fix the login](gizai:task/GA-12), [Giz AI](gizai:project/GA), [Name](gizai:client/<id>), and the same for agent, person and doc. After the slash comes the task's identifier, the project's key or the item's id, which the gizai tools take: look the item up when you need it. You may link items the same way in your answers.\n\
          - Files {you} adds to a message are named after it, each with the path of a copy in your folder: read them there. attach_file takes those paths, so you can attach such a file to a task, project or client when {you} asks.\n\
+         - Files on a project, task or client: get_project, get_task and get_client give each one's path in your folder: read them there.\n\
          - When that line says a project's linked folder ({you}'s own checkout, where new cards copy vendor/ and node_modules/ from) is outdated, ask {you} once in this chat, when that project comes up, whether to update it. Say exactly what will happen: any branch switch, how many commits it moves and which installs run. Call update_checkout only after a yes in this chat (switch only when they agreed to the switch, stash only when they agreed to the stash); never update a folder without that yes.\n\
          - Your instructions below also cover task runs; in chat, never write a GIZAI_RESULT line.\n\
          Answer in {you}'s language, short and plain.\n\n\
@@ -1111,16 +1115,34 @@ fn set_live(st: &AppState, thread_id: &str, f: impl FnOnce(&mut LiveTurn)) {
     }
 }
 
-/// Changes the text being written in the thread's live turn, numbered (`ChatStatus::seq`) under the same lock as the
-/// change, so a snapshot holds exactly the changes up to its number. Returns the change's number.
-fn draft_change(st: &AppState, thread_id: &str, f: impl FnOnce(&mut String)) -> u64 {
+/// The next number for a change to the text being written, in any chat (`ChatStatus::seq`). `stream::chat_draft` takes
+/// it as it queues the change.
+pub(crate) fn next_seq(st: &AppState) -> u64 {
+    st.chat.seq.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// The batch of the chat's events that goes to the window now (`stream`), taken with `take` under the live turns' lock,
+/// and its changes to the text being written applied to the turn's draft there. So a snapshot (`live`) holds exactly the
+/// batches sent before it: the page adds the batches it hears after it, and gets no piece of text twice and loses none.
+pub(crate) fn publish(st: &AppState, thread_id: &str, take: impl FnOnce() -> Vec<ChatUiEvent>) -> Vec<ChatUiEvent> {
     let mut live = st.chat.live.lock().unwrap();
-    let seq = st.chat.seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let events = take();
     if let Some(l) = live.get_mut(thread_id) {
-        f(&mut l.draft);
-        l.seq = seq;
+        for ev in &events {
+            match ev {
+                ChatUiEvent::Delta { text, seq } => {
+                    l.draft.push_str(text);
+                    l.seq = *seq;
+                }
+                ChatUiEvent::Block { seq } => {
+                    l.draft.clear();
+                    l.seq = *seq;
+                }
+                _ => {}
+            }
+        }
     }
-    seq
+    events
 }
 
 /// The folders the Team Lead may read, for `--add-dir` in a chat turn and in a board check: `copies` (its copies of the
@@ -1216,8 +1238,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     let _ = core_runs::set_running(&st.db, &run_id, handle.pid);
     let stopped_early = st.chat.stopped.lock().unwrap().contains(&thread.id);
     set_live(st, &thread.id, |l| { l.run_id = run_id.clone(); l.stop = Some(handle.stop.clone()); l.tool = None; });
-    let seq = draft_change(st, &thread.id, String::clear);
-    emit(st, &thread.id, ChatUiEvent::Block { seq });
+    crate::stream::chat_draft(st, &thread.id, Draft::Block);
     if stopped_early {
         handle.stop.stop();
     }
@@ -1245,13 +1266,11 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
             }
             ChatEvent::BlockStart => {
                 draft.clear();
-                let seq = draft_change(st, &thread.id, String::clear);
-                emit(st, &thread.id, ChatUiEvent::Block { seq });
+                crate::stream::chat_draft(st, &thread.id, Draft::Block);
             }
             ChatEvent::Delta { text } => {
                 draft.push_str(&text);
-                let seq = draft_change(st, &thread.id, |d| d.push_str(&text));
-                emit(st, &thread.id, ChatUiEvent::Delta { text, seq });
+                crate::stream::chat_draft(st, &thread.id, Draft::Delta(text));
             }
             ChatEvent::Text { text } => {
                 draft.clear();
@@ -1259,8 +1278,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
                     save(st, NewMessage { body_md: Some(text.trim().to_string()), ..base("agent") });
                 }
                 // The block is saved: the text being written starts again.
-                let seq = draft_change(st, &thread.id, String::clear);
-                emit(st, &thread.id, ChatUiEvent::Block { seq });
+                crate::stream::chat_draft(st, &thread.id, Draft::Block);
             }
             ChatEvent::ToolUse { id, name, input } => {
                 if is_outside_tool(&name) {

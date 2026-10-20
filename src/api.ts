@@ -1,9 +1,15 @@
 // The only file that talks to Tauri. Swap this file to change the shell.
-import { Channel, invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Channel } from "@tauri-apps/api/core";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { shared } from "./lib/share";
+// Tauri's own invoke and listen, counted in a perf run only (GA-188, lib/perf.ts)
+import { invoke as tauriInvoke, listen } from "./lib/perf";
 import type * as T from "./types";
+
+// Every call: in a screen's data hook, a read another hook has on its way with the same arguments is shared (GA-190).
+const invoke = <R>(cmd: string, args?: Record<string, unknown>): Promise<R> => shared(cmd, args, () => tauriInvoke<R>(cmd, args));
 
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const selftestReport = (json: unknown) => invoke<void>("selftest_report", { json: JSON.stringify(json) });
@@ -147,7 +153,7 @@ export const mcpSignOut = (id: string) => invoke<T.McpServerView>("mcp_sign_out"
 export const agentMcp = (agentId: string) => invoke<T.AgentMcpView>("agent_mcp", { agentId });
 export const saveAgentMcp = (agentId: string, tools: T.AgentTools) => invoke<T.AgentMcpView>("save_agent_mcp", { agentId, tools });
 export const agentCliTools = (agentId: string | null, cliId: string) => invoke<T.ToolsView>("agent_cli_tools", { agentId, cliId });
-export const saveAgentCliTools = (agentId: string, tools: T.CliTools) => invoke<T.CliTools>("save_agent_cli_tools", { agentId, tools });
+export const saveAgentCliTools = (agentId: string, tools: T.CliToolsSave) => invoke<T.CliTools>("save_agent_cli_tools", { agentId, tools });
 /** Ask Claude Code again: its tools, from a start without a login (nothing spent, nothing written in ~/.claude). */
 export const askCliTools = (cliId: string) => invoke<string[]>("ask_cli_tools", { cliId });
 export const browserEntry = () => invoke<T.BrowserView>("browser_entry");
@@ -182,11 +188,16 @@ export const continueAfterRunForMe = (taskId: string) => invoke<string>("continu
 export const listRuns = (taskId: string) => invoke<T.Run[]>("list_runs", { taskId });
 /** The commits a finished run made, oldest first. */
 export const runCommits = (runId: string) => invoke<T.Commit[]>("run_commits", { runId });
-export const runEvents = (runId: string) => invoke<T.SeqEvent[]>("run_events", { runId });
+/** The run's events numbered after `afterSeq` (all of them without it), at most the last 500. */
+export const runEvents = (runId: string, afterSeq: number | null = null) => invoke<T.SeqEvent[]>("run_events", { runId, afterSeq });
 export const liveRuns = () => invoke<T.LiveRun[]>("live_runs");
 export const suggestAgent = (taskId: string) => invoke<string | null>("suggest_agent", { taskId });
+/** Each live run event, one call per event: they come in batches (`run-events`, at most one every 50 ms per run), in
+ *  seq order. */
 export const onRunEvent = (cb: (e: { runId: string; seq: number; event: T.RunEvent }) => void): Promise<UnlistenFn> =>
-  listen<{ runId: string; seq: number; event: T.RunEvent }>("run-event", (m) => cb(m.payload));
+  listen<{ runId: string; events: T.SeqEvent[] }>("run-events", (m) => {
+    for (const e of m.payload.events) cb({ runId: m.payload.runId, seq: e.seq, event: e.event });
+  });
 export const onRunsChanged = (cb: () => void): Promise<UnlistenFn> => listen("runs-changed", () => cb());
 
 /** A card's changed files with their counts: its worktree (uncommitted changes included) against its merge base with main,
@@ -198,6 +209,14 @@ export const cardFileDiff = (taskId: string, path: string, oldPath: string | nul
   invoke<T.FileDiff>("card_file_diff", { taskId, path, oldPath, from, to });
 /** The changes one run committed: from the commit it started at to the one it ended at. */
 export const runChanges = (runId: string) => invoke<T.CardChanges>("run_changes", { runId });
+
+// ---- Screenshots (GA-182, contract CS) ----
+/** The card's screenshot sets, newest run first: every run of the card that got the Screenshots section, also one that
+ *  saved none (its `shots` is empty), with what it left out and why its preview didn't start. They arrive when a run ends,
+ *  before "runs-changed": reload on onRunsChanged. */
+export const listScreenshots = (taskId: string) => invoke<T.ScreenshotSet[]>("list_screenshots", { taskId });
+/** One screenshot's bytes (PNG, JPEG or WebP), for a blob: URL. Any id that isn't a run's screenshot is refused. */
+export const screenshotBytes = (fileId: string) => invoke<ArrayBuffer>("screenshot_bytes", { fileId });
 
 /** Pushes a Review card's branch and opens its pull request: with gh on GitHub, through Bitbucket's API on Bitbucket (keeps an open one). */
 export const openPullRequest = (taskId: string) => invoke<T.PullInfo>("open_pull_request", { taskId });
@@ -370,5 +389,8 @@ export const approvePendingActions = (ids: string[]) => invoke<T.PendingAction[]
 export const discardPendingAction = (id: string) => invoke<T.PendingAction>("discard_pending_action", { id });
 export const chatLive = () => invoke<T.ChatStatus[]>("chat_live");
 export const chatAgent = () => invoke<T.Member | null>("chat_agent");
-export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> => listen<T.ChatEvent>("chat-event", (e) => cb(e.payload));
+/** Each event of a chat's answer, one call per event: they come in batches (`chat-events`, at most one every 50 ms per
+ *  chat, pieces of text one after the other joined into one). */
+export const onChatEvent = (cb: (e: T.ChatEvent) => void): Promise<UnlistenFn> =>
+  listen<{ threadId: string; events: T.ChatEvent[] }>("chat-events", (m) => { for (const e of m.payload.events) cb(e); });
 export const onChatChanged = (cb: () => void): Promise<UnlistenFn> => listen("chat-changed", () => cb());

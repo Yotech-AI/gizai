@@ -9,8 +9,9 @@ export const KIND_NAME: Record<ItemKind, string> = { task: "Task", project: "Pro
 export const KIND_GROUP: Record<ItemKind, string> = { task: "Tasks", project: "Projects", client: "Clients", agent: "Agents", person: "People", doc: "Docs" };
 
 /** One item the picker lists. `key`: what its link names (a task's identifier, a project's key, else its id). `label`: the
- *  row's text; `text`: the link's text; `hint`: more words it is found by (shown faint); `column`: a task's column. */
-export type PickItem = { kind: ItemKind; key: string; label: string; text: string; hint?: string; column?: PickColumn };
+ *  row's text; `text`: the link's text; `hint`: more words it is found by (shown faint); `column`: a task's column;
+ *  `closed`: a done or cancelled task (GA-206), listed after the open ones that match as well. */
+export type PickItem = { kind: ItemKind; key: string; label: string; text: string; hint?: string; column?: PickColumn; closed?: boolean };
 
 /** A task's column (GA-88): its name, and its place in the board's order (left out when that order doesn't have it). */
 export type PickColumn = { name: string; place?: number };
@@ -19,7 +20,8 @@ export type PickColumn = { name: string; place?: number };
 export function taskItem(t: Task, columns: readonly string[] = []): PickItem {
   const place = columns.indexOf(t.stateName);
   const column = t.stateName ? { name: t.stateName, ...(place >= 0 ? { place } : {}) } : undefined;
-  return { kind: "task", key: t.identifier, label: `${t.identifier} - ${t.title}`, text: `${t.identifier} - ${t.title}`, hint: t.projectName ?? undefined, column };
+  const closed = t.stateCategory === "done" || t.stateCategory === "cancelled" ? { closed: true } : {};
+  return { kind: "task", key: t.identifier, label: `${t.identifier} - ${t.title}`, text: `${t.identifier} - ${t.title}`, hint: t.projectName ?? undefined, column, ...closed };
 }
 export const projectItem = (p: Project): PickItem =>
   ({ kind: "project", key: p.key, label: `${p.key} - ${p.name}`, text: p.name, hint: p.clientName ?? undefined });
@@ -63,10 +65,15 @@ export type PickRow = { type: "kind"; kind: ItemKind } | { type: "item"; item: P
 export const PER_KIND = 5;
 export const IN_KIND = 50;
 
+/** The score of an item whose ID or key is the search's first word (GA-206): better than any other match (0 to 2). */
+const EXACT = -1;
+
 /** The picker's rows for what was typed after the @: only @, the kinds; a kind and its dot, that kind's items (all of
  *  them, or those the search finds); else the items of every kind the search finds, grouped by kind in ITEM_KINDS'
- *  order. An item is found when every word appears in its label or hint (ID or key, and name); one whose ID, key or
- *  label starts with the first word comes first. Tasks alone (`@task.`) are grouped by column as well (GA-88). */
+ *  order. An item is found when every word appears in its label or hint (ID or key, and name). One whose ID or key is
+ *  the first word comes first (GA-206: `@ga-4` lists GA-4 above GA-40), then those whose ID, key or label starts with
+ *  it. With the same score an open task goes before a done or cancelled one, then the list's order. Tasks alone
+ *  (`@task.`) are grouped by column as well (GA-88). */
 export function pickRows(query: string, items: readonly PickItem[]): PickRow[] {
   if (query === "") return ITEM_KINDS.map((kind) => ({ type: "kind", kind }));
   const { kind, text } = parseQuery(query);
@@ -79,10 +86,11 @@ export function pickRows(query: string, items: readonly PickItem[]): PickRow[] {
     const hay = `${label} ${fold(item.hint ?? "")} ${item.kind === "task" || item.kind === "project" ? key : ""}`;
     if (!words.every((w) => hay.includes(w))) return;
     const first = words[0] ?? "";
-    const score = words.length === 0 ? 0 : key.startsWith(first) || label.startsWith(first) ? 0 : words.every((w) => label.includes(w)) ? 1 : 2;
+    const score = words.length === 0 ? 0 : key === first ? EXACT
+      : key.startsWith(first) || label.startsWith(first) ? 0 : words.every((w) => label.includes(w)) ? 1 : 2;
     scored.push({ item, score, i });
   });
-  scored.sort((a, b) => a.score - b.score || a.i - b.i);
+  scored.sort((a, b) => a.score - b.score || Number(!!a.item.closed) - Number(!!b.item.closed) || a.i - b.i);
   const limit = kind ? IN_KIND : PER_KIND;
   const rows: PickRow[] = [];
   for (const k of ITEM_KINDS) {
@@ -95,8 +103,9 @@ export function pickRows(query: string, items: readonly PickItem[]): PickRow[] {
 
 /** The tasks found (the best match first, then the list's order) grouped by column: the columns in the board's order,
  *  then any that order doesn't have in the list's order; in a column, the order they came in. A task without a column
- *  comes first, under no heading. */
-function byColumn(found: { item: PickItem; i: number }[]): PickItem[] {
+ *  comes first, under no heading. Only the column of a task whose ID is the search's first word goes before all that
+ *  (GA-206), so that task is the first row: the selected one, which Enter picks. */
+function byColumn(found: { item: PickItem; score: number; i: number }[]): PickItem[] {
   const columns = new Map<string, { place: number; first: number }>();
   for (const { item, i } of found) {
     if (!item.column) continue;
@@ -105,7 +114,8 @@ function byColumn(found: { item: PickItem; i: number }[]): PickItem[] {
     else columns.set(item.column.name, { place: item.column.place ?? Number.MAX_SAFE_INTEGER, first: i });
   }
   const order = new Map([...columns].sort(([, a], [, b]) => a.place - b.place || a.first - b.first).map(([name], n) => [name, n]));
-  const at = (item: PickItem) => (item.column ? order.get(item.column.name) ?? -1 : -1);
+  const lead = found.find((s) => s.score === EXACT)?.item.column?.name;
+  const at = (item: PickItem) => (!item.column ? -1 : item.column.name === lead ? -2 : order.get(item.column.name) ?? -1);
   return found.map((s) => s.item).sort((a, b) => at(a) - at(b));
 }
 

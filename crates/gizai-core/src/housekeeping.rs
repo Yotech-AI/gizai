@@ -1,5 +1,6 @@
 //! Housekeeping: what Gizai no longer needs goes, so its data folder doesn't grow for ever (README → Your data). Gizai
-//! does this when it starts and once a day while it runs.
+//! does this when it starts and once a day while it runs: `run` (tokens and logs), then `clear_screenshots` (old
+//! screenshots and the blobs no row uses).
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -25,11 +26,38 @@ pub struct Pruned {
 }
 
 /// Removes the chat tools' dead tokens (`tokens::prune`) and the old logs in the `LOG_DIRS` of `data_dir` (`prune_logs`).
-/// The runs themselves stay, with their summary, cost and commits.
+/// The runs themselves stay, with their summary, cost and commits. Then SQLite's `PRAGMA optimize` keeps the query
+/// planner's statistics fresh (GA-191, `Db::optimize`).
 pub fn run(db: &Db, data_dir: &Path, now_ms: i64) -> Result<Pruned> {
     let tokens = tokens::prune(db, now_ms)?;
     let logs = LOG_DIRS.iter().map(|d| prune_logs(&data_dir.join(d), now_ms)).sum();
+    // only the plans would suffer: what was removed stays removed
+    if let Err(e) = db.optimize() {
+        eprintln!("gizai: PRAGMA optimize in the housekeeping failed: {e}");
+    }
     Ok(Pruned { tokens, logs })
+}
+
+/// What `clear_screenshots` removed (GA-182).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Cleared {
+    /// Runs whose screenshot set went.
+    pub sets: usize,
+    /// Their screenshots (file rows).
+    pub screenshots: usize,
+    /// Blobs in the data folder's `files/` that no row used any more (any kind of file).
+    pub blobs: usize,
+}
+
+/// Clears old screenshots as Settings → Agents and runs → Screenshots says (`screenshots::limits`): each card keeps its
+/// newest Keep per card sets, and a card in Done or Cancelled for longer than Delete after loses all of them (0 keeps
+/// them), what people attached never (`screenshots::prune`). Then the blobs in `data_dir/files` that no row uses any
+/// more go, never one a row still uses (`screenshots::sweep_blobs`).
+pub fn clear_screenshots(db: &Db, data_dir: &Path, now_ms: i64) -> Result<Cleared> {
+    let l = crate::screenshots::limits(db);
+    let pruned = crate::screenshots::prune(db, now_ms, l.keep_sets, l.keep_days)?;
+    let blobs = crate::screenshots::sweep_blobs(db, data_dir, now_ms)?;
+    Ok(Cleared { sets: pruned.sets, screenshots: pruned.files, blobs })
 }
 
 /// Removes the logs in `dir` (files named `*.jsonl` or `*.log`: a run's output and its stderr) last written to more than

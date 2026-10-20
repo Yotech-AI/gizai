@@ -1,7 +1,7 @@
 // GA-21: the top of Settings. Quit Gizai completely with its warning (how many runs and chat answers it stops), the
 // Notifications section under it with a switch per kind, and the warning under Runs at once (was GA-27). Rendered to HTML
 // on the server, so no data loads: the page's state is handed in, in the order of its useState calls (settings, budget,
-// msg, detecting, savedAt, agents), and the live runs and chat answers come from the replaced hooks. Switches and the
+// msg, detecting, savedAt, the screenshot value refused last (GA-185), agents), and the live runs and chat answers come from the replaced hooks. Switches and the
 // Quit button are used on the element tree with the hooks replaced, and the api is mocked to see what they send. The
 // sections below Notifications that GA-21 didn't change are stubs.
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,6 +59,7 @@ const SETTINGS: Settings = {
   claudeBin: "/usr/bin/claude", dataDir: "/home/you/.local/share/gizai", maxConcurrentRuns: 4, agentsPaused: false, maxRunUsd: null,
   maxRunMinutes: 45, maxRunToolCalls: 400, maxChatMinutes: 15, maxChatToolCalls: 60, pushOver: "ssh",
   notifications: { hold: true, waiting: true, leadAsks: true, leadAnswered: true }, editorRoots: ["~/Herd"],
+  screenshotsPerRun: 12, screenshotMaxMb: 10, screenshotsKeepSets: 3, screenshotsKeepDays: 30, previewPortFrom: 47100, previewPortTo: 47999,
 };
 const AGENTS: CardAgent[] = [{ name: "Backend Agent", cardsAtOnce: 3 }, { name: "QA Agent", cardsAtOnce: 1 }, { name: "Frontend Agent", cardsAtOnce: 2 }];
 const run = (n: number): LiveRun => ({ runId: `r${n}`, taskId: `t${n}`, agentId: "be" });
@@ -71,7 +72,7 @@ const LABELS = [
 ];
 
 type Page = { s?: Partial<Settings>; agents?: CardAgent[] };
-const states = (p: Page) => [{ ...SETTINGS, ...p.s }, "", null, false, 0, p.agents ?? AGENTS];
+const states = (p: Page) => [{ ...SETTINGS, ...p.s }, "", null, false, 0, null, p.agents ?? AGENTS];
 
 function render(p: Page = {}) {
   queue.push(...states(p));

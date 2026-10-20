@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in GizAi doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for telling us. A problem with installing or updating GizAi has a form of its own,
+        **Install or update problem**. Questions go to [Q&A in Discussions](https://github.com/Yotech-AI/gizai/discussions/categories/q-a),
+        and a security problem is reported privately, as the [security policy](https://github.com/Yotech-AI/gizai/security/policy)
+        says, never in an issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, in a few sentences. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, step by step, so someone else can see it happen too.
+      placeholder: |
+        1. Open a card in Review
+        2. Press Show changes
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: version
+    attributes:
+      label: GizAi version
+      description: >-
+        Settings → Updates shows it, and so does `gizai --version` in a terminal.
+      placeholder: "0.11.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Linux
+        - macOS (Apple silicon)
+        - Windows 11
+    validations:
+      required: true
+  - type: input
+    id: linux
+    attributes:
+      label: Which Linux
+      description: On Linux, the distribution and its version.
+      placeholder: Arch, Omarchy 3.1, Ubuntu 24.04
+  - type: dropdown
+    id: cli
+    attributes:
+      label: Coding CLI
+      description: The CLI the agent or the chat ran on, when it's about a run or a chat.
+      multiple: true
+      options:
+        - Claude Code
+        - Codex CLI
+        - Gemini CLI
+        - Another CLI
+  - type: input
+    id: cli-version
+    attributes:
+      label: The CLI's version
+      description: >-
+        What `claude --version`, `codex --version` or `gemini --version` prints.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        The error lines, the run's output (Show output on its card) or what GizAi printed in a terminal.
+        They show as text, so no backticks are needed.
+      render: text
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Before you send it
+      options:
+        - label: I removed tokens, keys, client names and private code from what I pasted
+          required: true

@@ -8,9 +8,12 @@
 
 <div align="center">
 
-**A desktop app where a team of AI agents works through your board.**
+**Your agents build it. You review.**
 
-[Install](#install) · [Docs](#documentation) · [Releases](https://github.com/Yotech-AI/gizai/releases) · [Licence](LICENSE)
+A free, open-source desktop app where a team of AI coding agents works through your board in parallel, on Claude Code,
+Codex CLI or Gemini CLI. Made for freelancers and software companies with several clients and projects.
+
+[Website](https://gizai.app) · [Install](#install) · [Docs](#documentation) · [Releases](https://github.com/Yotech-AI/gizai/releases) · [Licence](LICENSE)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/tour/tour-dark.gif">
@@ -22,13 +25,37 @@
 
 ## What it is
 
-GizAi is an Agentic Development Application (ADA): a team of AI agents builds your software through your board, while you review and decide. Each card gets its own git worktree, an agent builds it, a QA agent tests it, and it lands in your Review. Everything runs on your own computer, with your own git repositories, logins and coding CLIs.
+GizAi is an Agentic Development Application (ADA). You write the cards; agents build them side by side, each card in
+its own git worktree and branch; a QA agent tests the card and opens its pull request; and you review and merge.
+Everything runs on your own computer, with your own git repositories, logins and coding CLIs.
+
+## Made for work with several clients
+
+- **Clients, projects and cards in one app.** Clients with their contacts, projects with their own repository and docs,
+  and every card on one board.
+- **Memory kept apart per client.** Agents keep notes as they work, and a note about one client or project never
+  reaches a run for another.
+- **Several accounts per CLI.** Add a second Claude Code or Codex CLI account, see the usage limits of each, and move
+  an agent or a chat to another account.
+
+## The team
+
+A new install starts with five agents. Each runs on the CLI you pick, with its own model, instructions and tools:
+
+- **Team Lead:** you chat with it (its chat runs on Claude Code). It turns requests into cards, starts agents and
+  answers their questions before they reach you.
+- **Backend and Frontend Agents** build the cards in To do.
+- **QA Agent** tests the cards, adds missing tests and opens the pull requests.
+- **DevOps Agent** releases what you merged, when you ask.
+
+Add a **Design Agent** for a Design column, or agents with roles and instructions of your own, like an **R&D Agent**
+that researches a feature before it's built.
 
 ## Features
 
 - **The board decides who works.** Each column holds the agents that work its cards, so cards move from builder to tester to you by themselves. [Read more](docs/features/board.md)
 - **A Team Lead you talk to.** Ask the Team Lead in chat to plan work, make cards or start agents, and Approve with one click (or Approve all) the steps that wait for your OK. [Read more](docs/features/team-lead.md)
-- **Bring your own CLI.** Each agent runs on the coding CLI you pick, like Claude Code, Codex or Gemini, on your own machine with your own logins and accounts. [Read more](docs/features/cli.md)
+- **Bring your own CLI.** Each agent runs on the coding CLI you pick, like Claude Code, Codex CLI or Gemini CLI, on your own machine with your own logins and accounts. [Read more](docs/features/cli.md)
 - **Tested before you see it.** A QA agent tests a card before it reaches your Review, and opens its pull request on GitHub. [Read more](docs/features/testing.md)
 - **The Editor and Terminal, built in.** Open a project or a card's worktree, see its git status and edit it, with your own shell in a panel under the code or on its own page. [Read more](docs/features/editor-and-terminal.md)
 - **Memory.** The Team Lead, the agents and you keep notes for later, and each run gets the notes for its card. [Read more](docs/features/memory.md)
@@ -84,8 +111,8 @@ The details are in [docs/install.md](docs/install.md): what each system needs, u
 ## Documentation
 
 - [Install](docs/install.md): what each system needs, when macOS or Windows warns, updates, your data and no telemetry.
-- [Settings](docs/settings.md): what each tab holds, how GizAi looks, and the tray.
-- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [CLIs](docs/features/cli.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md)
+- [Settings](docs/settings.md): what each tab holds, how GizAi looks, the tray, and the screenshot settings.
+- Features: [Board](docs/features/board.md) · [Team Lead](docs/features/team-lead.md) · [CLIs](docs/features/cli.md) · [Testing](docs/features/testing.md) · [Editor and Terminal](docs/features/editor-and-terminal.md) · [Memory](docs/features/memory.md) · [Tools](docs/features/tools.md) · [Inbox](docs/features/inbox.md) · [Screenshots](docs/features/screenshots.md)
 - [Memory in depth](docs/memory.md): folders, properties, links, search, and how runs get notes.
 - [Agent tools in depth](docs/agent-tools.md): MCP servers, signing in, the web, the browser and the safety rules.
 - [Linux, macOS and Windows](docs/PLATFORMS.md): what differs on each system.
@@ -99,11 +126,15 @@ source scripts/env.sh
 cargo test --workspace && npm test
 scripts/ui-test.sh        # UI tests in a headless compositor, never on your desktop
 scripts/tour-capture.sh --out <folder>   # the product tour's stills, in dark and light (default .devdata/tour/capture)
+scripts/perf.sh [scenario …]             # the benchmark: medians in .devdata/perf/<commit>.json; --compare a.json b.json
+node scripts/bundle-size.mjs             # after npm run build: each file's bytes and gzip bytes, the start files apart
 ```
 
-The capture makes the product tour's stills: Gizai with made-up data in a headless compositor, scene by scene, in dark and light, with a `scenes.json` of what each step clicked. The tour video and the two GIFs above (`docs/tour/tour-dark.gif` and `tour-light.gif`) are made from those stills in the website's repository, which holds the tour's Remotion project.
+A performance card runs `scripts/perf.sh` on `main` and on its branch, on the same machine with nothing else running, and puts `scripts/perf.sh --compare` of the two in its pull request (`docs/research/performance.md` §7 says what each scenario measures). For the database alone: `cargo run --release -p gizai-core --example bench_queries -- <data dir>` on `prep_perf`'s data.
 
-On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds Gizai and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs Gizai from source on macOS and Windows with it (`.github/workflows/install.yml`). A pull request into `main` that changes nothing but Gizai's version, a release's first step, skips both, and its checks pass within a minute or two: the release's pull request into `production` runs them in full (`docs/RELEASING.md`).
+The capture makes the product tour's stills: GizAi with made-up data in a headless compositor, scene by scene, in dark and light, with a `scenes.json` of what each step clicked. The tour video and the two GIFs above (`docs/tour/tour-dark.gif` and `tour-light.gif`) are made from those stills in the website's repository, which holds the tour's Remotion project.
+
+On every pull request and every push to `main`, CI (`.github/workflows/ci.yml`) builds GizAi and runs `cargo test --workspace` and `npm test` on Linux, macOS (Apple silicon) and Windows, and checks the install scripts there. A pull request that changes an install script also installs GizAi from source on macOS and Windows with it (`.github/workflows/install.yml`). A pull request into `main` that changes nothing but GizAi's version, a release's first step, skips both, and its checks pass within a minute or two: the release's pull request into `production` runs them in full (`docs/RELEASING.md`).
 
 [CLAUDE.md](CLAUDE.md) has the rules for working in this repository, [docs/HANDOFF-2026-10-07.md](docs/HANDOFF-2026-10-07.md) explains how it is built, and [docs/RELEASING.md](docs/RELEASING.md) how a release is made.
 
@@ -113,4 +144,4 @@ GizAi is open source under the [Apache License 2.0](LICENSE); see also [NOTICE](
 
 The whole app is free, with the agents, the Team Lead's chat, the Editor and the terminals; the plan for paid features is hosted services only, like an encrypted backup and sync ([docs/PAID-FEATURES.md](docs/PAID-FEATURES.md)).
 
-GizAi is not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.
+GizAi is an independent open-source project by YoTech, not affiliated with or endorsed by Anthropic, OpenAI or Google. It runs Claude Code, Codex CLI and Gemini CLI with your own accounts, and never sells AI usage. Claude Code is a trademark of Anthropic, Codex of OpenAI, and Gemini of Google LLC.

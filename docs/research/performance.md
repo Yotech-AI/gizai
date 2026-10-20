@@ -15,7 +15,8 @@ dependencies change with this card. Written by the R&D Agent on 14 Oct 2026, aga
 - **Then (F5 to F7):** every page and the 300 KB self-test load at start; typing redraws whole pages; timers, animations
   and each window focus (it follows the mouse on Omarchy) cost git and redraws at rest. FW: WebKitGTK 2.54 uses the GPU.
 - **Measured here:** the 7 Oct bundle (one 1.21 MB file), library sizes, call counts, this PC's GPU and the UI tests'
-  speed budgets. Start-up, memory, CPU and frames need a running Gizai: the harness takes them (section 7, code in 7.1).
+  speed budgets. Start-up, memory, CPU and frames need a running Gizai: the harness takes them (section 7, code in 7.1);
+  GA-188 built it, and section 3 has its baseline.
 - **Recommendation (option A):** the harness first (P1a, P1b), then one card per cost, each measured before and after.
 
 ## 2. The project now
@@ -95,15 +96,39 @@ held when they last ran (`scripts/ui-test.sh` runs them; their numbers aren't ke
 So the graph and the diff view were built to a budget; the board, the chat, Memory's list and the run log have none.
 P1 adds theirs, with the same frame timing.
 
-**What needs a running Gizai** (not taken in this run):
+**The baseline (GA-188).** Taken with the harness (section 7) on 16 Oct 2026, on this PC (AMD Ryzen 7 7800X3D, 8 cores;
+the AMD Radeon RX 7800 XT through Mesa) in the headless cage at 1280 × 720, on GA-188's branch at `80ed59a`: `main` at
+`69b871a` (Gizai 0.12.0, after GA-178's lazy pages and GA-190's reloads) plus the harness. `scripts/perf.sh` ran each
+scenario five times on a fresh copy of `prep_perf`'s data; every number is the **median of the four warm runs**, with the
+cold run's (WebKit's cache empty) where it differs. `.devdata/perf/80ed59a.json` keeps every number of every run, and a
+later card puts its own run beside it with `scripts/perf.sh --compare`. The headless window never has the focus, so `idle`
+and `editor` tell the page it has it (section 7).
 
-| What the card asks | Why not here | How it is taken (P1, section 7) |
+| What the card asks | Baseline | How it is taken |
 |---|---|---|
-| Start-up, cold and warm, launch to board | needs Gizai started | `scripts/perf.sh start`: launch time to the page's `timeOrigin`, then to the first card drawn; 1 cold and 4 warm starts; the setup part (`open_state`) shows as the wait before the page's `responseStart` |
-| Memory (RSS) and CPU at rest, with a run, while the Team Lead answers | needs `/proc` of a running Gizai | `scripts/perf.sh idle runlog lead`: `VmRSS` and CPU % per process of the test Gizai it started. For **your own** Gizai, this read-only line gives memory per process now: `ps -o pid,rss,pcpu,etime,comm -p "$(pgrep -d, -x gizai),$(pgrep -d, -P "$(pgrep -x gizai)")"` (RSS in KiB; `pcpu` is the average since the process started, so for CPU now use `top -b -d 10 -n 2 -p <those pids>` and read the second block) |
-| The UI with 500 cards, 1,000 messages, 300 notes, a big repository, a run's live log | needs the window | `scripts/perf.sh board chat memory editor runlog` on `prep_perf`'s data: time to drawn, frames a second and the longest frame while scrolling or streaming |
-| `npm run build`'s chunk sizes today | needs a build | `npm run build && node scripts/bundle-size.mjs` |
-| Backend calls and how much comes back | needs the window | the probe's `invoke` counter in every scenario (calls, bytes and ms per command) |
+| Start-up, cold and warm, launch to board | Warm (median of 4): the page begins **332 ms** after the launch (the four runs: 330 to 333), `app_info` has answered at 438 ms and the first card is drawn at **464 ms**; cold (WebKit's cache empty): 352, 769 and 801 ms. Inside the page (warm): its script has run at 24 ms (`DOMContentLoaded`), the sidebar is drawn at 39, `app_info` answers at 107 and the first card shows at 132 ms (cold 449) | `scripts/perf.sh start`: from the launch (`date +%s%3N`) to the page's `timeOrigin`, to `app_info` answered and to the first card drawn; the times inside the page from the counter |
+| Memory (RSS) and CPU at rest, with a run, while the Team Lead answers | At rest on the board (`idle`, 60 s): the app 180.7 MB, the web process 288.7 MB, the network process 60.3 MB; CPU: the app 0.1 %, the web process 0.3 %. While a run streams 50 events a second (`runlog`): the app 2.3 %, the web process 23.4 %, the run's own processes 0.1 %. While the Team Lead streams its 20 KB answer (`lead`): the app 3.5 %, the web process **128.1 %** (more than a core), which grows to 530.7 MB (median over the run 414.5 MB) | `scripts/perf.sh idle runlog lead`: `VmRSS` and CPU % per process of the test Gizai, from `/proc` every 500 ms. For **your own** Gizai, this read-only line gives memory per process now: `ps -o pid,rss,pcpu,etime,comm -p "$(pgrep -d, -x gizai),$(pgrep -d, -P "$(pgrep -x gizai)")"` (RSS in KiB; `pcpu` is the average since the process started, so for CPU now use `top -b -d 10 -n 2 -p <those pids>` and read the second block) |
+| The UI with 500 cards, 1,000 messages, 300 notes, a big repository, a run's live log | **Board** (500 cards): every open column drawn 187 ms into the page, 578 ms after the launch; scrolling each open column 60 fps, longest frame 48 ms (in To do, the first column scrolled, while the start drew the board a second time; the other columns 17 to 19 ms: from `3615b32` the probe scrolls only once the board stays on the page, and then measured 60 fps and 18 ms in every column of all five runs, with another test run on the machine); a card dragged to the next column drawn there in 18 ms. **Chat** (1,000 messages): the first screen 105 ms (7 messages in the page), scrolling up to the first message 17.9 s at 400 px a frame, 60 fps, longest frame 22 ms; 50 characters typed 60 fps, longest frame 17 ms. **Memory** (300 notes): the tree 60 ms; a search typed 63 fps, longest frame 16 ms, its hits 161 ms after the last key (150 of them the wait for typing to pause); the graph loaded in 53 ms, 61 fps while it lays out (longest frame 20 ms), settled in 1,491 ms, a frame's work 1.6 ms. **Editor** (20,000 files): the tree 130 ms; the 5,000-line file opened in 63 ms in the cold run (the warm runs reopened it from the tabs the run before had left: 2 to 14 ms; the probe now forgets them first). **Run log** (5,000 events): loaded 51 ms, drawn 57 ms (32 lines in the page), scrolling 60 fps, longest frame 21 ms; while a run streams 50 events a second: 62 fps, longest frame 20 ms; the Team Lead's answer: 57 fps, longest frame 43 ms | `scripts/perf.sh board chat memory editor runlog lead` on `prep_perf`'s data: time to drawn, frames a second and the longest frame while scrolling, typing or streaming |
+| `npm run build`'s chunk sizes today | At start 658,441 bytes (194,398 gzipped) in 3 files: the app's JS 509,220, its CSS 148,505; later 2,759,567 (1,147,235) in 103 files, the largest `xterm-ScmBfeDI.js` 331,178, `dist-ByECefBn.js` 301,260, `selftest-Y_5XNRpk.js` 191,910; in all 3,418,008 | `npm run build && node scripts/bundle-size.mjs` (`perf.sh` keeps it in its result) |
+| Backend calls and how much comes back | The start's first 5 s: 58 calls, 9 of them listeners, bringing back 552 KB, 437 KB of it `list_tasks`; `list_screenshots` 34 times, once per Review card. A drag on the board: 3 calls, 464 KB, 1 `rows-changed`. At rest on the board for 60 s: 0 calls. The Editor open for 60 s: 42 calls (`editor_folders` 8, `editor_main` 6, `editor_versions` 20, `editor_git` 8). A live run of 20 s: 1,002 `run-event`s, 2 `rows-changed`, 5 calls. The Team Lead's answer (7 s): 691 `chat-event`s, 12 `rows-changed` and 15 calls, which bring back 1,291 KB | the counter (`src/lib/perf.ts`) in every scenario: calls, answer bytes (as JSON) and ms per command, and the events heard |
+| The queries on their own (F3) | Median (p95) in ms: the whole board check **14.4** (15.1); the usage summary for all time 5.8 (6.1) and for 30 days 1.5; the task list 1.8, KADE's open cards 1.1, the Inbox's 1.4; the project list 1.1; the big chat's messages 0.8 (1.4); a card 0.3; Memory's search 0.4 and list 0.2; the team 0.1; the chat list 0.08; a card's activity 0.02 and comments 0.01 | `cargo run --release -p gizai-core --example bench_queries -- .devdata/perf/base`: 30 runs each; `--plan` adds each statement's `EXPLAIN QUERY PLAN` and how often it ran, `--writer` a writer beside the reads |
+
+What the baseline already shows (measured; what to do about it is for the later cards):
+
+- **A write reloads the whole card list once.** Dragging a card makes 3 calls and one `rows-changed` (GA-190's work),
+  but they bring back 464 KB: every card again (F1, P12).
+- **The start asks `list_screenshots` once per Review card** (34 calls at once), beside its other lists.
+- **The Team Lead's answer is the costliest thing measured:** while it streams, the web process uses 128 % of a core
+  and grows to 531 MB (F2, P4, P5). A run's live log at 50 events a second costs it 23 %.
+- **At rest the board makes no calls**; the Editor in use makes 42 a minute, half of them `editor_versions` every 3 s
+  (F7, P9).
+- **Before the page:** warm, the page begins about 330 ms after the launch and the first card shows 132 ms after that,
+  so most of a warm start is before the page: the setup on the main thread (section 2) and WebKit's own start **[I]**.
+  Over all 40 runs the page began 330 to 885 ms after the launch, with the disk flushed before each, so compare medians
+  of several runs.
+- **The database:** the board check, which holds the one connection's lock, takes 14.4 ms on 500 cards; every other
+  query here stays under 6 ms on this data (F3: `bench_queries` on data made with `prep_perf --years <n>` shows how they
+  grow).
 
 ## 4. Findings, biggest cost first
 
@@ -431,6 +456,15 @@ what exists: the headless `cage` start of `scripts/smoke-cage.sh`, the self-test
 `:3089-3100`), the Memory graph probe's numbers (`src/selftest.ts:1988-2005`: load, frames a second while it lays out,
 settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/examples/prep_*.rs`).
 
+**Built in GA-188** (P1a and P1b in one card), as planned below, with these differences: `scripts/perf-report.mjs` (Node)
+joins the runs and prints the tables, instead of Python; the app and `prep_perf` run in a scratch home folder
+(`.devdata/perf/home`), because the Editor refuses a folder inside `~/.local/share/gizai`, where a card's worktree is; the
+scenarios that open their own page start on People, so the board's start doesn't overlap what they measure; the headless
+window never has the focus, so in `idle` and `editor` the probe tells the page it has it (else Gizai's git checks rest, as
+for a window nobody uses: GA-190), and notes that it didn't (`had_focus`); `prep_perf` sets 2,000 tool calls a run (the
+streaming fake makes 333). Each scenario's numbers are named in `src/selftest.ts` (`perfProbe`); a result file has every
+run's numbers, the medians of the warm runs and the cold run's. Section 3 has the baseline.
+
 **Its five parts:**
 
 1. **The data, `crates/gizai-core/examples/prep_perf.rs`** (new; usage like the others, `prep_graph.rs:8`:
@@ -453,17 +487,20 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
    run" (`tauri-2.12.1/src/plugin.rs:329-330`, `:371`) **[V]**, and only in a perf run; outside one, `perf.ts` hands back
    Tauri's `invoke` and `listen` themselves, so the app runs exactly as today. The listener registrations themselves
    (`plugin:event|listen`, made inside `@tauri-apps/api`) aren't counted; the probe counts them as `listen` calls.
+   Since GA-191 a run's and a chat's events come in batches (`run-events`, `chat-events`, at most one message every
+   50 ms), before it one message per event (`run-event`, `chat-event`): `runlog` and `lead` count both names, so a
+   result from before GA-191 (the baseline in section 3) compares; there messages and events are the same number.
 
    | Scenario | Route and data | Numbers |
    |---|---|---|
    | `start` | the default route | `performance.timeOrigin`; the navigation entry's `responseStart` and `domContentLoadedEventEnd`; `app_info` answered; first card drawn; calls and bytes in the first 5 s |
-   | `board` | `#/board`, 500 cards | all columns drawn (ms); 3 s scrolling each column (fps, longest frame); a drag to the next column (ms to drawn; calls after the drop) |
+   | `board` | `#/board`, 500 cards | all columns drawn (ms); 3 s scrolling each column, once the board has stayed on the page for 500 ms (fps, longest frame; an error when no column was scrolled); a drag to the next column (ms to drawn; calls after the drop) |
    | `chat` | the 1,000-message chat | first screen (ms); scroll to the top (fps, longest frame); 50 characters typed in the composer (longest frame) |
    | `memory` | `#/memory`, 300 notes; `#/memory/graph` | tree drawn (ms); search typing (longest frame); the graph probe's load, fps, settle and frame numbers |
-   | `runlog` | the card with the 5,000-event run; then a fake run streaming 50 events a second for 20 s | log drawn (ms); scroll (fps, longest frame); live: fps, longest frame, calls and events counted |
+   | `runlog` | the card with the 5,000-event run; then a fake run streaming 50 events a second for 20 s | log drawn (ms); scroll (fps, longest frame); live: fps, longest frame, calls and events counted (`live_run_events`: the run's messages heard; `live_run_stream_events`: the events in them) |
    | `idle` | `#/board`, 60 s, nothing happening | calls and bytes, events heard |
    | `editor` | the Editor on a made git repository of 20,000 files | tree drawn (ms); a 5,000-line file opened (ms); calls a minute while it sits open |
-   | `lead` | the chat, with the fake Team Lead streaming a 20 KB answer | fps and longest frame while it streams; events heard |
+   | `lead` | the chat, with the fake Team Lead streaming a 20 KB answer | fps and longest frame while it streams; events heard (`stream_chat_events`: the chat's messages heard; `stream_chat_stream_events`: the events in them) |
 
 3. **The script, `scripts/perf.sh [scenario …]`.** Builds when stale (`gz_app`, `scripts/app-ready.sh:20-27`), makes the
    data once, then per scenario starts `target/release/gizai` in the headless `cage` exactly as `scripts/smoke-cage.sh:16-22`
@@ -479,7 +516,8 @@ settle time, a frame's work) and the data makers' pattern (`crates/gizai-core/ex
    results side by side with the change in %. Optional: `--webkit-env 'WEBKIT_DISABLE_COMPOSITING_MODE=1'` runs the same
    with an environment variable, to compare WebKitGTK's drawing modes.
 4. **The query bench, `crates/gizai-core/examples/bench_queries.rs`** (new): on the `prep_perf` data, without a window,
-   times each hot core function 30 times (the task list with each filter, the project list, the team, the chat list, the
+   times each hot core function 30 times (the task list with each filter, and the window's lean one, `tasks.list_lean`,
+   since GA-191; the project list, the team, and the window's lean one, `team.get_lean`; the chat list, the
    usage summary, the big chat's messages, a card's comments and activity, the Memory list and search, and the whole
    board check, `gizai_core::board::check`, which is also how long it holds the lock) and prints the median and p95 in
    µs as JSON lines: `cargo run --release -p gizai-core --example bench_queries -- <data dir>`. With `--plan` it prints
@@ -909,7 +947,8 @@ by side.
 8. **History that only grows.** Runs, comments, chat messages and the `changes` log are never deleted (F3). Should Gizai
    ever thin them out, for example the `changes` rows of cards archived a year ago? *Recommendation:* not now: with
    P8's indexes their size stops mattering for speed, and `changes` is meant as the log a future sync reads
-   (`crates/gizai-core/src/db.rs:1-2`); look again if `bench_queries --years 3` still shows growth after P8.
+   (`crates/gizai-core/src/db.rs:1-2`); look again if `bench_queries` on `prep_perf --years 3`'s data still shows growth
+   after P8.
 
 ## 10. Sources
 

@@ -15,7 +15,7 @@ fn select() -> String {
     p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
     (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
     (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown}),
-    p.lead_may_merge
+    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs, p.test_runs_at_once
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL")
@@ -30,7 +30,24 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         worktree_copy: serde_json::from_str(&r.get::<_, String>(18)?).unwrap_or_default(),
         worktree_install: r.get(19)?, worktree_setup: r.get(20)?,
         ai_cost_usd_micros: r.get(21)?, ai_unknown_cost_runs: r.get(22)?, lead_may_merge: r.get::<_, i64>(23)? != 0,
+        screenshots: crate::screenshots::parse_project(r.get::<_, Option<String>>(24)?.as_deref()),
+        preview_command: r.get(25)?,
+        preview_start_secs: r.get::<_, Option<i64>>(26)?.and_then(|s| u32::try_from(s).ok())
+            .filter(|s| crate::screenshots::START_SECS.contains(s)).unwrap_or(crate::screenshots::DEFAULT_START_SECS),
+        test_runs_at_once: r.get::<_, Option<i64>>(27)?.and_then(|n| u32::try_from(n).ok()).filter(|n| *n >= 1),
     })
+}
+
+/// Test runs at once (GA-212): how many of a project's cards may be in a test run at the same time.
+pub const TEST_RUNS_AT_ONCE: std::ops::RangeInclusive<i64> = 1..=20;
+
+/// The Test runs at once of `input` to save, checked: None keeps what the project has, 0 removes it, 1 to 20 sets it.
+fn test_runs_field(input: &ProjectInput) -> Result<Option<i64>> {
+    match input.test_runs_at_once {
+        Some(n) if n != 0 && !TEST_RUNS_AT_ONCE.contains(&n) => Err(Error::Invalid(format!(
+            "Test runs at once must be from {} to {}, or empty for no limit.", TEST_RUNS_AT_ONCE.start(), TEST_RUNS_AT_ONCE.end()))),
+        n => Ok(n),
+    }
 }
 
 /// Team Lead may merge (GA-86) is a person's switch, set in the app: a write by anyone else (an agent, Gizai) that gives
@@ -44,6 +61,32 @@ fn person_sets_lead_may_merge(c: &rusqlite::Connection, actor: &str, input: &Pro
         return Err(Error::Invalid("Team Lead may merge is switched only by a person, in the app (the project page → Edit). Nothing changed.".into()));
     }
     Ok(())
+}
+
+/// The Preview command runs on your computer as you, like the setup command: only a person sets it, in the app (the project
+/// form). A write by anyone else (an agent, Gizai) that sets it is refused, and nothing changes.
+fn person_sets_preview(c: &rusqlite::Connection, actor: &str, input: &ProjectInput) -> Result<()> {
+    if input.preview_command.is_none() {
+        return Ok(());
+    }
+    let kind: Option<String> = c.query_row("SELECT kind FROM actors WHERE id=?1 AND deleted_at IS NULL", [actor], |r| r.get(0)).optional()?;
+    if kind.as_deref() != Some("person") {
+        return Err(Error::Invalid("The Preview command is set only by a person, in the app (the project page → Edit). Nothing changed.".into()));
+    }
+    Ok(())
+}
+
+/// The screenshot and preview settings of `input` to save (GA-182), checked: None keeps what the project has. The
+/// screenshots as JSON, the Preview command trimmed ("" removes it), the Start time.
+fn preview_fields(input: &ProjectInput) -> Result<(Option<String>, Option<String>, Option<u32>)> {
+    let shots = match &input.screenshots {
+        Some(s) => Some(serde_json::to_string(&crate::screenshots::check_project(s)?)?),
+        None => None,
+    };
+    if let Some(secs) = input.preview_start_secs {
+        crate::screenshots::check_start_secs(secs)?;
+    }
+    Ok((shots, input.preview_command.as_ref().map(|c| c.trim().to_string()), input.preview_start_secs))
 }
 
 /// The start of this month (UTC), from which a project's AI usage counts.
@@ -183,9 +226,12 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
     let key = normalise_key(&input.key)?;
     validate_status(&input.status)?;
     let (copy, install, setup) = worktree_fields(&input)?;
+    let (shots, preview, start_secs) = preview_fields(&input)?;
+    let test_runs = test_runs_field(&input)?;
     db.write(Some(actor), |w| {
         let c = w.conn();
         person_sets_lead_may_merge(c, actor, &input)?;
+        person_sets_preview(c, actor, &input)?;
         let org = org_id(c)?;
         if c.query_row("SELECT count(*) FROM projects WHERE org_id=?1 AND key=?2", [&org, &key], |r| r.get::<_, i64>(0))? > 0 {
             return Err(Error::Invalid(format!("project key {key} is already used")));
@@ -204,12 +250,13 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
         let id = ids::new_id();
         c.execute(
             "INSERT INTO projects(id, created_at, updated_at, created_by, updated_by, org_id, client_id, number, key, name, status,
-               color, goal_md, team_id, budget_amount_minor, budget_hours, worktree_copy_json, worktree_install, worktree_setup, lead_may_merge)
+               color, goal_md, team_id, budget_amount_minor, budget_hours, worktree_copy_json, worktree_install, worktree_setup, lead_may_merge,
+               screenshots_json, preview_command, preview_start_secs, test_runs_at_once)
              VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8, coalesce(?9, 'active'), ?10, ?11, ?12, ?13, ?14,
-               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''), coalesce(?18, 0))",
+               coalesce(?15, '[]'), coalesce(?16, 1), NULLIF(?17, ''), coalesce(?18, 0), ?19, NULLIF(?20, ''), ?21, NULLIF(?22, 0))",
             rusqlite::params![id, now, actor, org, clean(&input.client_id), number, key, name, clean(&input.status),
                               clean(&input.color), clean(&input.goal_md), team, input.budget_amount_minor, input.budget_hours,
-                              copy, install, setup, input.lead_may_merge],
+                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs, test_runs],
         )?;
         w.insert("projects", &id, serde_json::to_value(&input)?)?;
         upsert_repo(w, actor, &id, &input, now)?;
@@ -225,19 +272,25 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
     }
     validate_status(&input.status)?;
     let (copy, install, setup) = worktree_fields(&input)?;
+    let (shots, preview, start_secs) = preview_fields(&input)?;
+    let test_runs = test_runs_field(&input)?;
     db.write(Some(actor), |w| {
         person_sets_lead_may_merge(w.conn(), actor, &input)?;
+        person_sets_preview(w.conn(), actor, &input)?;
         let now = ids::now_ms();
         let n = w.conn().execute(
             "UPDATE projects SET client_id=?2, name=?3, status=coalesce(?4, status), color=?5, goal_md=?6,
                budget_amount_minor=?7, budget_hours=?8, updated_at=?9, updated_by=?10, version=version+1,
                worktree_copy_json=coalesce(?11, worktree_copy_json), worktree_install=coalesce(?12, worktree_install),
                worktree_setup=CASE WHEN ?13 IS NULL THEN worktree_setup ELSE NULLIF(?13, '') END,
-               lead_may_merge=coalesce(?14, lead_may_merge)
+               lead_may_merge=coalesce(?14, lead_may_merge), screenshots_json=coalesce(?15, screenshots_json),
+               preview_command=CASE WHEN ?16 IS NULL THEN preview_command ELSE NULLIF(?16, '') END,
+               preview_start_secs=coalesce(?17, preview_start_secs),
+               test_runs_at_once=CASE WHEN ?18 IS NULL THEN test_runs_at_once ELSE NULLIF(?18, 0) END
              WHERE id=?1 AND deleted_at IS NULL",
             rusqlite::params![id, clean(&input.client_id), name, clean(&input.status), clean(&input.color),
                               clean(&input.goal_md), input.budget_amount_minor, input.budget_hours, now, actor,
-                              copy, install, setup, input.lead_may_merge],
+                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs, test_runs],
         )?;
         if n == 0 {
             return Err(Error::NotFound(format!("project {id}")));

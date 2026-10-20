@@ -2,11 +2,12 @@
 // Those three tabs share the period switch; gizai-core sums the runs and chat turns (usage.rs), so the tabs add up to the
 // same total. The Subscription tab (GA-62), first, shows each coding CLI's subscription limits as its runs and chat turns
 // last reported them (limits.rs), with the agents on it.
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChartColumn, FolderKanban, Gauge, MessagesSquare, Users } from "lucide-react";
 import { subscriptionLimits, usageSummary } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
+import { useClock } from "../lib/windowFocus";
 import { KIND_LABEL } from "../lib/clis";
 import {
   LIMITS_NOTE, anyRead, asOfLabel, cantRead, chatsLine, fullWhen, limitState, resetLabel, sourceNote, unreadLabel, usedLabel, usedWidth, whenLabel,
@@ -228,12 +229,9 @@ function LimitsBlock({ c, now }: { c: CliLimits; now: number }) {
 
 function SubscriptionTab() {
   const { data, error } = useData(() => subscriptionLimits(), []);
-  // A window can reset while the page is open: look at the clock again every minute.
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const t = window.setInterval(() => setTick((n) => n + 1), 60_000);
-    return () => window.clearInterval(t);
-  }, []);
+  // A window can reset while the page is open: look at the clock again every minute (not while the window is hidden, and
+  // at once when it shows again, GA-190).
+  useClock(60_000);
   if (error) return <div className="error-banner">{error}</div>;
   if (!data) return null;
   const now = Date.now();

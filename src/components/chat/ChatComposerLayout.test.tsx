@@ -16,19 +16,30 @@ vi.mock("../../api", async (orig) => {
   return out;
 });
 // Calling a component as a function: useState gives its initial value, effects don't run, refs are plain objects.
-const fake = vi.hoisted(() => ({ on: false }));
+// GA-190: the text being typed is the composer's own state (its first useState); `typed` stands in for it.
+const fake = vi.hoisted(() => ({ on: false, typed: null as string | null }));
 vi.mock("react", async (orig) => {
   const R = await orig<typeof import("react")>();
-  const useState = ((init: unknown) => (fake.on ? [typeof init === "function" ? (init as () => unknown)() : init, () => {}] : R.useState(init))) as typeof R.useState;
+  const useState = ((init: unknown) => {
+    if (!fake.on) return R.useState(init);
+    if (init === "" && fake.typed !== null) { const t = fake.typed; fake.typed = null; return [t, () => {}]; }
+    return [typeof init === "function" ? (init as () => unknown)() : init, () => {}];
+  }) as typeof R.useState;
   const useEffect = ((effect: EffectCallback, deps?: DependencyList) => (fake.on ? undefined : R.useEffect(effect, deps))) as typeof R.useEffect;
   const useLayoutEffect = ((effect: EffectCallback, deps?: DependencyList) => (fake.on ? undefined : R.useLayoutEffect(effect, deps))) as typeof R.useLayoutEffect;
   const useRef = ((init: unknown) => (fake.on ? { current: init } : R.useRef(init))) as typeof R.useRef;
   // GA-176: ChatThread keeps its groups and note actions between renders; called as a function, each is simply made.
   const useMemo = ((make: () => unknown, deps: DependencyList) => (fake.on ? make() : R.useMemo(make, deps))) as typeof R.useMemo;
   const useCallback = ((f: unknown, deps: DependencyList) => (fake.on ? f : R.useCallback(f as () => void, deps))) as typeof R.useCallback;
-  const hooks = { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback };
+  const useImperativeHandle = ((ref: unknown, make: () => unknown, deps?: DependencyList) => (fake.on ? undefined : R.useImperativeHandle(ref as never, make as never, deps))) as typeof R.useImperativeHandle;
+  const hooks = { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useImperativeHandle };
   return { ...R, ...hooks, default: { ...R, ...hooks } };
 });
+// GA-190: the thread's list draws only the groups in sight (@tanstack/react-virtual); with no messages here it draws none,
+// and its hooks aren't among the stand-ins above.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: () => ({ getVirtualItems: () => [], getTotalSize: () => 0, measureElement: () => {} }),
+}));
 vi.mock("./useChat", () => ({
   useChat: () => ({ messages: [], draft: "", tool: null, working: false, queue: [], error: null, setWorking: () => {} }),
 }));
@@ -61,6 +72,14 @@ const composerEl = call(ChatThread, { threadId: "c1", agent: lead() }).find((e) 
 const Composer = composerEl.type as (p: Props) => ReactElement;
 const RunsOn = (composerEl.props.picker as El).type as (p: Props) => ReactElement;
 const composer = (over: Props = {}) => renderToStaticMarkup(<Composer {...composerEl.props} picker={<span className="picker-here" />} {...over} />);
+/** The composer with `typed` in its text box (GA-190: the text is its own state, so it is called with the stand-ins). */
+function composerTyped(typed: string, over: Props = {}) {
+  fake.on = true;
+  fake.typed = typed;
+  let el: ReactElement;
+  try { el = Composer({ ...composerEl.props, picker: <span className="picker-here" />, ...over }); } finally { fake.on = false; fake.typed = null; }
+  return renderToStaticMarkup(el);
+}
 const runsOn = (over: Props) => renderToStaticMarkup(<RunsOn value="claude_code" clis={CLIS} disabled={false} onChange={() => {}} {...over} />);
 
 /** Where `needle` first is in `html`, after `from`; -1 when it isn't there. */
@@ -115,13 +134,13 @@ describe("the composer is one box (GA-83)", () => {
   });
 
   it("while the Team Lead answers: Enter queues, Stop shows before Queue once there is text, and only Stop without it", () => {
-    const typed = composer({ working: true, value: "and one more thing" });
+    const typed = composerTyped("and one more thing", { working: true });
     expect(text(typed.slice(tagOf(typed, 'class="composer-hint"')))).toMatch(/^Enter queues Shift Enter new line/);
     const stop = at(typed, 'class="btn sm stop-btn"');
     expect(stop).toBeGreaterThan(at(typed, 'class="picker-here"'));
     expect(at(typed, 'aria-label="Queue"')).toBeGreaterThan(stop);
     expect(typed).not.toContain('aria-label="Send"');
-    const empty = composer({ working: true, value: "" });
+    const empty = composerTyped("", { working: true });
     expect(empty).toContain('class="btn sm stop-btn"');
     expect(empty).not.toContain('aria-label="Queue"');
     expect(empty).not.toContain('aria-label="Send"');

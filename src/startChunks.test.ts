@@ -79,11 +79,26 @@ describe("the start (npm run build)", () => {
     expect(start.has(chunkOf("src/components/memory/GraphCanvas.tsx")!.fileName)).toBe(false);
   });
 
-  // GA-178 QA: splitting the drawers was out of scope, so Ctrl+K's palette and every drawer open as before, with no file to load
-  it("keeps the sidebar, the command palette, the close guard and every drawer in it", () => {
+  // GA-178 QA: Ctrl+K's palette opens as before, with no file to load. GA-190: the drawers moved out (next test).
+  it("keeps the sidebar, the command palette, the close guard and the drawers' host in it", () => {
     for (const part of ["src/components/Sidebar.tsx", "src/components/CommandPalette.tsx", "src/components/CloseGuard.tsx", "src/lib/drawers.tsx",
-      "src/components/NewTaskDrawer.tsx", "src/components/ProjectForm.tsx", "src/components/ClientForm.tsx", "src/components/PersonDrawer.tsx",
-      "src/components/AgentForm.tsx", "src/components/DocDrawer.tsx", "src/router.ts"]) expect(startModules.some((id) => isModule(id, part)), part).toBe(true);
+      "src/router.ts"]) expect(startModules.some((id) => isModule(id, part)), part).toBe(true);
+  });
+
+  // GA-190 QA: each drawer loads when first opened, so the Markdown editor and CodeMirror leave the start files.
+  const DRAWERS = ["src/components/NewTaskDrawer.tsx", "src/components/ProjectForm.tsx", "src/components/ClientForm.tsx",
+    "src/components/PersonDrawer.tsx", "src/components/AgentForm.tsx", "src/components/DocDrawer.tsx"];
+  it.each(DRAWERS)("puts the drawer %s outside the start, loaded only by import()", (drawer) => {
+    expect(startModules.filter((id) => isModule(id, drawer))).toEqual([]);
+    const own = chunkOf(drawer)!;
+    expect(own).toBeDefined();
+    expect(start.has(own.fileName)).toBe(false);
+    expect(own.isDynamicEntry).toBe(true);
+  });
+
+  it("holds neither the Markdown editor nor CodeMirror (GA-190)", () => {
+    expect(startModules.filter((id) => isModule(id, "src/components/MarkdownEditor.tsx"))).toEqual([]);
+    expect(startModules.filter((id) => /\/node_modules\/(@codemirror|@lezer)\//.test(id))).toEqual([]);
   });
 
   it("is at most three files, smaller than before GA-178", () => {

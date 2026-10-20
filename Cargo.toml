@@ -5,7 +5,7 @@ members = ["crates/gizai-core", "crates/gizai-agents", "crates/gizai-mcp", "src-
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "0.12.0"
+version = "0.13.0"
 
 [workspace.dependencies]
 rusqlite = { version = "0.40", features = ["bundled", "serde_json"] }
@@ -20,6 +20,12 @@ tempfile = "3"
 sha2 = "0.10"
 # The system's random source on every system (getrandom on Linux, getentropy on macOS, ProcessPrng on Windows).
 getrandom = "0.4"
+
+# Debug builds keep line tables only: panics and backtraces still show file and line, and the test programs are a
+# fraction of their size with full debug info (GA-213). On dev, not only on test: `cargo test` takes dev's settings,
+# and if the two differed, `cargo build` and `cargo test` would each compile every crate.
+[profile.dev]
+debug = "line-tables-only"
 
 [profile.release]
 lto = "thin"

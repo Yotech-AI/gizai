@@ -1,5 +1,6 @@
-// The items the @ picker lists: open tasks (with their columns), projects that aren't archived (and their docs), clients,
-// agents and people. Asked for when a picker opens and kept for a short while, so the next @ shows them at once.
+// The items the @ picker lists: tasks with their columns, done and cancelled ones too (GA-206; archived cards aren't
+// listed), projects that aren't archived (and their docs), clients, agents and people. Asked for when a picker opens and
+// kept for a short while, so the next @ shows them at once.
 import { getTeam, listClients, listDocs, listProjects, listTasks, listTeams, listUsers } from "../api";
 import { boardOrder } from "./columns";
 import { agentItem, clientItem, docItem, personItem, projectItem, taskItem, type PickItem } from "./itemLinks";
@@ -19,7 +20,7 @@ export function loadPickItems(): Promise<PickItem[]> {
 
 async function fetchItems(): Promise<PickItem[]> {
   const [tasks, projects, clients, people, teams] = await Promise.all([
-    listTasks({ openOnly: true }), listProjects(), listClients(), listUsers(), listTeams(),
+    listTasks({ openOnly: false }), listProjects(), listClients(), listUsers(), listTeams(),
   ]);
   const live = projects.filter((p) => p.status !== "archived");
   const [boards, docs] = await Promise.all([

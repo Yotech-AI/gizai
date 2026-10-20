@@ -81,7 +81,7 @@ When QA sends the card back, the bar says so until you open the card.
 
 ## A card's changes
 
-Every card has two tabs at the top: Card and Changes.
+Every card has three tabs at the top: Card, Changes and Screenshots ([Screenshots](screenshots.md) has the third).
 
 - **Changes** lists the files the card changed under their folders on the left, and shows every file's diff on the right, one below the other.
 - The changes come from the card's worktree, uncommitted files included, since its branch left main.

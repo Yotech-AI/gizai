@@ -1,15 +1,16 @@
 // The task page, Paperclip layout: header line, title, description, acceptance criteria, attachments, the agent
-// run, tabs (Comments, Activity, Runs) and a closable properties panel (]). Card | Changes at the top (GA-112): Changes
-// shows what the card changed, full width (Properties closes; ] still brings it back), at #/task/<id>/changes. A card
+// run, tabs (Comments, Activity, Runs) and a closable properties panel (]). Card | Changes | Screenshots at the top
+// (GA-112, GA-185): Changes shows what the card changed, Screenshots what its agents saw of the screens they built, each
+// full width (Properties closes; ] still brings it back), at #/task/<id>/changes and #/task/<id>/screenshots. A card
 // assigned to you has Open in editor in the top bar (GA-115): its worktree, made and prepared as for an agent, opens in
 // the Editor, the card pinned to you.
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity, Archive, ArchiveRestore, Copy, FileDiff, Keyboard, LoaderCircle, MessageSquare, PanelRight, Pencil, Play, SquareCode, SquareKanban,
+  Activity, Archive, ArchiveRestore, Copy, FileDiff, Images, Keyboard, LoaderCircle, MessageSquare, PanelRight, Pencil, Play, SquareCode, SquareKanban,
 } from "lucide-react";
 import {
-  addComment, archiveTask, cardChanges, getTask, getTeam, handCard, listComments, listRuns, listUsers, onRunsChanged, restoreTask, startByHand,
-  taskActivity, updateTask,
+  addComment, archiveTask, cardChanges, getProject, getTask, getTeam, handCard, listComments, listRuns, listScreenshots, listUsers, onRunsChanged,
+  restoreTask, startByHand, taskActivity, updateTask,
 } from "../api";
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
@@ -32,7 +33,10 @@ import { byHandTip, canDoByHand, couldntOpen, markCardSeen, openInEditorTitle } 
 import { ChangesView } from "../components/changes/ChangesView";
 import { Diffstat } from "../components/changes/Diffstat";
 import { tabLabel } from "../lib/changes";
-import type { CardChanges } from "../types";
+import { ScreenshotsView } from "../components/screenshots/ScreenshotsView";
+import { roundCount } from "../lib/screenshots";
+import { reveal } from "../lib/reveal";
+import type { CardChanges, ScreenshotSet } from "../types";
 
 function readPref(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
 function writePref(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
@@ -81,6 +85,50 @@ function EditableMarkdown({ label, value, placeholder, hint, onSave, readOnly }:
   );
 }
 
+/** The card's title. What you type stays in this box, so a keystroke redraws only it (GA-190); Enter or leaving the box
+ *  saves it, Escape puts the saved title back, and an empty title isn't saved. */
+function TitleInput({ title, readOnly, onSave }: { title: string; readOnly: boolean; onSave: (t: string) => void }) {
+  const [value, setValue] = useState(title);
+  useEffect(() => setValue(title), [title]);
+  const cancelled = useRef(false);
+  const save = () => {
+    if (cancelled.current) { cancelled.current = false; return; }
+    if (readOnly) return;
+    const t = value.trim();
+    if (!t) { setValue(title); return; }
+    if (t !== title) onSave(t);
+  };
+  return (
+    <input className="title-input" aria-label="Title" value={value} readOnly={readOnly} onChange={(e) => setValue(e.target.value)} onBlur={save}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancelled.current = true; setValue(title); e.currentTarget.blur(); } }} />
+  );
+}
+
+/** Comments being written, by card: one stays while another tab of the card shows, or another page. */
+const drafts = new Map<string, string>();
+
+/** A new comment. Its text stays in this box, so a keystroke redraws only it (GA-190). Comment or Ctrl+Enter posts it;
+ *  once posted the box is empty again. */
+function CommentComposer({ taskId, onPost }: { taskId: string; onPost: (md: string) => Promise<boolean> }) {
+  const [first] = useState(() => drafts.get(taskId) ?? "");
+  const [text, setText] = useState(first);
+  const [round, setRound] = useState(0);
+  const write = (md: string) => { if (md) drafts.set(taskId, md); else drafts.delete(taskId); setText(md); };
+  const post = async (md: string) => {
+    if (!md.trim()) return;
+    if (await onPost(md)) { drafts.delete(taskId); setText(""); setRound((n) => n + 1); }
+  };
+  return (
+    <div className="composer" style={{ marginTop: 14 }}>
+      <MarkdownEditor key={round} value={round ? "" : first} onChange={write} onSave={post} ariaLabel="New comment" minHeight={72} hint={`${modKey()}+Enter posts`}
+        placeholder="Write a comment. @ links a task, project, client or agent." />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+        <button className="btn primary" disabled={!text.trim()} onClick={() => post(text)}>Comment</button>
+      </div>
+    </div>
+  );
+}
+
 /** A card's changes (its files and counts, without their diffs): when the page opens, and again when a run starts or
  *  ends. */
 function useCardChanges(id: string) {
@@ -98,39 +146,54 @@ function useCardChanges(id: string) {
   return { data, error, reload };
 }
 
-/** `view` "changes": the Changes tab (GA-112); `run`: only that run's changes. `youId`: you, the person using this Gizai
- *  (Open in editor shows on a card assigned to you). */
-export function TaskPage({ id, view = "card", run, youId }: { id: string; view?: "card" | "changes"; run?: string; youId?: string }) {
+/** A card's screenshot sets (GA-185): when the page opens, and again when a run ends (they arrive before runs-changed). */
+function useScreenshots(id: string) {
+  const [data, setData] = useState<ScreenshotSet[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let un: (() => void) | undefined, alive = true;
+    const reload = () => listScreenshots(id).then((d) => { if (alive) { setData(d); setError(null); } }).catch((e) => { if (alive) setError(String(e)); });
+    reload();
+    onRunsChanged(() => alive && reload()).then((f) => (alive ? (un = f) : f())).catch(() => {});
+    return () => { alive = false; un?.(); };
+  }, [id]);
+  return { data, error };
+}
+
+/** `view` "changes": the Changes tab (GA-112); `run`: only that run's changes. "screenshots": the Screenshots tab (GA-185);
+ *  `run`: only that run's set. `youId`: you, the person using this Gizai (Open in editor shows on a card assigned to you). */
+export function TaskPage({ id, view = "card", run, youId }: { id: string; view?: "card" | "changes" | "screenshots"; run?: string; youId?: string }) {
   const { data: task, error } = useData(() => getTask(id), [id]);
   const { data: team } = useData(() => getTeam());
-  const { data: people } = useData(() => listUsers());
+  const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: comments } = useData(() => listComments(id), [id]);
   const { data: activity } = useData(() => taskActivity(id), [id]);
   const { data: runs } = useData(() => listRuns(id), [id]);
   const liveRun = useLiveRuns().find((r) => r.taskId === id);
   const live = !!liveRun;
   const [tab, setTab] = useState<"comments" | "activity" | "runs">("comments");
-  const [title, setTitle] = useState("");
-  const [draft, setDraft] = useState("");
-  const [composerKey, setComposerKey] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [props, setPropsState] = useState(() => readPref("gizai-props") !== "closed");
   const setProps = (on: boolean) => { setPropsState(on); writePref("gizai-props", on ? "open" : "closed"); };
-  // On Changes, Properties is closed until ] (or Show properties) brings it back; the Card tab keeps its own choice.
+  // On Changes and Screenshots, Properties is closed until ] (or Show properties) brings it back; the Card tab keeps its own
+  // choice.
   const changes = useCardChanges(id);
+  const shots = useScreenshots(id);
+  const { data: project } = useData(() => (task?.projectId ? getProject(task.projectId) : Promise.resolve(null)), [task?.projectId]);
   const onChanges = view === "changes";
+  const onShots = view === "screenshots";
+  const wide = view !== "card";
   const [propsOnChanges, setPropsOnChanges] = useState(false);
   const viewRef = useRef(view);
   viewRef.current = view;
-  useEffect(() => { if (view === "changes") setPropsOnChanges(false); }, [view, run]);
+  useEffect(() => { if (view !== "card") setPropsOnChanges(false); }, [view, run]);
   const thread = useRef<HTMLDivElement>(null);
   const [readReason, setReadReason] = useState(0);
-  useEffect(() => { if (task) setTitle(task.title); }, [task?.title]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.closest("input, textarea, select, [contenteditable], .cm-editor, [role=dialog]") || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === "]" && viewRef.current === "changes") { e.preventDefault(); setPropsOnChanges((p) => !p); return; }
+      if (e.key === "]" && viewRef.current !== "card") { e.preventDefault(); setPropsOnChanges((p) => !p); return; }
       if (e.key === "]") { e.preventDefault(); setPropsState((p) => { writePref("gizai-props", p ? "closed" : "open"); return !p; }); }
     };
     window.addEventListener("keydown", onKey);
@@ -182,18 +245,19 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
   // A merge moves the card to the team's Deploy column (merged, not deployed yet), else to Done.
   const columns = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
   const mergeTo = (columns.find((s) => s.category === "deploy") ?? columns.find((s) => s.category === "done"))?.name;
-  const saveTitle = () => {
-    if (archived) return;
-    const t = title.trim();
-    if (!t) { setTitle(task.title); return; }
-    if (t !== task.title) updateTask(id, { title: t }).catch(fail);
-  };
-  const showProps = onChanges ? propsOnChanges : props;
-  const openProps = (on: boolean) => (onChanges ? setPropsOnChanges(on) : setProps(on));
+  const showProps = wide ? propsOnChanges : props;
+  const openProps = (on: boolean) => (wide ? setPropsOnChanges(on) : setProps(on));
   const label = tabLabel(changes.data);
+  // Screenshots (GA-185): the tab shows on a card whose project takes them (or whose own switch is on), and on one with sets.
+  const shotsCount = shots.data ? roundCount(shots.data) : null;
+  const shotsTab = onShots || (shots.data?.length ?? 0) > 0 || !!project?.screenshots?.on || task.screenshots === true;
+  const agent = team?.members.find((m) => m.actorId === task.assigneeId && m.kind === "agent") ?? null;
+  // Off for this card: Show properties opens Properties with the focus on its Screenshots switch.
+  const showShotsSwitch = () => { openProps(true); reveal("props-screenshots"); };
+  // View the run: the Card tab's Runs, at that run.
+  const viewRun = (runId: string) => { setTab("runs"); go({ page: "task", id }); reveal(`run-${runId}`); };
   const post = async (md: string) => {
-    if (!md.trim()) return;
-    try { await addComment(id, md); setDraft(""); setComposerKey((k) => k + 1); } catch (e) { fail(e); }
+    try { await addComment(id, md); return true; } catch (e) { fail(e); return false; }
   };
 
   return (
@@ -218,16 +282,25 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
           {!showProps && <button className="btn ghost sm icon-only" aria-label="Show properties" title="Show properties (])" onClick={() => openProps(true)}><PanelRight className="icon" /></button>}
         </div>
       </div>
-      <div className="tabs task-tabs" role="tablist" aria-label="The card and its changes">
-        <a className="tab" role="tab" aria-selected={!onChanges} href={href({ page: "task", id })}><SquareKanban className="icon" />Card</a>
+      <div className="tabs task-tabs" role="tablist" aria-label="The card, its changes and its screenshots">
+        <a className="tab" role="tab" aria-selected={!wide} href={href({ page: "task", id })}><SquareKanban className="icon" />Card</a>
         <a className="tab" role="tab" aria-selected={onChanges} href={href({ page: "task", id, view: "changes" })}
           title={label === null ? undefined : "What this card changed"}>
           <FileDiff className="icon" />Changes
           {label === "none" ? <span className="n">No changes</span> : label && <> <Diffstat add={label.add} del={label.del} /></>}</a>
+        {shotsTab && (
+          <a className="tab" role="tab" aria-selected={onShots} href={href({ page: "task", id, view: "screenshots" })}
+            title={shotsCount === null ? undefined : "What the agents saw of the screens they built"}>
+            <Images className="icon" />Screenshots
+            {shotsCount !== null && <span className="n">{shotsCount > 0 ? shotsCount : "None"}</span>}</a>
+        )}
       </div>
       {err && <div className="error-banner" role="alert">{err}<button className="btn ghost sm" onClick={() => setErr(null)}>Dismiss</button></div>}
       <div className="split">
-        {onChanges ? <ChangesView task={task} card={changes} runId={run} runs={runs} /> : <div className="doc">
+        {onChanges ? <ChangesView task={task} card={changes} runId={run} runs={runs} />
+          : onShots ? <ScreenshotsView task={task} sets={shots.data} error={shots.error} runId={run} project={project} agent={agent}
+            onShowProps={showShotsSwitch} onViewRun={viewRun} />
+          : <div className="doc">
           <div className="doc-in">
             <div className="task-head">
               <StatusIcon category={task.stateCategory} hold={task.hold} /><PriorityIcon priority={task.priority} />
@@ -243,8 +316,7 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
                 <span className="grow">Archived {relTime(task.archivedAt!)}{task.archivedBy ? ` by ${task.archivedBy}` : ""}. It is read-only: Restore puts it back at the bottom of {task.stateName}.</span>
               </div>
             )}
-            <input className="title-input" aria-label="Title" value={title} readOnly={archived} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
-              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") { setTitle(task.title); (e.target as HTMLInputElement).blur(); } }} />
+            <TitleInput title={task.title} readOnly={archived} onSave={(t) => updateTask(id, { title: t }).catch(fail)} />
             <EditableMarkdown label="Description" value={task.descriptionMd} readOnly={archived}
               placeholder="Describe the task. Markdown works: headings, bold, checklists. @ links a task, project, client or agent."
               onSave={(md) => updateTask(id, { descriptionMd: md }).catch(fail)} />
@@ -276,13 +348,7 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
                   </div>
                 ))}
                 {comments && comments.length === 0 && <p className="faint">No comments yet.</p>}
-                {!archived && <div className="composer" style={{ marginTop: 14 }}>
-                  <MarkdownEditor key={composerKey} value="" onChange={setDraft} onSave={post} ariaLabel="New comment" minHeight={72} hint={`${modKey()}+Enter posts`}
-                    placeholder="Write a comment. @ links a task, project, client or agent." />
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                    <button className="btn primary" disabled={!draft.trim()} onClick={() => post(draft)}>Comment</button>
-                  </div>
-                </div>}
+                {!archived && <CommentComposer key={id} taskId={id} onPost={post} />}
               </div>
             )}
             {tab === "activity" && (

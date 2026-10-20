@@ -767,7 +767,37 @@ pub struct ToolsView {
     pub browser: BrowserSection,
     pub builtin: BuiltinSection,
     /// The agent's saved switches (None for a new agent).
-    pub saved: Option<core_mcp::CliTools>,
+    pub saved: Option<SavedCliTools>,
+}
+
+/// The agent's CLI tools as the agent form gets them (`T.CliTools`): its saved switches, and its Take screenshots of what
+/// it built (GA-182), its role's default until set.
+pub use core_mcp::SavedCliTools;
+
+/// What the agent form saves (`T.CliTools`): the CLI's tools, and Take screenshots of what it built; left out, that switch
+/// keeps what was saved.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliToolsInput {
+    #[serde(flatten)]
+    pub tools: core_mcp::CliTools,
+    #[serde(default)]
+    pub screenshots: Option<bool>,
+}
+
+/// The agent's saved CLI tools with its Take screenshots of what it built (`SavedCliTools`), as its Member has them.
+pub fn saved_cli_tools(st: &AppState, agent_id: &str) -> Result<SavedCliTools, String> {
+    gizai_core::team::agent(&st.db, agent_id).map(|m| m.cli_tools).map_err(|e| e.to_string())
+}
+
+/// Saves the agent form's CLI tools (`save_cli_tools`) and its Take screenshots of what it built (GA-182), and returns
+/// them as saved. Only you: no Team Lead tool calls this.
+pub fn save_cli_tools_input(st: &AppState, agent_id: &str, input: CliToolsInput) -> Result<SavedCliTools, String> {
+    save_cli_tools(st, agent_id, input.tools)?;
+    if let Some(on) = input.screenshots {
+        core_mcp::set_agent_screenshots(&st.db, &st.you_id, agent_id, on).map_err(|e| e.to_string())?;
+    }
+    saved_cli_tools(st, agent_id)
 }
 
 fn ago(at: i64) -> String {
@@ -809,7 +839,7 @@ pub fn tools_view(st: &AppState, agent_id: Option<&str>, cli_id: &str) -> Result
     let builtin = BuiltinSection { tools: tool_catalog::merged(kind, reported.as_deref()), source, can_ask: kind == gizai_agents::cli::Kind::ClaudeCode,
                                    slash: tool_catalog::slash_support(kind).map(str::to_string) };
     let saved = match agent_id {
-        Some(a) => Some(core_mcp::agent_cli_tools(&st.db, a).map_err(|e| e.to_string())?),
+        Some(a) => Some(saved_cli_tools(st, a)?),
         None => None,
     };
     Ok(ToolsView { kind: cli.kind, web, browser, builtin, saved })

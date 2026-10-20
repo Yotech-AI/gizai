@@ -438,7 +438,7 @@ async fn an_update_and_a_card_preparation_of_the_same_project_wait_for_each_othe
 
     // a card's preparation waits while the folder is held (as an update holds it)
     let lock = code::folder_lock(&st, &herd);
-    let held = lock.clone().lock_owned().await;
+    let held = lock.clone().write_owned().await;
     let st2 = st.clone();
     let run = tokio::spawn(async move { gizai_lib::runs::run_once(&st2, &task, None, Some(FAKE.into())).await });
     tokio::time::sleep(Duration::from_millis(1500)).await;
@@ -452,7 +452,7 @@ async fn an_update_and_a_card_preparation_of_the_same_project_wait_for_each_othe
     always_fetch(&st);
     code::before_turn(&st, "warm-up").await;
     let thread = chat::create_thread(&st.db, &st.you_id, &lead, "Update").unwrap();
-    let held = lock.clone().lock_owned().await;
+    let held = lock.clone().read_owned().await;
     let r = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE"})).await.unwrap();
     assert_eq!(r["done"], "started", "it answers at once");
     let e = tools::call_in(&st, &lead, Some(&thread), "update_checkout", json!({"project": "KADE"})).await.unwrap_err();

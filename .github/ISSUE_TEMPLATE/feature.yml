@@ -1,0 +1,50 @@
+name: Feature request
+description: An idea for GizAi, or something it could do better.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        The app stays free; the paid plan is hosted services only
+        ([docs/PAID-FEATURES.md](https://github.com/Yotech-AI/gizai/blob/main/docs/PAID-FEATURES.md)).
+        To talk an idea over first, open it in [Ideas in Discussions](https://github.com/Yotech-AI/gizai/discussions/categories/ideas).
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem it solves
+      description: What you want to do, and what gets in the way now.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How GizAi could do it. A sketch or a screenshot is welcome.
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who it helps
+      options:
+        - A freelancer
+        - A team
+        - Both
+  - type: dropdown
+    id: part
+    attributes:
+      label: The part of GizAi
+      options:
+        - Board
+        - Team Lead
+        - CLIs
+        - Testing
+        - Editor and Terminal
+        - Memory
+        - Tools
+        - Inbox
+        - Install and updates
+        - Other
+  - type: textarea
+    id: tried
+    attributes:
+      label: Other ways you tried
+      description: What you do now instead, or other tools you tried for it.

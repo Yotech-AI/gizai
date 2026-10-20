@@ -22,7 +22,9 @@ pub mod pulls;
 mod quit;
 pub mod run_memory;
 pub mod runs;
+pub mod screenshots;
 pub mod shell_path;
+pub mod stream;
 pub mod terminal;
 pub mod tools;
 mod tour;
@@ -46,6 +48,9 @@ pub struct AppState {
     /// Off until `run_memory::start`, which Gizai's start calls: a test's Gizai keeps its processes outside systemd, and
     /// its runs don't wait for memory unless the test fakes a reading (`RunsMemory::fake_reading`).
     pub run_memory: Arc<gizai_agents::run_memory::RunsMemory>,
+    /// Where the runs' temp folders go (GA-210, `worktree::temp_base`): `/var/tmp/gizai-<uid>` on Linux and macOS. A
+    /// test's Gizai keeps them in its own folder (`test_state`).
+    pub temp_base: PathBuf,
     /// Where the MCP server for chat turns listens (see `mcp::socket_path`).
     pub mcp_socket: PathBuf,
     /// The `gizai-mcp` shim Claude Code starts in a chat turn (None: not found next to Gizai).
@@ -71,6 +76,8 @@ pub struct AppState {
     pub tokens: Arc<gizai_agents::oauth::TokenStore>,
     /// Tells the UI what changed (rows, runs, live run events). A no-op in tests.
     pub notify: Arc<dyn Fn(runs::Note) + Send + Sync>,
+    /// Run and chat events waiting for their batch to the window (see `stream`).
+    pub streams: Arc<stream::Streams>,
     /// Shows desktop notifications and says whether the window is out of sight (see `notifications`). Shows nothing
     /// until `run` sets the real one; tests set their own.
     pub desktop: notifications::Desktop,
@@ -93,9 +100,10 @@ pub struct AppInfo {
     pub data_label: Option<String>,
 }
 
+/// Memory only: on the async runtime.
 #[tauri::command]
-fn app_info(st: tauri::State<AppState>) -> AppInfo {
-    AppInfo {
+async fn app_info(st: tauri::State<'_, AppState>) -> Result<AppInfo, String> {
+    Ok(AppInfo {
         version: env!("CARGO_PKG_VERSION").into(),
         data_dir: st.data_dir.display().to_string(),
         selftest: std::env::var("GIZAI_SELFTEST").is_ok(),
@@ -103,19 +111,23 @@ fn app_info(st: tauri::State<AppState>) -> AppInfo {
         start_route: std::env::var("GIZAI_ROUTE").ok().filter(|r| !r.is_empty()),
         selftest_mode: std::env::var("GIZAI_SELFTEST_MODE").ok().filter(|m| !m.is_empty()),
         data_label: data_label(&st.data_dir),
-    }
+    })
 }
 
-/// Writes the UI's self-test report (used by scripts/smoke-cage.sh). No-op unless GIZAI_SELFTEST is set.
+/// Writes the UI's self-test report (used by scripts/smoke-cage.sh). No-op unless GIZAI_SELFTEST is set. The file is
+/// written off the main thread.
 #[tauri::command]
-fn selftest_report(json: String) -> Result<(), String> {
+async fn selftest_report(json: String) -> Result<(), String> {
     match std::env::var("GIZAI_SELFTEST") {
-        Ok(path) => std::fs::write(path, json).map_err(|e| e.to_string()),
+        Ok(path) => tauri::async_runtime::spawn_blocking(move || std::fs::write(path, json)).await.map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string()),
         Err(_) => Ok(()),
     }
 }
 
 /// The page quits Gizai (Settings' Quit Gizai completely, a self-test's end): it has no unsaved text to save first.
+/// On the main thread, in order with `unsaved`'s commands: quitting goes after the page's last word on unsaved text. It
+/// does no database or file work: ending the app happens in `run`'s exit.
 #[tauri::command]
 fn exit_app(app: AppHandle, code: i32) {
     unsaved::settle();
@@ -213,12 +225,21 @@ pub fn backup_data_dir(dir: &std::path::Path, label: &str) -> Result<PathBuf, St
 }
 
 /// Housekeeping (README → Your data): the chat tools' dead tokens, and the run and chat logs in `dir` older than 30 days,
-/// go. When Gizai starts (`open_state`) and once a day while it runs.
+/// go; then old screenshots, as Settings → Agents and runs → Screenshots says, and the blobs no row uses any more
+/// (GA-182). When Gizai starts (`open_state`) and once a day while it runs.
 pub fn housekeeping(db: &Db, dir: &std::path::Path) {
-    match gizai_core::housekeeping::run(db, dir, gizai_core::ids::now_ms()) {
+    let now = gizai_core::ids::now_ms();
+    match gizai_core::housekeeping::run(db, dir, now) {
         Ok(p) if p.logs + p.tokens > 0 => eprintln!("gizai: housekeeping removed {} old logs and {} old tokens", p.logs, p.tokens),
         Ok(_) => {}
         Err(e) => eprintln!("gizai: housekeeping failed: {e}"),
+    }
+    match gizai_core::housekeeping::clear_screenshots(db, dir, now) {
+        Ok(c) if c.sets + c.blobs > 0 => {
+            eprintln!("gizai: housekeeping removed {} old screenshot sets ({} screenshots) and {} unused files", c.sets, c.screenshots, c.blobs)
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("gizai: clearing old screenshots failed: {e}"),
     }
 }
 
@@ -230,11 +251,15 @@ pub fn open_state(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>) -
     open_data(dir, notify, true)
 }
 
-/// `open_state`, with or without the default agents on a first start.
+/// `open_state`, with or without the default agents on a first start. The log says once how long each part took
+/// (GA-191), so a slow start says where its time went.
 fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, default_agents: bool) -> Result<AppState, String> {
+    let mut timed = Timed::start();
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let lock = lock_data_dir(&dir)?;
+    timed.part("the lock");
     let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
+    timed.part("the database");
     let seed = if default_agents {
         gizai_core::seed::ensure_seed_with_agents(&db, &display_name(), clis::codex_at_first_start)
     } else {
@@ -256,12 +281,24 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     if let Err(e) = gizai_core::memory::ensure_agent_folders(&db) {
         eprintln!("gizai: making the agents' memory folders failed: {e}");
     }
+    timed.part("the seed");
+    // GA-211: first, whatever a previous Gizai (one that crashed, or was killed) left running in this data folder's slice
+    // for agent runs ends: its runs' CLIs and what they started, a browser started detached too. Linux with the slice; a
+    // Gizai with another data folder has another slice, which this never touches.
+    run_memory::end_leftovers_at_start(&dir);
     // Runs a previous Gizai left running: end their claude process groups (only when /proc proves they are
     // ours), save where a card's run ended (a chat answer has no worktree of its own), then mark them interrupted
     // and release their cards.
     for r in gizai_core::runs::active(&db).unwrap_or_default() {
         if let (Some(pid), Some(wt)) = (r.pid, r.worktree_path.as_deref()) {
             gizai_agents::process::end_orphan_group(pid as u32, std::path::Path::new(wt));
+        }
+        // and its preview (GA-182), which works in the same worktree, or a folder inside it (`cd web && …`), in a
+        // process group of its own
+        if let (Some(wt), Ok(Some(note))) = (r.worktree_path.as_deref(), gizai_core::screenshots::run_note(&db, &r.id))
+            && let Some(pid) = note.preview_pid
+        {
+            gizai_agents::process::end_orphan_group_within(pid, std::path::Path::new(wt));
         }
         if let (Some(_), Some(wt)) = (&r.task_id, r.worktree_path.as_deref()) {
             runs::record_head(&db, &r.id, std::path::Path::new(wt));
@@ -275,21 +312,53 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     // Messages queued in a chat wait for Send now: the answer they waited for is gone.
     let _ = gizai_core::chat::hold_all_queues(&db);
     chat::remove_stray_configs(&dir);
+    timed.part("the recovery");
     housekeeping(&db, &dir);
+    timed.part("the housekeeping");
     let mcp_socket = mcp::socket_path(&dir);
     let keychain = gizai_agents::secrets::from_env();
     let tokens = Arc::new(gizai_agents::oauth::TokenStore::new(keychain.clone()));
     let st = AppState { keychain, tokens, db: Arc::new(db), you_id: seed.you_id, data_dir: dir, runs: Arc::new(runs::RunManager::default()),
-                  run_memory: Arc::new(Default::default()), mcp_socket,
+                  run_memory: Arc::new(Default::default()), temp_base: gizai_agents::worktree::temp_base(), mcp_socket,
                   mcp_shim: mcp::shim_bin(), chat: Arc::new(chat::ChatManager::default()), code: Arc::new(code::Copies::default()), pulls: Arc::new(pulls::PullChecks::default()),
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
                   desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()),
-                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()) };
+                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()), streams: Arc::new(stream::Streams::default()) };
     // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
     // failed, so it never runs twice, and its chat says so.
     pending::at_start(&st);
+    timed.part("the calls that wait for approval");
+    eprintln!("gizai: {}", timed.said());
     Ok(st)
+}
+
+/// The parts of the start and how long each took (GA-191, `open_data`).
+struct Timed {
+    at: std::time::Instant,
+    began: std::time::Instant,
+    parts: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl Timed {
+    fn start() -> Timed {
+        let now = std::time::Instant::now();
+        Timed { at: now, began: now, parts: vec![] }
+    }
+
+    /// The part `what` ended now.
+    fn part(&mut self, what: &'static str) {
+        let now = std::time::Instant::now();
+        self.parts.push((what, now - self.at));
+        self.at = now;
+    }
+
+    /// "the start took 182 ms: the lock 0 ms, the database 41 ms, …".
+    fn said(&self) -> String {
+        let ms = |d: std::time::Duration| d.as_millis();
+        let parts: Vec<String> = self.parts.iter().map(|(what, d)| format!("{what} {} ms", ms(*d))).collect();
+        format!("the start took {} ms: {}", ms(self.at - self.began), parts.join(", "))
+    }
 }
 
 fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
@@ -303,11 +372,15 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
         let _ = match note {
             runs::Note::RowsChanged(table) => app.emit("rows-changed", serde_json::json!({ "table": table })),
             runs::Note::RunsChanged => app.emit("runs-changed", ()),
-            runs::Note::Event { run_id, seq, event } => app.emit("run-event", serde_json::json!({ "runId": run_id, "seq": seq, "event": event })),
-            runs::Note::Chat { thread_id, event } => {
-                let mut v = serde_json::to_value(&event).unwrap_or_default();
-                v["threadId"] = serde_json::Value::String(thread_id);
-                app.emit("chat-event", v)
+            runs::Note::RunEvents { run_id, events } => app.emit("run-events", serde_json::json!({ "runId": run_id, "events": events })),
+            // each event names its chat too, as the page's ChatEvent has it
+            runs::Note::ChatEvents { thread_id, events } => {
+                let events: Vec<serde_json::Value> = events.iter().map(|event| {
+                    let mut v = serde_json::to_value(event).unwrap_or_default();
+                    v["threadId"] = serde_json::Value::String(thread_id.clone());
+                    v
+                }).collect();
+                app.emit("chat-events", serde_json::json!({ "threadId": thread_id, "events": events }))
             }
             runs::Note::ChatChanged => app.emit("chat-changed", ()),
             runs::Note::UpdateChanged => app.emit("update-changed", ()),
@@ -398,6 +471,8 @@ fn appindicator_found() -> bool {
 #[doc(hidden)]
 pub fn test_state(dir: &std::path::Path) -> AppState {
     let mut st = open_data(dir.join("data"), Arc::new(|_| {}), false).expect("test state");
+    // Tests keep their runs' temp folders in their own folder too, never in /var/tmp.
+    st.temp_base = dir.join("run-temp");
     // Tests keep their socket in their own folder, never in the real runtime dir.
     #[cfg(unix)]
     {
@@ -479,6 +554,14 @@ pub fn run() {
             app.exit(0);
         }
     });
+    // The benchmark harness (GA-188, scripts/perf.sh): in a perf run (GIZAI_SELFTEST_MODE=perf:…) the page counts its
+    // backend calls from the first one (src/lib/perf.ts). The init script runs before any of the page's own scripts.
+    let perf_run = std::env::var("GIZAI_SELFTEST_MODE").is_ok_and(|m| m.starts_with("perf:"));
+    let builder = if perf_run {
+        builder.plugin(tauri::plugin::Builder::<_, ()>::new("gizai-perf").js_init_script("window.__GIZAI_PERF__ = true;").build())
+    } else {
+        builder
+    };
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -535,7 +618,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move { code::startup(&st).await });
             }
             // The pull request check: at start and every two minutes, cards in Review (and open pull requests) hear
-            // what happened on GitHub; a merge moves its card to Done.
+            // what happened on GitHub (asked when git shows something moved); a merge moves its card on.
             {
                 let st = state.clone();
                 tauri::async_runtime::spawn(async move {
@@ -580,12 +663,14 @@ pub fn run() {
                 });
             }
             // Once a minute the agents take cards that had to wait (the run limit was full, Gizai just started), and the
-            // Team Lead checks the board when its interval has passed; only new findings start it.
+            // Team Lead checks the board when its interval has passed; only new findings start it. The cards start on
+            // their own (GA-191): the board check doesn't wait for a card's fetch and install.
             tauri::async_runtime::spawn(async move {
                 let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     tick.tick().await;
-                    let _ = runs::pull(&state).await;
+                    let st = state.clone();
+                    tauri::async_runtime::spawn(async move { runs::pull(&st).await; });
                     let _ = board::tick(&state, gizai_core::ids::now_ms()).await;
                 }
             });
@@ -625,6 +710,7 @@ pub fn run() {
             commands::pending_actions, commands::approve_pending_action, commands::approve_pending_actions, commands::discard_pending_action,
             commands::open_pull_request, commands::check_pull_request, commands::detect_gh,
             changes::card_changes, changes::card_file_diff, changes::run_changes,
+            screenshots::list_screenshots, screenshots::screenshot_bytes,
             commands::github_status, commands::github_check, commands::github_login, commands::github_login_wait, commands::github_login_cancel,
             commands::bitbucket_status, commands::bitbucket_save_login, commands::bitbucket_remove_login, commands::bitbucket_check,
             commands::list_old_worktrees, commands::remove_old_worktrees, commands::remove_old_worktree_anyway,
@@ -672,9 +758,11 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 quit::end_web_content(app);
-                // agents still at work and every terminal end now, at the same time, so none outlives Gizai
+                // agents still at work and every terminal end now, at the same time, so none outlives Gizai; then what is
+                // still in the agent runs' slice (GA-211)
                 let terminals = quit::end_terminals(app.state::<AppState>().inner());
                 quit::end_agents(app.state::<AppState>().inner());
+                quit::end_slice(app.state::<AppState>().inner());
                 let _ = terminals.join();
                 mcp::remove_socket(app.state::<AppState>().inner());
                 // an update that is building stops (its source and build so far are kept for the next one)

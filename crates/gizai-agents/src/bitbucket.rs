@@ -136,7 +136,9 @@ fn pull(v: &Value) -> Option<PullRequest> {
         _ => ("OPEN", draft),
     };
     let head = v.pointer("/source/commit/hash").and_then(Value::as_str).unwrap_or_default().to_string();
-    Some(PullRequest { number, url, state: state.into(), is_draft, head_ref_oid: head, commits: vec![], merge_commit: merge_commit_of(v) })
+    let branch = v.pointer("/source/branch/name").and_then(Value::as_str).unwrap_or_default().to_string();
+    Some(PullRequest { number, url, state: state.into(), is_draft, head_ref_name: branch, head_ref_oid: head, commits: vec![],
+                       merge_commit: merge_commit_of(v) })
 }
 
 /// The commit that merged a pull request (`merge_commit.hash`, often a short hash), once merged.

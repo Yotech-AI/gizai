@@ -113,6 +113,25 @@ pub struct Project {
     /// are green. Off by default; only a person sets it, in the app.
     #[serde(default)]
     pub lead_may_merge: bool,
+    /// Screenshots (GA-182, project form → Preview): on or off for the project, the sizes, both themes, whole page.
+    #[serde(default)]
+    pub screenshots: crate::screenshots::ProjectScreenshots,
+    /// The Preview command Gizai runs with bash -c in a card's worktree before an agent that takes screenshots starts, on
+    /// a port it picked (GIZAI_PREVIEW_PORT); None: no preview, so no screenshots.
+    #[serde(default)]
+    pub preview_command: Option<String>,
+    /// Start time: how long Gizai waits for the preview's port to answer before the agent starts anyway, in seconds.
+    #[serde(default = "default_start_secs")]
+    pub preview_start_secs: u32,
+    /// Test runs at once (GA-212): how many of the project's cards may be in a test run (a run on a card in a column of
+    /// kind testing) at the same time, 1 to 20. None: no limit of its own, only "Runs at once" and the agents' cards at
+    /// once (`workflow::test_runs_full`).
+    #[serde(default)]
+    pub test_runs_at_once: Option<u32>,
+}
+
+fn default_start_secs() -> u32 {
+    crate::screenshots::DEFAULT_START_SECS
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -136,9 +155,18 @@ pub struct ProjectInput {
     pub worktree_install: Option<bool>,
     /// The command a new worktree runs after the install ("" removes it); None keeps it.
     pub worktree_setup: Option<String>,
+    /// Test runs at once (GA-212), 1 to 20; 0 removes it (no limit of its own); None keeps it (none for a new project).
+    pub test_runs_at_once: Option<i64>,
     /// Team Lead may merge; None keeps it (off for a new project). Only a person may give it (`projects::create`/`update`
     /// refuse it from an agent).
     pub lead_may_merge: Option<bool>,
+    /// The project's screenshots (GA-182); None keeps them (the defaults for a new project).
+    pub screenshots: Option<crate::screenshots::ProjectScreenshots>,
+    /// The Preview command ("" removes it); None keeps it (none for a new project). Only a person sets it, as the setup
+    /// command: `projects::create`/`update` refuse it from an agent.
+    pub preview_command: Option<String>,
+    /// Start time in seconds, 10 to 600; None keeps it (120 for a new project).
+    pub preview_start_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -198,6 +226,10 @@ pub struct Task {
     /// GA-111: pinned to a person, who does it by hand (`workflow::start_by_hand`): agents leave it alone.
     #[serde(default)]
     pub by_hand: bool,
+    /// Screenshots before Review (GA-182, the card's Properties): None follows the project's Screenshots switch; Some is
+    /// the card's own.
+    #[serde(default)]
+    pub screenshots: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -231,6 +263,15 @@ pub struct TaskPatch {
     /// The Testing switch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub testing: Option<bool>,
+    /// Screenshots before Review (GA-182): left out keeps it; null goes back to the project's switch; true or false is the
+    /// card's own.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "set_or_null")]
+    pub screenshots: Option<Option<bool>>,
+}
+
+/// A patch's field that can be cleared: left out is None (keep it), null is Some(None), a value Some(Some(value)).
+fn set_or_null<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(d).map(Some)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

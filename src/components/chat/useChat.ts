@@ -2,6 +2,7 @@
 // queued while it answers, and the Team Lead's calls that wait for your approval (GA-102).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chatLive, chatMessages, chatQueue, onChatChanged, onChatEvent, onRowsChanged, pendingActions } from "../../api";
+import { whenShown } from "../../lib/windowFocus";
 import { applyDraft, withSnapshot, type DraftChange, type LiveDraft } from "../../lib/chat";
 import type { ChatMessage, ChatStatus, PendingAction, QueuedMessage } from "../../types";
 
@@ -13,8 +14,10 @@ export function useChatLive(): ChatStatus[] {
     let un: (() => void) | undefined;
     const load = () => { chatLive().then((l) => { if (alive) setLive(l); }).catch(() => {}); };
     load();
-    onChatChanged(load).then((f) => (alive ? (un = f) : f())).catch(() => {});
-    return () => { alive = false; un?.(); };
+    // while the window is hidden, once when it shows again (GA-190)
+    const later = whenShown(load);
+    onChatChanged(later.run).then((f) => (alive ? (un = f) : f())).catch(() => {});
+    return () => { alive = false; un?.(); later.stop(); };
   }, []);
   return live;
 }
@@ -89,10 +92,12 @@ export function useChat(threadId: string | null) {
         if (e.message.role === "user") setWorking(true);
       }
     }).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
-    onChatChanged(reload).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
+    // while the window is hidden, these reloads wait until it shows again (GA-190)
+    const again = whenShown(reload), pendingAgain = whenShown(reloadPending);
+    onChatChanged(again.run).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
     // A call was kept for you, approved or discarded (in this chat or another).
-    onRowsChanged((table) => { if (table === "pending_actions") reloadPending(); }).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
-    return () => { alive = false; uns.forEach((u) => u()); };
+    onRowsChanged((table) => { if (table === "pending_actions") pendingAgain.run(); }).then((f) => (alive ? uns.push(f) : f())).catch(() => {});
+    return () => { alive = false; uns.forEach((u) => u()); again.stop(); pendingAgain.stop(); };
   }, [reload, reloadPending]);
 
   return { messages, draft: live.text, tool, working, queue, pending, error, setWorking, reload };

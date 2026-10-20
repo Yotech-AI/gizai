@@ -44,7 +44,7 @@ const tab = (html: string, name: "Card" | "Changes") => html.match(new RegExp(`<
 describe("Card | Changes on a card's page", () => {
   it("on Card: Card is selected, the card shows with Properties, and Changes links to #/task/<id>/changes", () => {
     const html = renderToStaticMarkup(<TaskPage id="t1" />);
-    expect(html).toContain('<div class="tabs task-tabs" role="tablist" aria-label="The card and its changes">');
+    expect(html).toContain('<div class="tabs task-tabs" role="tablist" aria-label="The card, its changes and its screenshots">');
     expect(tab(html, "Card")).toContain('aria-selected="true" href="#/task/t1"');
     expect(tab(html, "Changes")).toContain('aria-selected="false" href="#/task/t1/changes"');
     expect(html).toContain('<div class="doc">');

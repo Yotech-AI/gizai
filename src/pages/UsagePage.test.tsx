@@ -272,7 +272,9 @@ describe("the Usage page's Subscription tab (GA-62)", () => {
 describe("the Projects list", () => {
   const project = (o: Partial<Project>): Project => ({
     id: "p", number: "P-1", key: "KADE", name: "Kade portal", status: "active", defaultBranch: "main", openTasks: 1, doneTasks: 1, updatedAt: 0,
-    aiCostUsdMicros: 0, aiUnknownCostRuns: 0, worktreeCopy: [], worktreeInstall: false, ...o,
+    aiCostUsdMicros: 0, aiUnknownCostRuns: 0, worktreeCopy: [], worktreeInstall: false,
+    screenshots: { on: true, sizes: [{ name: "Desktop", width: 1280, height: 800 }, { name: "Mobile", width: 390, height: 844 }], bothThemes: false,
+    fullPage: false }, previewCommand: null, previewStartSecs: 120, ...o,
   });
 
   it("has a sortable AI usage column that says what the cost is", () => {

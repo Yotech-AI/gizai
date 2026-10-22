@@ -113,14 +113,14 @@ pub fn paste_command(selftest: bool, command: Option<&str>) -> Result<Option<&'s
 /// `clipboard`, when given, on the clipboard (on the primary selection for PasteGlobalSelection), then makes the main
 /// window's web view paste into the field that has the focus, with WebKit's editing `command`: "Paste" the way Ctrl+V,
 /// Shift+Insert and the right-click menu's Paste do, or "PasteGlobalSelection" the way middle-click does. Returns
-/// `guarded()` as it is before this paste: WebKit pastes after this returns. With neither, it only returns that count.
-/// Refused outside a self-test run.
+/// `guarded()` as it is before this paste: the paste happens a moment after this returns. With neither, it only returns
+/// that count. Refused outside a self-test run.
 #[tauri::command]
-pub fn selftest_paste(app: AppHandle, command: Option<String>, clipboard: Option<String>) -> Result<u64, String> {
+pub async fn selftest_paste(app: AppHandle, command: Option<String>, clipboard: Option<String>) -> Result<u64, String> {
     let command = paste_command(selftest_run(), command.as_deref())?;
     if command.is_some() || clipboard.is_some() {
         let window = app.get_webview_window("main").ok_or("no main window")?;
-        // A command without async runs on the main thread, so this runs at once, not later (as in quit::end_web_content).
+        // GTK's clipboard and the web view belong to the main thread: it runs this, after this command has returned.
         window
             .with_webview(move |wv| {
                 use webkit2gtk::WebViewExt;

@@ -17,6 +17,9 @@ pub mod mcp_servers;
 pub mod memory;
 pub mod notifications;
 pub mod onboarding;
+// Keeps WebKitGTK 2.54.1 from crashing Gizai on a paste with an empty clipboard (GA-222).
+#[cfg(target_os = "linux")]
+pub mod paste_guard;
 pub mod pending;
 pub mod pulls;
 mod quit;
@@ -678,6 +681,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, tour::tour_still, tour::tour_steps, exit_app, unsaved::set_unsaved_edits, unsaved::close_answer,
+            #[cfg(target_os = "linux")] paste_guard::selftest_paste,
             commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
             commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
             commands::agent_mcp, commands::save_agent_mcp, commands::agent_cli_tools, commands::save_agent_cli_tools, commands::ask_cli_tools,

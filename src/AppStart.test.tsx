@@ -44,7 +44,7 @@ const fakeSelftest = () => {
     return { ok: true, moved: true, saved: true, editor_closed: true };
   };
   return Object.fromEntries(["runSteps", "appearanceProbe", "changesProbe", "chatArchiveProbe", "chatProbe", "closeSaveProbe", "docProbe", "dragProbe",
-    "editorProbe", "memoryEmptyProbe", "memoryProbe", "runProbe", "screenshotsProbe", "teamProbe", "terminalProbe", "usageProbe"].map((n) => [n, probe(n)]));
+    "editorProbe", "memoryEmptyProbe", "memoryProbe", "pasteProbe", "runProbe", "screenshotsProbe", "teamProbe", "terminalProbe", "usageProbe"].map((n) => [n, probe(n)]));
 };
 vi.mock("./lib/appearance", () => ({ appearanceOf: (spec: string) => ({ spec }), setAppearance: (a: unknown) => { h.log.push(`setAppearance ${JSON.stringify(a)}`); }, toggleDensity: () => {}, toggleTheme: () => {} }));
 vi.mock("./lib/terminals", () => ({ startTerminals: () => { h.log.push("startTerminals"); } }));
@@ -201,6 +201,7 @@ describe("a test run", () => {
     ["task/t1", "changes-b:t1 t2", 'changesProbe ["b",["t1","t2"]]'],
     ["task/t1/screenshots", "screenshots:t1 r1 r2", 'screenshotsProbe [["t1","r1","r2"]]'],
     ["terminal", "terminal:KADE-1", 'terminalProbe ["KADE-1"]'],
+    ["projects", "paste", "pasteProbe []"],
   ])("GIZAI_SELFTEST on %s with mode '%s' loads the self-test before its probe (%s) and reports", async (route, mode, probe) => {
     await start({ selftest: true, start_route: route, selftest_mode: mode || null }, "", ended);
     expect(fakeWindow.location.hash).toBe(`#/${route}`);

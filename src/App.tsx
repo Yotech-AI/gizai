@@ -102,7 +102,7 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
             await exitApp(0);
             return;
           }
-          const { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, runProbe, screenshotsProbe, teamProbe, terminalProbe, usageProbe } = await import("./selftest");
+          const { appearanceProbe, changesProbe, chatArchiveProbe, chatProbe, closeSaveProbe, docProbe, dragProbe, editorProbe, memoryEmptyProbe, memoryProbe, pasteProbe, runProbe, screenshotsProbe, teamProbe, terminalProbe, usageProbe } = await import("./selftest");
           // GA-122: GIZAI_SELFTEST_MODE=close-save:<step> on route doc/<id> or memory/<id> (scripts/close-save-test.sh): the
           // probe types in the editor and reports; the script quits Gizai from outside, so the page doesn't.
           if (i.selftest_mode?.startsWith("close-save:")) {
@@ -194,7 +194,13 @@ export default function App({ onboarding = false }: { onboarding?: boolean }) {
             terminal = await terminalProbe(i.selftest_mode.slice(9));
             if (!terminal.ok) errors.push(`terminal probe: ${JSON.stringify(terminal)}`);
           }
-          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes, screenshots, terminal });
+          // GA-222 (Linux): GIZAI_SELFTEST_MODE=paste on route projects: the paste guard's step (see pasteProbe)
+          let paste: Awaited<ReturnType<typeof pasteProbe>> | undefined;
+          if (i.selftest_mode === "paste") {
+            paste = await pasteProbe();
+            if (!paste.ok) errors.push(`paste probe: ${JSON.stringify(paste)}`);
+          }
+          await selftestReport({ ready: true, errors, version: i.version, columns: team?.states.length, clients: clients?.length, projects: projects?.length, tasks: tasks?.length, drag, editor, doc, team: teamUi, run, chat, usage, chats, appearance, memory, changes, screenshots, terminal, paste });
           await exitApp(0);
         }
       })

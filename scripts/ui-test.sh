@@ -128,6 +128,11 @@
 #     (C) side by side and with the slider, Unchanged and New, Open; Esc closes it and the focus goes back to the picture.
 #     Leaving the tab frees every blob: URL; the board's sign (only on GFW-2 in Review: 6) and the Inbox row's
 #     "6 screenshots" open the tab.
+# 21. paste guard (GA-222, Linux), in a cage of its own, whose clipboard and primary selection start empty: in the agent
+#     form's folder field (Team → Add agent → Add folder) WebKit pastes the way Ctrl+V does ("Paste") and middle-click does
+#     ("PasteGlobalSelection"); Gizai still answers after each; with nothing copied the field is unchanged, with or without
+#     text selected, and the guard's count (selftest_paste) rises; with "GA-222 text" on the clipboard the same paste puts
+#     exactly that in the field.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -248,4 +253,7 @@ fresh
 # GA-185: GFW-2's screenshot sets; prep_screenshots prints its id and its six runs', which the probe gets
 SHOTS=$(source scripts/env.sh && cargo run -q -p gizai-core --example prep_screenshots -- .devdata/uitest)
 DATA=$PWD/.devdata/uitest ROUTE="task/${SHOTS%% *}/screenshots" MODE="screenshots:$SHOTS" TIMEOUT=60 scripts/smoke-cage.sh || fail=1
+fresh
+# GA-222: a fresh cage has an empty clipboard and primary selection (Linux only: the guard is WebKitGTK's)
+DATA=$PWD/.devdata/uitest ROUTE=projects MODE=paste scripts/smoke-cage.sh || fail=1
 exit $fail

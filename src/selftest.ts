@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Terminal } from "@xterm/xterm";
-import { appInfo, archiveTask, chatMessages, editorFolders, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, setAgentStatus, terminalClose, terminalInput, terminalList, terminalOpen } from "./api";
+import { appInfo, archiveTask, chatMessages, editorFolders, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, selftestPaste, setAgentStatus, terminalClose, terminalInput, terminalList, terminalOpen } from "./api";
 import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
@@ -4585,4 +4585,58 @@ export async function perfProbe(spec: string): Promise<PerfResult> {
   o.numbers.run_s = Math.round(performance.now() / 100) / 10;
   o.ok = o.errors.length === 0;
   return o;
+}
+
+/** GA-222 (Linux): the paste guard's step (scripts/ui-test.sh, in a cage of its own, whose clipboard and primary selection
+ *  start empty), in the agent form's folder field, where Jefsev's paste crashed Gizai. WebKit pastes through the backend
+ *  (selftest_paste) the way Ctrl+V does ("Paste") and middle-click does ("PasteGlobalSelection"); after each paste Gizai
+ *  still answers (appInfo) and the field holds what it should. With nothing copied the field is unchanged, with or
+ *  without text selected, and the guard's count rises; with a text on the clipboard the paste puts exactly that text in.
+ *  The middle-click paste goes before anything is selected: a selection fills the primary selection. */
+export async function pasteProbe() {
+  const steps: Record<string, unknown>[] = [];
+  await goTo("#/team", ".topbar .actions");
+  buttonByText(document, "Add agent")?.click();
+  (await waitFor(() => buttonByText(q(".drawer") ?? document.createDocumentFragment(), "Add folder"), 6000))?.click();
+  const field = await waitFor(() => q<HTMLInputElement>('.drawer input[aria-label="Folder 1"]'), 4000);
+  if (!field) return { ok: false, error: "no folder field in the agent form", steps };
+  const answers = async () => { try { return !!(await appInfo()).version; } catch { return false; } };
+  const paste = async (name: string, command: "Paste" | "PasteGlobalSelection", o: { value: string; select?: boolean; clipboard?: string; want: string; guarded: boolean }) => {
+    typeInto(field, o.value);
+    await sleep(150);
+    field.focus();
+    if (o.select) field.setSelectionRange(0, field.value.length); else field.setSelectionRange(field.value.length, field.value.length);
+    const step: Record<string, unknown> = { name, command, focused: document.activeElement === field, selected: field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0) };
+    try {
+      const before = await selftestPaste(command, o.clipboard);
+      let count = before;
+      // the paste happens a moment after the command returns: the count rises, or the text lands
+      const landed = await until(async () => {
+        count = await selftestPaste(null);
+        return o.guarded ? count > before : field.value === o.want;
+      }, 50);
+      await sleep(300); // anything the paste does after that, it does by now
+      count = await selftestPaste(null);
+      Object.assign(step, { before, after: count, landed, rose: count > before });
+    } catch (e) {
+      step.error = String(e);
+    }
+    Object.assign(step, { value: field.value, answers: await answers() });
+    step.ok = !step.error && step.focused === true && step.answers === true && step.value === o.want && step.rose === o.guarded
+      && (!o.select || step.selected === o.value);
+    steps.push(step);
+  };
+  await paste("empty clipboard", "Paste", { value: "", want: "", guarded: true });
+  await paste("empty primary selection", "PasteGlobalSelection", { value: "", want: "", guarded: true });
+  await paste("empty clipboard, text in the field", "Paste", { value: "keep me", want: "keep me", guarded: true });
+  // control: text selected and no paste, so what the next step finds is the paste's doing
+  typeInto(field, "keep me");
+  await sleep(150);
+  field.focus();
+  field.setSelectionRange(0, field.value.length);
+  await sleep(800);
+  steps.push({ name: "text selected, no paste", value: field.value, ok: field.value === "keep me" });
+  await paste("empty clipboard, text selected", "Paste", { value: "keep me", select: true, want: "keep me", guarded: true });
+  await paste("a text on the clipboard", "Paste", { value: "", clipboard: "GA-222 text", want: "GA-222 text", guarded: false });
+  return { ok: steps.length === 6 && steps.every((s) => s.ok), steps };
 }

@@ -4590,9 +4590,10 @@ export async function perfProbe(spec: string): Promise<PerfResult> {
 /** GA-222 (Linux): the paste guard's step (scripts/ui-test.sh, in a cage of its own, whose clipboard and primary selection
  *  start empty), in the agent form's folder field, where Jefsev's paste crashed Gizai. WebKit pastes through the backend
  *  (selftest_paste) the way Ctrl+V does ("Paste") and middle-click does ("PasteGlobalSelection"); after each paste Gizai
- *  still answers (appInfo) and the field holds what it should. With nothing copied the field is unchanged, with or
- *  without text selected, and the guard's count rises; with a text on the clipboard the paste puts exactly that text in.
- *  The middle-click paste goes before anything is selected: a selection fills the primary selection. */
+ *  still answers (appInfo) and the field holds what it should. With nothing copied the guard's count rises and the
+ *  field is unchanged; text selected in it is replaced by nothing, WebKit's own paste of an empty clipboard, as before
+ *  2.54.1 (the guard only turns GTK's count of -1 into 0). With a text on the clipboard the paste puts exactly that text
+ *  in. The middle-click paste goes before anything is selected: a selection fills the primary selection. */
 export async function pasteProbe() {
   const steps: Record<string, unknown>[] = [];
   await goTo("#/team", ".topbar .actions");
@@ -4629,14 +4630,15 @@ export async function pasteProbe() {
   await paste("empty clipboard", "Paste", { value: "", want: "", guarded: true });
   await paste("empty primary selection", "PasteGlobalSelection", { value: "", want: "", guarded: true });
   await paste("empty clipboard, text in the field", "Paste", { value: "keep me", want: "keep me", guarded: true });
-  // control: text selected and no paste, so what the next step finds is the paste's doing
+  // control: text selected and no paste, so what the next step finds is the paste's doing (GA-222's criterion 4, as
+  // changed: the selected text goes, as WebKit did before 2.54.1; keeping it would change how pasting works)
   typeInto(field, "keep me");
   await sleep(150);
   field.focus();
   field.setSelectionRange(0, field.value.length);
   await sleep(800);
   steps.push({ name: "text selected, no paste", value: field.value, ok: field.value === "keep me" });
-  await paste("empty clipboard, text selected", "Paste", { value: "keep me", select: true, want: "keep me", guarded: true });
+  await paste("empty clipboard, text selected", "Paste", { value: "keep me", select: true, want: "", guarded: true });
   await paste("a text on the clipboard", "Paste", { value: "", clipboard: "GA-222 text", want: "GA-222 text", guarded: false });
   return { ok: steps.length === 6 && steps.every((s) => s.ok), steps };
 }

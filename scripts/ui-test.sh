@@ -130,9 +130,9 @@
 #     "6 screenshots" open the tab.
 # 21. paste guard (GA-222, Linux), in a cage of its own, whose clipboard and primary selection start empty: in the agent
 #     form's folder field (Team → Add agent → Add folder) WebKit pastes the way Ctrl+V does ("Paste") and middle-click does
-#     ("PasteGlobalSelection"); Gizai still answers after each; with nothing copied the field is unchanged, with or without
-#     text selected, and the guard's count (selftest_paste) rises; with "GA-222 text" on the clipboard the same paste puts
-#     exactly that in the field.
+#     ("PasteGlobalSelection"); Gizai still answers after each; with nothing copied the guard's count (selftest_paste) rises
+#     and the field is unchanged, but text selected in it is replaced by nothing (WebKit's own paste of an empty clipboard,
+#     as before 2.54.1); with "GA-222 text" on the clipboard the same paste puts exactly that in the field.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail

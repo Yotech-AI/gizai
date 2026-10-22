@@ -42,6 +42,7 @@ mod notifications_test;
 mod nudge_flow_test;
 mod onboarding_flow_test;
 mod own_push_test;
+mod paste_guard_test;
 mod pending_actions_test;
 mod pr_check_rounds_test;
 mod pull_flow_test;

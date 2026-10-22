@@ -17,6 +17,13 @@ export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
 // GA-148, the product tour (scripts/tour-capture.sh): a still of the screen, and the steps with what they clicked
 export const tourStill = (name: string) => invoke<void>("tour_still", { name });
 export const tourSteps = (json: unknown) => invoke<void>("tour_steps", { json: JSON.stringify(json) });
+/** GA-222, Linux: the paste guard's self-test step (scripts/ui-test.sh). Puts `clipboard` on the clipboard when given (the
+ *  primary selection for PasteGlobalSelection), then makes WebKit paste into the field with the focus, as Ctrl+V ("Paste")
+ *  or middle-click ("PasteGlobalSelection") does. Resolves with how often the guard turned an empty clipboard's count of
+ *  -1 into 0 before this paste, which WebKit does afterwards; with neither it only gives that count. Refused outside a
+ *  self-test run; macOS and Windows have no such command. */
+export const selftestPaste = (command: "Paste" | "PasteGlobalSelection" | null, clipboard?: string) =>
+  invoke<number>("selftest_paste", { command, clipboard: clipboard ?? null });
 
 // The first start's onboarding (GA-162, GA-164): it waits on a new install until it is finished or skipped.
 export const onboardingPending = () => invoke<boolean>("onboarding_pending");

@@ -1,7 +1,11 @@
-# Installs Gizai from source on macOS (install.sh) and Windows (install.ps1) into a scratch folder, the way Gizai's own
-# update does: build only, then install, then install again over it (which replaces the programs). Then it uninstalls.
+# Installs Gizai the way people do, into a scratch folder, on Linux (Ubuntu 24.04 itself, and Fedora, Arch Linux and
+# openSUSE Tumbleweed in containers), macOS (Apple silicon) and Windows. The first install is the one line at the pull
+# request's own commit, with a full build: scripts/get.sh piped into sh, or scripts/get.ps1 from memory in Windows
+# PowerShell 5.1. Then, over it, what Gizai's own update does: build only, then install. Then the checks, and the one
+# line's uninstall. On Linux the system packages come from the line install.sh --check prints for that system, so each
+# distribution's line is tried too.
 # A release build takes a while, so it runs only on pull requests that change an installer, and by hand. A pull request
-# into main that only bumps Gizai's version passes without building or installing (the "Version only?" step).
+# into main that only bumps Gizai's version passes without building or installing (the "Version only?" job).
 # It signs, releases and uploads nothing.
 name: Install
 
@@ -10,6 +14,8 @@ on:
     paths:
       - install.sh
       - install.ps1
+      - scripts/get.sh
+      - scripts/get.ps1
       - src-tauri/tauri.conf.json
       - .github/workflows/install.yml
   workflow_dispatch:
@@ -22,77 +28,248 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  install:
-    name: install on ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+  # The version bump's pull request into main changes src-tauri/tauri.conf.json but nothing to install: the release's
+  # pull request into production installs it (docs/RELEASING.md). This job decides it once, on the runner, which has
+  # node (a container may have none before its setup), and the install jobs read its answer. HEAD is the pull request's
+  # merge commit, and HEAD^1 is main. When the fetch or the check fails, everything runs.
+  version:
+    name: Version only?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      only: ${{ steps.check.outputs.only }}
     steps:
-      - name: Keep LF line endings
-        run: git config --global core.autocrlf false
-
       - uses: actions/checkout@v4
-
-      # The version bump's pull request into main changes src-tauri/tauri.conf.json but nothing to install: the
-      # release's pull request into production installs it (docs/RELEASING.md). Skipped step by step, as in ci.yml, so
-      # the checks keep their names.
-      - name: Version only?
-        id: version
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
-        shell: bash
+
+      - name: Version only?
+        id: check
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
         run: |
           git fetch --quiet --no-tags --depth=2 origin "$GITHUB_SHA" || exit 0
           if node scripts/version-only.mjs HEAD^1 HEAD; then echo "only=true" >> "$GITHUB_OUTPUT"; fi
 
+  install:
+    name: install on ${{ matrix.system }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        # refresh: the package lists. start: what a container needs before the job can start, git (without it
+        # actions/checkout makes no git repository, and the one line gets the source with it), curl and bash. On Arch
+        # and Tumbleweed, which roll, the refresh is a full upgrade, as Tauri's own steps do first: installing from
+        # fresh lists onto an older system is a partial upgrade. Fedora's container has curl-minimal, which conflicts
+        # with the curl its package line names: curl replaces it, as on a desktop install. Tumbleweed's has no awk, and
+        # git needs one: zypper would give it busybox-gawk, which conflicts with gawk, the only awk the package line's
+        # devel_basis takes, and -n would cancel that line. So gawk comes with git, as on a desktop install; the line
+        # would install it anyway.
+        include:
+          - system: ubuntu-24.04
+            runner: ubuntu-24.04
+            refresh: sudo apt-get update
+          - system: fedora
+            runner: ubuntu-24.04
+            container: fedora:latest
+            refresh: dnf -y makecache
+            start: dnf -y install --allowerasing git curl bash
+          - system: archlinux
+            runner: ubuntu-24.04
+            container: archlinux:latest
+            refresh: pacman -Syu --noconfirm
+            start: pacman -S --needed --noconfirm git curl bash
+          - system: opensuse/tumbleweed
+            runner: ubuntu-24.04
+            container: opensuse/tumbleweed:latest
+            refresh: zypper -n refresh && zypper -n dup
+            start: zypper -n install git curl bash gawk
+          - system: macos-14
+            runner: macos-14
+          - system: windows-latest
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    # An empty one runs the job on the runner itself, as does a version bump, which skips every step and so needs no
+    # image (pulling one could still fail).
+    container: ${{ needs.version.outputs.only != 'true' && matrix.container || '' }}
+    timeout-minutes: 90
+    # A version bump skips every step, one by one, as in ci.yml: a job skipped with if: never reports its matrix's
+    # checks, and branch protection would wait for them.
+    steps:
+      # Windows' git turns LF into CRLF on checkout; the source folder the one line makes keeps LF too.
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      # Once a step adds a folder to GITHUB_PATH (setup-node does), the runner gives a container's steps the PATH from
+      # the image's settings after the added folders. opensuse/tumbleweed's image sets none, so its steps would get
+      # node's folder alone and find no bash (exit code 127). So the PATH the container starts with goes there first,
+      # as one line, which keeps its order.
+      - name: The container's PATH
+        if: needs.version.outputs.only != 'true' && matrix.container
+        shell: sh
+        run: echo "$PATH" >> "$GITHUB_PATH"
+
+      # In a container the job runs as root, and the workspace belongs to the runner's user: git may use it all the same.
+      - name: Package lists, and git, curl and bash
+        if: needs.version.outputs.only != 'true' && runner.os == 'Linux'
+        shell: sh
+        run: |
+          set -eux
+          ${{ matrix.refresh }}
+          ${{ matrix.start }}
+          if [ -n "${{ matrix.container }}" ]; then git config --global --add safe.directory "$GITHUB_WORKSPACE"; fi
+
+      - uses: actions/checkout@v4
+        if: needs.version.outputs.only != 'true'
+
+      # The system packages Gizai's build needs, installed with the line install.sh --check prints for this system
+      # (deps_command), as someone would copy it: only made non-interactive (-y, --noconfirm or -n) and, where the job
+      # runs as root, without sudo.
+      - name: System packages, as install.sh --check names them
+        if: needs.version.outputs.only != 'true' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          check="$(bash ./install.sh --check 2>&1)" || true
+          printf '%s\n' "$check"
+          line="$(printf '%s\n' "$check" | sed -n '/^Install them with:$/{n;s/^ *//;p;q;}')"
+          if [ -z "$line" ]; then echo "install.sh --check named no system packages to install."; exit 1; fi
+          cmd="$(printf '%s\n' "$line" | sed -e 's/apt install /apt install -y /g' -e 's/pacman -S /pacman -S --noconfirm /g' \
+            -e 's/dnf install /dnf install -y /g' -e 's/dnf group install /dnf group install -y /g' -e 's/zypper in /zypper -n in /g')"
+          if [ "$(id -u)" = 0 ]; then cmd="$(printf '%s\n' "$cmd" | sed 's/sudo //g')"; fi
+          printf '\ninstall.sh --check says: %s\nRunning: %s\n' "$line" "$cmd"
+          eval "$cmd" || { echo "The package line install.sh --check prints failed."; exit 1; }
+
+      # Node.js and Rust, which install.sh's check asks for. In a container, rust-toolchain installs rustup first.
       - uses: actions/setup-node@v4
-        if: steps.version.outputs.only != 'true'
+        if: needs.version.outputs.only != 'true'
         with:
           node-version: 22
-          cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.version.outputs.only != 'true'
+        if: needs.version.outputs.only != 'true'
 
-      - uses: Swatinem/rust-cache@v2
-        if: steps.version.outputs.only != 'true'
-
-      # macOS's own bash 3.2, as on a Mac. A scratch prefix and data folder: nothing goes in ~/Applications.
-      - name: install.sh (macOS)
-        if: steps.version.outputs.only != 'true' && runner.os == 'macOS'
-        env:
-          GIZAI_PREFIX: ${{ runner.temp }}/gizai
-          GIZAI_DATA_DIR: ${{ runner.temp }}/gizai-data
+      # Everything the installs make goes into the runner's temp folder: the programs (GIZAI_PREFIX), the source folder
+      # the one line makes (XDG_DATA_HOME's gizai-src, on Windows LOCALAPPDATA's) and the data folder (GIZAI_DATA_DIR;
+      # on Linux $XDG_DATA_HOME/gizai, where it points too). From the shell's RUNNER_TEMP, which in a container is the
+      # container's own path.
+      - name: Scratch folders
+        if: needs.version.outputs.only != 'true' && runner.os != 'Windows'
+        shell: bash
         run: |
-          set -eu
+          {
+            echo "GIZAI_PREFIX=$RUNNER_TEMP/gizai"
+            echo "XDG_DATA_HOME=$RUNNER_TEMP/share"
+            echo "GIZAI_DATA_DIR=$RUNNER_TEMP/share/gizai"
+          } >> "$GITHUB_ENV"
+
+      # UTF-8 without a byte order mark, which Windows PowerShell's Out-File -Encoding utf8 would write.
+      - name: Scratch folders (Windows)
+        if: needs.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $t = $env:RUNNER_TEMP
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "GIZAI_PREFIX=$t\gizai`nGIZAI_DATA_DIR=$t\gizai-data`nLOCALAPPDATA=$t\localappdata`n")
+
+      # The one line as people run it, but from this pull request's commit: get.sh piped into sh (dash on Ubuntu,
+      # macOS's own sh). It gets the commit into $XDG_DATA_HOME/gizai-src and runs its install.sh --check, then
+      # install.sh, which builds Gizai and installs it.
+      - name: The one line (get.sh)
+        if: needs.version.outputs.only != 'true' && runner.os != 'Windows'
+        shell: bash
+        run: cat scripts/get.sh | GIZAI_REPO="$GITHUB_WORKSPACE" GIZAI_REF=HEAD sh
+
+      # Over that install, what Gizai's own update does, in the source folder the one line made: build only, then
+      # install what was built. macOS's own bash 3.2, as on a Mac.
+      - name: Update over it (install.sh --build-only, then --skip-build)
+        if: needs.version.outputs.only != 'true' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd "$XDG_DATA_HOME/gizai-src"
           /bin/bash ./install.sh --build-only
           /bin/bash ./install.sh --skip-build
-          /bin/bash ./install.sh --skip-build
+
+      - name: What it installed (Linux)
+        if: needs.version.outputs.only != 'true' && runner.os == 'Linux'
+        shell: bash
+        run: |
+          fail() { echo "$*"; exit 1; }
+          lib="$GIZAI_PREFIX/lib/gizai"
+          icons="$XDG_DATA_HOME/icons/hicolor"
+          for program in gizai gizai-mcp gizai-launch; do
+            test -x "$lib/$program" || fail "$lib/$program is missing, or can't run."
+          done
+          link="$(readlink "$GIZAI_PREFIX/bin/gizai")" || fail "$GIZAI_PREFIX/bin/gizai is missing, or isn't a link."
+          [ "$link" = "$lib/gizai-launch" ] || fail "$GIZAI_PREFIX/bin/gizai links to $link, not to $lib/gizai-launch."
+          grep -qFx "Exec=$lib/gizai-launch" "$XDG_DATA_HOME/applications/gizai.desktop" \
+            || fail "$XDG_DATA_HOME/applications/gizai.desktop has no line Exec=$lib/gizai-launch."
+          for size in 32 64 128 256 512; do
+            test -s "$icons/${size}x${size}/apps/gizai.png" || fail "$icons/${size}x${size}/apps/gizai.png is missing."
+          done
+          test -s "$icons/scalable/apps/gizai.svg" || fail "$icons/scalable/apps/gizai.svg is missing."
+          want="gizai $(node -p 'require(process.argv[1]).version' "$GITHUB_WORKSPACE/src-tauri/tauri.conf.json")"
+          got="$("$GIZAI_PREFIX/bin/gizai" --version)" || fail "$GIZAI_PREFIX/bin/gizai --version failed: $got"
+          echo "gizai --version: $got"
+          [ "$got" = "$want" ] || fail "gizai --version says $got, and src-tauri/tauri.conf.json $want."
+
+      - name: What it installed (macOS)
+        if: needs.version.outputs.only != 'true' && runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -eu
           app="$GIZAI_PREFIX/lib/gizai/Gizai.app"
           test -x "$app/Contents/MacOS/gizai"
           test -x "$app/Contents/MacOS/gizai-mcp"
           codesign --verify --deep --strict "$app"
           "$GIZAI_PREFIX/bin/gizai" --version
           "$GIZAI_PREFIX/lib/gizai/gizai" --version | grep -E '^gizai [0-9]+\.[0-9]+\.[0-9]+'
-          /bin/bash ./install.sh --uninstall
-          test ! -e "$GIZAI_PREFIX/lib/gizai"
-          test ! -e "$GIZAI_PREFIX/bin/gizai"
 
-      # Windows PowerShell 5.1, which Gizai's update runs. The Start menu shortcut must carry Gizai's AppUserModelID,
-      # without which Windows shows none of its notifications.
-      - name: install.ps1 (Windows)
-        if: steps.version.outputs.only != 'true' && runner.os == 'Windows'
-        shell: powershell
-        env:
-          GIZAI_PREFIX: ${{ runner.temp }}\gizai
-          GIZAI_DATA_DIR: ${{ runner.temp }}\gizai-data
+      # The one line's uninstall removes the programs, the command and, on Linux, the desktop entry and the icons. It
+      # keeps the data folder: a file put there first must still be there.
+      - name: Uninstall with the one line (get.sh --uninstall)
+        if: needs.version.outputs.only != 'true' && runner.os != 'Windows'
+        shell: bash
         run: |
-          foreach ($step in @('-BuildOnly', '-SkipBuild', '-SkipBuild')) {
+          fail() { echo "$*"; exit 1; }
+          mkdir -p "$GIZAI_DATA_DIR"
+          echo "The uninstall keeps this." > "$GIZAI_DATA_DIR/keep.txt"
+          cat scripts/get.sh | GIZAI_REPO="$GITHUB_WORKSPACE" GIZAI_REF=HEAD sh -s -- --uninstall
+          icons="$XDG_DATA_HOME/icons/hicolor"
+          for path in "$GIZAI_PREFIX/lib/gizai" "$GIZAI_PREFIX/bin/gizai" "$XDG_DATA_HOME/applications/gizai.desktop" \
+            "$icons/scalable/apps/gizai.svg" "$icons"/{32x32,64x64,128x128,256x256,512x512}/apps/gizai.png; do
+            if [ -e "$path" ] || [ -L "$path" ]; then fail "$path is still there after the uninstall."; fi
+          done
+          test -f "$GIZAI_DATA_DIR/keep.txt" || fail "The uninstall removed $GIZAI_DATA_DIR/keep.txt from the data folder."
+
+      # The one line as people run it, but from this pull request's commit: get.ps1 from memory, as irm | iex runs it,
+      # in a Windows PowerShell 5.1 of its own. It gets the commit into $env:LOCALAPPDATA\gizai-src and runs its
+      # install.ps1 -Check, then install.ps1, which builds Gizai and installs it. Piped into iex, get.ps1 returns rather
+      # than exit, with its result in $LASTEXITCODE.
+      - name: The one line (get.ps1)
+        if: needs.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:GIZAI_REPO = $env:GITHUB_WORKSPACE; $env:GIZAI_REF = 'HEAD'
+          $iex = "$env:RUNNER_TEMP\iex-get-ps1.ps1"
+          Set-Content -LiteralPath $iex -Value 'Get-Content -LiteralPath scripts\get.ps1 -Raw | Invoke-Expression; "returned $LASTEXITCODE"'
+          powershell -NoProfile -ExecutionPolicy Bypass -File $iex | Tee-Object -Variable out
+          if (@($out)[-1] -ne 'returned 0') { "get.ps1 didn't install Gizai: it $(@($out)[-1])"; exit 1 }
+
+      # Over that install, what Gizai's own update does, in the source folder the one line made, with Windows
+      # PowerShell 5.1: build only, then install what was built.
+      - name: Update over it (install.ps1 -BuildOnly, then -SkipBuild)
+        if: needs.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Set-Location -LiteralPath "$env:LOCALAPPDATA\gizai-src"
+          foreach ($step in @('-BuildOnly', '-SkipBuild')) {
             powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 $step
             if ($LASTEXITCODE -ne 0) { "install.ps1 $step failed"; exit 1 }
           }
+
+      # The Start menu shortcut must carry Gizai's AppUserModelID, without which Windows shows none of its notifications.
+      - name: What it installed (Windows)
+        if: needs.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        run: |
           $marker = Get-Content -LiteralPath "$env:GIZAI_PREFIX\gizai-installed.txt"
           "installed: $marker"
           if ("$marker" -notmatch '^gizai \d+\.\d+\.\d+') { 'gizai-installed.txt should say the version'; exit 1 }
@@ -101,7 +278,23 @@ jobs:
           $id = (New-Object -ComObject Shell.Application).NameSpace($menu).ParseName('Gizai.lnk').ExtendedProperty('System.AppUserModel.ID')
           "shortcut app id: $id"
           if ($id -ne 'ai.gizai.app') { 'the Start menu shortcut should carry ai.gizai.app'; exit 1 }
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
-          if ($LASTEXITCODE -ne 0) { 'install.ps1 -Uninstall failed'; exit 1 }
-          if (Test-Path -LiteralPath "$env:GIZAI_PREFIX\gizai.exe") { 'gizai.exe should be gone'; exit 1 }
+
+      # The one line's uninstall, with its option as people give it one: & ([scriptblock]::Create(...)) -Uninstall. It
+      # keeps the data folder: a file put there first must still be there.
+      - name: Uninstall with the one line (get.ps1 -Uninstall)
+        if: needs.version.outputs.only != 'true' && runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:GIZAI_DATA_DIR | Out-Null
+          Set-Content -LiteralPath "$env:GIZAI_DATA_DIR\keep.txt" -Value 'The uninstall keeps this.'
+          $env:GIZAI_REPO = $env:GITHUB_WORKSPACE; $env:GIZAI_REF = 'HEAD'
+          $iex = "$env:RUNNER_TEMP\iex-get-ps1-uninstall.ps1"
+          Set-Content -LiteralPath $iex -Value '& ([scriptblock]::Create((Get-Content -LiteralPath scripts\get.ps1 -Raw))) -Uninstall; "returned $LASTEXITCODE"'
+          powershell -NoProfile -ExecutionPolicy Bypass -File $iex | Tee-Object -Variable out
+          if (@($out)[-1] -ne 'returned 0') { "get.ps1 -Uninstall failed: it $(@($out)[-1])"; exit 1 }
+          foreach ($file in @('gizai.exe', 'gizai-mcp.exe', 'gizai-installed.txt')) {
+            if (Test-Path -LiteralPath "$env:GIZAI_PREFIX\$file") { "$file should be gone"; exit 1 }
+          }
+          $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
           if (Test-Path -LiteralPath (Join-Path $menu 'Gizai.lnk')) { 'the Start menu shortcut should be gone'; exit 1 }
+          if (-not (Test-Path -LiteralPath "$env:GIZAI_DATA_DIR\keep.txt")) { 'the uninstall removed keep.txt from the data folder'; exit 1 }

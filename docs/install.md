@@ -26,6 +26,7 @@ It gets the source of the latest release into `~/.local/share/gizai-src` (on Win
 - Without git (on Linux and macOS also bash and curl), it says what to install first and does nothing else.
 - The source folder is the install's own: changes in it are replaced. Your data stays in [its own folder](#your-data).
 - `--uninstall --purge` (`-Uninstall -Purge` on Windows) deletes the source folder with your data.
+- CI proves the line: it installs, updates and uninstalls GizAi with it on Ubuntu 24.04, Fedora, Arch Linux, openSUSE Tumbleweed, macOS 14 on Apple silicon and Windows whenever an install script changes, and runs gizai.app's own lines on Ubuntu, macOS and Windows after each release and every week.
 
 The install script's options go after the line:
 

@@ -1,0 +1,147 @@
+# Installs GizAi's latest release with gizai.app's own one lines, as someone reading docs/install.md does, into a
+# scratch folder, on Ubuntu 24.04, macOS (Apple silicon) and Windows:
+#   curl -fsSL https://gizai.app/install.sh | sh     (on Ubuntu first with --check, then the packages it names)
+#   irm https://gizai.app/install.ps1 | iex          (in Windows PowerShell 5.1)
+# It passes when the installed Gizai is the latest release on GitHub, then uninstalls it with the same line. It uses
+# nothing from the checkout. It runs when a release is published, every week, by hand, and on a pull request that
+# changes this file. It signs, releases and uploads nothing.
+name: One-line install
+
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: "17 5 * * 1" # Mondays, 05:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/one-line.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-line-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  one-line:
+    name: one line on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      # Node.js and Rust, which the install's check asks for.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # What the line must install: the latest release, as GitHub's own CLI names it, with the job's token. In a step
+      # of its own, so the token stays out of what the line runs.
+      - name: The latest release
+        id: latest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release view --repo Yotech-AI/gizai --json tagName --jq .tagName)"
+          echo "The latest release: $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # The line asks GitHub's API for the latest release without a login, which allows 60 calls an hour, and the
+      # runners share them. So when it stops at "Finding GizAi's latest release" (Could not read the latest release),
+      # it is tried again a minute later, at most 3 times; after that the job fails and says why.
+      - name: The one line (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GIZAI_PREFIX: ${{ runner.temp }}/gizai
+          XDG_DATA_HOME: ${{ runner.temp }}/share
+          GIZAI_DATA_DIR: ${{ runner.temp }}/share/gizai
+          LATEST: ${{ steps.latest.outputs.tag }}
+        run: |
+          fail() { echo "$*"; exit 1; }
+          line() {
+            for try in 1 2 3 4; do
+              printf '\n$ %s\n' "$1"
+              status=0
+              eval "$1" 2>&1 | tee "$RUNNER_TEMP/line.log" || status=$?
+              if [ "$status" = 0 ] || ! grep -q "Could not read the latest release" "$RUNNER_TEMP/line.log"; then return "$status"; fi
+              if [ "$try" = 4 ]; then
+                fail "The one line could not read GizAi's latest release from GitHub's API, also not after trying again 3 times, a minute apart. GitHub allows 60 calls an hour without a login, and the runners share them: run this again later."
+              fi
+              echo "Could not read the latest release: trying again in a minute ($try of 3)."
+              sleep 60
+            done
+          }
+
+          # Ubuntu: the check first, then the system packages it names, with its own line (made non-interactive).
+          if [ "$RUNNER_OS" = Linux ]; then
+            line 'curl -fsSL https://gizai.app/install.sh | sh -s -- --check' || true
+            packages="$(sed -n '/^Install them with:$/{n;s/^ *//;p;q;}' "$RUNNER_TEMP/line.log")"
+            if [ -n "$packages" ]; then
+              sudo apt-get update
+              packages="$(printf '%s\n' "$packages" | sed 's/apt install /apt install -y /g')"
+              printf '\n$ %s\n' "$packages"
+              eval "$packages" || fail "The packages the check names didn't install."
+            fi
+          fi
+
+          line 'curl -fsSL https://gizai.app/install.sh | sh' || fail "The one line didn't install GizAi."
+
+          installed="$("$GIZAI_PREFIX/bin/gizai" --version)" || fail "$GIZAI_PREFIX/bin/gizai --version failed: $installed"
+          echo "The latest release: $LATEST. Installed: $installed."
+          [ "$installed" = "gizai ${LATEST#v}" ] || fail "The one line installed $installed, not the latest release, $LATEST."
+
+          line 'curl -fsSL https://gizai.app/install.sh | sh -s -- --uninstall' || fail "The one line didn't uninstall GizAi."
+          for path in "$GIZAI_PREFIX/lib/gizai" "$GIZAI_PREFIX/bin/gizai" "$XDG_DATA_HOME/applications/gizai.desktop"; do
+            if [ -e "$path" ] || [ -L "$path" ]; then fail "$path is still there after the uninstall."; fi
+          done
+
+      # The line runs in a Windows PowerShell 5.1 of its own each time, as in a new window. Piped into iex, get.ps1
+      # returns rather than exit, with its result in $LASTEXITCODE.
+      - name: The one line (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          GIZAI_PREFIX: ${{ runner.temp }}\gizai
+          GIZAI_DATA_DIR: ${{ runner.temp }}\gizai-data
+          LOCALAPPDATA: ${{ runner.temp }}\localappdata
+          LATEST: ${{ steps.latest.outputs.tag }}
+        run: |
+          function Invoke-Line([string]$Line) {
+            $wrapper = "$env:RUNNER_TEMP\line.ps1"
+            Set-Content -LiteralPath $wrapper -Value ($Line + '; "returned $LASTEXITCODE"')
+            for ($try = 1; $true; $try++) {
+              Write-Host ''
+              Write-Host "> $Line"
+              $out = @(powershell -NoProfile -ExecutionPolicy Bypass -File $wrapper | ForEach-Object { Write-Host $_; $_ })
+              $returned = if ($out.Count) { $out[-1] } else { 'returned nothing' }
+              if ($returned -eq 'returned 0') { return }
+              if (-not ($out -match 'Could not read the latest release')) { Write-Host "The one line failed: it $returned."; exit 1 }
+              if ($try -eq 4) {
+                Write-Host "The one line could not read GizAi's latest release from GitHub's API, also not after trying again 3 times, a minute apart. GitHub allows 60 calls an hour without a login, and the runners share them: run this again later."
+                exit 1
+              }
+              Write-Host "Could not read the latest release: trying again in a minute ($try of 3)."
+              Start-Sleep -Seconds 60
+            }
+          }
+
+          Invoke-Line 'irm https://gizai.app/install.ps1 | iex'
+
+          $marker = "$env:GIZAI_PREFIX\gizai-installed.txt"
+          if (-not (Test-Path -LiteralPath $marker)) { "The one line installed nothing: $marker is missing."; exit 1 }
+          $installed = Get-Content -LiteralPath $marker
+          "The latest release: $env:LATEST. Installed: $installed."
+          if ("$installed" -ne "gizai $($env:LATEST -replace '^v', '')") { "The one line installed $installed, not the latest release, $env:LATEST."; exit 1 }
+
+          Invoke-Line '& ([scriptblock]::Create((irm https://gizai.app/install.ps1))) -Uninstall'
+          foreach ($file in @('gizai.exe', 'gizai-mcp.exe', 'gizai-installed.txt')) {
+            if (Test-Path -LiteralPath "$env:GIZAI_PREFIX\$file") { "$file is still there after the uninstall."; exit 1 }
+          }

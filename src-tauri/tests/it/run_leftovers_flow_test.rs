@@ -209,6 +209,27 @@ async fn the_runs_log_names_each_process_it_left_running_once_and_a_run_that_lef
 }
 
 #[tokio::test]
+async fn a_run_gizai_ended_after_its_result_gets_the_leftovers_note_and_its_own() {
+    // GA-221: the child the CLI left in a session of its own keeps its stdout open, and the fake doesn't exit after its
+    // result line; Gizai ends it after the wait (2 s here), and what it left in its scope with it
+    let a = app();
+    let Some(slice) = own_slice(&a.st) else { return };
+    a.st.runs.set_after_result(Duration::from_secs(2));
+    let left = a.tmp.path().join("one");
+    let bin = a.cli("one.sh", &setsid_sleep(&left, false));
+    let s = tokio::time::timeout(Duration::from_secs(60), runs::run_once(&a.st, &a.card("FAKE_RESULT_THEN_HANG"), None, Some(bin)))
+        .await.expect("ended after the wait").unwrap();
+    assert_eq!((s.status.as_str(), s.outcome.as_deref()), ("succeeded", Some("ready_for_testing")), "{s:?}");
+    let pid = pid_in(&left).await;
+    assert!(!alive(pid), "the child the run left ({pid}) still runs");
+    assert_eq!(ended_notes(&a.st, &s.run_id), [format!("Ended 1 process this run left running: sleep (pid {pid}).")]);
+    let after = "Claude Code hadn't exited 3 minutes after the agent's final message, so Gizai ended it and kept the result. \
+                 Something the run started was probably still running in the background, such as a server.";
+    assert_eq!(notes(&a.st, &s.run_id).iter().filter(|n| *n == after).count(), 1, "{:?}", notes(&a.st, &s.run_id));
+    until("nothing is left in the slice", 5, || procs_in(slice.0.dir()).is_empty()).await;
+}
+
+#[tokio::test]
 async fn after_gizai_quits_no_process_is_left_in_its_slice() {
     let a = app();
     let Some(slice) = own_slice(&a.st) else { return };

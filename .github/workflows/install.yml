@@ -59,7 +59,10 @@ jobs:
         # actions/checkout makes no git repository, and the one line gets the source with it), curl and bash. On Arch
         # and Tumbleweed, which roll, the refresh is a full upgrade, as Tauri's own steps do first: installing from
         # fresh lists onto an older system is a partial upgrade. Fedora's container has curl-minimal, which conflicts
-        # with the curl its package line names: curl replaces it, as on a desktop install.
+        # with the curl its package line names: curl replaces it, as on a desktop install. Tumbleweed's has no awk, and
+        # git needs one: zypper would give it busybox-gawk, which conflicts with gawk, the only awk the package line's
+        # devel_basis takes, and -n would cancel that line. So gawk comes with git, as on a desktop install; the line
+        # would install it anyway.
         include:
           - system: ubuntu-24.04
             runner: ubuntu-24.04
@@ -78,7 +81,7 @@ jobs:
             runner: ubuntu-24.04
             container: opensuse/tumbleweed:latest
             refresh: zypper -n refresh && zypper -n dup
-            start: zypper -n install git curl bash
+            start: zypper -n install git curl bash gawk
           - system: macos-14
             runner: macos-14
           - system: windows-latest

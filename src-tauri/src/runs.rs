@@ -94,12 +94,25 @@ pub struct RunManager {
     pub(crate) memory_wait: Mutex<Option<(i64, String)>>,
     /// The runs' previews (GA-182): each run's block of ports, and its preview's tree while it runs.
     pub(crate) previews: crate::screenshots::Previews,
+    /// GA-221: how long a run's or a chat answer's CLI may stay quiet once the agent is done before Gizai ends it
+    /// (`Caps::after_result`). None: `process::AFTER_RESULT`; a test shortens it (`set_after_result`).
+    after_result: Mutex<Option<Duration>>,
 }
 
 impl RunManager {
     /// The CLIs changed: ask for model lists again.
     pub fn forget_models(&self) {
         self.models.lock().unwrap().clear();
+    }
+
+    /// GA-221: `Caps::after_result` for the runs and chat answers that start from now on.
+    pub fn after_result(&self) -> Duration {
+        self.after_result.lock().unwrap().unwrap_or(process::AFTER_RESULT)
+    }
+
+    /// Tests: another wait than `process::AFTER_RESULT` for the runs and chat answers that start from now on.
+    pub fn set_after_result(&self, wait: Duration) {
+        *self.after_result.lock().unwrap() = Some(wait);
     }
 }
 
@@ -1303,7 +1316,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let mut parser = agent_cli::Parser::new(spec.kind);
     parser.claude_code_signs_in(claude_code_signs_in);
     let mut handle = match process::spawn_exec::<RunEvent, _>(&exec, &wt.path, &log_path,
-        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, parser) {
+        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls, after_result: st.runs.after_result() },
+        parser) {
         Ok(h) => h,
         Err(e) => {
             drop_config();

@@ -19,6 +19,15 @@
 # FAKE_LEARNED in the prompt finishes like run-learned: run-ok with two `learned` lines on its result line (GA-19).
 # FAKE_STREAM <rate>x<seconds> in the prompt (FAKE_STREAM 50x20: 50 events a second for 20 s) prints the init line, those
 # events (a text, a tool call, its result, again) and run-ok's last two lines; Stop's SIGINT ends it part-way (GA-188).
+# GA-221: the agent is done but the CLI doesn't exit, as Claude Code while something the run started still runs in the
+# background. Each of these prints its lines and then waits until it is ended (SIGINT: exit 130), as "hang" does.
+# FAKE_RESULT_THEN_HANG: the whole fixture (run-ok, run-learned with FAKE_LEARNED), its result line too.
+# FAKE_RESULT_THEN_STUBBORN: the same, but it ignores SIGINT, so only SIGTERM ends it.
+# FAKE_TEXT_THEN_HANG: the fixture up to its result line: the last text has the GIZAI_RESULT line, no result line comes.
+# FAKE_ERROR_THEN_HANG: the init line and an error result ("API Error: 500 the fake failed").
+# FAKE_RESULT_THEN_TRICKLE: the whole fixture, then a line every 0.5 s for 3 s, then the wait.
+# FAKE_TEXT_TOOL_THEN_GO_ON doesn't wait: the init line, run-ok's text with the GIZAI_RESULT line, then a tool call; 3 s
+# later its tool result and run-ok's last two lines, and it exits 0 (the agent went on after its GIZAI_RESULT line).
 here="$(cd "$(dirname "$0")" && pwd)"
 # Asked for the model list (stream-json input): answer the initialize request, then exit when stdin closes.
 case " $* " in *" --input-format stream-json "*)
@@ -69,6 +78,40 @@ if [ "$prompt" = "refusedhang" ]; then
   print_and_wait "${lines[@]}"
   exit 0
 fi
+# GA-221 (see the top)
+then_hang=""
+case "$prompt" in
+  *FAKE_RESULT_THEN_HANG*) then_hang=result ;; *FAKE_RESULT_THEN_STUBBORN*) then_hang=stubborn ;;
+  *FAKE_TEXT_THEN_HANG*) then_hang=text ;; *FAKE_ERROR_THEN_HANG*) then_hang=error ;;
+  *FAKE_RESULT_THEN_TRICKLE*) then_hang=trickle ;;
+esac
+if [ -n "$then_hang" ]; then
+  if [ "$then_hang" = "stubborn" ]; then trap '' INT; else trap 'exit 130' INT; fi
+  lines=()
+  while IFS= read -r line; do lines+=("$line"); done < "$fixture"
+  case "$then_hang" in
+    text) unset 'lines[${#lines[@]}-1]' ;;   # up to its result line
+    error) lines=("${lines[0]}" '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: 500 the fake failed","total_cost_usd":0.05,"num_turns":3,"session_id":"S1","usage":{"input_tokens":1000,"output_tokens":100}}') ;;
+  esac
+  if [ "$then_hang" = "trickle" ]; then
+    perl -MTime::HiRes=sleep -e '$| = 1; print map { "$_\n" } @ARGV;
+      for my $i (1 .. 6) { sleep 0.5; print qq({"type":"system","subtype":"status","n":$i}\n) } sleep 600' -- "${lines[@]}"
+  else
+    print_and_wait "${lines[@]}"
+  fi
+  exit 0
+fi
+case "$prompt" in *FAKE_TEXT_TOOL_THEN_GO_ON*)
+  trap 'exit 130' INT
+  IFS= read -r init < "$here/fixtures/run-ok.jsonl"
+  { IFS= read -r text; IFS= read -r result; } < <(tail -n2 "$here/fixtures/run-ok.jsonl")
+  tool='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu3","name":"Bash","input":{"command":"git push","description":"Push the branch"}}]},"session_id":"S1"}'
+  tool_result='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu3","content":"pushed","is_error":false}]},"session_id":"S1"}'
+  perl -e '$| = 1; my ($init, $text, $tool, $res, $result) = @ARGV; print "$init\n$text\n$tool\n"; sleep 3; print "$res\n$text\n$result\n"' -- \
+    "$init" "$text" "$tool" "$tool_result" "$result"
+  echo "fake claude done" >&2
+  exit 0 ;;
+esac
 if [ "$prompt" = "nologin" ]; then
   # What Claude Code 2.1.289 prints without a login: subtype "success" but is_error, and the reason as the result.
   head -n1 "$here/fixtures/run-ok.jsonl"

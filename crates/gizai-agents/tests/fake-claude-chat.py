@@ -23,6 +23,8 @@ The prompt (stdin) decides what happens:
                                   Team Lead/Notes (GA-19), instead of get_overview
   FAKE_CHAT_STREAM                the last answer is about 20 KB of Markdown (headings, lists, tables, code blocks), streamed
                                   in pieces of 20 to 40 characters, one every 10 ms; exits 130 on SIGINT (GA-188)
+  FAKE_CHAT_RESULT_THEN_HANG      answers as usual, result line too, then doesn't exit until SIGINT (exit 130), as Claude
+                                  Code while something it started still runs in the background (GA-221)
 Each run appends {argv, prompt, account, cwd, auto_memory} to fake-calls.jsonl next to its MCP config, for the tests to
 read; `account` is its CLAUDE_CONFIG_DIR, `auto_memory` its CLAUDE_CODE_DISABLE_AUTO_MEMORY (null when unset, GA-85). Accounts: a session belongs to the account that started it (kept in fake-sessions.json next
 to the MCP config, never in the account's folder), and --resume from another account exits 1 before init, like Claude
@@ -231,3 +233,6 @@ mcp.wait(timeout=5)
 n = 2 if resume else 1
 out({"type": "result", "subtype": "success", "is_error": False, "result": final, "total_cost_usd": 0.01 * n, "num_turns": 2, "session_id": sid,
      "usage": {"input_tokens": 1000 * n, "output_tokens": 100 * n}})
+if "FAKE_CHAT_RESULT_THEN_HANG" in prompt:
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
+    time.sleep(600)

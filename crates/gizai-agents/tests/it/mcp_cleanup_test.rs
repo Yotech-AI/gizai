@@ -92,7 +92,7 @@ impl Drop for Pids {
 /// Starts the fake claude with its MCP server, waits for its init line and checks the helper is out of the run's group.
 async fn start(tmp: &Path, mode: &str, max_time: Duration) -> (RunHandle, Pids) {
     let pids_dir = tmp.join("pids");
-    let mut h = spawn(&args(&pids_dir, mode), tmp, &tmp.join("r.jsonl"), Caps { max_time, max_tool_calls: 80 }).unwrap();
+    let mut h = spawn(&args(&pids_dir, mode), tmp, &tmp.join("r.jsonl"), Caps { max_time, max_tool_calls: 80, after_result: gizai_agents::process::AFTER_RESULT }).unwrap();
     let pids = Pids::read(&pids_dir).await;
     let first = tokio::time::timeout(Duration::from_secs(10), h.events.recv()).await.expect("init line");
     assert!(first.is_some_and(|e| !matches!(e, RunEvent::Other { ref raw_type } if raw_type.starts_with("exit:"))), "the fake ended at once");

@@ -99,6 +99,15 @@ jobs:
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
 
+      # Once a step adds a folder to GITHUB_PATH (setup-node does), the runner gives a container's steps the PATH from
+      # the image's settings after the added folders. opensuse/tumbleweed's image sets none, so its steps would get
+      # node's folder alone and find no bash (exit code 127). So the PATH the container starts with goes there first,
+      # as one line, which keeps its order.
+      - name: The container's PATH
+        if: needs.version.outputs.only != 'true' && matrix.container
+        shell: sh
+        run: echo "$PATH" >> "$GITHUB_PATH"
+
       # In a container the job runs as root, and the workspace belongs to the runner's user: git may use it all the same.
       - name: Package lists, and git, curl and bash
         if: needs.version.outputs.only != 'true' && runner.os == 'Linux'

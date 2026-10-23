@@ -57,9 +57,9 @@ jobs:
       matrix:
         # refresh: the package lists. start: what a container needs before the job can start, git (without it
         # actions/checkout makes no git repository, and the one line gets the source with it), curl and bash. On Arch
-        # the refresh is a full upgrade: installing from fresh lists onto an older system is a partial upgrade, which
-        # Arch doesn't support. Fedora's container has curl-minimal, which conflicts with the curl its package line
-        # names: curl replaces it, as on a desktop install.
+        # and Tumbleweed, which roll, the refresh is a full upgrade, as Tauri's own steps do first: installing from
+        # fresh lists onto an older system is a partial upgrade. Fedora's container has curl-minimal, which conflicts
+        # with the curl its package line names: curl replaces it, as on a desktop install.
         include:
           - system: ubuntu-24.04
             runner: ubuntu-24.04
@@ -77,15 +77,16 @@ jobs:
           - system: opensuse/tumbleweed
             runner: ubuntu-24.04
             container: opensuse/tumbleweed:latest
-            refresh: zypper -n refresh
+            refresh: zypper -n refresh && zypper -n dup
             start: zypper -n install git curl bash
           - system: macos-14
             runner: macos-14
           - system: windows-latest
             runner: windows-latest
     runs-on: ${{ matrix.runner }}
-    # An empty one runs the job on the runner itself.
-    container: ${{ matrix.container || '' }}
+    # An empty one runs the job on the runner itself, as does a version bump, which skips every step and so needs no
+    # image (pulling one could still fail).
+    container: ${{ needs.version.outputs.only != 'true' && matrix.container || '' }}
     timeout-minutes: 90
     # A version bump skips every step, one by one, as in ci.yml: a job skipped with if: never reports its matrix's
     # checks, and branch protection would wait for them.

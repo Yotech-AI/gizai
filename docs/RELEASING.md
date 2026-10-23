@@ -62,7 +62,7 @@ Replace `X.Y.Z` with the new version.
 
    Each must say `COMPLETED SUCCESS`. The full check comes in step 2, on the release's pull request.
 
-   `scripts/version-only.mjs` decides, in each CI check's "Version only?" step and in Install's `Version only?` job: only these five files may change (the three above and the two lock files), and in them only GizAi's version, from one old version to one new version everywhere (in `Cargo.lock`, the versions of GizAi's own crates). Before you push, `node scripts/version-only.mjs origin/main HEAD` says the same, or what else changes. A pull request that changes anything else, a dependency in `Cargo.lock` say, gets the full checks of step 2, about half an hour: wait until they all say `COMPLETED SUCCESS` (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
+   `scripts/version-only.mjs` decides, in each CI check's "Version only?" step and in Install's `Version only?` job: only these five files may change (the three above and the two lock files), and in them only GizAi's version, from one old version to one new version everywhere (in `Cargo.lock`, the versions of GizAi's own crates). Before you push, `node scripts/version-only.mjs origin/main HEAD` says the same, or what else changes. A pull request that changes anything else, a dependency in `Cargo.lock` say, gets the full checks of step 2, up to about 17 minutes: wait until they all say `COMPLETED SUCCESS` (the Windows install is the slowest). On a failure, don't release: the card goes back to whoever can fix it.
 
    GizAi checks the bump. An update installs nothing when the release's `Cargo.toml` says another version, and it checks `gizai --version` after installing. A forgotten bump would otherwise offer the same update forever.
 
@@ -76,7 +76,7 @@ Replace `X.Y.Z` with the new version.
 
    That's ten checks:
    - from CI, about 12 minutes: `ubuntu-24.04`, `macos-14` and `windows-latest`;
-   - from Install, which runs as the release changes `src-tauri/tauri.conf.json`: `Version only?`, then six installs through the one line, `install on ubuntu-24.04`, `install on fedora`, `install on archlinux`, `install on opensuse/tumbleweed`, `install on macos-14` and `install on windows-latest`. Each one builds GizAi in full, then again as an update, so they take about half an hour (the Windows install is the slowest).
+   - from Install, which runs as the release changes `src-tauri/tauri.conf.json`: `Version only?`, then six installs through the one line, `install on ubuntu-24.04`, `install on fedora`, `install on archlinux`, `install on opensuse/tumbleweed`, `install on macos-14` and `install on windows-latest`. Each one builds GizAi in full, then again as an update, in 8 to 17 minutes (the Windows install is the slowest).
 
    Each must say `COMPLETED SUCCESS`. A check that is still `IN_PROGRESS` needs a few more minutes. On a failure, don't release: the card goes back to whoever can fix it.
 
@@ -100,7 +100,7 @@ Replace `X.Y.Z` with the new version.
    curl -s https://api.github.com/repos/Yotech-AI/gizai/releases/latest | grep '"tag_name"'   # what GizAi reads: vX.Y.Z
    ```
 
-   Publishing the release also starts One-line install (`.github/workflows/one-line.yml`): gizai.app's own lines install the new release on Ubuntu 24.04, macOS 14 and Windows, then uninstall it. Its run takes about half an hour and must be green on all three:
+   Publishing the release also starts One-line install (`.github/workflows/one-line.yml`): gizai.app's own lines install the new release on Ubuntu 24.04, macOS 14 and Windows, then uninstall it. Its jobs take 7 to 12 minutes and must be green on all three:
 
    ```sh
    gh run list --workflow one-line.yml --event release --limit 1 --json headBranch,status,conclusion,url   # vX.Y.Z, completed, success

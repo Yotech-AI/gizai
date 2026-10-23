@@ -133,12 +133,15 @@ if [ -r /etc/os-release ]; then
   . /etc/os-release
   distro=" ${ID:-} ${ID_LIKE:-} "
 fi
+# The command that installs the missing system packages. CI's Install workflow runs it on Ubuntu, Fedora, Arch and
+# openSUSE Tumbleweed (.github/workflows/install.yml). openSUSE's WebKitGTK 4.1 package was webkit2gtk3-devel and is
+# webkitgtk3-devel on Tumbleweed: zypper finds it by its pkg-config name.
 deps_command() {
   case "$distro" in
     *" arch "*|*" manjaro "*|*" endeavouros "*|*" omarchy "*) say "sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libayatana-appindicator librsvg git" ;;
     *" debian "*|*" ubuntu "*) say "sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config git" ;;
     *" fedora "*|*" rhel "*) say "sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel git && sudo dnf group install c-development" ;;
-    *" opensuse"*|*" suse "*) say "sudo zypper in webkit2gtk3-soup2-devel libopenssl-devel curl wget file libappindicator3-1 librsvg-devel git && sudo zypper in -t pattern devel_basis" ;;
+    *" opensuse"*|*" suse "*) say "sudo zypper in 'pkgconfig(webkit2gtk-4.1)' libopenssl-devel curl wget file libappindicator3-1 librsvg-devel git && sudo zypper in -t pattern devel_basis" ;;
     *) say "Install WebKitGTK 4.1, GTK 3, librsvg and OpenSSL development packages, a C compiler and pkg-config (see https://v2.tauri.app/start/prerequisites/)." ;;
   esac
 }

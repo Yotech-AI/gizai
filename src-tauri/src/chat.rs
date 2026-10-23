@@ -32,7 +32,8 @@ use crate::stream::Draft;
 
 /// The limits of an answer of the Team Lead that starts now (Settings → Runs, Minutes and Tool calls per chat answer): a
 /// chat answer, a board check, its look at an agent's question. Each answer reads them once as it starts and keeps them
-/// until it ends. Its Claude Code ends `RunManager::after_result` after the answer's result when it doesn't exit (GA-221).
+/// until it ends. Gizai ends its Claude Code when it stays quiet for `RunManager::after_result` after the answer's
+/// result (GA-221).
 pub fn caps(st: &AppState) -> Caps {
     let s = crate::runs::get_settings(st);
     Caps { max_time: Duration::from_secs(s.max_chat_minutes.saturating_mul(60)), max_tool_calls: s.max_chat_tool_calls,

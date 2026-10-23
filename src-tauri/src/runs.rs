@@ -1418,7 +1418,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
-        // GA-221: that text is the run's result only when Gizai ended the CLI once the agent was done and no result came.
+        // GA-221: that text is the result only when Gizai ended the CLI once the agent was done and no result came.
         let done_text = done_text.filter(|_| after_result && result.is_none());
         if ended_at_limit > 0 {
             note_run(&st2, &rid, &crate::run_memory::ended_note(&st2, ended_at_limit));
@@ -1827,10 +1827,11 @@ pub async fn start_by_hand(st: &AppState, task_id: &str) -> Result<worktree::Wor
     Ok(wt)
 }
 
-/// GA-221: the note on a run that finished after Gizai ended its CLI, `cli`, which hadn't exited once the agent was done.
+/// GA-221: the note on a finished run whose CLI (`cli`) Gizai ended because it hadn't exited once the agent was done.
 fn after_result_note(cli: &str) -> String {
-    format!("{cli} hadn't exited {} minutes after the agent's final message, so Gizai ended it and kept the result. Something the \
-             run started was probably still running in the background, such as a server.", process::AFTER_RESULT.as_secs() / 60)
+    let minutes = process::AFTER_RESULT.as_secs() / 60;
+    format!("{cli} hadn't exited {minutes} minutes after the agent's final message, so Gizai ended it and kept the result. \
+             Something the run started was probably still running in the background, such as a server.")
 }
 
 /// Gizai's note on a run that is ending: in its log, where Show output reads it later, and in the Run panel now.

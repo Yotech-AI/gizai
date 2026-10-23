@@ -2,9 +2,9 @@
 //! see `os::Tree`), streams its events, enforces the caps, ends it when it doesn't exit once the agent is done (GA-221)
 //! and stops it.
 //! Gizai's own markers come among the CLI's events (`StreamEvent::other`): `cap_exceeded:tools` and `cap_exceeded:time`
-//! at a cap, `ended_after_result` when the CLI stayed quiet for `Caps::after_result` after the agent's result, `oom_kill:<n>`
-//! when Linux ended a process in the run at the memory limit, `leftover:<pid> <name>` for each process ended that the run
-//! left in its scope, and last `exit:<code>`.
+//! at a cap, `ended_after_result` when the CLI stayed quiet for `Caps::after_result` after the agent's result,
+//! `oom_kill:<n>` when Linux ended a process in the run at the memory limit, `leftover:<pid> <name>` for each process
+//! ended that the run left in its scope, and last `exit:<code>`.
 //! Signals only ever go to that process group (never pid 0 or 1), so nothing else on the machine is touched; in the
 //! slice of the agent runs (Linux), also to what the run left running in its own scope (GA-211).
 use std::io::Write;

@@ -148,12 +148,13 @@ jobs:
             echo "GIZAI_DATA_DIR=$RUNNER_TEMP/share/gizai"
           } >> "$GITHUB_ENV"
 
+      # UTF-8 without a byte order mark, which Windows PowerShell's Out-File -Encoding utf8 would write.
       - name: Scratch folders (Windows)
         if: needs.version.outputs.only != 'true' && runner.os == 'Windows'
         shell: powershell
         run: |
-          "GIZAI_PREFIX=$env:RUNNER_TEMP\gizai", "GIZAI_DATA_DIR=$env:RUNNER_TEMP\gizai-data", "LOCALAPPDATA=$env:RUNNER_TEMP\localappdata" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $t = $env:RUNNER_TEMP
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "GIZAI_PREFIX=$t\gizai`nGIZAI_DATA_DIR=$t\gizai-data`nLOCALAPPDATA=$t\localappdata`n")
 
       # The one line as people run it, but from this pull request's commit: get.sh piped into sh (dash on Ubuntu,
       # macOS's own sh). It gets the commit into $XDG_DATA_HOME/gizai-src and runs its install.sh --check, then

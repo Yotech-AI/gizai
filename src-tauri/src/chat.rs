@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use gizai_agents::chat_stream::{self, ChatEvent, UsageLimit};
 use gizai_agents::claude::ClaudeArgs;
 use gizai_agents::cli::CliSpec;
-use gizai_agents::process::{self, Caps, StopHandle};
+use gizai_agents::process::{self, Caps, StopHandle, StreamEvent};
 use gizai_core::chat::{self, ChatMessage, ChatThread, NewMessage, QueuedMessage, Totals};
 use gizai_core::clis::{self as core_clis, Cli};
 use gizai_core::files::Blob;
@@ -32,10 +32,12 @@ use crate::stream::Draft;
 
 /// The limits of an answer of the Team Lead that starts now (Settings → Runs, Minutes and Tool calls per chat answer): a
 /// chat answer, a board check, its look at an agent's question. Each answer reads them once as it starts and keeps them
-/// until it ends.
+/// until it ends. Gizai ends its Claude Code when it stays quiet for `RunManager::after_result` after the answer's
+/// result (GA-221).
 pub fn caps(st: &AppState) -> Caps {
     let s = crate::runs::get_settings(st);
-    Caps { max_time: Duration::from_secs(s.max_chat_minutes.saturating_mul(60)), max_tool_calls: s.max_chat_tool_calls }
+    Caps { max_time: Duration::from_secs(s.max_chat_minutes.saturating_mul(60)), max_tool_calls: s.max_chat_tool_calls,
+           after_result: st.runs.after_result() }
 }
 
 /// Starts Claude Code for an answer of the Team Lead (a chat answer, a board check, its look at an agent's question) in
@@ -1250,10 +1252,14 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
     let mut result: Option<ChatEvent> = None;
     let mut capped: Option<String> = None;
     let mut exit = String::new();
+    // GA-221: whether Gizai ended Claude Code because it stayed quiet once the answer was done, and whether a text said
+    // so (a GIZAI_RESULT line), which counts when no result line came
+    let (mut after_result, mut done_text) = (false, false);
     let mut draft = String::new();
     let mut tool_msgs: HashMap<String, String> = HashMap::new();
     let base = |role: &str| NewMessage { thread_id: thread.id.clone(), role: role.into(), author_id: Some(agent.actor_id.clone()), run_id: Some(run_id.clone()), ..Default::default() };
     while let Some(ev) = handle.events.recv().await {
+        let done = ev.is_result();
         match ev {
             ChatEvent::Init { session_id, mcp_status, .. } => {
                 saw_init = true;
@@ -1273,6 +1279,7 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
                 crate::stream::chat_draft(st, &thread.id, Draft::Delta(text));
             }
             ChatEvent::Text { text } => {
+                done_text |= done;
                 draft.clear();
                 if !text.trim().is_empty() {
                     save(st, NewMessage { body_md: Some(text.trim().to_string()), ..base("agent") });
@@ -1304,7 +1311,9 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
             ChatEvent::Result { .. } => result = Some(ev),
             // What Claude Code heard of the account's limits: kept for the CLI this turn ran on (Usage → Subscription).
             ChatEvent::Limits { info } => crate::limits::from_claude(st, &run_id, &info),
-            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type),
+            // A cap, or Gizai's end once the answer was done: whichever came first says how the turn ended.
+            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() && !after_result => capped = Some(raw_type),
+            ChatEvent::Other { raw_type } if raw_type == process::ENDED_AFTER_RESULT && capped.is_none() => after_result = true,
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             ChatEvent::Other { .. } => {}
         }
@@ -1325,10 +1334,12 @@ async fn attempt_once(st: &AppState, thread: &ChatThread, plan: &Plan, prompt: &
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, .. }) => (
             Totals { cost_usd_micros: (cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, input_tokens: *input_tokens, output_tokens: *output_tokens },
             !is_error),
-        _ => (Totals::default(), false),
+        // GA-221: Gizai ended Claude Code after a text with its GIZAI_RESULT line, and no result line came.
+        _ => (Totals::default(), after_result && done_text),
     };
     let own = chat::turn_cost(prev, now_totals);
-    let finished = ok && exit == "exit:0";
+    // GA-221: an answer whose Claude Code Gizai ended once it was done has finished, as one whose Claude Code exited.
+    let finished = ok && (exit == "exit:0" || after_result);
     // An answer that finished is done, also when Stop was pressed (or Gizai began quitting) just as it ended: Stop
     // came too late for it, and the messages queued meanwhile go.
     // While Gizai quits, an answer that didn't finish was stopped by the quit, also when Claude Code ended first:
@@ -1505,11 +1516,15 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
     }
     (st.notify)(Note::RowsChanged("runs"));
     let (mut result, mut capped, mut exit, mut last_text, mut draft) = (None, None, String::new(), String::new(), String::new());
+    // GA-221: as for a chat answer (`attempt_once`)
+    let (mut after_result, mut done_text) = (false, false);
     while let Some(ev) = handle.events.recv().await {
+        let done = ev.is_result();
         match ev {
             ChatEvent::BlockStart => draft.clear(),
             ChatEvent::Delta { text } => draft.push_str(&text),
             ChatEvent::Text { text } => {
+                done_text |= done;
                 draft.clear();
                 if !text.trim().is_empty() {
                     last_text = text.trim().to_string();
@@ -1517,7 +1532,8 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
             }
             ChatEvent::Result { .. } => result = Some(ev),
             ChatEvent::Limits { info } => crate::limits::from_claude(st, &run_id, &info),
-            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type),
+            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() && !after_result => capped = Some(raw_type),
+            ChatEvent::Other { raw_type } if raw_type == process::ENDED_AFTER_RESULT && capped.is_none() => after_result = true,
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             _ => {}
         }
@@ -1530,9 +1546,9 @@ async fn check_once(st: &AppState, agent: &Member, prompt: &str, saw: &[gizai_co
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, .. }) => (
             Totals { cost_usd_micros: (cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, input_tokens: *input_tokens, output_tokens: *output_tokens },
             !is_error),
-        _ => (Totals::default(), false),
+        _ => (Totals::default(), after_result && done_text),
     };
-    let finished = ok && exit == "exit:0";
+    let finished = ok && (exit == "exit:0" || after_result);
     let quit = crate::runs::is_closing(st) && !finished;
     let status = if quit { "cancelled" } else if capped.is_some() { "timed_out" } else if finished { "succeeded" } else { "failed" };
     let error = match status {
@@ -1709,11 +1725,15 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
     }
     (st.notify)(Note::RowsChanged("runs"));
     let (mut result, mut capped, mut exit, mut last_text, mut draft) = (None, None, String::new(), String::new(), String::new());
+    // GA-221: as for a chat answer (`attempt_once`)
+    let (mut after_result, mut done_text) = (false, false);
     while let Some(ev) = handle.events.recv().await {
+        let done = ev.is_result();
         match ev {
             ChatEvent::BlockStart => draft.clear(),
             ChatEvent::Delta { text } => draft.push_str(&text),
             ChatEvent::Text { text } => {
+                done_text |= done;
                 draft.clear();
                 if !text.trim().is_empty() {
                     last_text = text.trim().to_string();
@@ -1721,7 +1741,8 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
             }
             ChatEvent::Result { .. } => result = Some(ev),
             ChatEvent::Limits { info } => crate::limits::from_claude(st, run_id, &info),
-            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type),
+            ChatEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() && !after_result => capped = Some(raw_type),
+            ChatEvent::Other { raw_type } if raw_type == process::ENDED_AFTER_RESULT && capped.is_none() => after_result = true,
             ChatEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type,
             _ => {}
         }
@@ -1734,11 +1755,11 @@ async fn question_process(st: &AppState, agent: &Member, asked_run_id: &str, pro
         Some(ChatEvent::Result { cost_usd, input_tokens, output_tokens, is_error, text, .. }) => (
             Totals { cost_usd_micros: (cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, input_tokens: *input_tokens, output_tokens: *output_tokens },
             !is_error, text.clone()),
-        _ => (Totals::default(), false, String::new()),
+        _ => (Totals::default(), after_result && done_text, String::new()),
     };
     // The result line is in its last message; Claude Code's result repeats that message.
     let text = if final_text.contains("GIZAI_RESULT:") { final_text } else { last_text };
-    let finished = ok && exit == "exit:0";
+    let finished = ok && (exit == "exit:0" || after_result);
     let quit = crate::runs::is_closing(st) && !finished;
     let status = if quit { "cancelled" } else if capped.is_some() { "timed_out" } else if finished { "succeeded" } else { "failed" };
     let error = match status {

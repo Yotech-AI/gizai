@@ -197,6 +197,23 @@ async fn a_second_message_while_working_is_queued() {
 }
 
 #[tokio::test]
+async fn an_answer_whose_claude_code_doesnt_exit_after_its_result_is_ended_after_the_wait_and_shows_its_answer() {
+    // GA-221: something the answer started still runs, so Claude Code doesn't exit after its result line
+    let t = setup().await;
+    t.st.runs.set_after_result(std::time::Duration::from_secs(2));
+    let t0 = std::time::Instant::now();
+    let (thread, s) = t.turn(None, "FAKE_CHAT_RESULT_THEN_HANG").await;
+    assert!(t0.elapsed() >= std::time::Duration::from_secs(2), "{:?}", t0.elapsed());
+    assert_eq!((s.status.as_str(), s.error.as_deref()), ("succeeded", None), "{s:?}");
+    let msgs = chat::messages(&t.st.db, &thread).unwrap();
+    assert_eq!(msgs.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(), ["user", "agent", "tool", "agent"]);
+    assert_eq!(msgs[3].body_md.as_deref(), Some("Here is the overview."), "its answer shows");
+    let run = core_runs::get(&t.st.db, &s.run_id).unwrap();
+    assert_eq!((run.status.as_str(), run.cost_usd_micros), ("succeeded", 10_000), "its result line counts");
+    assert!(app_chat::live(&t.st).iter().all(|l| l.thread_id != thread), "the chat isn't busy any more");
+}
+
+#[tokio::test]
 async fn stopping_a_turn_cancels_it_and_says_so() {
     let t = setup().await;
     let (thread, done) = app_chat::send(&t.st, None, "FAKE_CHAT_HANG".into(), None).await.unwrap();

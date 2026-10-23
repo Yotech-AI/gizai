@@ -292,7 +292,7 @@ fn at_a_1_gb_limit_a_command_that_asks_for_2_gb_is_ended_the_watch_sees_it_and_t
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_cli_started_in_the_slice_runs_there_and_its_events_say_when_linux_ended_a_process_in_it_at_the_limit() {
-    use gizai_agents::process::{Caps, ClaudeLines, Exec, OOM_KILL, spawn_exec};
+    use gizai_agents::process::{AFTER_RESULT, Caps, ClaudeLines, Exec, OOM_KILL, spawn_exec};
     use gizai_agents::stream::RunEvent;
     let tmp = tempfile::tempdir().unwrap();
     let Some(s) = own_slice(tmp.path(), GB) else { return };
@@ -306,7 +306,7 @@ async fn a_cli_started_in_the_slice_runs_there_and_its_events_say_when_linux_end
         .arg(&cli).status().unwrap().success());
     let exec = Exec { bin: cli, args: vec!["-p".into()], env: vec![], stdin: "p".into(), slice: Some(s.0.clone()) };
     let log = tmp.path().join("r.jsonl");
-    let mut h = spawn_exec::<RunEvent, _>(&exec, tmp.path(), &log, Caps { max_time: Duration::from_secs(120), max_tool_calls: 80 }, ClaudeLines).unwrap();
+    let mut h = spawn_exec::<RunEvent, _>(&exec, tmp.path(), &log, Caps { max_time: Duration::from_secs(120), max_tool_calls: 80, after_result: AFTER_RESULT }, ClaudeLines).unwrap();
     let mut evs = vec![];
     while let Some(e) = h.events.recv().await {
         evs.push(e);

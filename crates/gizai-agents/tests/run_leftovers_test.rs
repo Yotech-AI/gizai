@@ -25,7 +25,7 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use gizai_agents::os::{self, End};
-    use gizai_agents::process::{Caps, ClaudeLines, Exec, LEFTOVER, OOM_KILL, leftover, spawn_exec};
+    use gizai_agents::process::{AFTER_RESULT, Caps, ClaudeLines, Exec, LEFTOVER, OOM_KILL, leftover, spawn_exec};
     use gizai_agents::run_memory::{self as mem, GB, LEFTOVER_GRACE, Leftover, Slice};
     use gizai_agents::stream::RunEvent;
 
@@ -152,7 +152,7 @@ mod linux {
             Ends::TimeLimit => ("FAKE_HANG", 2),
         };
         let exec = Exec { bin, args: vec!["-p".into()], env: vec![], stdin: stdin.into(), slice: slice.cloned() };
-        let caps = Caps { max_time: Duration::from_secs(max_time), max_tool_calls: 80 };
+        let caps = Caps { max_time: Duration::from_secs(max_time), max_tool_calls: 80, after_result: AFTER_RESULT };
         let mut h = spawn_exec::<RunEvent, _>(&exec, tmp, &tmp.join("r.jsonl"), caps, ClaudeLines).unwrap();
         let pid = pid_in(&left, "sleep");
         // the scenario: the child runs in a session and process group of its own, outside the run's group
@@ -234,7 +234,7 @@ mod linux {
         let Some(s) = own_slice(tmp.path(), 2 * GB) else { return };
         let exec = Exec { bin: cli(tmp.path(), ""), args: vec!["-p".into()], env: vec![], stdin: "p".into(), slice: Some(s.0.clone()) };
         let mut h = spawn_exec::<RunEvent, _>(&exec, tmp.path(), &tmp.path().join("r.jsonl"),
-                                              Caps { max_time: Duration::from_secs(60), max_tool_calls: 80 }, ClaudeLines).unwrap();
+                                              Caps { max_time: Duration::from_secs(60), max_tool_calls: 80, after_result: AFTER_RESULT }, ClaudeLines).unwrap();
         let t0 = Instant::now();
         let mut evs = vec![];
         while let Some(e) = h.events.recv().await {
@@ -259,7 +259,7 @@ mod linux {
         let exec = Exec { bin: cli(&two, &setsid_sleep(&other_left)), args: vec!["-p".into()], env: vec![], stdin: "FAKE_HANG".into(),
                           slice: Some(s.0.clone()) };
         let mut other = spawn_exec::<RunEvent, _>(&exec, &two, &two.join("r.jsonl"),
-                                                  Caps { max_time: Duration::from_secs(120), max_tool_calls: 80 }, ClaudeLines).unwrap();
+                                                  Caps { max_time: Duration::from_secs(120), max_tool_calls: 80, after_result: AFTER_RESULT }, ClaudeLines).unwrap();
         let other_child = pid_in(&other_left, "sleep");
         let other_first = other.events.recv().await.expect("the other CLI's first line");
 
@@ -361,7 +361,7 @@ mod linux {
         let bin = cli(tmp.path(), &format!("{}\npython3 -c \"b = b'x' * (2 << 30)\"\necho \"build: $?\" >&2", setsid_sleep(&left)));
         let exec = Exec { bin, args: vec!["-p".into()], env: vec![], stdin: "p".into(), slice: Some(s.0.clone()) };
         let mut h = spawn_exec::<RunEvent, _>(&exec, tmp.path(), &tmp.path().join("r.jsonl"),
-                                              Caps { max_time: Duration::from_secs(120), max_tool_calls: 80 }, ClaudeLines).unwrap();
+                                              Caps { max_time: Duration::from_secs(120), max_tool_calls: 80, after_result: AFTER_RESULT }, ClaudeLines).unwrap();
         let mut evs = vec![];
         while let Some(e) = h.events.recv().await {
             evs.push(e);

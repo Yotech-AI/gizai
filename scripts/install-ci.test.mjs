@@ -231,6 +231,61 @@ describe("install.yml: when it runs, and a version bump", () => {
   });
 });
 
+// install.yml's matrix: each system's keys, as written under its "- system:".
+function matrix() {
+  const systems = {};
+  let at;
+  for (const line of read(".github/workflows/install.yml").split("\n")) {
+    const system = line.match(/^ {10}- system: (.+)$/);
+    if (system) systems[(at = system[1])] = {};
+    else if (at && /^ {12}\w+: /.test(line)) {
+      const [, key, value] = line.match(/^ {12}(\w+): (.*)$/);
+      systems[at][key] = value;
+    } else at = undefined;
+  }
+  return systems;
+}
+
+describe("install.yml: what a container gets before the package line", () => {
+  it("installs git, curl and bash to start, and on Tumbleweed gawk, which git needs, instead of busybox's awk", () => {
+    const m = matrix();
+    expect(Object.keys(m)).toEqual(["ubuntu-24.04", "fedora", "archlinux", "opensuse/tumbleweed", "macos-14", "windows-latest"]);
+    expect(m["ubuntu-24.04"].start).toBeUndefined();
+    expect(m.fedora.start).toBe("dnf -y install --allowerasing git curl bash");
+    expect(m.archlinux.start).toBe("pacman -S --needed --noconfirm git curl bash");
+    expect(m["opensuse/tumbleweed"].start).toBe("zypper -n install git curl bash gawk");
+    // the refresh only refreshes (or, on a rolling system, upgrades): it names no package
+    expect(m["ubuntu-24.04"].refresh).toBe("sudo apt-get update");
+    expect(m.fedora.refresh).toBe("dnf -y makecache");
+    expect(m.archlinux.refresh).toBe("pacman -Syu --noconfirm");
+    expect(m["opensuse/tumbleweed"].refresh).toBe("zypper -n refresh && zypper -n dup");
+  });
+
+  it("writes the container's own PATH to GITHUB_PATH first, before setup-node and Rust add theirs, in a container only", () => {
+    const steps = jobSteps(".github/workflows/install.yml", "install");
+    const names = steps.map((s) => s.name);
+    const path = names.indexOf("The container's PATH");
+    expect(path).toBeGreaterThanOrEqual(0);
+    expect(path).toBeLessThan(names.indexOf("actions/setup-node@v4"));
+    expect(path).toBeLessThan(names.indexOf("dtolnay/rust-toolchain@stable"));
+    expect(path).toBeLessThan(names.indexOf(PACKAGES));
+    expect(steps[path].if).toBe("needs.version.outputs.only != 'true' && matrix.container");
+  });
+
+  it.runIf(unix)("its PATH step adds the whole PATH as one line, in its order", () => {
+    const lines = read(".github/workflows/install.yml").split("\n");
+    const at = lines.findIndex((l) => l.trim() === "- name: The container's PATH");
+    const run = lines.slice(at + 1, at + 5).find((l) => /^ {8}run: /.test(l)).replace(/^ {8}run: /, "");
+    const dir = mkdtempSync(join(scratch, "container-path-"));
+    const githubPath = join(dir, "github_path");
+    writeFileSync(githubPath, "/opt/earlier\n");
+    const PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    const r = spawnSync("/bin/sh", ["-e", "-c", run], { encoding: "utf8", env: { PATH, GITHUB_PATH: githubPath } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(readFileSync(githubPath, "utf8")).toBe(`/opt/earlier\n${PATH}\n`);
+  });
+});
+
 const LINE = "The one line (Linux, macOS)";
 
 // gizai.app's install.sh, as curl hands it to sh: it can't read the latest release for its first $FAKE_API_FAILS runs;

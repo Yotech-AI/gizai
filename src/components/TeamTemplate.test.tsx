@@ -1,10 +1,12 @@
 // GA-227 QA: the New team drawer's check of a template and Export's question, rendered to HTML on the server (nothing is
 // clicked: scripts/ui-test.sh's templates run clicks them in the app), plus the file names and the save dialog's permission.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TemplatePlan, TemplateWarning } from "../types";
 import { ExportWarnings, PAUSED_LINE, TemplateCheck, baseName, kindWord, templateFileName } from "./TeamTemplate";
+
+const fs = await import(/* @vite-ignore */ ["node", "fs"].join(":"));
+const readFileSync = (url: URL, enc: "utf8"): string => fs.readFileSync(url, enc);
 
 /** The text a person reads: tags out, entities back. */
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&")

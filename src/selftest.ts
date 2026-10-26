@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import type { Terminal } from "@xterm/xterm";
-import { appInfo, archiveTask, chatMessages, editorFolders, getTask, listChatThreads, listDocs, listLabels, listProjects, listTasks, readClipboardText, selftestPaste, setAgentStatus, terminalClose, terminalInput, terminalList, terminalOpen } from "./api";
+import { appInfo, archiveTask, chatMessages, checkTeamExport, editorFolders, getTask, getTeam as teamById, listChatThreads, listDocs, listLabels, listProjects, listTasks, listTeams, previewTeamTemplate, readClipboardText, selftestPaste, setAgentStatus, terminalClose, terminalInput, terminalList, terminalOpen } from "./api";
 import { isMac } from "./lib/keys";
 import { periodDays } from "./lib/usage";
 import { getAppearance, resetAppearance, setAppearance } from "./lib/appearance";
@@ -16,7 +16,10 @@ import { tellMain } from "./lib/behind";
 import { boardDrawn, perfCalls, perfCount, perfFirst, perfFrames, perfHeard, perfOn } from "./lib/perf";
 import { graphProbe } from "./components/memory/GraphCanvas";
 import { TerminalView } from "./components/terminal/TerminalView";
-import type { FolderMain } from "./types";
+import { boardOrder } from "./lib/columns";
+import { pickTeam } from "./lib/team";
+import { PAUSED_LINE, kindWord } from "./components/TeamTemplate";
+import type { FolderMain, Team, TemplatePlan } from "./types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -334,6 +337,9 @@ type ProbeTeam = { states: { id: string; name: string; category: string; sortKey
  * itself, Auto without a next column); Review; Add column; dragging a column to a new place; the bin's confirm and removing a
  * column; a new label (and a name in use); a new branch. Then "New label…" in a task's Properties and in the New task drawer. */
 export async function teamProbe(getTeam: () => Promise<ProbeTeam>) {
+  // GA-227 QA: MODE=templates:<folder> runs the team templates' probe instead (see templatesProbe)
+  const mode = (await appInfo()).selftest_mode ?? "";
+  if (mode.startsWith("templates:")) return templatesProbe(mode.slice(10));
   const out: Record<string, unknown> = {};
   const fail = (step: string, extra: Record<string, unknown> = {}) => ({ ok: false, failed_at: step, ...out, ...extra });
   if (!(await waitFor(() => column("To do"), 6000))) return fail("no Workflow columns");
@@ -4641,4 +4647,323 @@ export async function pasteProbe() {
   await paste("empty clipboard, text selected", "Paste", { value: "keep me", select: true, want: "", guarded: true });
   await paste("a text on the clipboard", "Paste", { value: "", clipboard: "GA-222 text", want: "GA-222 text", guarded: false });
   return { ok: steps.length === 6 && steps.every((s) => s.ok), steps };
+}
+
+/** GIZAI_SELFTEST_MODE=templates:<folder> on route team (GA-227 QA; scripts/ui-test.sh, on the demo data). <folder> holds
+ *  "Mobile team.gizai-team.json" (extra commands, an MCP server that isn't set up, a Codex agent, an agent name the Software
+ *  team takes, new labels, settings out of range and text that looks private) and bad.json (format 2, refused); Export
+ *  writes its files there too. The file dialogs are answered here: Tauri's IPC goes through fetch, so plugin:dialog|open and
+ *  plugin:dialog|save get the path the step sets (null: Cancel) and no window opens; every other call goes through. Steps:
+ *  the top bar; New team with Empty; Export without warnings; Software team, renamed; a template file and its check; Export
+ *  with warnings (Cancel, Escape, Export anyway); a bad file; then the Software team exported and made again from its file. */
+async function templatesProbe(dir: string) {
+  const asked: { cmd: string; options: Record<string, unknown> }[] = [];
+  let answer: string | null = null;
+  const realFetch = window.fetch;
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = decodeURIComponent(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    const cmd = /plugin:dialog\|(open|save)$/.exec(url)?.[1];
+    if (!cmd) return realFetch(input, init);
+    let options: Record<string, unknown> = {};
+    try { options = (JSON.parse(String(init?.body ?? "{}")) as { options?: Record<string, unknown> }).options ?? {}; } catch { /* not JSON */ }
+    asked.push({ cmd, options });
+    return new Response(JSON.stringify(answer), { headers: { "Content-Type": "application/json", "Tauri-Response": "ok" } });
+  }) as typeof window.fetch;
+  try {
+    return await templatesSteps(dir, { asked, answer: (path) => { answer = path; } });
+  } finally {
+    window.fetch = realFetch;
+  }
+}
+
+async function templatesSteps(dir: string, dialog: { asked: { cmd: string; options: Record<string, unknown> }[]; answer: (path: string | null) => void }) {
+  const out: Record<string, unknown> = {};
+  const fail = (step: string) => ({ ok: false, failed_at: step, ...out });
+  const drawer = () => q('[role=dialog][aria-label="New team"]');
+  const nameField = () => q<HTMLInputElement>("#tm-name");
+  const createBtn = () => [...(drawer()?.querySelectorAll<HTMLButtonElement>(".drawer-foot button.primary") ?? [])][0];
+  const radio = (label: string) => [...document.querySelectorAll(".tt-start")].find((l) => textOf(l.querySelector(".tt-name")) === label)
+    ?.querySelector<HTMLInputElement>("input");
+  const shownName = () => q<HTMLSelectElement>('.topbar select[aria-label="Team"]')?.selectedOptions[0]?.textContent ?? "";
+  const exportBtn = () => buttonByText(q(".topbar .actions") ?? document, "Export template");
+  const rowsShown = () => [...document.querySelectorAll(".tt-table tbody tr")].map((tr) => cellsOf(tr));
+  const planRows = (p: TemplatePlan) => p.columns.map((c) => [c.name, kindWord(c.kind), c.auto ? "Auto" : "Manual", c.next ?? "None", c.agents.length ? c.agents.join(", ") : "None"]);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const toast = (text: string) => waitFor(() => (textOf(q(".toast[role=status]")) === text ? true : null), 6000).then((v) => !!v);
+  const lastAsk = (after: number) => waitFor(() => (dialog.asked.length > after ? dialog.asked[dialog.asked.length - 1] : null), 4000);
+  const openDrawer = async () => {
+    buttonByText(q(".topbar .actions") ?? document, "New team")?.click();
+    return !!(await waitFor(() => (drawer() && nameField() ? true : null), 4000));
+  };
+  const checkShown = () => waitFor(() => (rowsShown().length ? true : null), 8000).then((v) => !!v);
+  /** Create team, then the new team: made, the drawer closed, and the Team page showing it. */
+  const create = async () => {
+    const before = (await listTeams()).map((t) => t.id);
+    const btn = createBtn();
+    const on = !!btn && !btn.disabled;
+    btn?.click();
+    let made: { id: string; name: string } | undefined;
+    await until(async () => !!(made = (await listTeams()).find((t) => !before.includes(t.id))), 80);
+    const closed = !!(await waitFor(() => (!drawer() ? true : null), 5000));
+    const shown = !!made && !!(await waitFor(() => (shownName() === made!.name ? true : null), 5000));
+    return { on, closed, id: made?.id ?? "", name: made?.name ?? "", shown, picked: !!made && localStorage.getItem("gizai-team") === made.id };
+  };
+  const agentsOf = (t: Team) => t.members.filter((m) => m.kind === "agent");
+  /** A team's columns and agents, names aside: each column's name, kind, Auto, next column and its agents' roles; each agent's
+   *  role, model, effort, permission mode, allowed commands and cards at once. */
+  const shape = (t: Team) => {
+    const role = new Map(t.members.map((m) => [m.actorId, m.roleKey]));
+    const name = new Map(t.states.map((s) => [s.id, s.name]));
+    return {
+      columns: boardOrder(t.states).map((s) => [s.name, s.category, !!s.auto, s.nextStateId ? name.get(s.nextStateId) ?? "?" : null, (s.agentIds ?? []).map((a) => role.get(a))]),
+      agents: agentsOf(t).map((m) => [m.roleKey, m.model ?? null, m.effort ?? null, m.permissionMode ?? null, [...m.allowedTools].sort(), m.maxRuns ?? 1])
+        .sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1)),
+    };
+  };
+
+  // 1. The top bar: Export template right before New team.
+  if (!(await waitFor(() => q(".topbar .actions"), 6000))) return fail("no top bar");
+  const actions = textsOf(".topbar .actions button");
+  out.top_bar = actions;
+
+  // 2. New team with Empty: the name has focus, Empty is picked, the subtitle is the old one; it makes the seven usual
+  //    columns and no agents, and opens the team.
+  if (!(await openDrawer())) return fail("New team opened no drawer");
+  const d = drawer()!;
+  const empty: Record<string, unknown> = {
+    focus: document.activeElement === nameField(), subtitle: textOf(q(".drawer-head p", d)),
+    group: !!q('[role=radiogroup][aria-label="Start from"]', d), starts: textsOf(".tt-start .tt-name", d), notes: textsOf(".tt-start .tt-note", d),
+    empty_on: radio("Empty")?.checked === true, off_without_name: createBtn()?.disabled === true, no_check: !q(".tt-table"),
+  };
+  typeInto(nameField()!, "Empty probe team");
+  await sleep(150);
+  const madeEmpty = await create();
+  const emptyTeam = madeEmpty.id ? await teamById(madeEmpty.id) : null;
+  empty.made = { ...madeEmpty, columns: emptyTeam ? boardOrder(emptyTeam.states).map((s) => [s.name, s.category, !!s.auto]) : null,
+    agents: emptyTeam ? agentsOf(emptyTeam).length : null };
+  out.empty = empty;
+  if (!madeEmpty.id) return fail("Empty made no team");
+
+  // 3. Export without warnings, on the empty team: straight to the save dialog with <team name>.gizai-team.json, the file
+  //    is written and the toast says so.
+  const noWarnings = await checkTeamExport(madeEmpty.id);
+  const emptyPath = `${dir}/Empty probe team.gizai-team.json`;
+  dialog.answer(emptyPath);
+  let n = dialog.asked.length;
+  exportBtn()?.click();
+  const plainAsk = await lastAsk(n);
+  const plainQuestion = !!q("[role=alertdialog]");
+  const plainToast = await toast("Saved Empty probe team.gizai-team.json");
+  let plainFile: unknown;
+  try { const p = await previewTeamTemplate({ path: emptyPath }); plainFile = { columns: p.columns.map((c) => c.name), agents: p.agents.length }; } catch (e) { plainFile = String(e); }
+  out.export_plain = { warnings: noWarnings.length, asked: plainAsk?.cmd, default_path: plainAsk?.options.defaultPath, filters: plainAsk?.options.filters,
+    question: plainQuestion, toast: plainToast, file: plainFile };
+
+  // 4. Software team: the check shows its seven columns and five agents (no paused line, no extra commands); the name is
+  //    filled in and can be changed; Create team makes it under the new name and opens it.
+  const swPlan = await previewTeamTemplate({ builtin: "software" });
+  if (!(await openDrawer())) return fail("New team opened no drawer (Software team)");
+  const swDescription = textOf([...document.querySelectorAll(".tt-start")].find((l) => textOf(l.querySelector(".tt-name")) === "Software team")?.querySelector(".tt-note"));
+  radio("Software team")?.click();
+  const swShown = await checkShown();
+  const software: Record<string, unknown> = {
+    shown: swShown, description: swDescription, name: nameField()?.value, plan_name: swPlan.teamName, plan_columns: swPlan.columns.length,
+    plan_agents: swPlan.agents.length, rows_match: same(rowsShown(), planRows(swPlan)), rows: rowsShown().length,
+    cards: textsOf(".tt-agent .h b"), heading: (drawer()?.textContent ?? "").includes("Commands beyond"), paused_line: !!q(".tt-paused"),
+    props: textsOf(".tt-agent:first-child .tt-props dd"), subtitle: textOf(q(".drawer-head p", drawer()!)), on: createBtn()?.disabled === false,
+  };
+  typeInto(nameField()!, "Probe software team");
+  await sleep(150);
+  const madeSw = await create();
+  const swTeam = madeSw.id ? await teamById(madeSw.id) : null;
+  software.made = { ...madeSw, agents: swTeam ? agentsOf(swTeam).map((m) => [m.name, m.roleKey, m.status]) : null,
+    columns: swTeam ? boardOrder(swTeam.states).map((s) => s.name) : null };
+  out.software = software;
+  if (!madeSw.id || !swTeam) return fail("Software team made no team");
+
+  // 5. A template file: the open dialog asks for .json; the check shows its columns, agents, CLIs, modes, the extra commands
+  //    under their heading in the error banner's colours, missing servers, added labels and every note, with the paused line
+  //    above the agents. Create team makes it with its agents paused.
+  const good = `${dir}/Mobile team.gizai-team.json`;
+  const filePlan = await previewTeamTemplate({ path: good });
+  if (!(await openDrawer())) return fail("New team opened no drawer (file)");
+  dialog.answer(good);
+  n = dialog.asked.length;
+  radio("A template file…")?.click();
+  const openAsk = await lastAsk(n);
+  const fileShown = await checkShown();
+  const paused = q(".tt-paused"), list = q(".tt-agents");
+  const cards = [...document.querySelectorAll(".tt-agent")];
+  const agentsOk = filePlan.agents.map((a, i) => {
+    const c = cards[i];
+    const extra = c?.querySelector(".tt-extra");
+    return {
+      name: textOf(c?.querySelector(".h b")) === a.name,
+      file_name: a.fileName === a.name || textsOf(".h .faint", c ?? document).includes(`${a.fileName} in the file`),
+      props: same(textsOf(".tt-props dd", c ?? document), [a.role, a.cliName, a.model ?? "The CLI's default", a.effort ?? "The CLI's default", a.permissionMode || "None"]),
+      extra: a.extraTools.length ? textOf(extra?.querySelector("h4")) === "Commands beyond its role's usual ones" && same(textsOf("li", extra ?? document), a.extraTools) : !extra,
+      missing: same(textsOf(".tt-missing", c ?? document), a.missingServers.map((s) => `Needs MCP server ${s}: add it in Settings → MCP to switch it on.`)),
+    };
+  });
+  // the extra commands' block against an error banner in the same drawer
+  const banner = document.createElement("div");
+  banner.className = "error-banner";
+  q(".drawer-body", drawer() ?? document)?.appendChild(banner);
+  const colours = (el: Element | null | undefined) => { if (!el) return null; const s = getComputedStyle(el); return [s.color, s.backgroundColor, s.borderTopColor]; };
+  const extraColours = colours(q(".tt-extra")), bannerColours = colours(banner);
+  banner.remove();
+  const file: Record<string, unknown> = {
+    asked: openAsk?.cmd, filters: openAsk?.options.filters, multiple: openAsk?.options.multiple, directory: openAsk?.options.directory,
+    shown: fileShown, picked: textOf(q(".tt-start.on .tt-note")), name: nameField()?.value, plan_name: filePlan.teamName,
+    rows_match: same(rowsShown(), planRows(filePlan)), agents: agentsOk,
+    paused_line: textOf(paused) === PAUSED_LINE, paused_above: !!paused && !!list && !!(paused.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING),
+    extra_colours: extraColours, banner_colours: bannerColours, labels: textOf(q(".tt-labels")), plan_labels: filePlan.labelsAdded,
+    notes: textsOf(".tt-notes li"), plan_notes: filePlan.notes,
+    // what the file brings, so the check above had something to show
+    plan_has: { extra: filePlan.agents.some((a) => a.extraTools.length > 0), missing: filePlan.agents.some((a) => a.missingServers.length > 0),
+      renamed: filePlan.agents.some((a) => a.fileName !== a.name), codex: filePlan.agents.some((a) => a.cliName === "Codex") || filePlan.notes.some((x) => x.includes("Codex")),
+      notes: filePlan.notes.length, paused: filePlan.agents.every((a) => !a.active) },
+  };
+  const madeFile = await create();
+  const fileTeam = madeFile.id ? await teamById(madeFile.id) : null;
+  file.made = { ...madeFile, agents: fileTeam ? agentsOf(fileTeam).map((m) => [m.name, m.status]) : null,
+    columns: fileTeam ? boardOrder(fileTeam.states).map((s) => s.name) : null };
+  out.file = file;
+  if (!madeFile.id) return fail("the template file made no team");
+
+  // 6. Export with warnings, on the team from the file: the question lists each warning; Cancel and Escape save nothing;
+  //    Export anyway goes on to the save dialog, and the file is written.
+  const expected = await checkTeamExport(madeFile.id);
+  n = dialog.asked.length;
+  exportBtn()?.click();
+  let dlg = await waitFor(() => q("[role=alertdialog]"), 4000);
+  const items = textsOf(".tt-warn-list li", dlg ?? document);
+  const warn: Record<string, unknown> = {
+    expected: expected.length, shown: !!dlg, title: textOf(q("h2", dlg ?? document)), items,
+    each: items.length === expected.length && expected.every((w, i) => items[i]?.includes(w.excerpt) && items[i]?.includes(w.agent ?? "the team")),
+    buttons: textsOf("button", dlg ?? document), focus_cancel: textOf(document.activeElement) === "Cancel",
+  };
+  buttonByText(dlg ?? document, "Cancel")?.click();
+  await sleep(600);
+  warn.cancel = { closed: !q("[role=alertdialog]"), saved_nothing: dialog.asked.length === n, focus_back: document.activeElement === exportBtn() };
+  exportBtn()?.click();
+  dlg = await waitFor(() => q("[role=alertdialog]"), 4000);
+  keyOn((document.activeElement as HTMLElement | null) ?? (dlg as HTMLElement | null) ?? document.body, "Escape");
+  await sleep(600);
+  warn.escape = { shown: !!dlg, closed: !q("[role=alertdialog]"), saved_nothing: dialog.asked.length === n };
+  const warnPath = `${dir}/Mobile team export.gizai-team.json`;
+  dialog.answer(warnPath);
+  exportBtn()?.click();
+  dlg = await waitFor(() => q("[role=alertdialog]"), 4000);
+  buttonByText(dlg ?? document, "Export anyway")?.click();
+  const anywayAsk = await lastAsk(n);
+  const anywayToast = await toast("Saved Mobile team export.gizai-team.json");
+  let anywayFile: unknown;
+  try { anywayFile = (await previewTeamTemplate({ path: warnPath })).agents.length; } catch (e) { anywayFile = String(e); }
+  warn.anyway = { asked: anywayAsk?.cmd, default_path: anywayAsk?.options.defaultPath, toast: anywayToast, file_agents: anywayFile, closed: !q("[role=alertdialog]") };
+  out.export_warnings = warn;
+
+  // 7. A bad file: the drawer shows the refusal and Create team stays off, a name typed or not; Cancel in the file dialog
+  //    keeps the file; Escape asks before the drawer closes, and no team is made.
+  const bad = `${dir}/bad.json`;
+  let refusal = "";
+  try { await previewTeamTemplate({ path: bad }); } catch (e) { refusal = String(e); }
+  const teamsBefore = (await listTeams()).length;
+  if (!(await openDrawer())) return fail("New team opened no drawer (bad file)");
+  dialog.answer(bad);
+  radio("A template file…")?.click();
+  const badBanner = await waitFor(() => textOf(q(".error-banner", drawer() ?? document)) || null, 8000);
+  const badOut: Record<string, unknown> = { refusal, banner: badBanner, off: createBtn()?.disabled === true, no_check: !q(".tt-table"), name: nameField()?.value };
+  typeInto(nameField()!, "Bad probe team");
+  await sleep(150);
+  badOut.off_with_name = createBtn()?.disabled === true;
+  dialog.answer(null);
+  n = dialog.asked.length;
+  buttonByText(drawer() ?? document, "Choose another file…")?.click();
+  badOut.cancel_asked = !!(await lastAsk(n));
+  await sleep(300);
+  badOut.cancel_keeps = textOf(q(".tt-start.on .tt-note")) === "bad.json" && radio("A template file…")?.checked === true && createBtn()?.disabled === true;
+  keyOn(nameField() ?? document.body, "Escape");
+  const discard = await waitFor(() => buttonByText(drawer() ?? document, "Discard"), 3000);
+  badOut.escape_asks = !!discard;
+  discard?.click();
+  badOut.closed = !!(await waitFor(() => (!drawer() ? true : null), 3000));
+  badOut.no_team = (await listTeams()).length === teamsBefore;
+  out.bad_file = badOut;
+
+  // 8. The Software team exported and made again from its file: the same columns and agents, names aside.
+  pickTeam(madeSw.id);
+  const swOpen = !!(await waitFor(() => (shownName() === "Probe software team" ? true : null), 5000));
+  const swWarnings = await checkTeamExport(madeSw.id);
+  const swPath = `${dir}/Probe software team.gizai-team.json`;
+  dialog.answer(swPath);
+  n = dialog.asked.length;
+  exportBtn()?.click();
+  if (swWarnings.length) buttonByText((await waitFor(() => q("[role=alertdialog]"), 4000)) ?? document, "Export anyway")?.click();
+  const swAsk = await lastAsk(n);
+  const swToast = await toast("Saved Probe software team.gizai-team.json");
+  const round: Record<string, unknown> = { opened: swOpen, warnings: swWarnings.map((w) => `${w.agent ?? "the team"} ${w.field} ${w.kind}`), default_path: swAsk?.options.defaultPath, toast: swToast };
+  if (!(await openDrawer())) return fail("New team opened no drawer (round trip)");
+  // each drawer starts at Empty, so a click on A template file… opens the dialog (answered with the exported file)
+  round.starts_empty = radio("Empty")?.checked === true;
+  radio("A template file…")?.click();
+  round.shown = await checkShown();
+  typeInto(nameField()!, "Round trip team");
+  await sleep(150);
+  const madeRound = await create();
+  const roundTeam = madeRound.id ? await teamById(madeRound.id) : null;
+  const swAfter = await teamById(madeSw.id);
+  round.made = madeRound;
+  round.original = shape(swAfter);
+  round.copy = roundTeam ? shape(roundTeam) : null;
+  round.same = !!roundTeam && same(shape(swAfter), shape(roundTeam));
+  round.names = roundTeam ? agentsOf(roundTeam).map((m) => m.name) : null;
+  out.round_trip = round;
+
+  const e = out.empty as { focus: boolean; subtitle: string; group: boolean; starts: string[]; notes: string[]; empty_on: boolean; off_without_name: boolean; no_check: boolean;
+    made: { on: boolean; closed: boolean; shown: boolean; picked: boolean; name: string; columns: unknown; agents: number | null } };
+  const ep = out.export_plain as { warnings: number; question: boolean; asked?: string; default_path?: unknown; filters?: unknown; toast: boolean; file: { columns: string[]; agents: number } | string };
+  const sw = software as { shown: boolean; description: string; name?: string; plan_name: string; plan_columns: number; plan_agents: number; rows_match: boolean;
+    rows: number; cards: string[]; heading: boolean; paused_line: boolean; on: boolean; made: { on: boolean; closed: boolean; shown: boolean; name: string; agents: unknown[][] | null; columns: string[] | null } };
+  const f = file as { asked?: string; filters?: { extensions?: string[] }[]; multiple?: boolean; directory?: boolean; shown: boolean; picked: string; name?: string; plan_name: string;
+    rows_match: boolean; agents: Record<string, boolean>[]; paused_line: boolean; paused_above: boolean; extra_colours: string[] | null; banner_colours: string[] | null;
+    labels: string; plan_labels: string[]; notes: string[]; plan_notes: string[]; plan_has: Record<string, boolean | number>;
+    made: { on: boolean; closed: boolean; shown: boolean; name: string; agents: string[][] | null } };
+  const w = warn as { expected: number; shown: boolean; title: string; each: boolean; buttons: string[]; focus_cancel: boolean; cancel: Record<string, boolean>;
+    escape: Record<string, boolean>; anyway: { asked?: string; default_path?: unknown; toast: boolean; file_agents: unknown; closed: boolean } };
+  const b = badOut as { refusal: string; banner: string | null; off: boolean; no_check: boolean; off_with_name: boolean; cancel_asked: boolean; cancel_keeps: boolean;
+    escape_asks: boolean; closed: boolean; no_team: boolean };
+  const r = round as { opened: boolean; default_path?: unknown; toast: boolean; starts_empty: boolean; shown: boolean; made: { on: boolean; shown: boolean; name: string }; same: boolean };
+  const usual = [["Backlog", "backlog", false], ["To do", "ready", true], ["In progress", "in_progress", true], ["Testing", "testing", true],
+    ["Review", "review", false], ["Deploy", "deploy", false], ["Done", "done", false]];
+  const checks: Record<string, boolean> = {
+    top_bar: actions.indexOf("Export template") >= 0 && actions.indexOf("Export template") === actions.indexOf("New team") - 1,
+    empty_drawer: e.focus && e.group && e.empty_on && e.off_without_name && e.no_check && e.starts[0] === "Empty" && e.starts.includes("Software team")
+      && e.starts[e.starts.length - 1] === "A template file…" && e.notes[0] === "The seven usual columns, no agents."
+      && e.subtitle === "A new team gets the seven usual columns and no agents. Move a project to it in the project's form.",
+    empty_made: e.made.on && e.made.closed && e.made.shown && e.made.picked && e.made.name === "Empty probe team" && same(e.made.columns, usual) && e.made.agents === 0,
+    export_plain: ep.warnings === 0 && !ep.question && ep.asked === "save" && ep.default_path === "Empty probe team.gizai-team.json" && ep.toast
+      && typeof ep.file === "object" && same(ep.file.columns, usual.map((u) => u[0])) && ep.file.agents === 0,
+    software_check: sw.shown && sw.description === "The five agents a new install gets, and the seven usual columns." && sw.name === sw.plan_name
+      && sw.plan_name.startsWith("Software team") && sw.plan_columns === 7 && sw.plan_agents === 5 && sw.rows === 7 && sw.rows_match && sw.cards.length === 5
+      && !sw.heading && !sw.paused_line && sw.on,
+    software_made: sw.made.on && sw.made.closed && sw.made.shown && sw.made.name === "Probe software team" && sw.made.agents?.length === 5
+      && !!sw.made.agents?.every((a) => a[2] === "active") && sw.made.columns?.length === 7,
+    file_dialog: f.asked === "open" && same(f.filters?.[0]?.extensions, ["json"]) && f.multiple === false && f.directory === false,
+    file_check: f.shown && f.picked === "Mobile team.gizai-team.json" && f.name === f.plan_name && f.rows_match && f.agents.length > 0
+      && f.agents.every((a) => Object.values(a).every(Boolean)) && f.paused_line && f.paused_above,
+    file_extras_highlighted: !!f.extra_colours && same(f.extra_colours, f.banner_colours),
+    file_labels_notes: f.plan_labels.length > 0 && f.labels === `Labels added: ${f.plan_labels.join(", ")}` && f.plan_notes.length > 0 && same(f.notes, f.plan_notes),
+    file_brings_all: !!f.plan_has.extra && !!f.plan_has.missing && !!f.plan_has.renamed && !!f.plan_has.codex && Number(f.plan_has.notes) >= 2 && !!f.plan_has.paused,
+    file_made: f.made.on && f.made.closed && f.made.shown && f.made.name === f.plan_name && !!f.made.agents?.length && f.made.agents.every((a) => a[1] !== "active"),
+    export_question: w.expected > 0 && w.shown && w.title === "This may share private details" && w.each && same(w.buttons, ["Cancel", "Export anyway"]) && w.focus_cancel,
+    export_cancel: Object.values(w.cancel).every(Boolean) && Object.values(w.escape).every(Boolean),
+    export_anyway: w.anyway.asked === "save" && w.anyway.default_path === `${f.made.name}.gizai-team.json` && w.anyway.toast && typeof w.anyway.file_agents === "number" && w.anyway.closed,
+    bad_file: !!b.refusal && b.banner === b.refusal && b.off && b.no_check && b.off_with_name,
+    bad_file_keyboard: b.cancel_asked && b.cancel_keeps && b.escape_asks && b.closed && b.no_team,
+    round_trip: r.opened && r.default_path === "Probe software team.gizai-team.json" && r.toast && r.starts_empty && r.shown && r.made.on && r.made.shown
+      && r.made.name === "Round trip team" && r.same,
+  };
+  const failed = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
+  return { ok: failed.length === 0, failed, ...out };
 }

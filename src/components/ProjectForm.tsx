@@ -141,8 +141,8 @@ export function ProjectDrawer({ id, onClose }: { id?: string; onClose: () => voi
       onClose={onClose} dirty={JSON.stringify(v) !== JSON.stringify(initial)} error={err}
       hint={moveAsk ? <span role="alert" style={{ color: "var(--text)", fontSize: "var(--fs-sm)" }}>{moveAsk}</span> : `${modKey()}+Enter saves`}
       actions={moveAsk
-        ? <><button key="keep" className="btn ghost" onClick={() => setMoveAsk(null)}>Cancel</button>
-          <button key="move" className="btn primary" disabled={busy} autoFocus onClick={() => save(true)}>Move</button></>
+        ? <><button key="keep" className="btn ghost" autoFocus onClick={() => setMoveAsk(null)}>Cancel</button>
+          <button key="move" className="btn primary" disabled={busy} onClick={() => save(true)}>Move</button></>
         : <><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !v.name.trim()} onClick={() => save()}>{isNew ? "Create project" : "Save changes"}</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); save(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } }}>
         <FormSection title="Project" text={<>Its name, client and task key. Tasks become {v.key || "KEY"}-1, {v.key || "KEY"}-2…</>}>

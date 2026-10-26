@@ -48,10 +48,12 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
       const open = ps.filter((p) => p.status !== "archived" && p.status !== "done");
       setProjects(open);
       setTeams(ts);
-      // GA-225: a project of the team whose column was picked on the board, else of the team picked there or on the Team
-      // page; with one team, any project, as before.
+      // GA-225: a project of the team whose column was picked on the board, or of the agent it is assigned to, else of the
+      // team picked there or on the Team page; with one team, any project, as before.
       const first = ts[0]?.id ?? "";
-      const wanted = (presetState ? ts.find((t) => t.states.some((s) => s.id === presetState))?.id : undefined) ?? shownTeam(ts, pickedTeam) ?? first;
+      const wanted = (presetState ? ts.find((t) => t.states.some((s) => s.id === presetState))?.id : undefined)
+        ?? (presetAssignee ? ts.find((t) => t.members.some((m) => m.kind === "agent" && m.actorId === presetAssignee))?.id : undefined)
+        ?? shownTeam(ts, pickedTeam) ?? first;
       const fits = (p: Project) => teamOfProject(p.id, open, first) === wanted;
       const remembered = readPref("gizai-task-project");
       setProjectId((cur) => cur || ((open.find((p) => p.id === remembered && fits(p)) ?? open.find(fits) ?? open.find((p) => p.id === remembered) ?? open[0])?.id ?? ""));
@@ -85,7 +87,8 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   const unpick = (path: string) => { if (!creating.current) setPaths((ps) => ps.filter((p) => p !== path)); };
   // The project's team (its own, else the first team): its columns and agents.
   const team = teams?.find((t) => t.id === teamOfProject(projectId, projects ?? [], teams[0]?.id ?? "")) ?? teams?.[0] ?? null;
-  const agents = (team?.members ?? []).filter((m) => m.kind === "agent");
+  // Its agents, and the agent picked if it is another team's (Assign task on that agent's page).
+  const agents = (teams ?? []).flatMap((t) => t.members).filter((m) => m.kind === "agent" && (team?.members.includes(m) || m.actorId === assigneeId));
   const states = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
   // The column picked while it is one of that team's, else its first (Backlog).
   const column = states.some((s) => s.id === stateId) ? stateId : states[0]?.id ?? "";

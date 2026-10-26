@@ -164,7 +164,6 @@ function useScreenshots(id: string) {
  *  `run`: only that run's set. `youId`: you, the person using this Gizai (Open in editor shows on a card assigned to you). */
 export function TaskPage({ id, view = "card", run, youId }: { id: string; view?: "card" | "changes" | "screenshots"; run?: string; youId?: string }) {
   const { data: task, error } = useData(() => getTask(id), [id]);
-  const { data: team } = useData(() => getTeam());
   const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: comments } = useData(() => listComments(id), [id]);
   const { data: activity } = useData(() => taskActivity(id), [id]);
@@ -180,6 +179,8 @@ export function TaskPage({ id, view = "card", run, youId }: { id: string; view?:
   const changes = useCardChanges(id);
   const shots = useScreenshots(id);
   const { data: project } = useData(() => (task?.projectId ? getProject(task.projectId) : Promise.resolve(null)), [task?.projectId]);
+  // GA-225: its project's team (a card without a project: the first team's), for its columns and the agents that run it.
+  const { data: team } = useData(() => getTeam(project?.teamId ?? null), [project?.teamId ?? ""]);
   const onChanges = view === "changes";
   const onShots = view === "screenshots";
   const wide = view !== "card";

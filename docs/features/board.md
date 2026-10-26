@@ -34,6 +34,17 @@ Testing has rules of its own: a failed test sends a card back, and a card can sk
 - An org chart of your team: the Team Lead on top, then branches (Design, Development, Quality, Operations and your own), each with one empty spot that adds an agent there.
 - Drag an agent onto a column in Team → Workflow to put it to work there.
 
+### Several teams
+
+Team → New team adds a team with the seven usual columns and no agents. Each team has its own board: its columns, the agents on them, and the cards of its projects. An agent works only the columns it is on, so only its own team's cards. Labels are shared by all teams.
+
+- **A project's team.** A project's cards are on its team's board. With more than one team, the project form has a Team select, and the project page shows the team. A new project starts in the team the board shows; without a pick, in the first team.
+- **Moving a project** to another team (its form → Team) asks first: "Move Giz AI to Research team? Its 31 cards go to the columns of the same kind, and My team's agents are taken off them." Then all its cards move, archived ones too: each to the new team's first column of the same kind, in board order, else to its first Backlog column. Agents that aren't on the new team come off a card as its assignee, pin or implementer; people stay. The new team's agents pick up the cards in its Auto columns.
+- **Refused while a run is under way:** while one of the project's cards has a run live or starting, the move is refused and nothing changes: "Wait for GA-12's run to end, or stop it, before you move Giz AI to another team."
+- **The board's Team select.** With more than one team, the Tasks page's toolbar has a Team select. The board and the list show that team's columns and the cards of its projects; cards without a project go with the first team. The Team page and the sidebar's agents follow the same pick. The Inbox still shows every team's cards that need you.
+
+With one team there is no Team select anywhere, and everything works as before. The Team Lead's tools name the team when there is more than one: [Teams](team-lead.md#teams).
+
 ## When agents start
 
 Agents start when you press Run, or when a card lands in an Auto column they are on (or is assigned to them there). An agent works on several cards at once when its Cards at once allows it.

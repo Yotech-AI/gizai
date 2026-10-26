@@ -20,6 +20,11 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
   // Archiving (from Done) is the card's soft delete; restoring undoes it.
   if (e.op === "delete") return "archived the card";
   if (d.archived === false) return "restored the card";
+  // GA-225: its project moved to another team, and the card with it, to a column of the same kind
+  if (Array.isArray(d.team)) {
+    const into = Array.isArray(d.column) ? `, into ${d.column[1]}` : "";
+    return `moved it with its project to ${d.team[1]}${into}${d.agentsOff ? `, and took ${d.team[0]}'s agents off it` : ""}`;
+  }
   if (Array.isArray(d.column)) return `moved it from ${d.column[0]} to ${d.column[1]}`;
   if (Array.isArray(d.labels)) return d.labels.length ? `set labels to ${d.labels.join(", ")}` : "removed all labels";
   // GA-228: the cards it builds on, the whole new list

@@ -161,7 +161,9 @@ pub(crate) fn list_projects(cx: &Cx, a: &Args) -> Result<Value, String> {
         .filter(|p| client.as_ref().is_none_or(|c| p.client_id.as_ref() == Some(c)))
         .filter(|p| status.as_ref().is_none_or(|s| &p.status == s))
         .map(|p| json!({"id": p.id, "key": p.key, "name": p.name, "client": p.client_name, "status": p.status, "repo_path": p.repo_path,
-                        "open_tasks": p.open_tasks, "done_tasks": p.done_tasks, "test_runs_at_once": p.test_runs_at_once}))
+                        "open_tasks": p.open_tasks, "done_tasks": p.done_tasks, "test_runs_at_once": p.test_runs_at_once,
+                        // GA-225: the team whose board its cards are on
+                        "team": p.team_name}))
         .collect();
     Ok(json!({"count": list.len(), "projects": list}))
 }
@@ -184,6 +186,8 @@ pub(crate) async fn get_project(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
         // GA-212: how many of its cards may be in a test run (on a card in a Testing column) at the same time; null: no
         // limit of its own
         "test_runs_at_once": p.test_runs_at_once,
+        // GA-225: the team whose board its cards are on (update_project's team moves it)
+        "team": p.team_name,
     }, "tasks_by_column": by_column, "docs": docs, "files": files}))
 }
 
@@ -196,8 +200,12 @@ pub(crate) fn list_tasks(cx: &Cx, a: &Args) -> Result<Value, String> {
         tasks::list(cx.db(), &TaskFilter { project_id: project.as_ref().map(|p| p.id.clone()), open_only: !include_done }).map_err(err)?
     };
     if let Some(c) = a.opt("column") {
-        let col = resolve::column(&resolve::team_of(cx, project.as_ref())?, &c)?;
-        list.retain(|t| t.state_name.eq_ignore_ascii_case(&col.name));
+        // GA-225: without a project the cards are every team's, so the column may be any team's.
+        let name = match &project {
+            Some(p) => resolve::column(&resolve::team_of(cx, Some(p))?, &c)?.name,
+            None => resolve::column_name_in_any(cx, &c)?,
+        };
+        list.retain(|t| t.state_name.eq_ignore_ascii_case(&name));
     }
     match a.opt("assignee").as_deref() {
         None => {}
@@ -264,9 +272,21 @@ fn agent_json(cx: &Cx, m: &team::Member, live: &[crate::runs::LiveRun]) -> Value
     })
 }
 
-pub(crate) fn list_agents(cx: &Cx) -> Result<Value, String> {
+/// The agents, of one team when `team` is given (GA-225); with more than one team each says its team.
+pub(crate) fn list_agents(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let only = match a.opt("team") { Some(r) => Some(resolve::team(cx, &r)?.id), None => None };
+    let teams = team::list(cx.db()).map_err(err)?;
     let live = crate::runs::live(cx.st);
-    let agents: Vec<Value> = team::all_agents(cx.db()).map_err(err)?.iter().map(|(_, m)| agent_json(cx, m, &live)).collect();
+    let agents: Vec<Value> = team::all_agents(cx.db()).map_err(err)?.iter()
+        .filter(|(t, _)| only.as_ref().is_none_or(|o| o == t))
+        .map(|(t, m)| {
+            let mut v = agent_json(cx, m, &live);
+            if teams.len() > 1 {
+                v["team"] = json!(teams.iter().find(|x| &x.id == t).map(|x| x.name.clone()));
+            }
+            v
+        })
+        .collect();
     Ok(json!({"count": agents.len(), "agents": agents}))
 }
 
@@ -365,18 +385,33 @@ pub(crate) fn column_line(s: &team::WorkflowState, t: &team::Team) -> String {
     }
 }
 
-pub(crate) fn workflow(cx: &Cx) -> Result<Value, String> {
-    let t = resolve::team_of(cx, None)?;
+/// The board's columns: of the `team` given (a name or an id), else of the only team, else every team's under its name
+/// (GA-225); and the labels, which all teams share.
+pub(crate) fn workflow(cx: &Cx, a: &Args) -> Result<Value, String> {
+    let teams: Vec<team::Team> = match a.opt("team") {
+        Some(r) => vec![resolve::team(cx, &r)?],
+        None => team::list(cx.db()).map_err(err)?.iter().map(|t| team::get(cx.db(), &t.id).map_err(err)).collect::<Result<_, _>>()?,
+    };
+    // Every team has all the labels.
+    let labels: Vec<String> = teams.first().map(|t| t.labels.iter().map(|l| l.name.clone()).collect()).unwrap_or_default();
+    match teams.as_slice() {
+        [] => Err("there is no team".into()),
+        [t] => Ok(json!({"team": t.name, "columns": columns_json(t), "labels": labels})),
+        all => Ok(json!({
+            "teams": all.iter().map(|t| json!({"team": t.name, "columns": columns_json(t)})).collect::<Vec<_>>(),
+            "labels": labels,
+        })),
+    }
+}
+
+/// A team's columns in board order, as get_workflow lists them.
+fn columns_json(t: &team::Team) -> Vec<Value> {
     let kind = |c: &str| gizai_core::columns::KINDS.iter().find(|(_, cat)| *cat == c).map(|(k, _)| *k).unwrap_or(c).to_string();
-    Ok(json!({
-        "team": t.name,
-        "columns": t.states.iter().map(|s| {
-            let agents: Vec<String> = s.agent_ids.iter().filter_map(|id| t.members.iter().find(|m| &m.actor_id == id).map(|m| m.name.clone())).collect();
-            let next = s.next_state_id.as_ref().and_then(|n| t.states.iter().find(|x| &x.id == n)).map(|x| x.name.clone());
-            json!({"name": s.name, "kind": kind(&s.category), "agents": agents,
-                   "start": if gizai_core::columns::takes_agents(&s.category) { if s.auto { "auto" } else { "manual" } } else { "none" },
-                   "next": next, "what_happens": column_line(s, &t)})
-        }).collect::<Vec<_>>(),
-        "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
-    }))
+    t.states.iter().map(|s| {
+        let agents: Vec<String> = s.agent_ids.iter().filter_map(|id| t.members.iter().find(|m| &m.actor_id == id).map(|m| m.name.clone())).collect();
+        let next = s.next_state_id.as_ref().and_then(|n| t.states.iter().find(|x| &x.id == n)).map(|x| x.name.clone());
+        json!({"name": s.name, "kind": kind(&s.category), "agents": agents,
+               "start": if gizai_core::columns::takes_agents(&s.category) { if s.auto { "auto" } else { "manual" } } else { "none" },
+               "next": next, "what_happens": column_line(s, t)})
+    }).collect()
 }

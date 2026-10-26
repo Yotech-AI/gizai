@@ -1,11 +1,18 @@
-use crate::db::Db;
+use crate::db::{Db, Writer};
 use crate::model::{Project, ProjectInput};
 use crate::util::{clean, org_id};
 use crate::{Error, Result, ids};
-use rusqlite::{OptionalExtension, Row};
+use rusqlite::{Connection, OptionalExtension, Row};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// The first team, the oldest that isn't removed: a new project's when none is given, and the team of a project (and of
+/// a card without a project) that has none.
+pub(crate) const FIRST_TEAM: &str = "(SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1)";
 
 /// The project with its task counts and its AI usage since `?1` (the start of this month): the API cost of the runs on
-/// its cards, archived ones included, and how many of them have an unknown cost (`usage`).
+/// its cards, archived ones included, and how many of them have an unknown cost (`usage`). Its team comes after
+/// (`with_teams`).
 fn select() -> String {
     let unknown = crate::usage::unknown_cost("u");
     format!("SELECT p.id, p.client_id, c.name, p.number, p.key, p.name, p.status, p.color, p.goal_md,
@@ -19,6 +26,21 @@ fn select() -> String {
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL")
+}
+
+/// GA-225: each project's team, as its cards go: its own, else the first team; and that team's name.
+fn with_teams(c: &Connection, mut list: Vec<Project>) -> Result<Vec<Project>> {
+    let teams: Vec<(String, String)> = {
+        let mut st = c.prepare("SELECT id, name FROM teams WHERE deleted_at IS NULL ORDER BY created_at")?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for p in &mut list {
+        if p.team_id.is_none() {
+            p.team_id = teams.first().map(|t| t.0.clone());
+        }
+        p.team_name = teams.iter().find(|t| p.team_id.as_ref() == Some(&t.0)).map(|t| t.1.clone());
+    }
+    Ok(list)
 }
 
 fn row(r: &Row) -> rusqlite::Result<Project> {
@@ -35,6 +57,7 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         preview_start_secs: r.get::<_, Option<i64>>(26)?.and_then(|s| u32::try_from(s).ok())
             .filter(|s| crate::screenshots::START_SECS.contains(s)).unwrap_or(crate::screenshots::DEFAULT_START_SECS),
         test_runs_at_once: r.get::<_, Option<i64>>(27)?.and_then(|n| u32::try_from(n).ok()).filter(|n| *n >= 1),
+        team_name: None,
     })
 }
 
@@ -97,15 +120,17 @@ fn month_start() -> i64 {
 pub fn list(db: &Db) -> Result<Vec<Project>> {
     db.read(|c| {
         let mut st = c.prepare(&format!("{} WHERE p.deleted_at IS NULL ORDER BY p.number DESC", select()))?;
-        Ok(st.query_map([month_start()], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        let list = st.query_map([month_start()], row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        with_teams(c, list)
     })
 }
 
 pub fn get(db: &Db, id: &str) -> Result<Project> {
     db.read(|c| {
-        c.query_row(&format!("{} WHERE p.id = ?2", select()), rusqlite::params![month_start(), id], row)
+        let p = c.query_row(&format!("{} WHERE p.id = ?2", select()), rusqlite::params![month_start(), id], row)
             .optional()?
-            .ok_or_else(|| Error::NotFound(format!("project {id}")))
+            .ok_or_else(|| Error::NotFound(format!("project {id}")))?;
+        Ok(with_teams(c, vec![p])?.remove(0))
     })
 }
 
@@ -246,7 +271,11 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
             seq += 1;
             number = format!("{year}-{seq:03}");
         }
-        let team: Option<String> = c.query_row("SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1", [], |r| r.get(0)).optional()?;
+        // The team given (GA-225), else the first team.
+        let team: Option<String> = match clean(&input.team_id) {
+            Some(t) => Some(team_named(c, &t)?.0),
+            None => c.query_row(&format!("SELECT {FIRST_TEAM}"), [], |r| r.get(0))?,
+        };
         let id = ids::new_id();
         c.execute(
             "INSERT INTO projects(id, created_at, updated_at, created_by, updated_by, org_id, client_id, number, key, name, status,
@@ -264,8 +293,15 @@ pub fn create(db: &Db, actor: &str, input: ProjectInput) -> Result<String> {
     })
 }
 
-/// The key is fixed after creation (task identifiers depend on it).
+/// The key is fixed after creation (task identifiers depend on it). Another team (`team_id`, GA-225) moves the project
+/// and all its cards there in the same write (`move_cards`), refused while one of its cards has a run live (`move_refused`).
 pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()> {
+    update_with(db, actor, id, input, &[])
+}
+
+/// `update`, where `under_way` are the cards the app has a run live or starting on (`runs::working_on`): a move to
+/// another team is refused while one of them is the project's, as for a live run in the runs table.
+pub fn update_with(db: &Db, actor: &str, id: &str, input: ProjectInput, under_way: &[String]) -> Result<()> {
     let name = input.name.trim().to_string();
     if name.is_empty() {
         return Err(Error::Invalid("project name is required".into()));
@@ -277,6 +313,23 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
     db.write(Some(actor), |w| {
         person_sets_lead_may_merge(w.conn(), actor, &input)?;
         person_sets_preview(w.conn(), actor, &input)?;
+        // GA-225: another team moves it. Checked before anything changes, so a refusal changes nothing.
+        let to = match clean(&input.team_id) {
+            Some(t) => Some(team_named(w.conn(), &t)?),
+            None => None,
+        };
+        let moving = match to {
+            Some(to) => {
+                let (saved_name, from) = name_and_team(w.conn(), id)?;
+                if from.0 == to.0 {
+                    None
+                } else {
+                    move_refused(w.conn(), id, &saved_name, under_way)?;
+                    Some((from, to))
+                }
+            }
+            None => None,
+        };
         let now = ids::now_ms();
         let n = w.conn().execute(
             "UPDATE projects SET client_id=?2, name=?3, status=coalesce(?4, status), color=?5, goal_md=?6,
@@ -286,17 +339,156 @@ pub fn update(db: &Db, actor: &str, id: &str, input: ProjectInput) -> Result<()>
                lead_may_merge=coalesce(?14, lead_may_merge), screenshots_json=coalesce(?15, screenshots_json),
                preview_command=CASE WHEN ?16 IS NULL THEN preview_command ELSE NULLIF(?16, '') END,
                preview_start_secs=coalesce(?17, preview_start_secs),
-               test_runs_at_once=CASE WHEN ?18 IS NULL THEN test_runs_at_once ELSE NULLIF(?18, 0) END
+               test_runs_at_once=CASE WHEN ?18 IS NULL THEN test_runs_at_once ELSE NULLIF(?18, 0) END,
+               team_id=coalesce(?19, team_id)
              WHERE id=?1 AND deleted_at IS NULL",
             rusqlite::params![id, clean(&input.client_id), name, clean(&input.status), clean(&input.color),
                               clean(&input.goal_md), input.budget_amount_minor, input.budget_hours, now, actor,
-                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs, test_runs],
+                              copy, install, setup, input.lead_may_merge, shots, preview, start_secs, test_runs,
+                              moving.as_ref().map(|(_, to)| to.0.clone())],
         )?;
         if n == 0 {
             return Err(Error::NotFound(format!("project {id}")));
         }
-        w.update("projects", id, serde_json::to_value(&input)?)?;
+        let mut diff = serde_json::to_value(&input)?;
+        if let Some((from, to)) = &moving {
+            let cards = move_cards(w, actor, id, from, to, now)?;
+            diff["team"] = serde_json::json!([from.1, to.1]);
+            diff["cardsMoved"] = serde_json::json!(cards);
+        }
+        w.update("projects", id, diff)?;
         upsert_repo(w, actor, id, &input, now)
+    })
+}
+
+/// The team `id`, checked: its id and name. A team that doesn't exist, or was removed, is refused.
+fn team_named(c: &Connection, id: &str) -> Result<(String, String)> {
+    c.query_row("SELECT id, name FROM teams WHERE id=?1 AND deleted_at IS NULL", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("team {id}")))
+}
+
+/// The project's name as saved, and its team (id and name): its own, else the first team.
+fn name_and_team(c: &Connection, id: &str) -> Result<(String, (String, String))> {
+    let (name, team): (String, Option<String>) = c
+        .query_row(&format!("SELECT name, COALESCE(team_id, {FIRST_TEAM}) FROM projects WHERE id=?1 AND deleted_at IS NULL"), [id],
+                   |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?
+        .ok_or_else(|| Error::NotFound(format!("project {id}")))?;
+    let team = team.ok_or_else(|| Error::Invalid("there is no team".into()))?;
+    let team_name: String = c.query_row("SELECT name FROM teams WHERE id=?1", [&team], |r| r.get(0))?;
+    Ok((name, (team, team_name)))
+}
+
+/// GA-225: a project doesn't move to another team while one of its cards has a run live or starting: one of `under_way`
+/// (the app's cards with a run live or starting), or a run the runs table has as live. The refusal names the first of
+/// them by number.
+fn move_refused(c: &Connection, id: &str, name: &str, under_way: &[String]) -> Result<()> {
+    let mut busy: Vec<String> = {
+        let mut st = c.prepare(
+            "SELECT t.identifier FROM tasks t WHERE t.project_id=?1
+               AND (t.id IN (SELECT value FROM json_each(?2))
+                    OR EXISTS (SELECT 1 FROM runs r WHERE r.task_id = t.id AND r.status IN ('queued','running','waiting_approval')))")?;
+        st.query_map(rusqlite::params![id, serde_json::to_string(under_way)?], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    crate::builds_on::sort_identifiers(&mut busy);
+    match busy.first() {
+        Some(card) => Err(Error::Invalid(format!("Wait for {card}'s run to end, or stop it, before you move {name} to another team."))),
+        None => Ok(()),
+    }
+}
+
+/// GA-225: moves the project's cards, archived ones too, from team `from` to team `to` (each an id and a name): each to
+/// `to`'s first column of the same category in board order, else its first Backlog column, else its first column, at
+/// the end of that column and in the cards' board order. An assignee, pin or implementer that is an agent not on `to`
+/// comes off; people stay. Every card's change goes in the changes log. Returns how many cards moved.
+fn move_cards(w: &Writer, actor: &str, project_id: &str, from: &(String, String), to: &(String, String), now: i64) -> Result<i64> {
+    let c = w.conn();
+    let columns: Vec<(String, String, String)> = {
+        let mut st = c.prepare("SELECT id, name, category FROM workflow_states WHERE team_id=?1 AND deleted_at IS NULL ORDER BY sort_key")?;
+        st.query_map([&to.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let target = |category: &str| {
+        columns.iter().find(|s| s.2 == category).or_else(|| columns.iter().find(|s| s.2 == "backlog")).or(columns.first())
+    };
+    // The cards in board order: by their column, then their place in it.
+    let cards: Vec<(String, String, String, [Option<String>; 3])> = {
+        let mut st = c.prepare(
+            "SELECT t.id, s.name, s.category, t.assignee_actor_id, t.pinned_actor_id, t.implementer_actor_id
+             FROM tasks t JOIN workflow_states s ON s.id = t.state_id WHERE t.project_id=?1 ORDER BY s.sort_key, t.sort_key, t.created_at")?;
+        st.query_map([project_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, [r.get(3)?, r.get(4)?, r.get(5)?])))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    // An agent that isn't on the new team comes off; a person stays, whatever team they are on.
+    let mut leaves: HashMap<String, bool> = HashMap::new();
+    let mut last: HashMap<String, Option<String>> = HashMap::new();
+    for (card, from_column, category, actors) in &cards {
+        let (state, column, new_category) = target(category).ok_or_else(|| Error::Invalid(format!("{} has no columns", to.1)))?;
+        let mut off = [false; 3];
+        for (i, a) in actors.iter().enumerate() {
+            let Some(a) = a else { continue };
+            if !leaves.contains_key(a) {
+                let gone: bool = c.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM actors x WHERE x.id=?1 AND x.kind='agent')
+                       AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id=?2 AND m.actor_id=?1 AND m.deleted_at IS NULL)",
+                    [a, &to.0], |r| r.get(0))?;
+                leaves.insert(a.clone(), gone);
+            }
+            off[i] = leaves[a];
+        }
+        if !last.contains_key(state) {
+            let max: Option<String> = c.query_row("SELECT max(sort_key) FROM tasks WHERE state_id=?1", [state], |r| r.get(0))?;
+            last.insert(state.clone(), max);
+        }
+        let key = crate::sortkey::key_after(last[state].as_deref());
+        c.execute(
+            "UPDATE tasks SET state_id=?2, state_category=?3, sort_key=?4,
+               started_at = coalesce(started_at, CASE WHEN ?3 = 'in_progress' THEN ?5 END),
+               completed_at = CASE WHEN ?3 = 'done' THEN coalesce(completed_at, ?5) ELSE NULL END,
+               assignee_actor_id = CASE WHEN ?7 THEN NULL ELSE assignee_actor_id END,
+               pinned_actor_id = CASE WHEN ?8 THEN NULL ELSE pinned_actor_id END,
+               implementer_actor_id = CASE WHEN ?9 THEN NULL ELSE implementer_actor_id END,
+               updated_at=?5, updated_by=?6, version=version+1 WHERE id=?1",
+            rusqlite::params![card, state, new_category, key, now, actor, off[0], off[1], off[2]])?;
+        let mut diff = serde_json::json!({"column": [from_column, column], "team": [from.1, to.1]});
+        if off.iter().any(|o| *o) {
+            diff["agentsOff"] = serde_json::json!(true);
+        }
+        w.update("tasks", card, diff)?;
+        last.insert(state.clone(), Some(key));
+    }
+    Ok(cards.len() as i64)
+}
+
+/// GA-225: what moving a project to another team does, for the project form's question.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMove {
+    /// The project's name.
+    pub project: String,
+    /// The team it is in now, and the team it would move to.
+    pub from: String,
+    pub to: String,
+    /// Its cards, archived ones included: all of them move.
+    pub cards: i64,
+}
+
+/// What moving project `id` to team `team_id` would do (`TeamMove`); nothing changes.
+pub fn team_move(db: &Db, id: &str, team_id: &str) -> Result<TeamMove> {
+    db.read(|c| {
+        let (project, from) = name_and_team(c, id)?;
+        let to = team_named(c, team_id)?;
+        let cards: i64 = c.query_row("SELECT count(*) FROM tasks WHERE project_id=?1", [id], |r| r.get(0))?;
+        Ok(TeamMove { project, from: from.1, to: to.1, cards })
+    })
+}
+
+/// The project's cards on the board (archived ones left out: no run starts on them), for the app to hold while the
+/// project moves to another team.
+pub fn card_ids(db: &Db, id: &str) -> Result<Vec<String>> {
+    db.read(|c| {
+        let mut st = c.prepare("SELECT id FROM tasks WHERE project_id=?1 AND deleted_at IS NULL")?;
+        Ok(st.query_map([id], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
     })
 }
 

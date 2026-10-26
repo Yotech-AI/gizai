@@ -491,6 +491,34 @@ pub fn starting(st: &AppState) -> Vec<String> {
     st.runs.starting.lock().unwrap().keys().cloned().collect()
 }
 
+/// GA-225: saves project `id` from the app (the project form, the Team Lead's update_project). When `input` moves it to
+/// another team, its cards are held while it moves, as a start by hand holds its card, so no run starts on one of them
+/// meanwhile; a card with a run live or starting refuses the move, and nothing changes (`projects::update_with`). True
+/// when it moved.
+pub fn update_project(st: &AppState, actor: &str, id: &str, input: gizai_core::model::ProjectInput) -> gizai_core::Result<bool> {
+    let moves = match input.team_id.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        Some(to) => projects::get(&st.db, id)?.team_id.as_deref() != Some(to),
+        None => false,
+    };
+    if !moves {
+        projects::update(&st.db, actor, id, input)?;
+        return Ok(false);
+    }
+    let cards = projects::card_ids(&st.db, id)?;
+    let mut held = Vec::with_capacity(cards.len());
+    let mut under_way = vec![];
+    for card in &cards {
+        match Starting::take(st, card, None) {
+            Some(hold) => held.push(hold),
+            None => under_way.push(card.clone()),
+        }
+    }
+    under_way.extend(st.runs.live.lock().unwrap().values().filter(|l| cards.contains(&l.task_id)).map(|l| l.task_id.clone()));
+    projects::update_with(&st.db, actor, id, input, &under_way)?;
+    drop(held);
+    Ok(true)
+}
+
 /// The cards with a run under way (GA-191): live, or starting (claimed for a run, its worktree being made ready), of
 /// `agent` or of every agent, each card once, without `except`. What the run limits count: since cards start side by
 /// side, a claimed card holds its place before its run is live. A person's start by hand isn't a run.

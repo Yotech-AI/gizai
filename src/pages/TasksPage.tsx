@@ -1,15 +1,16 @@
 // Tasks (and the Inbox): Paperclip-style list grouped by column, or the board. The Inbox is always the list. View options are remembered on this device.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpDown, Check, Columns3, Layers, List, ListFilter, LoaderCircle, Plus, StepForward, Trash2, X } from "lucide-react";
-import { continueAfterRunForMe, dismissChat, getTeam, listChatThreads, listProjects, listTasks, listUsers, moveTask, restoreTask, archiveTask } from "../api";
+import { continueAfterRunForMe, dismissChat, getTeam, listChatThreads, listProjects, listTasks, listTeams, listUsers, moveTask, restoreTask, archiveTask } from "../api";
 import { go, href } from "../router";
 import { useData } from "../lib/useData";
+import { cardsOfTeam, shownTeam, teamOfProject, useCurrentTeam } from "../lib/team";
 import { useLiveRuns } from "../lib/useLiveRuns";
 import { PENDING_MS } from "../lib/usePending";
 import { asksToRun, chatLabel, chatLabelTitle, hasPending, needsYou, waitingChats } from "../lib/inbox";
 import { relTime } from "../lib/format";
 import { modKey } from "../lib/keys";
-import type { ChatThread } from "../types";
+import type { ChatThread, Team } from "../types";
 import { filterCount, filterTasks, groupTasks, sortTasks, type Filter, type GroupBy, type SortBy } from "../lib/taskView";
 import type { Task } from "../types";
 import { Board } from "../components/Board";
@@ -130,11 +131,21 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const [sort, setSort] = usePref<SortBy>("gizai-task-sort", "updated");
   const [group, setGroup] = usePref<GroupBy>("gizai-task-group", "status");
   const [filter, setFilter] = useKeptFilter();
-  const { data: team, error: teamErr } = useData(() => getTeam());
+  // GA-225: with more than one team the board shows one team at a time, the one picked here, on the Team page or in the
+  // sidebar (none picked: the first team); the Inbox shows every team's cards. With one team, everything as before.
+  const [picked, setPicked] = useCurrentTeam();
+  const { data: team, error: teamErr } = useData(() => getTeam(picked), [picked]);
   const { data: projects } = useData(() => listProjects(), [], { counts: false });
   const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: fetched, error } = useData(() => listTasks({}));
   const { data: threads, reload: reloadThreads } = useData(() => (inbox ? listChatThreads() : Promise.resolve([] as ChatThread[])), [inbox]);
+  const { data: teams } = useData(() => listTeams(), [], { counts: false });
+  const several = (teams?.length ?? 0) > 1;
+  const { data: allTeams } = useData(() => (inbox && teams && teams.length > 1 ? Promise.all(teams.map((t) => getTeam(t.id))) : Promise.resolve(null)),
+    [inbox, (teams ?? []).map((t) => t.id).join(",")]);
+  // A pick that isn't one of the teams (another data folder's) goes back to the first team, here, on the Team page and in
+  // the sidebar.
+  useEffect(() => { if (teams?.length && picked && shownTeam(teams, picked) !== picked) setPicked(null); }, [teams, picked]); // eslint-disable-line react-hooks/exhaustive-deps
   const chats = useMemo(() => (inbox ? waitingChats(threads ?? []) : []), [inbox, threads]);
   const dismiss = (id: string) => dismissChat(id).then(reloadThreads).catch((e) => setToast({ text: `Couldn't dismiss the chat: ${e}` }));
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -154,18 +165,28 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const states = useMemo(() => [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1)), [team]);
+  // The boards shown: the picked team's; in the Inbox with more than one team, every team's (their columns in team order,
+  // each named with its team).
+  const boards: Team[] = useMemo(() => (inbox && allTeams ? allTeams : team ? [team] : []), [inbox, allTeams, team]);
+  const states = useMemo(() => boards.flatMap((b) => [...b.states].sort((a, c) => (a.sortKey < c.sortKey ? -1 : 1))
+    .map((s) => (boards.length > 1 ? { ...s, name: `${s.name} · ${b.name}` } : s))), [boards]);
+  const members = useMemo(() => boards.flatMap((b) => b.members), [boards]);
   const live = useLiveRuns();
-  const working = useMemo(() => new Map(live.map((r) => [r.taskId, team?.members.find((m) => m.actorId === r.agentId)?.name ?? "An agent"])), [live, team]);
+  const working = useMemo(() => new Map(live.map((r) => [r.taskId, members.find((m) => m.actorId === r.agentId)?.name ?? "An agent"])), [live, members]);
+  // GA-225: the board and the list have the picked team's cards: those of its projects, and with the first team those
+  // without a project. Not before the projects are read, so no other team's card flashes by.
+  const firstTeam = teams?.[0]?.id;
+  const teamTasks = useMemo(() => (inbox || !several ? tasks : team && projects && firstTeam ? cardsOfTeam(tasks, projects, team.id, firstTeam) : []),
+    [tasks, inbox, several, team, projects, firstTeam]);
   // Run this for me: in the Inbox these cards show on top with their commands, not in the list as well.
   const asks = useMemo(() => (inbox ? sortTasks(tasks.filter(asksToRun), "updated") : []), [tasks, inbox]);
   const shown = useMemo(() => {
-    const base = inbox ? tasks.filter((t) => needsYou(t, inboxFor!) && !asksToRun(t)) : tasks;
+    const base = inbox ? tasks.filter((t) => needsYou(t, inboxFor!) && !asksToRun(t)) : teamTasks;
     return sortTasks(filterTasks(base, filter), sort);
-  }, [tasks, filter, sort, inbox, inboxFor]);
+  }, [tasks, teamTasks, filter, sort, inbox, inboxFor]);
   const groups = useMemo(() => groupTasks(shown, group, states), [shown, group, states]);
   // GA-185: a Review card with screenshots has the sign on the board, and says "6 screenshots" in the Inbox.
-  const shots = useReviewShots(inbox || view === "board" ? tasks : null);
+  const shots = useReviewShots(inbox ? tasks : view === "board" ? teamTasks : null);
 
   const onMove = useCallback(async (id: string, stateId: string, sortKey: string) => {
     const before = tasksRef.current;
@@ -194,8 +215,15 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
 
   const project = projects?.find((p) => p.id === filter.projectId);
   const nFilters = filterCount(filter);
-  const agents = (team?.members ?? []).filter((m) => m.kind === "agent");
+  const agents = members.filter((m) => m.kind === "agent");
   const noProjects = projects !== null && projects.length === 0;
+  // With more than one team, Filters → Project offers the picked team's projects (the Inbox: every project).
+  const teamProjects = (projects ?? []).filter((p) => inbox || !several || !team || !firstTeam || teamOfProject(p.id, projects ?? [], firstTeam) === team.id);
+  // Another team: a project filter of the team shown before goes, so the board doesn't stay empty.
+  const onTeam = (id: string) => {
+    setPicked(id);
+    if (filter.projectId && firstTeam && teamOfProject(filter.projectId, projects ?? [], firstTeam) !== id) setFilter({ ...filter, projectId: null });
+  };
 
   return (
     <>
@@ -208,6 +236,9 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       <div className="toolbar">
         <button className="btn" onClick={() => onNewTask()}><Plus className="icon" />New task</button>
         <input className="input search-input" type="search" aria-label="Search tasks" placeholder="Search ID or title" value={filter.text ?? ""} onChange={(e) => setFilter({ ...filter, text: e.target.value })} />
+        {several && !inbox && team && <select className="chip" aria-label="Team" title="The team whose board shows" value={team.id} onChange={(e) => onTeam(e.target.value)}>
+          {(teams ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>}
         <span className="spacer" />
         {!inbox && <div className="seg" role="group" aria-label="View">
           <button aria-pressed={view === "board"} aria-label="Board" title={`Board (${modKey()}+B)`} onClick={() => setView("board")}><Columns3 className="icon" /></button>
@@ -217,7 +248,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
           {() => (<>
             <div className="pop-label">Project</div>
             <button className="opt" onClick={() => setFilter({ ...filter, projectId: null })}>All projects{!filter.projectId && <Check className="icon tick" />}</button>
-            {(projects ?? []).map((p) => <button key={p.id} className="opt" onClick={() => setFilter({ ...filter, projectId: p.id })}>
+            {teamProjects.map((p) => <button key={p.id} className="opt" onClick={() => setFilter({ ...filter, projectId: p.id })}>
               <span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", background: p.color ?? "var(--text-3)" }} />{p.name}{filter.projectId === p.id && <Check className="icon tick" />}</button>)}
             <div className="sep" /><div className="pop-label">Labels</div>
             {(team?.labels ?? []).map((l) => { const on = filter.labelIds?.includes(l.id); return (
@@ -242,7 +273,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
       {(error || teamErr) && <div className="error-banner">{error ?? teamErr}</div>}
       {noProjects ? (
         <div className="content"><div className="page-pad"><div className="empty"><b>No projects yet.</b><span>Tasks live in a project. Create one, then press N to add a task.</span><button className="btn primary" onClick={() => go({ page: "projects" })}>Go to Projects</button></div></div></div>
-      ) : !team || !fetched ? null : view === "list" ? (
+      ) : !team || !fetched || (inbox && several && !allTeams) ? null : view === "list" ? (
         <div className="content">
           {chats.length > 0 && <div className="page-pad lead-chats-pad"><LeadChats chats={chats} onDismiss={dismiss} /></div>}
           {asks.length > 0 && <div className="page-pad lead-chats-pad"><RunForMeCards tasks={asks} agentOf={(t) => (t.assigneeKind === "agent" ? t.assigneeName ?? null : null)} /></div>}
@@ -254,7 +285,7 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
         <div className="board-wrap">
           {chats.length > 0 && <LeadChats chats={chats} onDismiss={dismiss} />}
           {states.length > 0 && <Board tasks={shown} states={states} onMove={onMove} onOpen={openCard} onAdd={(sid) => onNewTask(sid)}
-            onArchive={onArchive} working={working} members={team.members} shots={shots} />}
+            onArchive={onArchive} working={working} members={members} shots={shots} />}
         </div>
       )}
       {bin && <ArchivedCards projectId={filter.projectId} projectName={project?.name} onClose={() => setBin(false)} />}

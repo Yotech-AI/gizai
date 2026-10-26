@@ -60,6 +60,7 @@ mod slash_commands_flow_test;
 mod team_lead_mcp_rules_test;
 mod terminal_flow_test;
 mod test_runs_at_once_flow_test;
+mod teams_flow_test;
 mod tools_test;
 mod update_flow_test;
 mod version_test;

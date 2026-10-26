@@ -22,6 +22,8 @@ export function describeChange(e: Pick<ChangeEntry, "table" | "op" | "diff">): s
   if (d.archived === false) return "restored the card";
   if (Array.isArray(d.column)) return `moved it from ${d.column[0]} to ${d.column[1]}`;
   if (Array.isArray(d.labels)) return d.labels.length ? `set labels to ${d.labels.join(", ")}` : "removed all labels";
+  // GA-228: the cards it builds on, the whole new list
+  if (Array.isArray(d.buildsOn)) return d.buildsOn.length ? `set Builds on to ${joinWords(d.buildsOn.map(String))}` : "cleared Builds on";
   // Review on GitHub or Bitbucket (its link says which): a pull request Gizai opened or saw change, and the clean-up after its merge
   if (typeof d.cleanup === "string" && d.cleanup) return d.cleanup;
   if (typeof d.pullRequest === "string") {

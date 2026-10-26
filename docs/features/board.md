@@ -46,6 +46,29 @@ Memory for agent runs, also in Settings → Runs, is how much memory all agent r
 
 A project can also keep how many of its cards are tested at the same time, so a heavy test suite doesn't run several times at once: [Test runs at once](testing.md#test-runs-at-once).
 
+A card that builds on another card waits until that card is merged: [Cards that build on others](#cards-that-build-on-others).
+
+## Cards that build on others
+
+A card that needs another card's code builds on it, like screens on their backend, or a follow-up on its base. It waits until that card is merged, then starts by itself, so a plan of cards runs through in order.
+
+- **Merged** means in a Deploy or Done column. An archived card came from Done, so it counts. A cancelled card never counts.
+- **Set it** in the card's Properties → Builds on: Add a card finds a card by ID or title, as @ does, and × takes one off. Any card may be named, another project's too, up to 20. The Team Lead sets it with `builds_on` ([A Team Lead you talk to](team-lead.md#cards-that-build-on-others)).
+- **Refused:** a card building on itself, more than 20 cards, and a loop, like "GA-227 can't build on GA-225: GA-225 already builds on GA-227." A loop through other cards names them: "…, through GA-226."
+- **Needed by**, under Builds on, lists the cards that build on this one.
+
+While it waits:
+
+- No agent takes it; they take their next cards meanwhile. It keeps its place, without a move or a hold, in To do, In progress, Testing or a column of your own.
+- The board shows "Waits for GA-226", or "Waits for 2 cards", with the cards in its tooltip. The badge goes once they are merged.
+- Run and Continue don't start it, and say why: "GA-227 builds on GA-226, which isn't merged yet. It starts by itself once GA-226 is merged; to start it now, take GA-226 off its Builds on."
+- You can still move it to any column. In an Auto column it waits there with its badge.
+- When a card it waits for is on hold or cancelled, the Team Lead's board check reports it (`builds_on_blocked`). Waiting for a card that is still in work isn't reported.
+
+Once the last of them is merged (its pull request merged, the DevOps Agent's release, or you moving it to Deploy or Done), the agents take it at the next pull, without anyone moving it. Its run's prompt lists the cards it builds on, like "Builds on GA-226: Team templates (backend), merged.", so the agent knows their code is on main.
+
+A card without Builds on works as before.
+
 ## A worktree for every card
 
 Every card gets its own git worktree and branch, started from main on GitHub or Bitbucket when the project is linked. Main is fetched through your checkout's own remote for that repository (origin first), so your own git settings apply as they do for your own `git fetch`, like an `insteadOf` rule that sends it to an SSH host alias. Worktrees start warm. Per project, a new worktree gets:

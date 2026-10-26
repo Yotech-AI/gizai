@@ -14,7 +14,7 @@ use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
 use gizai_agents::stream::RunEvent;
 use gizai_agents::{outcome, worktree};
 use gizai_core::model::{Outcome, Project, Refusal, Task, TaskPatch};
-use gizai_core::{comments, housekeeping, ids, projects, runs as core_runs, settings, tasks, team, workflow};
+use gizai_core::{builds_on, comments, housekeeping, ids, projects, runs as core_runs, settings, tasks, team, workflow};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -1012,8 +1012,15 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         None => Starting::take(st, task_id, Some(agent_id.as_deref().unwrap_or_default()))
             .ok_or_else(|| StartError::Wait("This card's run is already starting: Gizai is getting its worktree ready".into()))?,
     };
-    if let Ok(t) = tasks::get(&st.db, task_id) && t.archived_at.is_some() {
-        return Err(StartError::Other(format!("{} is archived: restore it first", t.identifier)));
+    if let Ok(t) = tasks::get(&st.db, task_id) {
+        if t.archived_at.is_some() {
+            return Err(StartError::Other(format!("{} is archived: restore it first", t.identifier)));
+        }
+        // GA-228: nor while it builds on a card that isn't merged yet. It only waits: the queue takes it once that card
+        // is merged (Run, Continue and the Team Lead's start_agent_run and continue_agent_run say so).
+        if !t.waits_for.is_empty() {
+            return Err(StartError::Wait(builds_on::waits_message(&t.identifier, &t.waits_for)));
+        }
     }
     let max = get_settings(st).max_concurrent_runs;
     // the other cards under way count, those still starting too: cards start side by side (GA-191)
@@ -1141,11 +1148,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let recent: Vec<(String, String)> = comments::list(&st.db, task_id).unwrap_or_default().into_iter().rev().take(10).rev()
         .map(|c| (c.author_name, c.body_md)).collect();
     let limits = { let s = get_settings(st); RunLimits { minutes: s.max_run_minutes, tool_calls: s.max_run_tool_calls } };
+    // GA-228: the cards it builds on, listed after its description, so the agent knows their code is on main.
+    let builds_on: Vec<prompt::BuiltOn> = builds_on::of(&st.db, task_id).map(|b| b.builds_on).unwrap_or_default().into_iter()
+        .map(|l| prompt::BuiltOn { identifier: l.identifier, title: l.title, merged: l.merged, column: l.column }).collect();
     let ctx = TaskContext {
         identifier: task.identifier.clone(), title: task.title.clone(), description_md: task.description_md.clone(),
         acceptance_md: task.acceptance_md.clone().unwrap_or_default(), recent_comments: recent, role: role.clone(),
         qa_issues: if role == "qa" { vec![] } else { core_runs::last_qa_issues(&st.db, task_id).unwrap_or_default() },
-        limits: Some(limits), base, project_goal_md: project.goal_md.clone().unwrap_or_default(),
+        limits: Some(limits), base, project_goal_md: project.goal_md.clone().unwrap_or_default(), builds_on,
     };
     let instructions = agent.instructions_md.clone().filter(|i| !i.trim().is_empty()).unwrap_or_else(|| gizai_core::seed::role_template(&role));
     // The agent's folders (agent form → Folders): one that is missing, or refused by now, is skipped and the run log

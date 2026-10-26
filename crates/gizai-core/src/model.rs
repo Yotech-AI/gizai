@@ -230,6 +230,10 @@ pub struct Task {
     /// the card's own.
     #[serde(default)]
     pub screenshots: Option<bool>,
+    /// Builds on (GA-228): the cards it builds on that aren't merged yet (not in a Deploy or Done column), by number. It
+    /// waits for them: the queue passes it over and a start by hand is refused. Empty: it waits for none.
+    #[serde(default)]
+    pub waits_for: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

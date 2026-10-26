@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
-use crate::{Error, Result, ids, runs, team, workflow};
+use crate::{Error, Result, builds_on, ids, runs, team, workflow};
 
 /// An agent with a free slot takes a waiting card within this long (the queue pulls every minute).
 pub const FREE_SLOT_GRACE_MS: i64 = 2 * 60_000;
@@ -62,7 +62,8 @@ pub struct Finding {
     /// answered | held | waiting | stopped | review
     pub kind: String,
     /// Why, as a code. held: the hold. waiting: no_agents, testing_off, agents_paused, paused, budget, pull_paused,
-    /// stopped_run, free_slot, runs_full, memory or test_runs_full (its project's Test runs at once, GA-212). stopped:
+    /// stopped_run, free_slot, runs_full, memory, test_runs_full (its project's Test runs at once, GA-212) or
+    /// builds_on_blocked (a card it builds on is on hold or cancelled, GA-228). stopped:
     /// limit, failed, no_result, stopped (by a person) or quit. review: may_merge (the Team Lead may merge it, GA-86).
     pub code: String,
     pub task_id: String,
@@ -289,13 +290,24 @@ pub fn check(db: &Db, cx: &Context) -> Result<Vec<Finding>> {
 
             // Waiting: no agent will start it.
             let since = changed_at.max(card.created_at);
+            let route = workflow::route(c, &card.id)?;
+            // GA-228: in an Auto column, a card that builds on cards not merged yet waits for them by design. Only a card
+            // it waits for that is on hold or cancelled, so it holds this one up for good, is a finding.
+            if route.auto {
+                let waits = builds_on::waits_for_in(c, &card.id)?;
+                if !waits.is_empty() {
+                    if let Some(reason) = builds_on::blocked_reason(&card.identifier, &waits) {
+                        out.push(base("waiting", "builds_on_blocked", since, None, reason));
+                    }
+                    continue;
+                }
+            }
             if let Some((r, agent_id)) = &last && r.status == "cancelled" {
                 let reason = if r.error.as_deref() == Some(STOPPED_BY_QUIT) { "Its last run stopped because Gizai quit" } else { "A person stopped its last run" };
                 out.push(base("waiting", "stopped_run", since, Some((agent_id.clone(), r.agent.clone())),
                               format!("{reason}: the queue doesn't start it again until Run or Continue")));
                 continue;
             }
-            let route = workflow::route(c, &card.id)?;
             if !route.auto {
                 // A Manual column: only a person's Run starts its cards.
                 continue;

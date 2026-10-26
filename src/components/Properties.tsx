@@ -13,6 +13,7 @@ import { Avatar } from "./Avatar";
 import { Popover } from "./Popover";
 import { NewLabel } from "./NewLabel";
 import { Diffstat } from "./changes/Diffstat";
+import { BuildsOnRows } from "./BuildsOn";
 
 const HOLD_NAMES: Record<string, string> = {
   needs_decision: "Needs your decision", stalled: "Stalled", merge_conflict: "Merge conflict",
@@ -95,6 +96,8 @@ export function Properties({ task, team, people, onError, onClose, onReadComment
             {agents.map((a) => <button key={a.actorId} className="opt" onClick={() => { close(); run(updateTask(task.id, { assigneeId: a.actorId })); }}><Avatar name={a.name} kind="agent" size="sm" />{a.name}{task.assigneeId === a.actorId && <Check className="icon tick" />}</button>)}
           </>)))}
         {row("Project", task.projectId ? <a className="v editable" href={href({ page: "project", id: task.projectId })}><span className="dot" style={{ width: 9, height: 9, borderRadius: "50%", background: task.projectColor ?? "var(--text-3)" }} />{task.projectName}</a> : <span className="v none">None</span>)}
+        {/* GA-228: the cards it builds on (it waits until they are merged) and the cards that build on it */}
+        <BuildsOnRows task={task} readOnly={readOnly} />
         {task.hold && row("Hold", <span className="v" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
           {/* GA-70: the question is with the Team Lead (an agent at work, so teal), not with you yet. */}
           {task.withLead ? <span className="badge live" title="The Team Lead answers it, or asks you in the Inbox">With the Team Lead</span>

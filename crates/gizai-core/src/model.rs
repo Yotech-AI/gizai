@@ -89,7 +89,11 @@ pub struct Project {
     /// or another git URL; new cards start from its branch.
     pub repo_url: Option<String>,
     pub default_branch: String,
+    /// The team whose board its cards are on (GA-225): its own, else the first team, as its cards go.
     pub team_id: Option<String>,
+    /// That team's name.
+    #[serde(default)]
+    pub team_name: Option<String>,
     pub budget_amount_minor: Option<i64>,
     pub budget_hours: Option<f64>,
     pub open_tasks: i64,
@@ -167,6 +171,9 @@ pub struct ProjectInput {
     pub preview_command: Option<String>,
     /// Start time in seconds, 10 to 600; None keeps it (120 for a new project).
     pub preview_start_secs: Option<u32>,
+    /// The project's team (GA-225); None: the first team for a new project, unchanged on update. Another team on update
+    /// moves the project and all its cards there (`projects::update`).
+    pub team_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

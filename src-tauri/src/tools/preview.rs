@@ -241,7 +241,10 @@ fn agent_fields(cx: &Cx, a: &Args) -> Vec<(&'static str, &'static str, String)> 
 fn create_agent(cx: &Cx, a: &Args) -> Result<Preview, String> {
     let name = a.req("name")?;
     let role = a.req("role")?;
-    let fields = agent_fields(cx, a).into_iter().map(|(_, label, v)| field(label, if v.is_empty() { "—".into() } else { v })).collect();
+    // GA-225: the team it joins, which must be named when there is more than one.
+    let t = resolve::team_arg(cx, a)?;
+    let mut fields: Vec<Field> = team_field(cx, &t).into_iter().collect();
+    fields.extend(agent_fields(cx, a).into_iter().map(|(_, label, v)| field(label, if v.is_empty() { "—".into() } else { v })));
     Ok(Preview { line: format!("Add the agent {name} ({role})"), fields, text: a.opt("instructions_md"), ..Default::default() })
 }
 
@@ -303,12 +306,19 @@ fn names(list: &[String]) -> String {
     if list.is_empty() { "none".into() } else { list.join(", ") }
 }
 
+/// GA-225: the team a call names, as a field, when there is more than one team to tell apart.
+fn team_field(cx: &Cx, t: &gizai_core::team::Team) -> Option<Field> {
+    let teams = gizai_core::team::list(cx.db()).unwrap_or_default();
+    (teams.len() > 1).then(|| field("Team", t.name.clone()))
+}
+
 fn add_column(cx: &Cx, a: &Args) -> Result<Preview, String> {
-    let t = resolve::team_of(cx, None)?;
+    let t = resolve::team_arg(cx, a)?;
     let name = a.req("name")?;
     let after = resolve::column(&t, &a.req("after")?)?;
     let kind = a.opt("kind").or_else(|| a.opt("category")).unwrap_or_default();
-    let mut fields = vec![field("Column", name.clone()), field("After", after.name.clone()), field("Kind", kind)];
+    let mut fields: Vec<Field> = team_field(cx, &t).into_iter().collect();
+    fields.extend([field("Column", name.clone()), field("After", after.name.clone()), field("Kind", kind)]);
     if let Some(list) = a.list("agents") {
         fields.push(field("Agents", names(&list)));
     }
@@ -320,10 +330,11 @@ fn add_column(cx: &Cx, a: &Args) -> Result<Preview, String> {
 }
 
 fn set_column(cx: &Cx, a: &Args) -> Result<Preview, String> {
-    let t = resolve::team_of(cx, None)?;
+    let t = resolve::team_arg(cx, a)?;
     let col = resolve::column(&t, &a.req("column")?)?;
     let column_name = |id: Option<&str>| id.and_then(|id| t.states.iter().find(|s| s.id == id)).map(|s| s.name.clone()).unwrap_or_else(|| "none".into());
-    let mut fields = vec![field("Column", col.name.clone())];
+    let mut fields: Vec<Field> = team_field(cx, &t).into_iter().collect();
+    fields.push(field("Column", col.name.clone()));
     if let Some(n) = a.opt("new_name") {
         fields.push(change("Name", col.name.clone(), n));
     }

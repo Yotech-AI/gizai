@@ -265,19 +265,29 @@ pub(crate) fn create_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         None => projects::unused_key(cx.db(), &name).map_err(err)?,
     };
     let client_id = match a.opt("client") { Some(c) => Some(resolve::client(cx, &c)?.id), None => None };
+    // GA-225: the team whose board its cards go on; left out, the first team.
+    let team_id = match a.opt("team") { Some(t) => Some(resolve::team(cx, &t)?.id), None => None };
     let id = projects::create(cx.db(), cx.actor, ProjectInput {
         client_id, name, key, status: a.opt("status"), goal_md: a.opt("goal_md"), repo_path,
-        default_branch: a.opt("default_branch"), color: a.opt("color"), repo_url: a.opt(repository_arg(a)), ..Default::default()
+        default_branch: a.opt("default_branch"), color: a.opt("color"), repo_url: a.opt(repository_arg(a)), team_id, ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
     let p = projects::get(cx.db(), &id).map_err(err)?;
     let label = format!("{} ({})", p.name, p.key);
-    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "number": p.number}, "link": link("project", &p.id, &label)}))
+    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "number": p.number, "team": p.team_name},
+              "link": link("project", &p.id, &label)}))
 }
 
-pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
+pub(crate) async fn update_project(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     guard_lead_may_merge(a)?;
     let cur = resolve::project(cx, &a.req("project")?)?;
+    // GA-225: another team moves the project and all its cards there, as the project form does.
+    let team = match a.opt("team") { Some(t) => Some(resolve::team(cx, &t)?), None => None };
+    let moves = team.as_ref().is_some_and(|t| cur.team_id.as_deref() != Some(t.id.as_str()));
+    // Its cards land where that team's agents start them: not after a tool from outside Gizai in this answer (GA-101).
+    if moves && let Some(tool) = cx.outside("update_project", a).await? {
+        return Err(super::refused_after("update_project", &tool));
+    }
     let repo_path = match a.text("repo_path") {
         Some(r) if r.is_empty() => None,
         Some(r) => Some(checked_repo(&r)?),
@@ -297,19 +307,32 @@ pub(crate) fn update_project(cx: &Cx, a: &Args) -> Result<Value, String> {
         return Err(format!("test_runs_at_once is a number from {} to {}, or 0 to clear it, not {n}. Nothing changed.",
                            projects::TEST_RUNS_AT_ONCE.start(), projects::TEST_RUNS_AT_ONCE.end()));
     }
-    projects::update(cx.db(), cx.actor, &cur.id, ProjectInput {
+    let moved = crate::runs::update_project(cx.st, cx.actor, &cur.id, ProjectInput {
         client_id, name: a.opt("name").unwrap_or_else(|| cur.name.clone()), key: cur.key.clone(),
         status: a.opt("status").or(Some(cur.status.clone())), goal_md: keep(a, "goal_md", &cur.goal_md),
         repo_path, default_branch: a.opt("default_branch").or(Some(cur.default_branch.clone())),
         color: keep(a, "color", &cur.color), budget_amount_minor: cur.budget_amount_minor, budget_hours: cur.budget_hours,
-        repo_url: keep(a, repository_arg(a), &cur.repo_url), test_runs_at_once, ..Default::default()
+        repo_url: keep(a, repository_arg(a), &cur.repo_url), test_runs_at_once, team_id: team.map(|t| t.id), ..Default::default()
     }).map_err(err)?;
     cx.changed("projects");
+    if moved {
+        // Its cards are in the new team's columns: that team's agents may take those in its Auto columns.
+        cx.changed("tasks");
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let st = cx.st.clone();
+            tokio::spawn(async move { crate::runs::pull(&st).await; });
+        }
+    }
     let p = projects::get(cx.db(), &cur.id).map_err(err)?;
     let label = format!("{} ({})", p.name, p.key);
-    Ok(json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path,
-              "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()), "test_runs_at_once": p.test_runs_at_once},
-              "link": link("project", &p.id, &label)}))
+    let mut v = json!({"ok": true, "project": {"id": p.id, "key": p.key, "name": p.name, "status": p.status, "repo_path": p.repo_path,
+              "repository": p.repo_url, "provider": super::provider(p.repo_url.as_deref()), "test_runs_at_once": p.test_runs_at_once,
+              "team": p.team_name},
+              "link": link("project", &p.id, &label)});
+    if moved {
+        v["done"] = json!(format!("moved to {} with all its cards", p.team_name.as_deref().unwrap_or("the team")));
+    }
+    Ok(v)
 }
 
 // ---- tasks ----
@@ -458,13 +481,14 @@ fn shares_memory_with(cx: &Cx<'_>, a: &Args) -> Result<Option<String>, String> {
 
 pub(crate) async fn create_agent(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
     guard_agent_powers(a)?;
+    // GA-225: the team it joins; with more than one team it must be named.
+    let team_id = resolve::team_arg(cx, a)?.id;
     let shares = shares_memory_with(cx, a)?;
     let cli = runs_on(cx, a)?;
     // Only Claude Code has a model list to check against; Codex and Gemini take their own model names.
     if cli.as_ref().is_none_or(|c| c.kind == "claude_code") {
         check_model(cx, a.opt("model").as_deref(), a.opt("effort").as_deref()).await?;
     }
-    let team_id = resolve::team_of(cx, None)?.id;
     let (name, role) = (a.req("name")?, a.req("role")?);
     // No list given: its role's, as the agent form starts it.
     let allowed_tools = a.list("allowed_tools").filter(|l| !l.is_empty()).unwrap_or_else(|| gizai_core::seed::role_tools(&team::role_key(&role)));
@@ -535,19 +559,21 @@ fn column_input(cx: &Cx, t: &team::Team, a: &Args, renaming: bool) -> Result<giz
     })
 }
 
-fn workflow_done(cx: &Cx, what: &str) -> Result<Value, String> {
+/// The columns of team `team_id` after a change to them.
+fn workflow_done(cx: &Cx, team_id: &str, what: &str) -> Result<Value, String> {
     cx.changed("workflow_states");
-    let t = resolve::team_of(cx, None)?;
+    let t = team::get(cx.db(), team_id).map_err(err)?;
     if tokio::runtime::Handle::try_current().is_ok() {
         let st = cx.st.clone();
         tokio::spawn(async move { crate::runs::pull(&st).await; });
     }
     let columns: Vec<String> = t.states.iter().map(|s| format!("{}: {}", s.name, super::read::column_line(s, &t))).collect();
-    Ok(json!({"ok": true, "done": what, "columns": columns, "link": {"page": "team", "id": t.id, "label": "Workflow"}}))
+    Ok(json!({"ok": true, "done": what, "team": t.name, "columns": columns, "link": {"page": "team", "id": t.id, "label": "Workflow"}}))
 }
 
 pub(crate) fn add_column(cx: &Cx, a: &Args) -> Result<Value, String> {
-    let t = resolve::team_of(cx, None)?;
+    // GA-225: the team whose board it goes on; with more than one team it must be named.
+    let t = resolve::team_arg(cx, a)?;
     let after = resolve::column(&t, &a.req("after")?)?;
     let kind = a.req("kind").or_else(|_| a.req("category"))?;
     let category = gizai_core::columns::category_of(&kind)
@@ -567,11 +593,12 @@ pub(crate) fn add_column(cx: &Cx, a: &Args) -> Result<Value, String> {
         cx.changed("workflow_states");
         return Err(format!("{name} was added after {}, but its setup was refused: {}", after.name, err(e)));
     }
-    workflow_done(cx, "column added")
+    workflow_done(cx, &t.id, "column added")
 }
 
 pub(crate) fn set_column(cx: &Cx, a: &Args) -> Result<Value, String> {
-    let t = resolve::team_of(cx, None)?;
+    // GA-225: the team whose column it is; with more than one team it must be named.
+    let t = resolve::team_arg(cx, a)?;
     let col = resolve::column(&t, &a.req("column")?)?;
     let input = column_input(cx, &t, a, true)?;
     let nothing = input.name.is_none() && input.agent_ids.is_none() && input.auto.is_none() && input.next_state_id.is_none() && input.after_id.is_none();
@@ -579,7 +606,7 @@ pub(crate) fn set_column(cx: &Cx, a: &Args) -> Result<Value, String> {
         return Err("nothing to change: give agents, auto, next, new_name or after".into());
     }
     gizai_core::columns::set_column(cx.db(), cx.actor, &col.id, input).map_err(err)?;
-    workflow_done(cx, "column changed")
+    workflow_done(cx, &t.id, "column changed")
 }
 
 pub(crate) fn save_label(cx: &Cx, a: &Args) -> Result<Value, String> {

@@ -56,6 +56,15 @@ The Team Lead splits bigger work into cards that build on each other: a backend 
 - `start_agent_run` and `continue_agent_run` on a card that waits don't start it, and say which cards it waits for.
 - `check_board` reports a card that waits for a card on hold or cancelled: kind `waiting`, code `builds_on_blocked`, like "GA-227 waits for GA-226, which is on hold: needs_decision". A card that waits for one still in work is no finding.
 
+## Teams
+
+With more than one team, each with its own board ([Several teams](board.md#several-teams)), the Team Lead's tools name the team, by its name or id. With one team, `team` may be left out, as before.
+
+- `add_column`, `set_column` and `create_agent` take `team`. With more than one team, a call without it is refused with the teams' names: "Name the team: My team or Research team."
+- `get_workflow` takes `team` for one team's columns; without it, each team's columns come under its name. `list_agents` takes `team` for one team's agents, and with more than one team says each agent's team.
+- `create_project` takes `team` (the first team when left out). `update_project` with `team` moves the project and all its cards, as the project form does, with the same refusal while one of its cards has a run live or starting. After a tool from outside GizAi in the same answer, a move is refused.
+- `get_project` and `list_projects` show each project's team.
+
 ## The board check
 
 Agent settings → Chat → Check the board every 15 min, off until you turn it on; the minutes go from 5 to 1440. It looks for answered questions, held and stuck cards, and cards no agent will start.

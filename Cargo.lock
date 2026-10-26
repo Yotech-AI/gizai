@@ -1507,7 +1507,7 @@ dependencies = [
 
 [[package]]
 name = "gizai"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gizai-agents",
  "gizai-core",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-agents"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "getrandom 0.4.3",
  "keyring",
@@ -1549,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-core"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -1567,7 +1567,7 @@ dependencies = [
 
 [[package]]
 name = "gizai-mcp"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "serde_json",
  "tempfile",

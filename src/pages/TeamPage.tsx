@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, pointerWithin, useSensor, useSensors,
   type CollisionDetection, type DragEndEvent, type DragOverEvent, type DragStartEvent,
@@ -71,7 +71,7 @@ function NewTeamDrawer({ onClose, onCreated }: { onClose: () => void; onCreated:
     finally { if (n === asked.current) setChecking(false); }
   };
   const pickFile = async () => {
-    const path = await open({ multiple: false, directory: false, title: "Start from a template file",
+    const path = await openDialog({ multiple: false, directory: false, title: "Start from a template file",
       filters: [{ name: "Team template", extensions: ["json"] }] }).catch((e) => { setErr(String(e)); return null; });
     if (typeof path === "string") await pick({ kind: "file", path });
   };
@@ -191,7 +191,7 @@ export function TeamPage() {
     setWarnings(null);
     exporting.current = true;
     try {
-      const path = await save({ title: "Export template", defaultPath: templateFileName(team.name), filters: [{ name: "Team template", extensions: ["json"] }] });
+      const path = await saveDialog({ title: "Export template", defaultPath: templateFileName(team.name), filters: [{ name: "Team template", extensions: ["json"] }] });
       if (!path) return;
       await saveTeamTemplate(team.id, path);
       setToast(`Saved ${baseName(path)}`);

@@ -46,7 +46,7 @@ export function TemplateCheck({ plan, fromFile }: { plan: TemplatePlan; fromFile
           {plan.agents.length === 0 ? <span className="faint">No agents.</span> : (
             <ul className="tt-agents">
               {plan.agents.map((a) => (
-                <li key={a.name} className="tt-agent" aria-label={a.name}>
+                <li key={a.name} className="tt-agent">
                   <div className="h">
                     <Avatar name={a.name} kind="agent" size="sm" role={a.role} />
                     <b>{a.name}</b>

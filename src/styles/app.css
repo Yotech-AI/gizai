@@ -148,6 +148,45 @@ a.member:hover { border-color: var(--line-2); }
 .stage-name:hover { border-color: var(--line-2); }
 .stage-name:focus { outline: none; border-color: var(--accent); background: var(--bg); }
 
+/* ---------- Team → New team from a template, and Export's warnings (GA-227, components/TeamTemplate.tsx) ---------- */
+.tt-wide { grid-column: 1 / -1; min-width: 0; }
+.tt-starts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.tt-start { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 3px 10px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-l); background: var(--raised); cursor: pointer; }
+.tt-start:hover { border-color: var(--line-2); }
+.tt-start.on { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--raised); }
+.tt-start:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.tt-start input { margin: 0; accent-color: var(--accent); }
+.tt-start .tt-name { font-weight: 600; color: var(--text); }
+.tt-start .tt-note { grid-column: 2; min-width: 0; overflow-wrap: anywhere; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }
+.tt-scroll { overflow-x: auto; }
+.tt-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.tt-table th { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; font-weight: 600; color: var(--text-3); }
+.tt-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--text-2); }
+.tt-table td:first-child, .tt-table th:first-child { padding-left: 0; }
+.tt-table td b { color: var(--text); font-weight: 600; }
+.tt-paused { margin: 0 0 10px; padding: 8px 12px; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--raised); color: var(--text); font-size: var(--fs-sm); }
+.tt-agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.tt-agent { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); }
+.tt-agent .h { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.tt-agent .h b { font-weight: 600; overflow-wrap: anywhere; }
+.tt-agent .h .faint { font-size: var(--fs-xs); }
+.tt-props { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 0; font-size: var(--fs-sm); }
+.tt-props dt { color: var(--text-3); }
+.tt-props dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.tt-extra { padding: 8px 10px; border: 1px solid var(--danger); border-radius: var(--radius); background: var(--danger-soft); color: var(--danger); }
+.tt-extra h4 { margin: 0 0 4px; font-size: var(--fs-sm); font-weight: 600; }
+.tt-extra ul { margin: 0; padding-left: 18px; font-size: var(--fs-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.tt-missing { margin: 0; color: var(--warning); font-size: var(--fs-sm); line-height: 1.4; }
+.tt-labels { margin: 0; color: var(--text); font-size: var(--fs-sm); }
+.tt-notes { margin: 10px 0 0; padding-left: 18px; color: var(--text-2); font-size: var(--fs-sm); line-height: 1.5; }
+.ask.tt-warn { width: min(620px, 100%); }
+.tt-warn-list { max-height: min(50vh, 420px); overflow-y: auto; margin: 14px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.tt-warn-list:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tt-warn-list li { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-sm); color: var(--text-2); }
+.tt-warn-list b { color: var(--text); font-weight: 600; }
+.tt-warn-list code { overflow-wrap: anywhere; color: var(--danger); font-size: var(--fs-xs); }
+
 /* ---------- Team → Workflow: the column editor ---------- */
 .wf { display: flex; flex-direction: column; gap: 8px; }
 .wf-col { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-l); background: var(--raised); }

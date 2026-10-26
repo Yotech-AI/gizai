@@ -62,7 +62,7 @@ With more than one team, each with its own board ([Several teams](board.md#sever
 
 - `add_column`, `set_column` and `create_agent` take `team`. With more than one team, a call without it is refused with the teams' names: "Name the team: My team or Research team."
 - `get_workflow` takes `team` for one team's columns; without it, each team's columns come under its name. `list_agents` takes `team` for one team's agents, and with more than one team says each agent's team.
-- `create_project` takes `team` (the first team when left out). `update_project` with `team` moves the project and all its cards, as the project form does, with the same refusal while one of its cards has a run live or starting. After a tool from outside GizAi in the same answer, a move is refused.
+- `create_project` takes `team` (the first team when left out). `update_project` with `team` moves the project and all its cards, as the project form does, with the same refusal while one of its cards has a run live or starting. A board check never moves a project, and neither does an answer after a tool from outside GizAi.
 - `get_project` and `list_projects` show each project's team.
 
 ## The board check

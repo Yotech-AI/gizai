@@ -284,6 +284,10 @@ pub(crate) async fn update_project(cx: &Cx<'_>, a: &Args) -> Result<Value, Strin
     // GA-225: another team moves the project and all its cards there, as the project form does.
     let team = match a.opt("team") { Some(t) => Some(resolve::team(cx, &t)?), None => None };
     let moves = team.as_ref().is_some_and(|t| cur.team_id.as_deref() != Some(t.id.as_str()));
+    if moves && cx.check.is_some() {
+        return Err(format!("A board check never moves a project to another team: ask the user in a chat (start_chat) instead. {} stays where it is.",
+                           cur.name));
+    }
     // Its cards land where that team's agents start them: not after a tool from outside Gizai in this answer (GA-101).
     if moves && let Some(tool) = cx.outside("update_project", a).await? {
         return Err(super::refused_after("update_project", &tool));

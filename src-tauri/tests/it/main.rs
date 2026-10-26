@@ -13,6 +13,7 @@ mod archive_flow_test;
 mod ask_lead_flow_test;
 mod backups_flow_test;
 mod board_flow_test;
+mod builds_on_flow_test;
 mod card_flow_test;
 mod changes_flow_test;
 mod chat_files_flow_test;

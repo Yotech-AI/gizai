@@ -349,6 +349,36 @@ async fn with_a_deploy_column_a_merge_moves_the_card_to_deploy_and_nothing_start
     assert_eq!(task(&c).state_name, "Deploy", "until a person drags it to Done");
 }
 
+/// GA-228: Check now (the card's own check, which merge_pull_request runs too) sees the merge, moves the card on, and pulls
+/// the queue at once: a card that builds on it starts by itself, without anyone moving it.
+#[tokio::test]
+async fn check_now_on_a_merged_card_starts_a_card_that_builds_on_it() {
+    let tmp = real_tempdir();
+    let c = worked_card(tmp.path()).await;
+    review_then_done(&c);
+    to_review(&c);
+    // KADE-2 builds on KADE-1 and waits in To do for the Backend Agent
+    gizai_core::settings::set(&c.st.db, "claude_bin", &FAKE.to_string()).unwrap();
+    let next = gizai_lib::test_task(&c.st, c.local.to_str().unwrap(), "backend");
+    gizai_core::tasks::update(&c.st.db, &c.st.you_id, &next, gizai_core::model::TaskPatch { description_md: Some("FAKE_HANG".into()),
+        ..Default::default() }).unwrap();
+    gizai_core::builds_on::set(&c.st.db, &c.st.you_id, &next, &[c.task.clone()]).unwrap();
+    assert!(gizai_lib::runs::pull(&c.st).await.is_empty(), "KADE-2 waits for KADE-1");
+    std::fs::write(c.gh.join("create.out"), format!("{LINK}/pull/7\n")).unwrap();
+    pulls::open(&c.st, &c.task).await.unwrap();
+    merge_on_github(tmp.path(), &c);
+    list(&c, 7, "MERGED", false, &git(&c.wt, &["rev-parse", "HEAD"]));
+    let pr = pulls::check(&c.st, &c.task).await.unwrap();
+    assert_eq!(pr.map(|p| p.state), Some("merged".to_string()));
+    assert_eq!(task(&c).state_name, "Done");
+    let t0 = std::time::Instant::now();
+    while !gizai_lib::runs::live(&c.st).iter().any(|l| l.task_id == next) {
+        assert!(t0.elapsed() < std::time::Duration::from_secs(30), "KADE-2 didn't start by itself after the merge");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    gizai_lib::runs::stop_all(&c.st, std::time::Duration::from_secs(12)).await;
+}
+
 /// A temp folder by its real path, the way git and Gizai report it: on macOS /var/folders is /private/var/folders, and on
 /// Windows TEMP can be a short name (RUNNER~1) that git gives in full. Without the \\?\ that canonicalize puts before a
 /// Windows drive.

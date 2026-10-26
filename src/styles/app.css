@@ -155,7 +155,7 @@ a.member:hover { border-color: var(--line-2); }
   border-radius: var(--radius-l); background: var(--raised); cursor: pointer; }
 .tt-start:hover { border-color: var(--line-2); }
 .tt-start.on { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--raised); }
-.tt-start:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.tt-start:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
 .tt-start input { margin: 0; accent-color: var(--accent); }
 .tt-start .tt-name { font-weight: 600; color: var(--text); }
 .tt-start .tt-note { grid-column: 2; min-width: 0; overflow-wrap: anywhere; color: var(--text-3); font-size: var(--fs-xs); line-height: 1.4; }

@@ -144,6 +144,29 @@ pub async fn set_task_labels(app: AppHandle, st: State<'_, AppState>, id: String
     wake(&st, &id);
     Ok(())
 }
+/// GA-228: the cards the card builds on and the cards that build on it (the card page's Builds on and Needed by).
+#[tauri::command]
+pub async fn get_builds_on(st: State<'_, AppState>, id: String) -> R<gizai_core::builds_on::BuildsOn> {
+    off(&st, move |st| gizai_core::builds_on::of(&st.db, &id).map_err(e)).await
+}
+/// GA-228: the card builds on `on` (a card's id) too. A loop, more than 20 cards or the card itself is refused with why.
+#[tauri::command]
+pub async fn add_builds_on(app: AppHandle, st: State<'_, AppState>, id: String, on: String) -> R<()> {
+    let task = id.clone();
+    off(&st, move |st| gizai_core::builds_on::add(&st.db, &st.you_id, &task, &on).map_err(e)).await?;
+    changed(&app, "tasks");
+    wake(&st, &id);
+    Ok(())
+}
+/// GA-228: the card no longer builds on `on`: when it waited only for that card, the queue may take it now.
+#[tauri::command]
+pub async fn remove_builds_on(app: AppHandle, st: State<'_, AppState>, id: String, on: String) -> R<()> {
+    let task = id.clone();
+    off(&st, move |st| gizai_core::builds_on::remove(&st.db, &st.you_id, &task, &on).map_err(e)).await?;
+    changed(&app, "tasks");
+    wake(&st, &id);
+    Ok(())
+}
 #[tauri::command]
 pub async fn list_archived_tasks(st: State<'_, AppState>, project_id: Option<String>) -> R<Vec<Task>> {
     off(&st, move |st| tasks::archived(&st.db, project_id.as_deref().filter(|p| !p.is_empty())).map_err(e)).await

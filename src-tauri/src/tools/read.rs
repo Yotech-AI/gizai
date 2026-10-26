@@ -24,6 +24,10 @@ fn task_line(t: &Task) -> Value {
     if t.by_hand {
         v["by_hand"] = json!(true);
     }
+    // GA-228: it builds on these cards, which aren't merged yet: no agent takes it until they are
+    if !t.waits_for.is_empty() {
+        v["waits_for"] = json!(t.waits_for);
+    }
     v
 }
 
@@ -225,6 +229,16 @@ pub(crate) async fn get_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
         "refused": r.refused,
     })).collect();
     let files = file_lines(cx, files::list(cx.db(), "task", &t.id).map_err(err)?).await;
+    // GA-228: the cards it builds on (merged: in Deploy or Done, so their code is on main) and those that build on it.
+    let links = gizai_core::builds_on::of(cx.db(), &t.id).map_err(err)?;
+    let builds_on: Vec<Value> = links.builds_on.iter().map(|l| {
+        let mut v = json!({"task": l.identifier, "title": l.title, "column": l.column, "merged": l.merged});
+        if let Some(h) = &l.hold {
+            v["hold"] = json!(h);
+        }
+        v
+    }).collect();
+    let needed_by: Vec<Value> = links.needed_by.iter().map(|l| json!({"task": l.identifier, "title": l.title, "column": l.column})).collect();
     Ok(json!({"task": {
         "id": t.id, "task": t.identifier, "title": t.title, "project": t.project_name, "column": t.state_name, "priority": t.priority,
         "assignee": t.assignee_name, "labels": t.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(), "hold": t.hold,
@@ -235,6 +249,7 @@ pub(crate) async fn get_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> {
         "by_hand": t.by_hand,
         "created": ymd(t.created_at), "updated": ymd(t.updated_at),
         "archived": t.archived_at.is_some(), "archived_on": t.archived_at.map(ymd), "archived_by": t.archived_by,
+        "builds_on": builds_on, "needed_by": needed_by,
     }, "comments": comments, "runs": runs, "files": files}))
 }
 

@@ -375,6 +375,12 @@ pub async fn check(st: &AppState, task_id: &str) -> Result<Option<PullInfo>, Str
     if checked.changed {
         (st.notify)(Note::RowsChanged("tasks"));
     }
+    // A merge moved the card on, as in a round of the check: on an Auto column its agents pick it up, and a card that
+    // builds on it (GA-228) may start now.
+    if checked.moved_to.is_some() {
+        let st2 = st.clone();
+        tokio::spawn(async move { crate::runs::pull(&st2).await; });
+    }
     Ok(checked.pull)
 }
 
@@ -491,7 +497,8 @@ pub async fn check_all_at(st: &AppState, now: Instant) -> Vec<Checked> {
                     if checked.changed {
                         (st.notify)(Note::RowsChanged("tasks"));
                     }
-                    // A merge moved the card on: on an Auto column its agents pick it up; on a Manual one nothing starts.
+                    // A merge moved the card on: on an Auto column its agents pick it up (on a Manual one nothing starts),
+                    // and a card that builds on it may start now (GA-228).
                     if checked.moved_to.is_some() {
                         let st2 = st.clone();
                         tokio::spawn(async move { crate::runs::pull(&st2).await; });

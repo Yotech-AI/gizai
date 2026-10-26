@@ -95,6 +95,20 @@ pub(crate) fn task(cx: &Cx, r: &str) -> Result<Task, String> {
     tasks::get(cx.db(), &all[i].id).map_err(err)
 }
 
+/// The cards `refs` names by identifier (or id), for builds_on (GA-228): their ids, in the order given, archived cards
+/// included. One that doesn't exist is refused, naming it; titles aren't matched.
+pub(crate) fn task_ids(cx: &Cx, refs: &[String]) -> Result<Vec<String>, String> {
+    refs.iter().map(|r| {
+        let r = r.trim();
+        match tasks::id_of(cx.db(), r) {
+            Ok(id) => Ok(id),
+            Err(gizai_core::Error::NotFound(_)) => tasks::get(cx.db(), r).map(|t| t.id)
+                .map_err(|_| format!("No task {}: check the identifier with list_tasks. Nothing changed.", r.to_uppercase())),
+            Err(e) => Err(err(e)),
+        }
+    }).collect()
+}
+
 pub(crate) fn agent(cx: &Cx, r: &str) -> Result<Member, String> {
     let mut list: Vec<Member> = team::all_agents(cx.db()).map_err(err)?.into_iter().map(|(_, m)| m).collect();
     let cands: Vec<Cand> = list.iter().map(|m| Cand { id: m.actor_id.clone(), names: vec![m.name.clone(), m.handle.clone()], show: m.name.clone() }).collect();

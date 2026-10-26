@@ -340,6 +340,9 @@ const TASK: (&str, &str, &str) = ("task", "string", "The task's identifier, like
 const PROJECT: (&str, &str, &str) = ("project", "string", "The project's key (KADE), name or id");
 const CLIENT: (&str, &str, &str) = ("client", "string", "The client's name or id");
 const AGENT: (&str, &str, &str) = ("agent", "string", "The agent's name or id");
+/// GA-228: create_task's builds_on.
+const BUILDS_ON: (&str, &str, &str) = ("builds_on", "string[]",
+    "Identifiers of the cards it builds on (it needs their code), like [\"GA-226\"]: it waits until each is merged (in Deploy or Done), then starts by itself. At most 20");
 
 const CLIENT_FIELDS: [(&str, &str, &str); 14] = [
     ("legal_name", "string", "Registered name"), ("kind", "enum:company|person", "A company or a private person"),
@@ -372,7 +375,7 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         tool("get_overview", "A summary of the organisation: clients, active projects, tasks per column, how many items wait in the inbox, the agents and who is working now. Start here.", &[], &[]),
         tool("read_inbox", "What needs the user: open tasks on hold (an agent or a gate needs a person), tasks waiting for them in Review or Deploy, and the chats you started that wait for their answer.", &[], &[]),
-        tool("check_board", "What on the board needs attention now: answered cards (a person commented after a needs-a-decision hold), held cards, cards no agent will start (and why), cards whose run stopped part-way, and cards in Review that QA passed in a project that lets you merge (merge_pull_request); then per agent its cards at once, the cards it works on, its free slots and whether its pull is paused (and why), and the free \"Runs at once\".", &[], &[]),
+        tool("check_board", "What on the board needs attention now: answered cards (a person commented after a needs-a-decision hold), held cards, cards no agent will start (and why; builds_on_blocked: a card it builds on is on hold or cancelled), cards whose run stopped part-way, and cards in Review that QA passed in a project that lets you merge (merge_pull_request); then per agent its cards at once, the cards it works on, its free slots and whether its pull is paused (and why), and the free \"Runs at once\".", &[], &[]),
         tool("start_chat", "Asks the user something in a new chat that waits at the top of their Inbox: a question, or an approval you need. One waiting chat per card: when a card already has one, the message is added to that chat. Returns a link to it.",
              &[("title", "string", "A short title, like \"GA-12: pick the export format\""), ("kind", "enum:question|approval", "question, or approval for something you want to do"),
                ("tasks", "string[]", "The identifiers of the cards it is about, like GA-12"), ("body_md", "string", "Your first message (Markdown): what you found, what you recommend and what you need")],
@@ -383,12 +386,12 @@ pub fn catalog() -> Vec<ToolDef> {
         tool("get_client", "One client with every field, its contacts, projects and files. Each file comes with the path of a copy in your folder, to read with Read (null for a file over 100 MB or one that couldn't be copied: its note or error says why).", &[CLIENT], &["client"]),
         tool("list_projects", "Projects with key, client, status, linked repository, task counts and Test runs at once (null: no limit of its own).", &[("client", "string", "Only this client's projects"), ("status", "enum:planned|active|paused|done|archived", "Only projects with this status")], &[]),
         tool("get_project", "One project with its goal, repository, Test runs at once, tasks per column, docs and files. Each file comes with the path of a copy in your folder, to read with Read (null for a file over 100 MB or one that couldn't be copied: its note or error says why).", &[PROJECT], &["project"]),
-        tool("list_tasks", "Tasks, newest columns first. Done and cancelled tasks are left out unless include_done is true. Archived tasks are always left out; archived: true lists only them, the most recently archived first.",
+        tool("list_tasks", "Tasks, newest columns first. Done and cancelled tasks are left out unless include_done is true. Archived tasks are always left out; archived: true lists only them, the most recently archived first. A task that waits for cards it builds on shows them in waits_for (not merged yet).",
              &[("project", "string", "Project key, name or id"), ("column", "string", "Column name, like To do or In progress"),
                ("assignee", "string", "A person or agent name; \"none\" for unassigned; \"me\" for the user"), ("label", "string", "Label name"),
                ("text", "string", "Words in the title"), ("include_done", "boolean", "Include done and cancelled tasks"),
                ("archived", "boolean", "Only the archived tasks (archived from Done; read-only until the user restores them)"), ("limit", "integer", "At most this many (default 50)")], &[]),
-        tool("get_task", "One task with its description, acceptance criteria, labels, hold, latest comments, agent runs (with the tool calls each was refused) and files. Each file comes with the path of a copy in your folder, to read with Read (null for a file over 100 MB or one that couldn't be copied: its note or error says why). Finds an archived task by its identifier too, and says so (archived: true): it is read-only until the user restores it.", &[TASK], &["task"]),
+        tool("get_task", "One task with its description, acceptance criteria, labels, hold, builds_on (the cards it builds on, each with its column and merged: true once it is in Deploy or Done) and needed_by (the cards that build on it), latest comments, agent runs (with the tool calls each was refused) and files. Each file comes with the path of a copy in your folder, to read with Read (null for a file over 100 MB or one that couldn't be copied: its note or error says why). Finds an archived task by its identifier too, and says so (archived: true): it is read-only until the user restores it.", &[TASK], &["task"]),
         tool("list_agents", "The team's agents: role, status, the columns they are on, model, whether they work right now, spend this month and budget.", &[], &[]),
         tool("get_agent", "One agent's settings, instructions and recent runs, with the card and the tool calls each run was refused.", &[AGENT], &["agent"]),
         tool("list_docs", "A project's docs (title, version, last change).", &[PROJECT], &["project"]),
@@ -421,13 +424,15 @@ pub fn catalog() -> Vec<ToolDef> {
                ("acceptance_md", "string", "Acceptance criteria, as a Markdown checklist"), ("column", "string", "Column name (default the first, Backlog)"),
                ("priority", "integer", "0 none, 1 urgent, 2 high, 3 medium, 4 low"), ("assignee", "string", "A person or agent name; \"me\" for the user"),
                ("labels", "string[]", "Existing label names, like Must have or bug"),
-               ("testing", "boolean", "On (default): the QA Agent tests it before Review. Off: straight to Review, for a small UI fix or bug fix")], &["project", "title"]),
-        tool("update_task", "Changes a task's fields, labels, assignee or hold. Only what is given changes.",
+               ("testing", "boolean", "On (default): the QA Agent tests it before Review. Off: straight to Review, for a small UI fix or bug fix"),
+               BUILDS_ON], &["project", "title"]),
+        tool("update_task", "Changes a task's fields, labels, assignee, hold or builds_on. Only what is given changes.",
              &[TASK, ("title", "string", "New title"), ("description_md", "string", "Description (Markdown)"), ("acceptance_md", "string", "Acceptance criteria (Markdown)"),
                ("priority", "integer", "0 none, 1 urgent, 2 high, 3 medium, 4 low"), ("assignee", "string", "A person or agent name; \"none\" to unassign"),
                ("labels", "string[]", "The full new set of existing label names"), ("hold", "enum:needs_decision|blocked|stalled", "Put it on hold"),
                ("hold_reason", "string", "Why it is on hold"), ("clear_hold", "boolean", "Take it off hold"),
-               ("testing", "boolean", "On: the QA Agent tests it before Review. Off: straight to Review")], &["task"]),
+               ("testing", "boolean", "On: the QA Agent tests it before Review. Off: straight to Review"),
+               ("builds_on", "string[]", "The full new list of cards it builds on, by identifier, like [\"GA-226\"]; an empty list clears it. It waits until each is merged (in Deploy or Done), then starts by itself. At most 20, never the card itself or a card that builds on it")], &["task"]),
         tool("move_task", "Moves a task to another column (to the bottom of that column).", &[TASK, ("column", "string", "Column name, like In progress")], &["task", "column"]),
         tool("comment_on_task", "Adds a comment to a task, as you.", &[TASK, ("body_md", "string", "The comment (Markdown)")], &["task", "body_md"]),
         tool("create_agent", "Adds an agent to the team, on Claude Code unless runs_on names another coding CLI. It starts from the role's instructions and allowed commands unless instructions_md or allowed_tools is given.",

@@ -680,11 +680,12 @@ pub fn builtin(key: &str) -> Option<TemplateFile> {
         name: name.to_string(), kind: category.to_string(), auto: *auto, next: next[i].map(|n| cols[n].0.to_string()),
         wip_limit: None, color: None, agents: on[i].clone(),
     }).collect();
+    // By name, as an export lists them.
+    let mut labels: Vec<FileLabel> = seed::DEFAULT_LABELS.iter().map(|(name, color)| FileLabel { name: name.to_string(), color: Some(color.to_string()) }).collect();
+    labels.sort_by(|a, b| a.name.cmp(&b.name));
     Some(TemplateFile {
         format: FORMAT.into(), format_version: FORMAT_VERSION, app_version: env!("CARGO_PKG_VERSION").into(), name: "Software team".into(),
-        description_md: None, color: None, branches: team::default_branches(),
-        labels: seed::DEFAULT_LABELS.iter().map(|(name, color)| FileLabel { name: name.to_string(), color: Some(color.to_string()) }).collect(),
-        columns, agents,
+        description_md: None, color: None, branches: team::default_branches(), labels, columns, agents,
     })
 }
 

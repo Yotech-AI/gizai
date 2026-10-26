@@ -736,13 +736,14 @@ fn read_file(path: &Path) -> Result<String> {
 /// The file's text as a template: JSON, of format gizai-team, version 1.
 fn parse(text: &str) -> Result<TemplateFile> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let v: Value = serde_json::from_str(text).map_err(|e| Error::Invalid(format!("This file isn't JSON: {e}.")))?;
+    let mut v: Value = serde_json::from_str(text).map_err(|e| Error::Invalid(format!("This file isn't JSON: {e}.")))?;
     if v.get("format").and_then(Value::as_str) != Some(FORMAT) {
         return Err(Error::Invalid("This file isn't a Gizai team template.".into()));
     }
     match v.get("format_version").and_then(Value::as_f64) {
         Some(n) if n > FORMAT_VERSION as f64 => return Err(Error::Invalid(NEWER.into())),
-        Some(n) if n >= 1.0 => {}
+        // 1, also written as 1.0
+        Some(n) if n >= 1.0 => v["format_version"] = FORMAT_VERSION.into(),
         _ => return Err(Error::Invalid("This team template has no format_version: Gizai reads format 1.".into())),
     }
     serde_json::from_value(v).map_err(|e| Error::Invalid(format!("This team template can't be read: {e}.")))

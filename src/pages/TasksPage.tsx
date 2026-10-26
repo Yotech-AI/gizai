@@ -132,18 +132,20 @@ export function TasksPage({ initialView, onNewTask, inboxFor }: { initialView?: 
   const [group, setGroup] = usePref<GroupBy>("gizai-task-group", "status");
   const [filter, setFilter] = useKeptFilter();
   // GA-225: with more than one team the board shows one team at a time, the one picked here, on the Team page or in the
-  // sidebar; the Inbox shows every team's cards. With one team, everything as before.
+  // sidebar (none picked: the first team); the Inbox shows every team's cards. With one team, everything as before.
   const [picked, setPicked] = useCurrentTeam();
-  const { data: teams } = useData(() => listTeams(), [], { counts: false });
-  const several = (teams?.length ?? 0) > 1;
-  const teamId = teams ? shownTeam(teams, picked) : picked;
-  const { data: team, error: teamErr } = useData(() => getTeam(teamId), [teamId]);
-  const { data: allTeams } = useData(() => (inbox && teams && teams.length > 1 ? Promise.all(teams.map((t) => getTeam(t.id))) : Promise.resolve(null)),
-    [inbox, (teams ?? []).map((t) => t.id).join(",")]);
+  const { data: team, error: teamErr } = useData(() => getTeam(picked), [picked]);
   const { data: projects } = useData(() => listProjects(), [], { counts: false });
   const { data: people } = useData(() => listUsers(), [], { counts: false });
   const { data: fetched, error } = useData(() => listTasks({}));
   const { data: threads, reload: reloadThreads } = useData(() => (inbox ? listChatThreads() : Promise.resolve([] as ChatThread[])), [inbox]);
+  const { data: teams } = useData(() => listTeams(), [], { counts: false });
+  const several = (teams?.length ?? 0) > 1;
+  const { data: allTeams } = useData(() => (inbox && teams && teams.length > 1 ? Promise.all(teams.map((t) => getTeam(t.id))) : Promise.resolve(null)),
+    [inbox, (teams ?? []).map((t) => t.id).join(",")]);
+  // A pick that isn't one of the teams (another data folder's) goes back to the first team, here, on the Team page and in
+  // the sidebar.
+  useEffect(() => { if (teams?.length && picked && shownTeam(teams, picked) !== picked) setPicked(null); }, [teams, picked]); // eslint-disable-line react-hooks/exhaustive-deps
   const chats = useMemo(() => (inbox ? waitingChats(threads ?? []) : []), [inbox, threads]);
   const dismiss = (id: string) => dismissChat(id).then(reloadThreads).catch((e) => setToast({ text: `Couldn't dismiss the chat: ${e}` }));
   const [tasks, setTasks] = useState<Task[]>([]);

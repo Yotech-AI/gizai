@@ -530,7 +530,8 @@ fn tokens(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Email addresses: name@domain.tld, the top-level domain two letters or more.
+/// Email addresses: name@domain.tld, the top-level domain two letters or more. A git remote's `git@github.com:owner/repo`
+/// (a host and `:` with a path right after it) isn't one.
 fn emails(b: &[u8]) -> Vec<(usize, usize)> {
     let local = |c: u8| c.is_ascii_alphanumeric() || b"._%+-".contains(&c);
     let domain = |c: u8| c.is_ascii_alphanumeric() || c == b'.' || c == b'-';
@@ -553,7 +554,8 @@ fn emails(b: &[u8]) -> Vec<(usize, usize)> {
         let host = &b[at + 1..e];
         let Some(dot) = host.iter().rposition(|c| *c == b'.') else { continue };
         let tld = &host[dot + 1..];
-        if s < at && dot > 0 && tld.len() >= 2 && tld.iter().all(u8::is_ascii_alphabetic) {
+        let remote = b.get(e) == Some(&b':') && b.get(e + 1).is_some_and(|c| c.is_ascii_graphic());
+        if s < at && dot > 0 && tld.len() >= 2 && tld.iter().all(u8::is_ascii_alphabetic) && !remote {
             out.push((s, e));
         }
     }

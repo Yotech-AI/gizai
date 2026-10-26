@@ -146,6 +146,17 @@ export const removeLabel = (id: string) => invoke<number>("remove_label", { id }
 export const addBranch = (teamId: string, name: string) => invoke<T.Branch[]>("add_branch", { teamId, name });
 /** Removes a branch without agents; resolves with the branches. */
 export const removeBranch = (teamId: string, key: string) => invoke<T.Branch[]>("remove_branch", { teamId, key });
+// Team templates (GA-226, contract TT): the screens pick a path with the dialog's open or save, these read or write the file.
+/** Export's check: each place in the team's template that looks private, with the agent it is in. Writes nothing. */
+export const checkTeamExport = (teamId: string) => invoke<T.TemplateWarning[]>("check_team_export", { teamId });
+/** Writes the team to `path` as a template, format 1 (`<team name>.gizai-team.json`). */
+export const saveTeamTemplate = (teamId: string, path: string) => invoke<void>("save_team_template", { teamId, path });
+/** The built-in templates. */
+export const teamTemplates = () => invoke<{ key: string; name: string; description: string }[]>("team_templates");
+/** What importing the template makes; rejects with why when it is refused. Writes nothing. */
+export const previewTeamTemplate = (source: T.TemplateSource) => invoke<T.TemplatePlan>("preview_team_template", { source });
+/** Makes a new team called `name` from the template; resolves with the new team's id. */
+export const importTeamTemplate = (source: T.TemplateSource, name: string) => invoke<string>("import_team_template", { source, name });
 export const getAgent = (id: string) => invoke<T.Member>("get_agent", { id });
 /** The models this user's Claude Code offers (kept for half an hour; refresh asks Claude Code again). `cli`: another Claude Code
  * CLI (a second account); other kinds of CLI have no list. */

@@ -535,6 +535,42 @@ pub async fn role_template(role: String) -> String { gizai_core::seed::role_temp
 #[tauri::command]
 pub async fn role_tools(role: String) -> Vec<String> { gizai_core::seed::role_tools(&team::role_key(&role)) }
 
+// ---- team templates (GA-226, docs/team-template-format.md) ----
+use gizai_core::templates;
+
+/// Export's check: each place in the team's template that looks private (an email, a local path, a URL with a query or
+/// a password, a key or token). Writes nothing.
+#[tauri::command]
+pub async fn check_team_export(st: State<'_, AppState>, team_id: String) -> R<Vec<templates::Warning>> {
+    off(&st, move |st| templates::check_export(&st.db, &team_id).map_err(e)).await
+}
+/// Writes the team to `path` (picked with the dialog's save) as a template, format 1.
+#[tauri::command]
+pub async fn save_team_template(st: State<'_, AppState>, team_id: String, path: String) -> R<()> {
+    off(&st, move |st| templates::save(&st.db, &team_id, std::path::Path::new(&path)).map_err(e)).await
+}
+/// The built-in templates. Memory only: on the async runtime.
+#[tauri::command]
+pub async fn team_templates() -> Vec<templates::Builtin> { templates::builtins() }
+/// The check: what importing the template makes; a refusal is an error that says why. Writes nothing.
+#[tauri::command]
+pub async fn preview_team_template(st: State<'_, AppState>, source: templates::Source) -> R<templates::Plan> {
+    off(&st, move |st| templates::preview(&st.db, &source).map_err(e)).await
+}
+/// Makes a new team called `name` from the template; returns its id. Its agents come in paused from a file (active from a
+/// built-in), and nothing starts by itself: the new team has no cards yet.
+#[tauri::command]
+pub async fn import_team_template(app: AppHandle, st: State<'_, AppState>, source: templates::Source, name: String) -> R<String> {
+    let id = off(&st, move |st| templates::import(&st.db, &st.you_id, &source, &name).map_err(e)).await?;
+    changed(&app, "teams");
+    changed(&app, "actors");
+    changed(&app, "workflow_states");
+    changed(&app, "labels");
+    // The agents' memory folders.
+    changed(&app, "docs");
+    Ok(id)
+}
+
 // ---- agent runs ----
 use crate::runs;
 

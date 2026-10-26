@@ -5,7 +5,8 @@
 //! the saved path; every refusal of the check (the version one word for word) makes nothing; names (a taken team name gets
 //! a number, a taken agent name the team's in brackets); the CLI (a kind that isn't set up runs on Claude Code with
 //! acceptEdits, word for word), permission modes and effort; `extraTools`; MCP servers; Chat; paused from a file, active
-//! from the built-in; shared memory folders; labels; and an import that fails partway leaves nothing behind.
+//! from the built-in; shared memory folders; labels; an import that fails partway leaves nothing behind; and a team made
+//! from the built-in can be a project's team (GA-225).
 use std::path::Path;
 
 use gizai_core::clis::{self, Cli};
@@ -402,6 +403,29 @@ fn without_a_chat_agent_the_builtins_team_lead_gets_chat() {
     let chat = team::chat_agent(&db).unwrap().unwrap();
     assert_eq!(chat.name, "Team Lead");
     assert_eq!(member(&team::get(&db, &id).unwrap(), "Team Lead").actor_id, chat.actor_id);
+}
+
+#[test]
+fn a_team_made_from_the_builtin_can_be_a_projects_team() {
+    // GA-225: a project picks its team. A team made from a template is a second team like any other.
+    let (db, s) = install();
+    std::thread::sleep(std::time::Duration::from_millis(5)); // teams are ordered by when they were made
+    let id = templates::import(&db, &s.you_id, &builtin(), "Software team 2").unwrap();
+    let made = team::get(&db, &id).unwrap();
+    let project = projects::create(&db, &s.you_id, ProjectInput { name: "Template project".into(), key: "TPL".into(),
+        team_id: Some(id.clone()), ..Default::default() }).unwrap();
+
+    let p = projects::get(&db, &project).unwrap();
+    assert_eq!((p.team_id.as_deref(), p.team_name.as_deref()), (Some(id.as_str()), Some("Software team 2")), "projects::get returns that team");
+
+    let card = tasks::create(&db, &s.you_id, TaskInput { project_id: project.clone(), title: "First card".into(), ..Default::default() }).unwrap();
+    let (state, category): (String, String) = db.read(|c| Ok(c.query_row("SELECT state_id, state_category FROM tasks WHERE id=?1", [&card],
+        |r| Ok((r.get(0)?, r.get(1)?)))?)).unwrap();
+    assert_eq!(state, made.states[0].id, "the new card goes to that team's first column");
+    assert_eq!((made.states[0].name.as_str(), category.as_str()), ("Backlog", "backlog"));
+    assert!(team::get(&db, &s.team_id).unwrap().states.iter().all(|c| c.id != state), "not the first team's Backlog");
+    let other = projects::create(&db, &s.you_id, ProjectInput { name: "Default project".into(), key: "DEF".into(), ..Default::default() }).unwrap();
+    assert_eq!(projects::get(&db, &other).unwrap().team_id.as_deref(), Some(s.team_id.as_str()), "without a team: the first team, as before");
 }
 
 // ---- export, then import ----

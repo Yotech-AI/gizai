@@ -1,9 +1,10 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { FileText, ListTodo, Pencil, Plus } from "lucide-react";
-import { checkRepo, getProject, listDocs, type RepoCheck } from "../api";
+import { checkRepo, getProject, listDocs, listTeams, type RepoCheck } from "../api";
 import { href } from "../router";
 import { useData } from "../lib/useData";
+import { pickTeam } from "../lib/team";
 import { linkLabel } from "../lib/provider";
 import { relTime } from "../lib/format";
 import { useDrawer } from "../lib/drawers";
@@ -13,13 +14,20 @@ import { MarkdownView } from "../components/MarkdownView";
 export function ProjectPage({ id }: { id: string }) {
   const { data: p, error } = useData(() => getProject(id), [id]);
   const { data: docs } = useData(() => listDocs(id), [id]);
+  // GA-225: with more than one team, the project's team shows here.
+  const { data: teams } = useData(() => listTeams(), [], { counts: false });
   const open = useDrawer();
   const [repo, setRepo] = useState<RepoCheck | null>(null);
   useEffect(() => { if (p?.repoPath) checkRepo(p.repoPath).then(setRepo).catch(() => setRepo(null)); else setRepo(null); }, [p?.repoPath]);
   if (error) return <div className="error-banner">{error}</div>;
   if (!p) return null;
   const total = p.openTasks + p.doneTasks;
-  const showTasks = () => { try { localStorage.setItem("gizai-task-project", p.id); } catch { /* ignore */ } };
+  const several = (teams?.length ?? 0) > 1;
+  // Its cards are on its team's board: the board shows that team.
+  const showTasks = () => {
+    try { localStorage.setItem("gizai-task-project", p.id); } catch { /* ignore */ }
+    if (several && p.teamId) pickTeam(p.teamId);
+  };
   return (
     <>
       <div className="topbar"><div className="crumbs"><a href={href({ page: "projects" })}>Projects</a><span className="sep">/</span><b>{p.name}</b></div></div>
@@ -28,7 +36,9 @@ export function ProjectPage({ id }: { id: string }) {
           <div className="entity-head">
             <span className="avatar xl" style={{ borderRadius: "var(--radius-l)", background: p.color ?? "var(--selected)", color: "var(--bg)", fontWeight: 800 }}>{p.key.slice(0, 2)}</span>
             <div className="names"><h1>{p.name}</h1>
-              <p><span className="mono">{p.number}</span> · tasks {p.key}-… · {p.clientId ? <a href={href({ page: "client", id: p.clientId })} style={{ color: "inherit" }}>{p.clientName}</a> : "Internal"} · {p.status}</p></div>
+              <p><span className="mono">{p.number}</span> · tasks {p.key}-… · {p.clientId ? <a href={href({ page: "client", id: p.clientId })} style={{ color: "inherit" }}>{p.clientName}</a> : "Internal"} · {p.status}
+                {several && p.teamName && <> · <a href={href({ page: "team" })} title="Its cards are on this team's board" style={{ color: "inherit" }}
+                  onClick={() => { if (p.teamId) pickTeam(p.teamId); }}>{p.teamName}</a></>}</p></div>
             <div className="actions">
               <a className="btn" href="#/tasks" onClick={showTasks}><ListTodo className="icon" />Open tasks</a>
               <button className="btn" onClick={() => open({ kind: "task", projectId: p.id })}><Plus className="icon" />New task</button>

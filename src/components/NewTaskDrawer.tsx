@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { addFiles, createTask, getTeam, listProjects, listUsers } from "../api";
+import { addFiles, createTask, getTeam, listProjects, listTeams, listUsers } from "../api";
 import { go } from "../router";
 import { addPaths, fileName } from "../lib/files";
 import { modKey } from "../lib/keys";
+import { shownTeam, teamOfProject, useCurrentTeam } from "../lib/team";
 import { useDropZone } from "../lib/useDropZone";
 import type { Person, Project, Team } from "../types";
 import { Drawer } from "./Drawer";
@@ -20,7 +21,9 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   onClose: () => void; stateId?: string | null; projectId?: string | null; assigneeId?: string | null;
 }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
-  const [team, setTeam] = useState<Team | null>(null);
+  // GA-225: every team; the task's columns and agents are its project's team's.
+  const [teams, setTeams] = useState<Team[] | null>(null);
+  const [pickedTeam] = useCurrentTeam();
   const [people, setPeople] = useState<Person[]>([]);
   const [projectId, setProjectId] = useState<string>(presetProject ?? "");
   const [title, setTitle] = useState("");
@@ -40,15 +43,21 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   const creating = useRef(false);
 
   useEffect(() => {
-    listProjects().then((ps) => {
+    const everyTeam = listTeams().then((ts) => (ts?.length ? Promise.all(ts.map((t) => getTeam(t.id))) : getTeam().then((t) => [t])));
+    Promise.all([listProjects(), everyTeam]).then(([ps, ts]) => {
       const open = ps.filter((p) => p.status !== "archived" && p.status !== "done");
       setProjects(open);
+      setTeams(ts);
+      // GA-225: a project of the team whose column was picked on the board, else of the team picked there or on the Team
+      // page; with one team, any project, as before.
+      const first = ts[0]?.id ?? "";
+      const wanted = (presetState ? ts.find((t) => t.states.some((s) => s.id === presetState))?.id : undefined) ?? shownTeam(ts, pickedTeam) ?? first;
+      const fits = (p: Project) => teamOfProject(p.id, open, first) === wanted;
       const remembered = readPref("gizai-task-project");
-      setProjectId((cur) => cur || (open.find((p) => p.id === remembered)?.id ?? open[0]?.id ?? ""));
+      setProjectId((cur) => cur || ((open.find((p) => p.id === remembered && fits(p)) ?? open.find(fits) ?? open.find((p) => p.id === remembered) ?? open[0])?.id ?? ""));
     }).catch((e) => setErr(String(e)));
-    getTeam().then((t) => { setTeam(t); setStateId((s) => s || [...t.states].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1))[0]?.id || ""); }).catch((e) => setErr(String(e)));
     listUsers().then(setPeople).catch(() => {});
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = async () => {
     if (creating.current) return;
@@ -58,7 +67,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
     setBusy(true);
     let id: string;
     try {
-      id = await createTask({ projectId, title: title.trim(), stateId: stateId || null, labelIds, priority, assigneeId: assigneeId || null,
+      id = await createTask({ projectId, title: title.trim(), stateId: column || null, labelIds, priority, assigneeId: assigneeId || null,
         descriptionMd: description, acceptanceMd: acceptance.trim() ? acceptance : null, testing });
     } catch (e) { creating.current = false; setErr(String(e)); setBusy(false); return; }
     // The task exists now: a file that can't be added never undoes it or creates it again.
@@ -74,8 +83,12 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
   const openTask = (id: string) => { onClose(); go({ page: "task", id }); };
   const pick = (more: string[]) => { if (!creating.current) setPaths((ps) => addPaths(ps, more)); };
   const unpick = (path: string) => { if (!creating.current) setPaths((ps) => ps.filter((p) => p !== path)); };
+  // The project's team (its own, else the first team): its columns and agents.
+  const team = teams?.find((t) => t.id === teamOfProject(projectId, projects ?? [], teams[0]?.id ?? "")) ?? teams?.[0] ?? null;
   const agents = (team?.members ?? []).filter((m) => m.kind === "agent");
   const states = [...(team?.states ?? [])].sort((a, b) => (a.sortKey < b.sortKey ? -1 : 1));
+  // The column picked while it is one of that team's, else its first (Backlog).
+  const column = states.some((s) => s.id === stateId) ? stateId : states[0]?.id ?? "";
   const noProjects = projects !== null && projects.length === 0;
   const dirty = !created && !!(title.trim() || description.trim() || acceptance.trim() || paths.length);
   // Without a project there is no Files section, but a drop still never reaches the page behind the drawer.
@@ -99,7 +112,7 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
             <Field label="Title" htmlFor="t-title" wide><input id="t-title" className="input" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Export invoices as CSV from the portal" /></Field>
             <Field label="Project" htmlFor="t-project"><select id="t-project" className="select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               {(projects ?? []).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.key})</option>)}</select></Field>
-            <Field label="Column" htmlFor="t-column"><select id="t-column" className="select" value={stateId} onChange={(e) => setStateId(e.target.value)}>
+            <Field label="Column" htmlFor="t-column"><select id="t-column" className="select" value={column} onChange={(e) => setStateId(e.target.value)}>
               {states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
             <Field label="Priority" htmlFor="t-priority"><select id="t-priority" className="select" value={priority} onChange={(e) => setPriority(Number(e.target.value))}>
               {[0, 1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORITY_NAMES[p]}</option>)}</select></Field>
@@ -116,7 +129,8 @@ export function NewTaskDrawer({ onClose, stateId: presetState, projectId: preset
                   <span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</button>;
               })}
               <NewLabel className="label-pill" labels={team?.labels ?? []} onCreated={(l) => {
-                setTeam((t) => (t ? { ...t, labels: [...t.labels, l] } : t));
+                // labels are every team's
+                setTeams((ts) => ts?.map((t) => ({ ...t, labels: [...t.labels, l] })) ?? ts);
                 setLabelIds((ids) => [...ids, l.id]);
               }} /></div></Field>
             <Field label="Testing" htmlFor="t-testing" wide

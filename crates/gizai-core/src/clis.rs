@@ -51,6 +51,13 @@ pub fn list(db: &Db) -> Result<Vec<Cli>> {
     Ok(out)
 }
 
+/// `list` on a connection that is open already (inside a write), the built-in Claude Code without its program.
+pub(crate) fn list_in(c: &rusqlite::Connection) -> Result<Vec<Cli>> {
+    let mut out = vec![claude_code()];
+    out.extend(settings::get_in::<Vec<Cli>>(c, KEY)?.unwrap_or_default());
+    Ok(out)
+}
+
 /// The kind of the CLI with this id (empty: the built-in Claude Code), on a connection that is open already (inside a
 /// write); None when there is no such CLI.
 pub(crate) fn kind_in(c: &rusqlite::Connection, id: &str) -> Result<Option<String>> {

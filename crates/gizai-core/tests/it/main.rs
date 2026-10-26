@@ -53,6 +53,7 @@ mod seed_agents_test;
 mod sortkey_test;
 mod tasks_test;
 mod team_test;
+mod templates_test;
 mod test_runs_at_once_test;
 mod usage_test;
 mod workflow_test;

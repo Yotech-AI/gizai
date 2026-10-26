@@ -200,6 +200,19 @@ export type ColumnInput = { name?: string; agentIds?: string[]; auto?: boolean; 
 export type ColumnRemoval = { cards: number; archived: number; defaultTarget?: string | null; relinked: string[]; unlinked: string[]; blocked?: string | null };
 /** A label with the number of cards that carry it. */
 export type LabelInfo = { id: string; name: string; color?: string | null; cards: number };
+/* Team templates (GA-226, contract TT; the file is docs/team-template-format.md). TemplateSource holds one of a built-in's
+ * key, the path of a file the person picked, or the file's text. */
+export type TemplateSource = { builtin?: string; path?: string; json?: string };
+export type TemplateWarning = { agent: string | null; field: string; kind: "email" | "path" | "url" | "secret"; excerpt: string };
+export type TemplatePlanAgent = { name: string; fileName: string; role: string; cliName: string; model: string | null; effort: string | null;
+  permissionMode: string; extraTools: string[]; missingServers: string[]; active: boolean };
+export type TemplatePlan = { teamName: string; columns: { name: string; kind: string; auto: boolean; next: string | null; agents: string[] }[];
+  agents: TemplatePlanAgent[]; labelsAdded: string[]; notes: string[] };
+// check_team_export(teamId) -> TemplateWarning[]                      (writes nothing)
+// save_team_template(teamId, path) -> void                             (writes the file, format 1)
+// team_templates() -> { key: string; name: string; description: string }[]
+// preview_team_template(source: TemplateSource) -> TemplatePlan        (a refusal is an error string)
+// import_team_template(source: TemplateSource, name: string) -> string  (the new team's id)
 export type AppInfo = { version: string; data_dir: string; selftest: boolean; you_id: string; start_route?: string | null; selftest_mode?: string | null; data_label?: string | null };
 /** What the first start's onboarding saves (GA-162): your name, the team's, and the id of a CLI in Settings → Coding CLIs
  *  for the Backend, Frontend, QA and DevOps Agents (null: they stay where the seed put them). */

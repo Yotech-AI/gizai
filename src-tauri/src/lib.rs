@@ -741,6 +741,8 @@ pub fn run() {
             commands::rename_state, commands::add_state, commands::set_column, commands::add_column_agent, commands::remove_column_agent,
             commands::column_removal, commands::remove_state, commands::list_labels, commands::save_label, commands::remove_label,
             commands::add_branch, commands::remove_branch, commands::role_template, commands::role_tools,
+            commands::check_team_export, commands::save_team_template, commands::team_templates, commands::preview_team_template,
+            commands::import_team_template,
             commands::detect_claude, commands::get_settings, commands::save_settings, commands::start_run, commands::continue_run,
             commands::continue_after_run_for_me, commands::stop_run,
             commands::list_runs, commands::run_events, commands::run_commits, commands::live_runs, commands::suggest_agent, commands::get_agent, commands::claude_models, commands::list_clis, commands::save_clis, commands::find_clis, commands::agent_stats, commands::agent_runs, commands::agent_next_task,

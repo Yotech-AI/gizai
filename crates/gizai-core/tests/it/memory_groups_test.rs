@@ -141,13 +141,13 @@ fn migration_0016_on_a_v070_database_keeps_every_agent_on_its_own_folder_after_a
     let path = v15_db(dir.path());
     let db = Db::open(&path).unwrap();
     // 0016, and GA-102's 0017 (pending actions), GA-180's 0018 (indexes), GA-182's 0019 (screenshots) and GA-212's 0020
-    // (Test runs at once) after it in the same step
-    assert_eq!(db::SCHEMA_VERSION, 20);
+    // (Test runs at once) and GA-228's 0021 (Builds on) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 21);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (20, 0), "schema 20, foreign keys intact");
+    assert_eq!((v, broken), (21, 0), "schema 21, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v20-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v21-"), "{snaps:?}");
     // the column: optional, empty for every agent
     let (notnull, default, set): (i64, Option<String>, i64) = db.read(|c| Ok((
         c.query_row("SELECT \"notnull\" FROM pragma_table_info('agent_configs') WHERE name = 'shares_memory_with'", [], |r| r.get(0))?,

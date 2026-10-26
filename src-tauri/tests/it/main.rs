@@ -11,6 +11,7 @@ mod agent_runs_test;
 mod app_state_test;
 mod archive_flow_test;
 mod ask_lead_flow_test;
+mod backups_flow_test;
 mod board_flow_test;
 mod card_flow_test;
 mod changes_flow_test;

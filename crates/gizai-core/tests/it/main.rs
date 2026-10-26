@@ -7,6 +7,7 @@
 mod agents_test;
 mod archive_test;
 mod backup_test;
+mod backups_test;
 mod bitbucket_core_test;
 mod board_test;
 mod by_hand_test;

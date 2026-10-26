@@ -53,6 +53,9 @@ pub enum Note {
     /// A terminal opened, was renamed or closed, its shell ended or its busy program changed (see `terminal`): the
     /// `terminals-changed` event, with every open terminal.
     TerminalsChanged(Vec<gizai_agents::terminal::TerminalSession>),
+    /// A snapshot started, took a step, ended or failed, or the backup settings changed (see `backups`): the
+    /// `backups-changed` event, with the status.
+    BackupsChanged(gizai_core::backups::BackupStatus),
 }
 
 #[derive(Debug, Clone, Serialize)]

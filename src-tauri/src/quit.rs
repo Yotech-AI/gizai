@@ -10,7 +10,8 @@
 //! because Gizai quit, and none outlives Gizai. On Linux with the slice for agent runs, whatever is still in that slice
 //! then ends too (GA-211, `end_slice`): a browser a run started detached, a run that was slow to end. Every terminal
 //! ends then too (GA-133, `end_terminals`), by the same paths; closing the window keeps Gizai and its terminals running,
-//! and nothing is restored at the next start.
+//! and nothing is restored at the next start. With On quit on, Quit Gizai completely (not a signal) backs up once the
+//! agents have stopped, before Gizai exits (GA-216, `backups`).
 //!
 //! Windows: logging off and shutting down reach Gizai as WM_ENDSESSION, which Tauri's event loop (tao) turns into its
 //! last event (`RunEvent::Exit`) before it ends the process: agents at work end at once there (`end_agents`, within the
@@ -31,19 +32,29 @@ const END_WAIT: Duration = Duration::from_secs(4);
 
 /// Set by the first request to quit while agents are at work: a second request quits at once.
 static STOPPING: AtomicBool = AtomicBool::new(false);
+/// Set once those agents have been stopped (or the wait for them is over), just before Gizai asks to quit again itself.
+static STOPPED: AtomicBool = AtomicBool::new(false);
 
 /// A request to quit (Quit Gizai completely, a signal, the app quitting itself). With agents at work, the first request
 /// stops them and quits once they have ended (at most 12 s), so Gizai stays for now: returns true. A second request,
-/// or one with no agents at work, quits at once.
+/// or one with no agents at work, quits at once. A second request quits at once without the quit's backup too (GA-216).
 pub fn stop_agents_first(app: &AppHandle) -> bool {
     let st = app.state::<AppState>().inner().clone();
     let busy = !runs::live(&st).is_empty() || !chat::live(&st).is_empty() || chat::checking(&st);
-    if !busy || STOPPING.swap(true, Ordering::SeqCst) {
+    if !busy {
+        return false;
+    }
+    if STOPPING.swap(true, Ordering::SeqCst) {
+        // Gizai's own request once the agents have stopped may still back up first; yours while they stop doesn't
+        if !STOPPED.load(Ordering::SeqCst) {
+            st.backups.quit_without_backup();
+        }
         return false;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::join!(runs::stop_all(&st, STOP_WAIT), chat::stop_all(&st, STOP_WAIT));
+        STOPPED.store(true, Ordering::SeqCst);
         app.exit(0);
     });
     true
@@ -113,6 +124,8 @@ pub fn on_signals(app: &AppHandle) {
                 // At once, not after the event loop has heard: logging out and shutting down send SIGTERM to the
                 // agents too, and a run or chat answer that ends now was stopped because Gizai quit (not failed).
                 runs::mark_closing(app.state::<AppState>().inner());
+                // only Quit Gizai completely backs up on quit (GA-216); a signal during that backup quits at once
+                app.state::<AppState>().backups.quit_without_backup();
                 // So a log of Gizai's output shows why it quit.
                 eprintln!("gizai: quitting on {name}");
                 app.exit(0);
@@ -141,6 +154,7 @@ pub fn on_signals(app: &AppHandle) {
         let app = app.clone();
         move || {
             runs::mark_closing(app.state::<AppState>().inner());
+            app.state::<AppState>().backups.quit_without_backup();
             eprintln!("gizai: quitting on {name}");
             app.exit(0);
         }

@@ -520,6 +520,28 @@ export type UpdateStatus = {
   /** Where releases come from. */
   repo: string;
 };
+
+// ---- backups (GA-216, contract BK): snapshots in a backups folder, on a schedule; docs/backup-format.md ----
+// A running snapshot's `step`: "database", "files", "compress", "manifest" or "keep". `last.bytes` is its compressed
+// database file's size (the files are shared by all snapshots). `next` is "now" (the time asked) when no snapshot is there yet.
+export type BackupSettings = { folder: string | null; every: "daily" | "weekly" | "manual"; onQuit: boolean; keep: number };
+export type BackupReason = "daily" | "weekly" | "manual" | "quit" | "before-restore";
+export type BackupEntry = {
+  name: string; reason: BackupReason; madeAt: number;
+  deviceId: string; deviceName: string; thisComputer: boolean;
+  appVersion: string; schemaVersion: number;
+  dbBytes: number; filesCount: number; filesBytes: number; filesMissing: number;
+  restorable: boolean; problem: string | null;
+};
+export type BackupStatus = {
+  settings: BackupSettings;
+  folder: string | null;           // the backups folder in use (…/Gizai backups), null when none is set
+  folderProblem: string | null;    // why it can't be used now: missing, not a folder, can't be written
+  running: { reason: BackupReason; startedAt: number; step: string } | null;
+  last: { name: string; madeAt: number; bytes: number } | null;   // this computer's newest good snapshot
+  lastError: { at: number; message: string } | null;
+  next: number | null;             // when the next scheduled snapshot is due, null when none is
+};
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- the Usage page (gizai-core usage.rs) ----

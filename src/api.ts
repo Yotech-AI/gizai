@@ -351,6 +351,20 @@ export const stopUpdate = () => invoke<T.UpdateStatus>("stop_update");
 export const restartGizai = () => invoke<void>("restart_gizai");
 export const onUpdateChanged = (cb: () => void): Promise<UnlistenFn> => listen("update-changed", () => cb());
 
+// ---- backups (GA-216, contract BK): snapshots in a backups folder, on a schedule ----
+/** The settings, the backups folder in use and why it can't be used now, the snapshot that runs, the last one, the last
+ *  error and when the next scheduled one is due. */
+export const backupStatus = () => invoke<T.BackupStatus>("backup_status");
+/** Rejects Keep outside 1..100 and a folder that can't be written, saying why. */
+export const saveBackupSettings = (settings: T.BackupSettings) => invoke<T.BackupStatus>("save_backup_settings", { settings });
+/** The snapshots in a folder, newest first; null: the folder in Settings. */
+export const listBackups = (folder: string | null) => invoke<T.BackupEntry[]>("list_backups", { folder });
+/** Starts one in the background; rejected without a folder or while one runs. */
+export const backUpNow = () => invoke<T.BackupStatus>("back_up_now");
+/** A snapshot started, took a step, ended or failed, or the settings changed. */
+export const onBackupsChanged = (cb: (s: T.BackupStatus) => void): Promise<UnlistenFn> =>
+  listen<T.BackupStatus>("backups-changed", (m) => cb(m.payload));
+
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>
   listen<{ table: string }>("rows-changed", (e) => cb(e.payload.table));

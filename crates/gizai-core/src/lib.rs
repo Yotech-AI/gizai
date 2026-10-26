@@ -36,6 +36,7 @@ pub mod columns;
 pub mod labels;
 pub mod mcp_servers;
 pub mod housekeeping;
+pub mod backups;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

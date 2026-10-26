@@ -20,6 +20,9 @@ tempfile = "3"
 sha2 = "0.10"
 # The system's random source on every system (getrandom on Linux, getentropy on macOS, ProcessPrng on Windows).
 getrandom = "0.4"
+# A backup's database, compressed (GA-216, docs/backup-format.md). Without the old formats' decoders and the dictionary
+# builder, which backups don't use.
+zstd = { version = "0.14", default-features = false }
 
 # Debug builds keep line tables only: panics and backtraces still show file and line, and the test programs are a
 # fraction of their size with full debug info (GA-213). On dev, not only on test: `cargo test` takes dev's settings,

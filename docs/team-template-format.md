@@ -1,12 +1,12 @@
 # Team templates: format 1
 
-A team template is a team's setup in one file: its columns, its agents (their settings, instructions and allowed commands), the labels and the organisation chart's branches (GA-226). You save a team as a template, share the file, and start a new team from it, or from a built-in template. This page describes the file as format 1, field by field, and what Gizai does when it saves one and when it makes a team from one. A community page may come later and will use the same file.
+A team template is a team's setup in one file: its columns, its agents (their settings, instructions and allowed commands), the labels and the organisation chart's branches (GA-226). You save a team as a template, share the file, and start a new team from it, or from a built-in template. This page describes the file as format 1, field by field, and what GizAi does when it saves one and when it makes a team from one. A community page may come later and will use the same file.
 
 The code is `gizai_core::templates`; the app's commands are in `src-tauri/src/commands.rs`, and the screens (GA-227) call them through `src/api.ts`.
 
 ## The file
 
-A template is a JSON file in UTF-8, named `<team name>.gizai-team.json`, like `Software team.gizai-team.json`. Gizai writes it indented, with its fields in the order below. It reads a file of at most 2 MB, with or without a byte order mark.
+A template is a JSON file in UTF-8, named `<team name>.gizai-team.json`, like `Software team.gizai-team.json`. GizAi writes it indented, with its fields in the order below. It reads a file of at most 2 MB, with or without a byte order mark.
 
 **Never in the file:** people (you, your reviewers), an agent's folders, MCP server settings (commands, addresses, environment and header values, keys and sign-ins), a CLI's id, program or account, the agents' status, clients, projects, cards, memory notes, runs and spend. Archived agents are left out; paused ones go in as they are.
 
@@ -44,8 +44,8 @@ Names link the file together: a column's `next` and `agents`, and an agent's `sh
 | Field | What it holds |
 |---|---|
 | `format` | always `"gizai-team"` |
-| `format_version` | `1`. A Gizai that reads a higher one refuses the file: "This template needs a newer version of the app." |
-| `app_version` | the Gizai version that wrote it, like `"0.13.0"` |
+| `format_version` | `1`. A GizAi that reads a higher one refuses the file: "This template needs a newer version of the app." |
+| `app_version` | the GizAi version that wrote it, like `"0.13.0"` |
 | `name` | the team's name |
 | `description_md` | the team's description, or `null` |
 | `color` | the team's colour, or `null` |
@@ -107,7 +107,7 @@ Team → Export saves the team in format 1 to the path the person picks (`save_t
 | `url` | a URL with a query string (`https://x.com/a?token=1`), or with a user and password (`https://me:secret@host`, `postgres://me:secret@localhost/db`) |
 | `secret` | anything that looks like a key or token: `sk-…`, `ghp_…` (and `gho_`, `ghu_`, `ghs_`, `ghr_`), `github_pat_…`, `glpat-…`, `xox…-…`, `AKIA…`, a private key's `-----BEGIN … PRIVATE KEY-----`, or a run of 32 or more hex characters, or of base64 characters that looks random (capitals, small letters and digits, mixed) |
 
-Gizai looks in the team's name, description, branches, labels and column names, and in each agent's name, title, model, instructions, allowed commands, fetch domains, built-in tools and MCP servers. Export never changes the text to hide what it finds: the person decides.
+GizAi looks in the team's name, description, branches, labels and column names, and in each agent's name, title, model, instructions, allowed commands, fetch domains, built-in tools and MCP servers. Export never changes the text to hide what it finds: the person decides.
 
 ## Built-in templates
 
@@ -162,4 +162,4 @@ It returns the new team's id. Existing teams, agents, labels' colours and the Ch
 
 ## Newer formats
 
-A Gizai reads format 1 and refuses a file whose `format_version` is higher. Within format 1, a field Gizai doesn't know is passed over, and a missing field takes its default (`false`, `null` or none; `cli` `claude_code`, `cards_at_once` 1, `use_memory` true, the default branches). So a later Gizai can add a field to format 1 that this one passes over, and a hand-written file needs only the fields it sets, besides these: `format`, `format_version` and `name`, each column's `name` and `kind`, each agent's `name` and `role`, each label's and MCP server's `name`, and each branch's `key`, `name` and `roles`.
+A GizAi reads format 1 and refuses a file whose `format_version` is higher. Within format 1, a field GizAi doesn't know is passed over, and a missing field takes its default (`false`, `null` or none; `cli` `claude_code`, `cards_at_once` 1, `use_memory` true, the default branches). So a later GizAi can add a field to format 1 that this one passes over, and a hand-written file needs only the fields it sets, besides these: `format`, `format_version` and `name`, each column's `name` and `kind`, each agent's `name` and `role`, each label's and MCP server's `name`, and each branch's `key`, `name` and `roles`.

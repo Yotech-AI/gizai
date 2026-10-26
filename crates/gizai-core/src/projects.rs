@@ -11,23 +11,36 @@ use std::collections::HashMap;
 pub(crate) const FIRST_TEAM: &str = "(SELECT id FROM teams WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1)";
 
 /// The project with its task counts and its AI usage since `?1` (the start of this month): the API cost of the runs on
-/// its cards, archived ones included, and how many of them have an unknown cost (`usage`). Its team is its own, else the
-/// first team, as its cards go (GA-225).
+/// its cards, archived ones included, and how many of them have an unknown cost (`usage`). Its team comes after
+/// (`with_teams`).
 fn select() -> String {
     let unknown = crate::usage::unknown_cost("u");
-    let team = format!("COALESCE(p.team_id, {FIRST_TEAM})");
     format!("SELECT p.id, p.client_id, c.name, p.number, p.key, p.name, p.status, p.color, p.goal_md,
-    r.local_path, coalesce(r.default_branch, 'main'), {team}, p.budget_amount_minor, p.budget_hours,
+    r.local_path, coalesce(r.default_branch, 'main'), p.team_id, p.budget_amount_minor, p.budget_hours,
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category NOT IN ('done','cancelled')),
     (SELECT count(*) FROM tasks t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.state_category = 'done'),
     p.updated_at, NULLIF(r.remote_url, ''), p.worktree_copy_json, p.worktree_install, p.worktree_setup,
     (SELECT COALESCE(SUM(u.cost_usd_micros), 0) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1),
     (SELECT count(*) FROM runs u JOIN tasks ut ON ut.id = u.task_id WHERE ut.project_id = p.id AND u.created_at >= ?1 AND {unknown}),
-    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs, p.test_runs_at_once,
-    (SELECT tm.name FROM teams tm WHERE tm.id = {team})
+    p.lead_may_merge, p.screenshots_json, p.preview_command, p.preview_start_secs, p.test_runs_at_once
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id
   LEFT JOIN repos r ON r.project_id = p.id AND r.deleted_at IS NULL")
+}
+
+/// GA-225: each project's team, as its cards go: its own, else the first team; and that team's name.
+fn with_teams(c: &Connection, mut list: Vec<Project>) -> Result<Vec<Project>> {
+    let teams: Vec<(String, String)> = {
+        let mut st = c.prepare("SELECT id, name FROM teams WHERE deleted_at IS NULL ORDER BY created_at")?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for p in &mut list {
+        if p.team_id.is_none() {
+            p.team_id = teams.first().map(|t| t.0.clone());
+        }
+        p.team_name = teams.iter().find(|t| p.team_id.as_ref() == Some(&t.0)).map(|t| t.1.clone());
+    }
+    Ok(list)
 }
 
 fn row(r: &Row) -> rusqlite::Result<Project> {
@@ -44,7 +57,7 @@ fn row(r: &Row) -> rusqlite::Result<Project> {
         preview_start_secs: r.get::<_, Option<i64>>(26)?.and_then(|s| u32::try_from(s).ok())
             .filter(|s| crate::screenshots::START_SECS.contains(s)).unwrap_or(crate::screenshots::DEFAULT_START_SECS),
         test_runs_at_once: r.get::<_, Option<i64>>(27)?.and_then(|n| u32::try_from(n).ok()).filter(|n| *n >= 1),
-        team_name: r.get(28)?,
+        team_name: None,
     })
 }
 
@@ -107,15 +120,17 @@ fn month_start() -> i64 {
 pub fn list(db: &Db) -> Result<Vec<Project>> {
     db.read(|c| {
         let mut st = c.prepare(&format!("{} WHERE p.deleted_at IS NULL ORDER BY p.number DESC", select()))?;
-        Ok(st.query_map([month_start()], row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        let list = st.query_map([month_start()], row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        with_teams(c, list)
     })
 }
 
 pub fn get(db: &Db, id: &str) -> Result<Project> {
     db.read(|c| {
-        c.query_row(&format!("{} WHERE p.id = ?2", select()), rusqlite::params![month_start(), id], row)
+        let p = c.query_row(&format!("{} WHERE p.id = ?2", select()), rusqlite::params![month_start(), id], row)
             .optional()?
-            .ok_or_else(|| Error::NotFound(format!("project {id}")))
+            .ok_or_else(|| Error::NotFound(format!("project {id}")))?;
+        Ok(with_teams(c, vec![p])?.remove(0))
     })
 }
 

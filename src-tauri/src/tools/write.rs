@@ -326,6 +326,9 @@ pub(crate) async fn create_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
     };
     // GA-228: the cards it builds on, set in the same write, so no agent takes it before it waits for them.
     let builds_on = builds_on_arg(cx, a)?.unwrap_or_default();
+    if builds_on.len() > gizai_core::builds_on::MAX {
+        return Err(format!("A card can't build on more than {} cards. Nothing changed.", gizai_core::builds_on::MAX));
+    }
     // GA-101: in an Auto column (the first column when none is given) after a tool from outside Gizai, it waits on hold.
     let held_after = match column.as_ref().or(team.states.first()) {
         Some(c) if auto(c) => cx.outside("create_task", a).await?,

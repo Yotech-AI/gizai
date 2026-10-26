@@ -814,3 +814,20 @@ button.label-pill[aria-pressed="true"] { border-color: var(--accent); color: var
 /* ---------- a person's card on the board: "By hand" before the person's avatar ---------- */
 .card .meta .by-hand { margin-left: auto; }
 .card .meta .by-hand + .avatar { margin-left: 0; }
+
+/* ---------- Builds on (GA-228): the board's "Waits for" badge, and the card's linked cards in its properties ---------- */
+.badge.waits .icon { color: var(--text-3); }
+.prop-row.prop-builds-on { align-items: start; padding: 4px 0; }
+.prop-row.prop-builds-on > .k { padding-top: 6px; }
+.prop-row .v.builds-on { flex-direction: column; align-items: stretch; gap: 2px; }
+.prop-row .v.builds-on > .none { color: var(--text-3); padding: 2px 0; }
+.builds-on-card { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.builds-on-card a { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 0; color: var(--text); text-decoration: none; }
+.builds-on-card a .id { color: var(--text-2); }
+.builds-on-card a:hover .id { color: var(--accent); }
+.builds-on-card .col { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--text-3); }
+.builds-on-card .merged { flex: none; color: var(--success); }
+.builds-on-card .btn { margin-left: auto; }
+.prop-row .v.builds-on .builds-on-add { align-self: flex-start; margin-left: -9px; }
+.prop-row .v.builds-on .builds-on-find { height: 30px; }
+.prop-builds-on .builds-on-error { grid-column: 2; font-size: var(--fs-sm); color: var(--danger); overflow-wrap: anywhere; }

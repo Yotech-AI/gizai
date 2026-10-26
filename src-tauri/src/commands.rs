@@ -149,11 +149,15 @@ pub async fn set_task_labels(app: AppHandle, st: State<'_, AppState>, id: String
 pub async fn get_builds_on(st: State<'_, AppState>, id: String) -> R<gizai_core::builds_on::BuildsOn> {
     off(&st, move |st| gizai_core::builds_on::of(&st.db, &id).map_err(e)).await
 }
-/// GA-228: the card builds on `on` (a card's id) too. A loop, more than 20 cards or the card itself is refused with why.
+/// GA-228: the card builds on `on` (a card's identifier, like GA-226, or its id) too. A loop, more than 20 cards or the
+/// card itself is refused with why.
 #[tauri::command]
 pub async fn add_builds_on(app: AppHandle, st: State<'_, AppState>, id: String, on: String) -> R<()> {
     let task = id.clone();
-    off(&st, move |st| gizai_core::builds_on::add(&st.db, &st.you_id, &task, &on).map_err(e)).await?;
+    off(&st, move |st| {
+        let other = tasks::id_of(&st.db, &on).unwrap_or(on);
+        gizai_core::builds_on::add(&st.db, &st.you_id, &task, &other).map_err(e)
+    }).await?;
     changed(&app, "tasks");
     wake(&st, &id);
     Ok(())

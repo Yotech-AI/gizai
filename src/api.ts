@@ -64,6 +64,11 @@ export const createTask = (input: T.TaskInput) => invoke<string>("create_task", 
 export const updateTask = (id: string, patch: T.TaskPatch) => invoke<void>("update_task", { id, patch });
 export const moveTask = (id: string, stateId: string, sortKey: string) => invoke<void>("move_task", { id, stateId, sortKey });
 export const setTaskLabels = (id: string, labelIds: string[]) => invoke<void>("set_task_labels", { id, labelIds });
+/** GA-228: the cards a card builds on and those that build on it; add one (by its identifier or id) or take one off. A
+ *  refusal (a loop, the card itself, more than 20) says why. */
+export const getBuildsOn = (id: string) => invoke<T.BuildsOn>("get_builds_on", { id });
+export const addBuildsOn = (id: string, on: string) => invoke<void>("add_builds_on", { id, on });
+export const removeBuildsOn = (id: string, on: string) => invoke<void>("remove_builds_on", { id, on });
 /** The archived cards (the bin) of one project, or of all: the most recently archived first. */
 export const listArchivedTasks = (projectId: string | null = null) => invoke<T.Task[]>("list_archived_tasks", { projectId });
 /** Archives a card in Done; fails with a plain message for another column or while an agent works on it. */

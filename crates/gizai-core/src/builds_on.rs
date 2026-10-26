@@ -86,7 +86,7 @@ fn linked(c: &Connection, task_id: &str, needed_by: bool) -> Result<Vec<Linked>>
             merged: merged(&category), category, hold: r.get(6)?, archived: r.get::<_, i64>(7)? != 0,
         })
     })?.collect::<rusqlite::Result<_>>()?;
-    list.sort_by(|a, b| number_key(&a.identifier).cmp(&number_key(&b.identifier)));
+    list.sort_by_key(|l| number_key(&l.identifier));
     Ok(list)
 }
 

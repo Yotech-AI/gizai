@@ -97,12 +97,23 @@ pub async fn list_projects(st: State<'_, AppState>) -> R<Vec<Project>> { off(&st
 pub async fn get_project(st: State<'_, AppState>, id: String) -> R<Project> { off(&st, move |st| projects::get(&st.db, &id).map_err(e)).await }
 #[tauri::command]
 pub async fn save_project(app: AppHandle, st: State<'_, AppState>, id: Option<String>, input: ProjectInput) -> R<String> {
-    let out = off(&st, move |st| match id {
-        Some(id) => projects::update(&st.db, &st.you_id, &id, input).map(|_| id),
-        None => projects::create(&st.db, &st.you_id, input),
+    // GA-225: another team moves the project and its cards (`runs::update_project`).
+    let (out, moved) = off(&st, move |st| match id {
+        Some(id) => crate::runs::update_project(st, &st.you_id, &id, input).map(|moved| (id, moved)),
+        None => projects::create(&st.db, &st.you_id, input).map(|id| (id, false)),
     }.map_err(e)).await?;
     changed(&app, "projects");
+    if moved {
+        // Its cards are in the new team's columns: that team's agents may take those in its Auto columns.
+        changed(&app, "tasks");
+        pull_soon(&st);
+    }
     Ok(out)
+}
+/// GA-225: what moving the project to team `team_id` would do, for the project form's question (`projects::team_move`).
+#[tauri::command]
+pub async fn project_team_move(st: State<'_, AppState>, id: String, team_id: String) -> R<projects::TeamMove> {
+    off(&st, move |st| projects::team_move(&st.db, &id, &team_id).map_err(e)).await
 }
 
 // ---- tasks ----

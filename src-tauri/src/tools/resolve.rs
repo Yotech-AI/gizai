@@ -2,10 +2,10 @@
 //! name wins; then a unique prefix; then a unique partial match. More than one candidate is never guessed:
 //! the error lists them. Nothing found: the error says what exists.
 use gizai_core::model::{Client, Doc, Project, Task, TaskFilter};
-use gizai_core::team::{Member, Team, WorkflowState};
+use gizai_core::team::{Member, Team, TeamSummary, WorkflowState};
 use gizai_core::{clients, docs, projects, tasks, team, users};
 
-use super::{Cx, err};
+use super::{Args, Cx, err};
 
 pub(crate) struct Cand {
     pub id: String,
@@ -138,6 +138,39 @@ pub(crate) fn team_of(cx: &Cx, project: Option<&Project>) -> Result<Team, String
     team::get(cx.db(), &id).map_err(err)
 }
 
+/// GA-225: a team by id or name (ignoring case), else by the start or a part of its name; more than one is never guessed.
+pub(crate) fn team(cx: &Cx, r: &str) -> Result<Team, String> {
+    let list = team::list(cx.db()).map_err(err)?;
+    let cands: Vec<Cand> = list.iter().map(|t| Cand { id: t.id.clone(), names: vec![t.name.clone()], show: t.name.clone() }).collect();
+    let i = pick("team", "teams", "full name", r, &cands)?;
+    team::get(cx.db(), &list[i].id).map_err(err)
+}
+
+/// GA-225: the team a tool acts on that sets up a board or adds an agent (add_column, set_column, create_agent): the
+/// `team` given, a name or an id. With one team it may be left out, as before teams were picked; with more, leaving it
+/// out is refused (`name_the_team`).
+pub(crate) fn team_arg(cx: &Cx, a: &Args) -> Result<Team, String> {
+    if let Some(r) = a.opt("team") {
+        return team(cx, &r);
+    }
+    let list = team::list(cx.db()).map_err(err)?;
+    match list.as_slice() {
+        [] => Err("there is no team".into()),
+        [only] => team::get(cx.db(), &only.id).map_err(err),
+        more => Err(name_the_team(more)),
+    }
+}
+
+/// Why a tool that needs a team, with more than one team, refuses a call without one: "Name the team: My team or
+/// Research team."
+pub(crate) fn name_the_team(teams: &[TeamSummary]) -> String {
+    let names: Vec<&str> = teams.iter().map(|t| t.name.as_str()).collect();
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("Name the team: {} or {last}.", rest.join(", ")),
+        _ => format!("Name the team: {}.", names.join("")),
+    }
+}
+
 /// A column by its name, ignoring case ("to do", "in_progress" for In progress). An unknown name is an error that lists
 /// the team's columns: never a guess by category.
 pub(crate) fn column(team: &Team, r: &str) -> Result<WorkflowState, String> {
@@ -147,6 +180,26 @@ pub(crate) fn column(team: &Team, r: &str) -> Result<WorkflowState, String> {
         let names: Vec<&str> = team.states.iter().map(|s| s.name.as_str()).collect();
         format!("No column called \"{}\". Columns: {}.", r.trim(), names.join(", "))
     })
+}
+
+/// GA-225: a column's name as a board has it, looked up in every team's columns (list_tasks without a project shows
+/// every team's cards). An unknown name is an error that lists them all.
+pub(crate) fn column_name_in_any(cx: &Cx, r: &str) -> Result<String, String> {
+    let mut states: Vec<WorkflowState> = vec![];
+    for t in team::list(cx.db()).map_err(err)? {
+        states.extend(team::get(cx.db(), &t.id).map_err(err)?.states);
+    }
+    let q = r.trim().to_lowercase().replace('_', " ");
+    if let Some(s) = states.iter().find(|s| s.name.to_lowercase() == q) {
+        return Ok(s.name.clone());
+    }
+    let mut names: Vec<&str> = vec![];
+    for s in &states {
+        if !names.contains(&s.name.as_str()) {
+            names.push(&s.name);
+        }
+    }
+    Err(format!("No column called \"{}\". Columns: {}.", r.trim(), names.join(", ")))
 }
 
 /// Label names → ids (exact names, ignoring case: labels are few and short). Any existing label; an unknown one is an

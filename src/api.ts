@@ -57,6 +57,8 @@ export const addUser = (name: string, email: string | null) => invoke<string>("a
 export const listProjects = () => invoke<T.Project[]>("list_projects");
 export const getProject = (id: string) => invoke<T.Project>("get_project", { id });
 export const saveProject = (id: string | null, input: T.ProjectInput) => invoke<string>("save_project", { id, input });
+/** What moving project `id` to team `teamId` would do, for the project form's question (GA-225); nothing changes. */
+export const projectTeamMove = (id: string, teamId: string) => invoke<T.TeamMove>("project_team_move", { id, teamId });
 
 export const listTasks = (filter: T.TaskFilter = {}) => invoke<T.Task[]>("list_tasks", { filter });
 export const getTask = (id: string) => invoke<T.Task>("get_task", { id });

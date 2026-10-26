@@ -726,7 +726,7 @@ pub fn run() {
             commands::browser_entry, commands::save_browser_entry, commands::list_browser_tools,
             commands::list_clients, commands::get_client, commands::save_client, commands::archive_client,
             commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
-            commands::list_projects, commands::get_project, commands::save_project,
+            commands::list_projects, commands::get_project, commands::save_project, commands::project_team_move,
             commands::list_tasks, commands::get_task, commands::create_task, commands::update_task, commands::move_task,
             commands::set_task_labels, commands::get_builds_on, commands::add_builds_on, commands::remove_builds_on,
             commands::task_activity, commands::list_comments, commands::add_comment,

@@ -35,7 +35,7 @@ function NewTeamDrawer({ onClose, onCreated }: { onClose: () => void; onCreated:
   const [err, setErr] = useState<string | null>(null);
   const make = async () => { try { onCreated(await addTeam(name)); } catch (e) { setErr(String(e)); } };
   return (
-    <Drawer title="New team" subtitle="A new team gets the seven usual columns and no agents. New projects still join your first team for now." onClose={onClose} dirty={!!name} error={err}
+    <Drawer title="New team" subtitle="A new team gets the seven usual columns and no agents. Move a project to it in the project's form." onClose={onClose} dirty={!!name} error={err}
       actions={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={!name.trim()} onClick={make}>Create team</button></>}>
       <form className="form" onSubmit={(e) => { e.preventDefault(); make(); }}>
         <FormSection title="Team"><Field label="Name" htmlFor="tm-name"><input id="tm-name" className="input" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Mobile team" /></Field></FormSection>

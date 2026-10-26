@@ -1396,7 +1396,9 @@ fn check_system_prompt(st: &AppState, agent: &Member) -> String {
          your recommendation. Holds blocked and stalled: find the cause in the card's runs and clear the hold only when the cause is gone; otherwise ask. \
          A held card with run_for_me waits for {you} to run those commands: the Inbox shows them with Done, continue, so leave it and don't ask about it.\n\
          - waiting: an agent with a free slot: start it on the card (start_agent_run). No agent is on its column: assign the agent the card \
-         clearly calls for (update_task), otherwise ask. A paused agent, a used budget, a paused pull or a full \"Runs at once\": ask.\n\
+         clearly calls for (update_task), otherwise ask. A paused agent, a used budget, a paused pull or a full \"Runs at once\": ask. \
+         builds_on_blocked (a card it builds on is on hold or cancelled): don't start it, it starts by itself once that card is merged. A held \
+         card it waits for is a finding of its own; for a cancelled one, ask {you} whether to take it off the card's builds_on (update_task).\n\
          - stopped: a run that hit the time or tool-call limit gets one Continue (continue_agent_run), not another when that run was already a \
          Continue (trigger nudge). A run a person stopped: leave it. A failed run: a passing problem (rate limit, network) gets one more \
          start_agent_run; otherwise ask. A run that stopped because Gizai quit: continue_agent_run.\n\

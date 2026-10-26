@@ -14,7 +14,7 @@ const COLS: &str = "t.id, t.identifier, t.project_id, p.name, p.color, t.title, 
     CASE WHEN t.hold IS NOT NULL THEN (SELECT json_extract(r.outcome_json, '$.run_for_me') FROM runs r
       WHERE r.task_id = t.id AND r.deleted_at IS NULL ORDER BY r.created_at DESC, r.id DESC LIMIT 1) END,
     {with_lead},
-    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person'), t.screenshots
+    EXISTS (SELECT 1 FROM actors pa WHERE pa.id = t.pinned_actor_id AND pa.kind = 'person'), t.screenshots, {waits_for}
   FROM tasks t JOIN workflow_states s ON s.id = t.state_id
   LEFT JOIN projects p ON p.id = t.project_id
   LEFT JOIN actors a ON a.id = t.assignee_actor_id";
@@ -30,7 +30,15 @@ const WITH_LEAD: &str = "CASE WHEN t.hold = 'needs_decision' THEN (SELECT json_e
 fn select(full: bool, acceptance: bool) -> String {
     format!("SELECT {}", COLS.replace("{desc}", if full { "t.description_md" } else { "''" })
         .replace("{acceptance}", if acceptance { "t.acceptance_md" } else { "NULL" })
-        .replace("{with_lead}", WITH_LEAD))
+        .replace("{with_lead}", WITH_LEAD)
+        .replace("{waits_for}", crate::builds_on::WAITS_FOR_JSON))
+}
+
+/// GA-228: the cards a card waits for, from their JSON array of identifiers, by number.
+fn waits_for(json: Option<String>) -> Vec<String> {
+    let mut list: Vec<String> = json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+    crate::builds_on::sort_identifiers(&mut list);
+    list
 }
 
 fn row(r: &Row) -> rusqlite::Result<Task> {
@@ -45,6 +53,7 @@ fn row(r: &Row) -> rusqlite::Result<Task> {
         with_lead: r.get::<_, Option<i64>>(30)?.unwrap_or(0) != 0,
         by_hand: r.get::<_, i64>(31)? != 0,
         screenshots: r.get::<_, Option<i64>>(32)?.map(|on| on != 0),
+        waits_for: waits_for(r.get(33)?),
     })
 }
 
@@ -250,6 +259,13 @@ pub fn create(db: &Db, actor: &str, input: TaskInput) -> Result<String> {
 /// `create`, with the card on hold from the start when `hold` (the hold and its reason) is given: in the same write, so no
 /// agent picks it up first (GA-101).
 pub fn create_held(db: &Db, actor: &str, input: TaskInput, hold: Option<(&str, &str)>) -> Result<String> {
+    create_with(db, actor, input, hold, &[])
+}
+
+/// `create_held`, building on the cards `builds_on` (their ids, GA-228) from the start: in the same write, so no agent
+/// takes it before it waits for them. Refused as `builds_on::set_in` says (more than 20 cards, a card of another
+/// organisation), and then no card is made.
+pub fn create_with(db: &Db, actor: &str, input: TaskInput, hold: Option<(&str, &str)>, builds_on: &[String]) -> Result<String> {
     let title = input.title.trim().to_string();
     if title.is_empty() {
         return Err(Error::Invalid("task title is required".into()));
@@ -289,6 +305,9 @@ pub fn create_held(db: &Db, actor: &str, input: TaskInput, hold: Option<(&str, &
         if !input.label_ids.is_empty() {
             set_labels_in(w, &id, &input.label_ids)?;
         }
+        if !builds_on.is_empty() {
+            crate::builds_on::set_in(w, &id, builds_on)?;
+        }
         if let Some((hold, reason)) = hold {
             crate::workflow::set_hold(w, &id, hold, reason)?;
         }
@@ -303,15 +322,25 @@ pub fn update(db: &Db, actor: &str, id: &str, patch: TaskPatch) -> Result<()> {
 /// `update` and, with `label_ids`, the card's new set of labels, in one write: when anything is refused (a bad label,
 /// hold or title), nothing changes.
 pub fn update_with_labels(db: &Db, actor: &str, id: &str, patch: TaskPatch, label_ids: Option<Vec<String>>) -> Result<()> {
+    update_with(db, actor, id, patch, label_ids, None)
+}
+
+/// `update_with_labels` and, with `builds_on`, the full new list of cards it builds on (their ids, GA-228; an empty list
+/// clears it), in one write: when anything is refused (a loop, a bad label, hold or title), nothing changes.
+pub fn update_with(db: &Db, actor: &str, id: &str, patch: TaskPatch, label_ids: Option<Vec<String>>, builds_on: Option<Vec<String>>)
+    -> Result<()> {
     db.write(Some(actor), |w| {
         if let Some(l) = &label_ids {
             check_labels(w.conn(), l)?;
         }
         update_in(w, actor, id, &patch)?;
-        match &label_ids {
-            Some(l) => set_labels_in(w, id, l),
-            None => Ok(()),
+        if let Some(l) = &label_ids {
+            set_labels_in(w, id, l)?;
         }
+        if let Some(on) = &builds_on {
+            crate::builds_on::set_in(w, id, on)?;
+        }
+        Ok(())
     })
 }
 

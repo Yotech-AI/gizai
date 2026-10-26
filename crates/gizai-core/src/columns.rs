@@ -122,7 +122,8 @@ fn key_after_column(c: &Connection, team_id: &str, moving: Option<&str>, after: 
     Ok(sortkey::key_between(prev.as_deref(), next.as_deref()))
 }
 
-fn write_agents(w: &Writer, state_id: &str, agent_ids: &[String]) -> Result<()> {
+/// Puts `agent_ids` on the column, in this order, in place of the agents on it now.
+pub(crate) fn write_agents(w: &Writer, state_id: &str, agent_ids: &[String]) -> Result<()> {
     let c = w.conn();
     c.execute("DELETE FROM column_agents WHERE state_id=?1", [state_id])?;
     let now = ids::now_ms();
@@ -251,32 +252,45 @@ pub fn remove_agent(db: &Db, actor: &str, state_id: &str, agent_id: &str) -> Res
     })
 }
 
-/// Puts an agent on the columns of `team_id` its role usually works, at the end of each: builders (every role but lead,
-/// qa and devops) the first To do column and the Work column it links to (else the first In progress column), QA the
-/// first Testing column, DevOps the first Deploy column, the Team Lead none.
-pub(crate) fn place_new_agent(w: &Writer, team_id: &str, agent_id: &str, role: &str) -> Result<()> {
-    let c = w.conn();
-    let mut cols: Vec<String> = vec![];
+/// The columns an agent with this role usually works, as places in `cols`: a team's columns in board order, each as its
+/// category and the place of its next column. Builders (every role but lead, qa and devops) get the first To do column
+/// and the Work column it links to (else the first In progress column), QA the first Testing column, DevOps the first
+/// Deploy column, the Team Lead none. A new agent lands on them (`place_new_agent`), and so do the built-in team
+/// template's agents (`templates`), so that template never drifts from a new install.
+pub(crate) fn role_columns(cols: &[(&str, Option<usize>)], role: &str) -> Vec<usize> {
+    let first = |category: &str| cols.iter().position(|(c, _)| *c == category);
+    let mut out = vec![];
     match role {
         "lead" => {}
-        "qa" => cols.extend(first_of(c, team_id, "testing")?.map(|(id, _)| id)),
-        "devops" => cols.extend(first_of(c, team_id, "deploy")?.map(|(id, _)| id)),
+        "qa" => out.extend(first("testing")),
+        "devops" => out.extend(first("deploy")),
         _ => {
-            if let Some((todo, _)) = first_of(c, team_id, "ready")? {
-                let linked: Option<String> = c.query_row(
-                    "SELECT n.id FROM workflow_states s JOIN workflow_states n ON n.id = s.next_state_id
-                     WHERE s.id=?1 AND n.deleted_at IS NULL AND n.category='in_progress'", [&todo], |r| r.get(0)).optional()?;
-                cols.push(todo);
-                cols.extend(linked);
+            if let Some(todo) = first("ready") {
+                out.push(todo);
+                out.extend(cols[todo].1.filter(|n| cols.get(*n).is_some_and(|(c, _)| *c == "in_progress")));
             }
-            if cols.len() < 2 {
-                cols.extend(first_of(c, team_id, "in_progress")?.map(|(id, _)| id));
+            if out.len() < 2 {
+                out.extend(first("in_progress"));
             }
         }
     }
+    out
+}
+
+/// Puts an agent on the columns of `team_id` its role usually works (`role_columns`), at the end of each.
+pub(crate) fn place_new_agent(w: &Writer, team_id: &str, agent_id: &str, role: &str) -> Result<()> {
+    let c = w.conn();
+    let rows: Vec<(String, String, Option<String>)> = {
+        let mut st = c.prepare("SELECT id, category, next_state_id FROM workflow_states WHERE team_id=?1 AND deleted_at IS NULL ORDER BY sort_key")?;
+        st.query_map([team_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let cols: Vec<(&str, Option<usize>)> = rows.iter()
+        .map(|(_, category, next)| (category.as_str(), next.as_ref().and_then(|n| rows.iter().position(|(id, _, _)| id == n))))
+        .collect();
     let now = ids::now_ms();
-    for s in cols {
-        let last: Option<String> = c.query_row("SELECT max(sort_key) FROM column_agents WHERE state_id=?1", [&s], |r| r.get(0))?;
+    for i in role_columns(&cols, role) {
+        let s = &rows[i].0;
+        let last: Option<String> = c.query_row("SELECT max(sort_key) FROM column_agents WHERE state_id=?1", [s], |r| r.get(0))?;
         c.execute("INSERT OR IGNORE INTO column_agents(state_id, actor_id, sort_key, created_at) VALUES (?1, ?2, ?3, ?4)",
                   rusqlite::params![s, agent_id, sortkey::key_after(last.as_deref()), now])?;
     }

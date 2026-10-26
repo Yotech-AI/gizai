@@ -247,6 +247,11 @@ pub fn list(db: &Db) -> Result<Vec<McpServer>> {
     Ok(settings::get::<Vec<McpServer>>(db, KEY)?.unwrap_or_default())
 }
 
+/// `list` on a connection that is open already (inside a write).
+pub(crate) fn list_in(c: &rusqlite::Connection) -> Result<Vec<McpServer>> {
+    Ok(settings::get_in::<Vec<McpServer>>(c, KEY)?.unwrap_or_default())
+}
+
 pub fn get(db: &Db, id: &str) -> Result<McpServer> {
     list(db)?.into_iter().find(|s| s.id == id).ok_or_else(|| Error::NotFound(format!("MCP server {id}")))
 }

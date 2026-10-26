@@ -38,6 +38,7 @@ pub mod labels;
 pub mod mcp_servers;
 pub mod housekeeping;
 pub mod backups;
+pub mod templates;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

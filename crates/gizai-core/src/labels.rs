@@ -40,7 +40,7 @@ pub fn find(db: &Db, name: &str) -> Result<Option<Label>> {
     db.read(|c| by_name(c, name))
 }
 
-fn clean_color(color: Option<&str>) -> Result<Option<String>> {
+pub(crate) fn clean_color(color: Option<&str>) -> Result<Option<String>> {
     let Some(c) = color.map(str::trim).filter(|c| !c.is_empty()) else { return Ok(None) };
     let hex = c.strip_prefix('#').unwrap_or(c);
     if !matches!(hex.len(), 3 | 6) || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {

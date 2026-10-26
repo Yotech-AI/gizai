@@ -372,7 +372,47 @@ pub(crate) fn add_agent_in(w: &crate::db::Writer, actor: &str, team_id: &str, cl
     insert_agent(w, actor, team_id, &a, &input)
 }
 
+/// A team template's agent (`templates::import`), inside the import's write: made on `cli` as `add_agent_in` makes one,
+/// but on no column (the template puts it on its own), paused when `paused`, with `extra` as its tools (its
+/// `mcp_extra_json`; None: nothing on) and its own memory folder only when `own_folder` (an agent that is to share one gets
+/// none: the import sets that once all of the template's agents are there).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_template_agent_in(w: &crate::db::Writer, actor: &str, team_id: &str, cli: crate::clis::Cli, input: &AgentInput, paused: bool,
+                                    extra: Option<&str>, own_folder: bool) -> Result<String> {
+    let a = clean_agent_on(cli, input, None)?;
+    let (id, now) = insert_agent_rows(w, actor, team_id, &a, input)?;
+    let c = w.conn();
+    if let Some(extra) = extra {
+        c.execute("UPDATE agent_configs SET mcp_extra_json=?2 WHERE actor_id=?1", rusqlite::params![id, extra])?;
+    }
+    if paused {
+        c.execute("UPDATE actors SET status='paused' WHERE id=?1", [&id])?;
+        w.update("actors", &id, serde_json::json!({"status": "paused"}))?;
+    }
+    agent_switches_in(w, &id, input, now)?;
+    if own_folder {
+        crate::memory::ensure_agent_notes_in(w, &id)?;
+    }
+    Ok(id)
+}
+
 fn insert_agent(w: &crate::db::Writer, actor: &str, team_id: &str, a: &CleanAgent, input: &AgentInput) -> Result<String> {
+    let (id, now) = insert_agent_rows(w, actor, team_id, a, input)?;
+    crate::columns::place_new_agent(w, team_id, &id, &a.role)?;
+    agent_switches_in(w, &id, input, now)?;
+    // The agent whose memory folder it shares (GA-96), else its own folder.
+    if let Some(with) = input.shares_memory_with.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        crate::memory::set_shares_in(w, actor, &id, Some(with))?;
+    }
+    // Its own memory folder, Agents/<name>/, with a Notes note, unless it shares one (the Team Lead's Team Lead/Notes is
+    // made on first use).
+    crate::memory::ensure_agent_notes_in(w, &id)?;
+    Ok(id)
+}
+
+/// A new agent's own rows: its actor (reporting to `actor`), its settings and its team membership. Returns its id and
+/// when it was made.
+fn insert_agent_rows(w: &crate::db::Writer, actor: &str, team_id: &str, a: &CleanAgent, input: &AgentInput) -> Result<(String, i64)> {
     let instructions = input.instructions_md.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| crate::seed::role_template(&a.role));
     let c = w.conn();
     if c.query_row("SELECT count(*) FROM teams WHERE id=?1 AND deleted_at IS NULL", [team_id], |r| r.get::<_, i64>(0))? == 0 {
@@ -400,21 +440,18 @@ fn insert_agent(w: &crate::db::Writer, actor: &str, team_id: &str, a: &CleanAgen
     w.insert("actors", &id, serde_json::json!({"kind": "agent", "name": a.name, "handle": handle}))?;
     w.insert("agent_configs", &id, serde_json::json!({"adapter": a.adapter, "role": a.role, "wakeup": a.wakeup, "heartbeat_minutes": a.heartbeat_minutes}))?;
     w.insert("team_members", &format!("{team_id}:{id}"), serde_json::json!({"role_key": a.role}))?;
-    crate::columns::place_new_agent(w, team_id, &id, &a.role)?;
+    Ok((id, now))
+}
+
+/// A new agent's Chat and Memory switches, as `input` has them.
+fn agent_switches_in(w: &crate::db::Writer, id: &str, input: &AgentInput, now: i64) -> Result<()> {
     if input.chat_enabled == Some(true) {
-        set_chat_in(w, &id, now)?;
+        set_chat_in(w, id, now)?;
     }
     if input.use_memory == Some(false) {
-        c.execute("UPDATE agent_configs SET use_memory = 0 WHERE actor_id = ?1", [&id])?;
+        w.conn().execute("UPDATE agent_configs SET use_memory = 0 WHERE actor_id = ?1", [id])?;
     }
-    // The agent whose memory folder it shares (GA-96), else its own folder.
-    if let Some(with) = input.shares_memory_with.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        crate::memory::set_shares_in(w, actor, &id, Some(with))?;
-    }
-    // Its own memory folder, Agents/<name>/, with a Notes note, unless it shares one (the Team Lead's Team Lead/Notes is
-    // made on first use).
-    crate::memory::ensure_agent_notes_in(w, &id)?;
-    Ok(id)
+    Ok(())
 }
 
 /// Saves an agent's settings. `instructions_md: None` keeps the current instructions.

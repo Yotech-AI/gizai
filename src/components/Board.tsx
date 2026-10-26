@@ -16,22 +16,27 @@ import { pullBadge, pullLabel } from "../lib/pulls";
 import { PriorityIcon, StatusIcon } from "./StatusIcon";
 import { Avatar } from "./Avatar";
 import { byHandTip } from "../lib/hand";
-import { Archive, Keyboard, Plus } from "lucide-react";
+import { Archive, Hourglass, Keyboard, Plus } from "lucide-react";
 import { BoardShotSign } from "./screenshots/ShotSign";
+import { waitsBadge, waitsTip } from "../lib/buildsOn";
 
 const CAP = 50;
 const RAIL_CATEGORIES = new Set(["backlog", "done", "cancelled"]);
 
 type Cols = Record<string, string[]>;
 
-const Card = memo(function Card({ task, onOpen, onArchive, working, shots }: {
+const Card = memo(function Card({ task, onOpen, onArchive, working, shots, waitsFor }: {
   task: Task; onOpen: (id: string) => void; working?: string;
+  /** GA-228: the "Waits for" badge's tooltip, naming the cards it builds on that aren't merged yet (a string, so the card
+   *  draws again only when it changes). */
+  waitsFor?: string;
   /** In Review, its newest round's screenshots (GA-185): the sign after the pull request's. */
   shots?: number;
   /** Cards in a Done column: the Archive button, shown on hover and focus. */
   onArchive?: (task: Task) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+  const waits = waitsBadge(task);
   return (
     <div ref={setNodeRef} className={"card" + (isDragging ? " dragging" : "")} data-card={task.identifier}
       style={{ transform: CSS.Transform.toString(transform), transition }} {...attributes} {...listeners}
@@ -49,8 +54,9 @@ const Card = memo(function Card({ task, onOpen, onArchive, working, shots }: {
         )}</div>
       <div className="title">{task.title}</div>
       {working && <div className="working"><span className="pulse" aria-hidden />{working} is working</div>}
-      {(task.labels.length > 0 || task.assigneeName || task.byHand) && (
+      {(task.labels.length > 0 || task.assigneeName || task.byHand || waits) && (
         <div className="meta">
+          {waits && <span className="badge waits" title={waitsFor}><Hourglass className="icon sm" />{waits}</span>}
           {task.labels.map((l) => <span key={l.id} className="label-pill"><span className="dot" style={{ background: l.color ?? "var(--text-3)" }} />{l.name}</span>)}
           {task.byHand && <span className="badge by-hand" title={byHandTip(task)}><Keyboard className="icon sm" />By hand</span>}
           {task.assigneeName && <Avatar name={task.assigneeName} kind={task.assigneeKind} size="sm" />}
@@ -60,8 +66,10 @@ const Card = memo(function Card({ task, onOpen, onArchive, working, shots }: {
   );
 });
 
-function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working, members, shots }: {
+function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive, working, members, shots, titleOf }: {
   state: WorkflowState; ids: string[]; byId: Map<string, Task>; rail: boolean; working: Map<string, string>; members?: Member[]; shots?: Map<string, number>;
+  /** A card's title by its identifier, for the "Waits for" tooltips (GA-228). */
+  titleOf: (identifier: string) => string | undefined;
   onToggleRail: (id: string) => void; onOpen: (id: string) => void; onAdd?: (stateId: string) => void; onArchive?: (task: Task) => void;
 }) {
   // Only a card in Done can be archived (not Deploy, not Cancelled).
@@ -91,7 +99,11 @@ function Column({ state, ids, byId, rail, onToggleRail, onOpen, onAdd, onArchive
       {note && <div className="col-note">{note}</div>}
       <SortableContext id={state.id} items={visible} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="col-body">
-          {visible.map((id) => { const t = byId.get(id); return t ? <Card key={id} task={t} onOpen={onOpen} onArchive={archive} working={working.get(id)} shots={shots?.get(id)} /> : null; })}
+          {visible.map((id) => {
+            const t = byId.get(id);
+            const waits = t?.waitsFor?.length ? waitsTip(t.waitsFor, titleOf) : undefined;
+            return t ? <Card key={id} task={t} onOpen={onOpen} onArchive={archive} working={working.get(id)} shots={shots?.get(id)} waitsFor={waits} /> : null;
+          })}
           {ids.length > shown && (
             <button className="show-more" onClick={() => setShown((s) => s + CAP)}>Show {Math.min(CAP, ids.length - shown)} more of {ids.length - shown}</button>
           )}
@@ -125,6 +137,8 @@ export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const byIdRef = useRef(byId);
   byIdRef.current = byId;
+  const titles = new Map(tasks.map((t) => [t.identifier, t.title]));
+  const titleOf = (identifier: string) => titles.get(identifier);
 
   // Follow the data unless a card is in the air.
   const stateKey = stateIds.join(",");
@@ -209,7 +223,7 @@ export function Board({ tasks, states, onMove, onOpen, onAdd, onArchive, working
       onDragEnd={onDragEnd}>
       <div className="board">
         {states.map((s) => (
-          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} members={members} shots={shots} />
+          <Column key={s.id} state={s} ids={cols[s.id] ?? []} byId={byId} rail={isRail(s.id)} onToggleRail={toggleRail} onOpen={onOpen} onAdd={onAdd} onArchive={onArchive} working={working} members={members} shots={shots} titleOf={titleOf} />
         ))}
       </div>
     </DndContext>

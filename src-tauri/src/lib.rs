@@ -1,4 +1,5 @@
 pub mod ask_lead;
+pub mod backups;
 pub mod bitbucket;
 pub mod board;
 pub mod changes;
@@ -17,6 +18,9 @@ pub mod mcp_servers;
 pub mod memory;
 pub mod notifications;
 pub mod onboarding;
+// Keeps WebKitGTK 2.54.1 from crashing Gizai on a paste with an empty clipboard (GA-222).
+#[cfg(target_os = "linux")]
+pub mod paste_guard;
 pub mod pending;
 pub mod pulls;
 mod quit;
@@ -85,6 +89,8 @@ pub struct AppState {
     pub inbox: Arc<notifications::Watch>,
     /// The open terminals, in memory only (see `terminal`).
     pub terminals: Arc<gizai_agents::terminal::Terminals>,
+    /// The snapshot that runs now, and the quit's (see `backups`).
+    pub backups: Arc<backups::Backups>,
 }
 
 #[derive(Serialize)]
@@ -127,10 +133,13 @@ async fn selftest_report(json: String) -> Result<(), String> {
 
 /// The page quits Gizai (Settings' Quit Gizai completely, a self-test's end): it has no unsaved text to save first.
 /// On the main thread, in order with `unsaved`'s commands: quitting goes after the page's last word on unsaved text. It
-/// does no database or file work: ending the app happens in `run`'s exit.
+/// does no database or file work: ending the app happens in `run`'s exit, which backs up first with On quit on.
 #[tauri::command]
 fn exit_app(app: AppHandle, code: i32) {
     unsaved::settle();
+    if let Some(st) = app.try_state::<AppState>() {
+        st.backups.quit_completely();
+    }
     app.exit(code);
 }
 
@@ -324,7 +333,8 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
                   changes: Arc::new(changes::PullDiffs::default()), editor: Arc::new(editor::Fetches::default()),
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
                   desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()),
-                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()), streams: Arc::new(stream::Streams::default()) };
+                  terminals: Arc::new(gizai_agents::terminal::Terminals::default()), streams: Arc::new(stream::Streams::default()),
+                  backups: Arc::new(backups::Backups::default()) };
     // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
     // failed, so it never runs twice, and its chat says so.
     pending::at_start(&st);
@@ -386,6 +396,7 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
             runs::Note::UpdateChanged => app.emit("update-changed", ()),
             runs::Note::EditorUpdated(ended) => app.emit("editor-updated", ended),
             runs::Note::TerminalsChanged(list) => app.emit("terminals-changed", list),
+            runs::Note::BackupsChanged(status) => app.emit("backups-changed", status),
         };
     })
 }
@@ -402,7 +413,8 @@ pub fn show_main(app: &AppHandle) {
 
 /// The tray icon: top right in Omarchy's Waybar, in the menu bar on macOS, in the notification area of the taskbar on
 /// Windows. A click opens its menu (on Linux a click always does): Open Gizai, and Quit Gizai completely, which goes
-/// through `app.exit` like `exit_app`, so agents at work are stopped first. On Linux it needs libayatana-appindicator (or
+/// through `app.exit` like `exit_app`, so agents at work are stopped first (and with On quit on, Gizai backs up before
+/// it exits: see `backups`). On Linux it needs libayatana-appindicator (or
 /// the older libappindicator); without it there is no tray icon, and starting Gizai again brings the window back.
 fn tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
@@ -426,7 +438,12 @@ fn tray(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, e| match e.id().as_ref() {
             "open" => show_main(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                if let Some(st) = app.try_state::<AppState>() {
+                    st.backups.quit_completely();
+                }
+                app.exit(0)
+            }
             _ => {}
         })
         .build(app)?;
@@ -551,6 +568,9 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.menu(mac_menu).on_menu_event(|app, e| {
         if e.id().as_ref() == MAC_QUIT {
+            if let Some(st) = app.try_state::<AppState>() {
+                st.backups.quit_completely();
+            }
             app.exit(0);
         }
     });
@@ -662,6 +682,27 @@ pub fn run() {
                     }
                 });
             }
+            // Backups (GA-216): 2 minutes after start, then every hour, a daily or weekly snapshot is made when this
+            // computer's newest one in the backups folder is a day or a week old. The hour goes by the wall clock, looked
+            // at every 5 minutes, so the hours the computer slept count too.
+            {
+                let st = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(backups::FIRST_CHECK_AFTER).await;
+                    let mut last = None;
+                    let mut tick = tokio::time::interval(backups::TICK);
+                    loop {
+                        tick.tick().await;
+                        let now = gizai_core::ids::now_ms();
+                        if !backups::check_due(last, now) {
+                            continue;
+                        }
+                        last = Some(now);
+                        let st = st.clone();
+                        let _ = tokio::task::spawn_blocking(move || backups::check_schedule(&st, now)).await;
+                    }
+                });
+            }
             // Once a minute the agents take cards that had to wait (the run limit was full, Gizai just started), and the
             // Team Lead checks the board when its interval has passed; only new findings start it. The cards start on
             // their own (GA-191): the board check doesn't wait for a card's fetch and install.
@@ -678,6 +719,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, selftest_report, tour::tour_still, tour::tour_steps, exit_app, unsaved::set_unsaved_edits, unsaved::close_answer,
+            #[cfg(target_os = "linux")] paste_guard::selftest_paste,
             commands::list_mcp_servers, commands::save_mcp_server, commands::remove_mcp_server, commands::list_mcp_tools,
             commands::scan_claude_code_mcp, commands::import_mcp_servers, commands::mcp_sign_in, commands::mcp_sign_out,
             commands::agent_mcp, commands::save_agent_mcp, commands::agent_cli_tools, commands::save_agent_cli_tools, commands::ask_cli_tools,
@@ -686,7 +728,8 @@ pub fn run() {
             commands::list_contacts, commands::save_contact, commands::remove_contact, commands::list_users, commands::add_user,
             commands::list_projects, commands::get_project, commands::save_project,
             commands::list_tasks, commands::get_task, commands::create_task, commands::update_task, commands::move_task,
-            commands::set_task_labels, commands::task_activity, commands::list_comments, commands::add_comment,
+            commands::set_task_labels, commands::get_builds_on, commands::add_builds_on, commands::remove_builds_on,
+            commands::task_activity, commands::list_comments, commands::add_comment,
             commands::list_archived_tasks, commands::archive_task, commands::restore_task,
             commands::list_teams, commands::get_team, commands::check_repo,
             commands::list_docs, commands::get_doc, commands::create_doc, commands::save_doc, commands::rename_doc,
@@ -716,6 +759,7 @@ pub fn run() {
             commands::list_old_worktrees, commands::remove_old_worktrees, commands::remove_old_worktree_anyway,
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,
+            commands::backup_status, commands::save_backup_settings, commands::list_backups, commands::back_up_now,
             editor::editor_folders, editor::editor_list, editor::editor_read, editor::editor_write, editor::editor_create,
             editor::editor_rename, editor::editor_delete, editor::editor_files, editor::editor_search, editor::editor_git,
             editor::editor_versions, editor::editor_apps, editor::open_in_app, editor::editor_main, editor::editor_fetch,
@@ -729,9 +773,12 @@ pub fn run() {
         .run(|app, event| {
             // Quitting with unsaved text in the doc page's or the Memory page's editor: the page saves it first, or
             // asks (see `unsaved`). Then, with agents at work (runs or a chat answer): stop them first, then quit (a
-            // second request quits at once).
+            // second request quits at once). Then, for Quit Gizai completely with On quit on: back up first, at most 5
+            // minutes (see `backups`; a second request quits at once).
             if let tauri::RunEvent::ExitRequested { api, code, .. } = &event
-                && (unsaved::quit_waits(app, code.unwrap_or(0)) || quit::stop_agents_first(app))
+                && (unsaved::quit_waits(app, code.unwrap_or(0))
+                    || quit::stop_agents_first(app)
+                    || backups::quit_first(app, code.unwrap_or(0)))
             {
                 api.prevent_exit();
             }

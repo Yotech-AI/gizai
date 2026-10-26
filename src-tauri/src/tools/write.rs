@@ -21,7 +21,16 @@ fn task_done(cx: &Cx, id: &str, what: &str, held_after: Option<&str>) -> Result<
     let t = tasks::get(cx.db(), id).map_err(err)?;
     cx.changed("tasks");
     cx.wake(&t.id);
-    let mut v = json!({"ok": true, "done": what, "task": task_json(&t), "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))});
+    let mut task = task_json(&t);
+    // GA-228: the cards it builds on, and those it waits for (not merged yet): it starts by itself once they are.
+    let on = gizai_core::builds_on::of(cx.db(), &t.id).map(|b| b.builds_on).unwrap_or_default();
+    if !on.is_empty() {
+        task["builds_on"] = json!(on.iter().map(|l| l.identifier.clone()).collect::<Vec<_>>());
+    }
+    if !t.waits_for.is_empty() {
+        task["waits_for"] = json!(t.waits_for);
+    }
+    let mut v = json!({"ok": true, "done": what, "task": task, "link": link("task", &t.id, &format!("{} {}", t.identifier, short(&t.title, 60)))});
     if let Some(tool) = held_after {
         v["on_hold"] = json!(format!("{} waits on hold for the user's OK, so no agent starts it: you used {tool}, a tool from outside \
             Gizai, in this answer. Tell the user, and ask them to check it and take it off hold.", t.identifier));
@@ -47,11 +56,30 @@ fn in_auto(cx: &Cx, t: &Task) -> Result<bool, String> {
 }
 
 /// GA-101: the patch changes what the card's agent is told (its description or acceptance criteria) or who starts it (its
-/// assignee).
-fn steers(t: &Task, p: &TaskPatch) -> bool {
+/// assignee). So does a new Builds on (GA-228, `builds_on`: card ids): its run prompt names those cards, and taking one
+/// off can start it.
+fn steers(cx: &Cx, t: &Task, p: &TaskPatch, builds_on: Option<&[String]>) -> bool {
     let differs = |new: &Option<String>, now: Option<&str>| new.as_deref().is_some_and(|n| n.trim() != now.unwrap_or_default().trim());
+    let new_builds_on = builds_on.is_some_and(|new| {
+        let now: Vec<String> = gizai_core::builds_on::of(cx.db(), &t.id).map(|b| b.builds_on).unwrap_or_default().into_iter().map(|l| l.id).collect();
+        new.len() != now.len() || new.iter().any(|id| !now.contains(id))
+    });
     differs(&p.description_md, Some(&t.description_md)) || differs(&p.acceptance_md, t.acceptance_md.as_deref())
-        || differs(&p.assignee_id, t.assignee_id.as_deref())
+        || differs(&p.assignee_id, t.assignee_id.as_deref()) || new_builds_on
+}
+
+/// GA-228: `builds_on`, the cards the card builds on by identifier, as their ids (a card named twice counts once); None
+/// when not given. An unknown card is refused here; the rest (the card itself, more than 20, a loop) in the write that
+/// makes the change (`builds_on::set_in`), so a refusal changes nothing.
+fn builds_on_arg(cx: &Cx, a: &Args) -> Result<Option<Vec<String>>, String> {
+    let Some(refs) = a.list("builds_on") else { return Ok(None) };
+    let mut ids: Vec<String> = vec![];
+    for id in resolve::task_ids(cx, &refs)? {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(Some(ids))
 }
 
 /// For an update: the given value (empty clears), else the current one.
@@ -296,17 +324,22 @@ pub(crate) async fn create_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
         Some(n) if !n.eq_ignore_ascii_case("none") => Some(resolve::assignee(cx, &n)?),
         _ => None,
     };
+    // GA-228: the cards it builds on, set in the same write, so no agent takes it before it waits for them.
+    let builds_on = builds_on_arg(cx, a)?.unwrap_or_default();
+    if builds_on.len() > gizai_core::builds_on::MAX {
+        return Err(format!("A card can't build on more than {} cards. Nothing changed.", gizai_core::builds_on::MAX));
+    }
     // GA-101: in an Auto column (the first column when none is given) after a tool from outside Gizai, it waits on hold.
     let held_after = match column.as_ref().or(team.states.first()) {
         Some(c) if auto(c) => cx.outside("create_task", a).await?,
         _ => None,
     };
     let reason = held_after.as_deref().map(waiting_for_ok);
-    let id = tasks::create_held(cx.db(), cx.actor, TaskInput {
+    let id = tasks::create_with(cx.db(), cx.actor, TaskInput {
         project_id: p.id.clone(), title, description_md: a.opt("description_md").unwrap_or_default(), acceptance_md: a.opt("acceptance_md"),
         state_id: column.map(|c| c.id), priority: a.int("priority")?.unwrap_or(0), assignee_id, label_ids,
         testing: Some(a.flag("testing").unwrap_or(true)),
-    }, reason.as_deref().map(|r| ("needs_decision", r))).map_err(err)?;
+    }, reason.as_deref().map(|r| ("needs_decision", r)), &builds_on).map_err(err)?;
     task_done(cx, &id, "created", held_after.as_deref())
 }
 
@@ -327,12 +360,16 @@ pub(crate) async fn update_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
         patch.hold_reason = Some(r);
     }
     let labels = a.list("labels");
+    // GA-228: the full new list of cards it builds on; an empty list clears it.
+    let builds_on = builds_on_arg(cx, a)?;
     let nothing = patch.title.is_none() && patch.description_md.is_none() && patch.acceptance_md.is_none() && patch.priority.is_none()
-        && patch.testing.is_none() && patch.assignee_id.is_none() && patch.hold.is_none() && patch.hold_reason.is_none() && labels.is_none();
+        && patch.testing.is_none() && patch.assignee_id.is_none() && patch.hold.is_none() && patch.hold_reason.is_none() && labels.is_none()
+        && builds_on.is_none();
     if nothing {
         return Err("nothing to change: give a field to update".into());
     }
-    // Everything given is checked before anything changes: a bad label (or hold, title, …) changes nothing.
+    // Everything given is checked before anything changes: a bad label (or hold, title, a loop in builds_on, …) changes
+    // nothing.
     let label_ids = match labels {
         Some(l) => Some(resolve::labels(&resolve::team_of(cx, t.project_id.as_ref().and_then(|p| projects::get(cx.db(), p).ok()).as_ref())?, &l)?),
         None => None,
@@ -340,7 +377,7 @@ pub(crate) async fn update_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
     // GA-101: after a tool from outside Gizai, a card in an Auto column isn't taken off hold, and a change to what its agent
     // is told or to who starts it puts it on hold for the user's OK, in the same write. A run under way goes on.
     let mut held_after = None;
-    if (clears || steers(&t, &patch)) && in_auto(cx, &t)? && let Some(tool) = cx.outside("update_task", a).await? {
+    if (clears || steers(cx, &t, &patch, builds_on.as_deref())) && in_auto(cx, &t)? && let Some(tool) = cx.outside("update_task", a).await? {
         if clears {
             return Err(super::refused_after("update_task", &tool));
         }
@@ -348,7 +385,7 @@ pub(crate) async fn update_task(cx: &Cx<'_>, a: &Args) -> Result<Value, String> 
         patch.hold_reason = Some(waiting_for_ok(&tool));
         held_after = Some(tool);
     }
-    tasks::update_with_labels(cx.db(), cx.actor, &t.id, patch, label_ids).map_err(err)?;
+    tasks::update_with(cx.db(), cx.actor, &t.id, patch, label_ids, builds_on).map_err(err)?;
     task_done(cx, &t.id, "updated", held_after.as_deref())
 }
 

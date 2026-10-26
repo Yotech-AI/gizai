@@ -169,20 +169,22 @@ pub fn next_task_for(db: &Db, agent_id: &str) -> Result<Option<String>> {
 /// pinned to anyone else (a person as assignee doesn't block; a card pinned to a person, who does it by hand, GA-111,
 /// does). Held, claimed and paused-project cards are skipped, and so is a card
 /// whose last run was stopped (by a person, or because Gizai quit: Run or Continue starts it again) and a card with
-/// its Testing switch off in a Testing column. Best means: priority urgent → low with none last, then cards assigned to
-/// this agent, then column and card order.
+/// its Testing switch off in a Testing column. So is a card that builds on a card not merged yet (GA-228,
+/// `builds_on`): it keeps its place, without a move or a hold, and is taken once the last of them is merged. Best means:
+/// priority urgent → low with none last, then cards assigned to this agent, then column and card order.
 pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
     db.read(|c| {
         if !is_active(c, agent_id)? {
             return Ok(vec![]);
         }
-        let mut st = c.prepare(
+        let mut st = c.prepare(&format!(
             "SELECT t.id FROM tasks t JOIN workflow_states s ON s.id = t.state_id
              LEFT JOIN projects p ON p.id = t.project_id
              LEFT JOIN actors x ON x.id = t.assignee_actor_id AND x.deleted_at IS NULL
              WHERE t.deleted_at IS NULL AND t.hold IS NULL AND s.deleted_at IS NULL AND s.auto = 1
                AND s.category NOT IN ('backlog','review','done','cancelled')
                AND NOT (s.category = 'testing' AND t.testing = 0)
+               AND NOT {waits}
                AND (p.id IS NULL OR p.status NOT IN ('archived','done','paused'))
                AND (t.claimed_by_run_id IS NULL OR t.lease_expires_at IS NULL OR t.lease_expires_at < ?2
                     OR NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = t.claimed_by_run_id AND r.status IN ('queued','running','waiting_approval')))
@@ -195,7 +197,8 @@ pub fn waiting_for(db: &Db, agent_id: &str) -> Result<Vec<String>> {
                      AND EXISTS (SELECT 1 FROM column_agents ca WHERE ca.state_id = s.id AND ca.actor_id = ?1))
                )
              ORDER BY CASE WHEN t.priority BETWEEN 1 AND 4 THEN t.priority ELSE 5 END,
-                      CASE WHEN t.assignee_actor_id = ?1 OR t.pinned_actor_id = ?1 THEN 0 ELSE 1 END, s.sort_key, t.sort_key, t.created_at")?;
+                      CASE WHEN t.assignee_actor_id = ?1 OR t.pinned_actor_id = ?1 THEN 0 ELSE 1 END, s.sort_key, t.sort_key, t.created_at",
+            waits = crate::builds_on::WAITS))?;
         Ok(st.query_map(rusqlite::params![agent_id, ids::now_ms()], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?)
     })
 }

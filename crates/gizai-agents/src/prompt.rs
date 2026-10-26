@@ -18,6 +18,33 @@ pub struct TaskContext {
     pub base: Option<BaseInfo>,
     /// The project's goal (Markdown), read with every task.
     pub project_goal_md: String,
+    /// The cards this card builds on (GA-228), by number: listed after its description, one line each, so the agent
+    /// knows their code is on main.
+    pub builds_on: Vec<BuiltOn>,
+}
+
+/// A card the card builds on (GA-228), for its line in the prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltOn {
+    /// Like GA-226.
+    pub identifier: String,
+    pub title: String,
+    /// In a Deploy or Done column: its code is on main.
+    pub merged: bool,
+    /// Its column's name, said when it isn't merged.
+    pub column: String,
+}
+
+impl BuiltOn {
+    /// "Builds on GA-226: Team templates (backend), merged."
+    pub fn line(&self) -> String {
+        let title = self.title.trim().trim_end_matches('.');
+        if self.merged {
+            format!("Builds on {}: {title}, merged.", self.identifier)
+        } else {
+            format!("Builds on {}: {title}, in {}, not merged yet.", self.identifier, self.column)
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +93,11 @@ pub fn build_from(task: &TaskContext, role_instructions: &str, fetched_from: &st
     }
     p.push_str("## Description\n\n");
     p.push_str(if task.description_md.trim().is_empty() { "No description was written; work from the title." } else { task.description_md.trim() });
+    // GA-228: the cards it builds on, so the agent knows their code is on main.
+    if !task.builds_on.is_empty() {
+        p.push_str("\n\n");
+        p.push_str(&task.builds_on.iter().map(BuiltOn::line).collect::<Vec<_>>().join("\n"));
+    }
     p.push_str("\n\n## Acceptance criteria\n\n");
     p.push_str(if task.acceptance_md.trim().is_empty() { "No acceptance criteria were written; use the description." } else { task.acceptance_md.trim() });
     if !task.qa_issues.is_empty() {

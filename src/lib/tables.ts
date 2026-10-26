@@ -18,6 +18,7 @@ const MEMBERS = ["actors", "team", "teams"];
 export const READS: Readonly<Record<string, readonly string[]>> = {
   list_tasks: CARDS,
   get_task: CARDS,
+  get_builds_on: CARDS,
   list_archived_tasks: CARDS,
   task_activity: ["tasks", "comments", "actors", "runs"],
   list_comments: ["comments", "actors"],

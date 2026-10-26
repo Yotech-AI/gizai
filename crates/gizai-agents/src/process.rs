@@ -1,5 +1,10 @@
 //! Runs an agent's CLI (`claude`, `codex`, `gemini`, …) as a child in its own process group (a Job Object on Windows,
-//! see `os::Tree`), streams its events, enforces the caps and stops it.
+//! see `os::Tree`), streams its events, enforces the caps, ends it when it doesn't exit once the agent is done (GA-221)
+//! and stops it.
+//! Gizai's own markers come among the CLI's events (`StreamEvent::other`): `cap_exceeded:tools` and `cap_exceeded:time`
+//! at a cap, `ended_after_result` when the CLI stayed quiet for `Caps::after_result` after the agent's result,
+//! `oom_kill:<n>` when Linux ended a process in the run at the memory limit, `leftover:<pid> <name>` for each process
+//! ended that the run left in its scope, and last `exit:<code>`.
 //! Signals only ever go to that process group (never pid 0 or 1), so nothing else on the machine is touched; in the
 //! slice of the agent runs (Linux), also to what the run left running in its own scope (GA-211).
 use std::io::Write;
@@ -9,6 +14,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Notify, mpsc};
+use tokio::time::Instant;
 
 use crate::AgentError;
 use crate::chat_stream::ChatEvent;
@@ -38,7 +44,18 @@ pub struct Caps {
     pub max_time: Duration,
     /// Tool calls, each one counted (a message can make several).
     pub max_tool_calls: u32,
+    /// GA-221: how long the CLI may stay quiet once the agent is done (`StreamEvent::is_result`) before Gizai ends it as
+    /// Stop does, with an `ENDED_AFTER_RESULT` marker. Something the agent left running in the background (a server, a
+    /// watcher) can keep a CLI from exiting. `AFTER_RESULT` for task runs and chat turns.
+    pub after_result: Duration,
 }
+
+/// `Caps::after_result` for task runs and chat turns.
+pub const AFTER_RESULT: Duration = Duration::from_secs(3 * 60);
+
+/// The marker for a CLI Gizai ended because it stayed quiet for `Caps::after_result` once the agent was done (GA-221).
+/// Before the run's `LEFTOVER` markers and its `exit:`.
+pub const ENDED_AFTER_RESULT: &str = "ended_after_result";
 
 #[derive(Clone)]
 pub struct StopHandle {
@@ -87,22 +104,87 @@ pub trait StreamEvent: Clone + Send + 'static {
     fn parse(line: &str) -> Vec<Self>;
     /// An assistant message that calls a tool (counted against the turn cap).
     fn is_tool_call(&self) -> bool;
-    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`, `oom_kill:<n>` when Linux
-    /// ended a process in the run at the memory limit for agent runs (the n-th in this run, `OOM_KILL`), and
-    /// `leftover:<pid> <name>` for each process Gizai ended that the run left running in its scope (`LEFTOVER`).
+    /// The agent is done (GA-221): a `Result` (Claude Code's result line, or what `cli::Parser` makes of another CLI's
+    /// end), or a text whose GIZAI_RESULT line `outcome::parse` accepts, as Claude Code may hold its result line back
+    /// while something the run started still runs in the background. From then on `Caps::after_result` counts; a tool
+    /// call after it means the agent went on.
+    fn is_result(&self) -> bool;
+    /// Gizai's own markers: `cap_exceeded:tools`, `cap_exceeded:time`, `exit:<code>`, `ended_after_result` when Gizai
+    /// ended a CLI that stayed quiet for `Caps::after_result` once the agent was done (`ENDED_AFTER_RESULT`),
+    /// `oom_kill:<n>` when Linux ended a process in the run at the memory limit for agent runs (the n-th in this run,
+    /// `OOM_KILL`), and `leftover:<pid> <name>` for each process Gizai ended that the run left running in its scope
+    /// (`LEFTOVER`).
     fn other(raw: String) -> Self;
 }
 
 impl StreamEvent for RunEvent {
     fn parse(line: &str) -> Vec<Self> { crate::stream::parse_line(line) }
     fn is_tool_call(&self) -> bool { matches!(self, RunEvent::ToolUse { .. }) }
+    fn is_result(&self) -> bool {
+        matches!(self, RunEvent::Result { .. }) || matches!(self, RunEvent::Text { text } if crate::outcome::parse(text).is_some())
+    }
     fn other(raw: String) -> Self { RunEvent::Other { raw_type: raw } }
 }
 
 impl StreamEvent for ChatEvent {
     fn parse(line: &str) -> Vec<Self> { crate::chat_stream::parse_line(line) }
     fn is_tool_call(&self) -> bool { matches!(self, ChatEvent::ToolUse { .. }) }
+    fn is_result(&self) -> bool {
+        matches!(self, ChatEvent::Result { .. }) || matches!(self, ChatEvent::Text { text } if crate::outcome::parse(text).is_some())
+    }
     fn other(raw: String) -> Self { ChatEvent::Other { raw_type: raw } }
+}
+
+/// GA-221: whether the agent is done after `evs`, when it was `done` before them: a result says it is, a tool call after
+/// it that it went on.
+fn done_after<E: StreamEvent>(done: bool, evs: &[E]) -> bool {
+    evs.iter().fold(done, |d, e| if e.is_tool_call() { false } else if e.is_result() { true } else { d })
+}
+
+/// GA-221: resolves once the agent is done and its CLI has been quiet for `after`. `quiet` says since when it has been
+/// quiet while the agent is done (each line starts that again), None while it isn't; the reader drops it when the output
+/// ends, and as it stood then it holds: no line can come any more.
+async fn quiet_after_result(mut quiet: tokio::sync::watch::Receiver<Option<Instant>>, after: Duration) {
+    loop {
+        let since = *quiet.borrow_and_update();
+        let open = match since {
+            Some(t) => tokio::select! {
+                _ = sleep_after(t, after) => return,
+                r = quiet.changed() => r.is_ok(),
+            },
+            None => quiet.changed().await.is_ok(),
+        };
+        if !open {
+            match since {
+                Some(t) => return sleep_after(t, after).await,
+                None => return std::future::pending().await,
+            }
+        }
+    }
+}
+
+/// Until `after` has passed since `t`; for ever when that is too far off to tell.
+async fn sleep_after(t: Instant, after: Duration) {
+    match t.checked_add(after) {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Ends the run's process group as Stop does: SIGINT, SIGTERM after 5 s, SIGKILL after 10 s; on Windows its job at once
+/// (see `os::End`). Returns how the CLI exited.
+async fn end_group(tree: &Tree, child: &mut tokio::process::Child) -> std::io::Result<std::process::ExitStatus> {
+    tree.end(End::Interrupt);
+    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+        Ok(s) => s,
+        Err(_) => {
+            tree.end(End::Terminate);
+            match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                Ok(s) => s,
+                Err(_) => { tree.end(End::Kill); child.wait().await }
+            }
+        }
+    }
 }
 
 /// Reads a run's output line by line; `finish` gives the events still due when the output ends.
@@ -242,6 +324,8 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
 
     let (tx, rx) = mpsc::channel::<E>(512);
     let stop = Arc::new(Notify::new());
+    // GA-221: since when the CLI has been quiet while the agent is done, from the reader to the waiter.
+    let (quiet, quiet_rx) = tokio::sync::watch::channel::<Option<Instant>>(None);
 
     // Linux, in the slice: each process Linux ends in the run's scope at the memory limit, as it happens.
     let watch = slice.map(|s| {
@@ -251,7 +335,8 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
         })
     });
 
-    // Reader: log every line, forward its events, count tool-calling turns.
+    // Reader: log every line, forward its events, count tool-calling turns, and tell the waiter when the agent is done
+    // and since when the CLI has been quiet (GA-221).
     let mut reader = {
         let tx = tx.clone();
         let stop = stop.clone();
@@ -259,12 +344,19 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
             let mut lines = BufReader::new(stdout).lines();
             let mut calls = 0u32;
             let mut capped = false;
+            let mut done = false;
             while let Ok(Some(line)) = lines.next_line().await {
                 let _ = writeln!(log, "{line}");
                 let evs = parser.line(&line);
                 calls += evs.iter().filter(|e| E::is_tool_call(e)).count() as u32;
+                let was = done;
+                done = done_after(done, &evs);
                 for e in evs {
                     let _ = tx.send(e).await;
+                }
+                // While the agent is done, each line starts the quiet time again.
+                if done || was {
+                    quiet.send_replace(done.then(Instant::now));
                 }
                 if calls > caps.max_tool_calls && !capped {
                     capped = true;
@@ -272,8 +364,15 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
                     stop.notify_one();
                 }
             }
-            for e in parser.finish() {
+            // What is still due when the output ends is no line from the CLI: it only says whether the agent is done.
+            let evs = parser.finish();
+            let was = done;
+            done = done_after(done, &evs);
+            for e in evs {
                 let _ = tx.send(e).await;
+            }
+            if done != was {
+                quiet.send_replace(done.then(Instant::now));
             }
         })
     };
@@ -291,8 +390,9 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
         })
     };
 
-    // Waiter: owns the child (so its pid can't be reused while we may still signal it), escalates on stop,
-    // cleans up whatever the run left in its group, then in its scope, then reports the exit and closes the channel.
+    // Waiter: owns the child (so its pid can't be reused while we may still signal it), escalates on stop, ends the run
+    // the same way when its CLI stays quiet once the agent is done (GA-221), cleans up whatever the run left in its
+    // group, then in its scope, then reports the exit and closes the channel.
     // On Windows every step ends the run's job at once (see `os::End`).
     {
         let stop = stop.clone();
@@ -301,18 +401,12 @@ pub fn spawn_exec<E: StreamEvent, P: LineParser<E>>(exec: &Exec, cwd: &Path, log
         tokio::spawn(async move {
             let status = tokio::select! {
                 s = child.wait() => s,
-                _ = stop.notified() => {
-                    tree.end(End::Interrupt);
-                    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
-                        Ok(s) => s,
-                        Err(_) => {
-                            tree.end(End::Terminate);
-                            match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
-                                Ok(s) => s,
-                                Err(_) => { tree.end(End::Kill); child.wait().await }
-                            }
-                        }
-                    }
+                _ = stop.notified() => end_group(&tree, &mut child).await,
+                _ = quiet_after_result(quiet_rx, caps.after_result) => {
+                    // The agent is done: the time cap doesn't stop this run as well.
+                    timer.abort();
+                    let _ = tx.send(E::other(ENDED_AFTER_RESULT.into())).await;
+                    end_group(&tree, &mut child).await
                 }
             };
             // The last look at the run's scope, while what the run left in it may still be there.

@@ -17,6 +17,13 @@ export const exitApp = (code = 0) => invoke<void>("exit_app", { code });
 // GA-148, the product tour (scripts/tour-capture.sh): a still of the screen, and the steps with what they clicked
 export const tourStill = (name: string) => invoke<void>("tour_still", { name });
 export const tourSteps = (json: unknown) => invoke<void>("tour_steps", { json: JSON.stringify(json) });
+/** GA-222, Linux: the paste guard's self-test step (scripts/ui-test.sh). Puts `clipboard` on the clipboard when given (the
+ *  primary selection for PasteGlobalSelection), then makes WebKit paste into the field with the focus, as Ctrl+V ("Paste")
+ *  or middle-click ("PasteGlobalSelection") does. Resolves with how often the guard turned an empty clipboard's count of
+ *  -1 into 0 before this paste, which WebKit does afterwards; with neither it only gives that count. Refused outside a
+ *  self-test run; macOS and Windows have no such command. */
+export const selftestPaste = (command: "Paste" | "PasteGlobalSelection" | null, clipboard?: string) =>
+  invoke<number>("selftest_paste", { command, clipboard: clipboard ?? null });
 
 // The first start's onboarding (GA-162, GA-164): it waits on a new install until it is finished or skipped.
 export const onboardingPending = () => invoke<boolean>("onboarding_pending");
@@ -57,6 +64,11 @@ export const createTask = (input: T.TaskInput) => invoke<string>("create_task", 
 export const updateTask = (id: string, patch: T.TaskPatch) => invoke<void>("update_task", { id, patch });
 export const moveTask = (id: string, stateId: string, sortKey: string) => invoke<void>("move_task", { id, stateId, sortKey });
 export const setTaskLabels = (id: string, labelIds: string[]) => invoke<void>("set_task_labels", { id, labelIds });
+/** GA-228: the cards a card builds on and those that build on it; add one (by its identifier or id) or take one off. A
+ *  refusal (a loop, the card itself, more than 20) says why. */
+export const getBuildsOn = (id: string) => invoke<T.BuildsOn>("get_builds_on", { id });
+export const addBuildsOn = (id: string, on: string) => invoke<void>("add_builds_on", { id, on });
+export const removeBuildsOn = (id: string, on: string) => invoke<void>("remove_builds_on", { id, on });
 /** The archived cards (the bin) of one project, or of all: the most recently archived first. */
 export const listArchivedTasks = (projectId: string | null = null) => invoke<T.Task[]>("list_archived_tasks", { projectId });
 /** Archives a card in Done; fails with a plain message for another column or while an agent works on it. */
@@ -343,6 +355,20 @@ export const stopUpdate = () => invoke<T.UpdateStatus>("stop_update");
 /** Quits and starts the Gizai an update installed (agents at work are stopped first, as when you quit). */
 export const restartGizai = () => invoke<void>("restart_gizai");
 export const onUpdateChanged = (cb: () => void): Promise<UnlistenFn> => listen("update-changed", () => cb());
+
+// ---- backups (GA-216, contract BK): snapshots in a backups folder, on a schedule ----
+/** The settings, the backups folder in use and why it can't be used now, the snapshot that runs, the last one, the last
+ *  error and when the next scheduled one is due. */
+export const backupStatus = () => invoke<T.BackupStatus>("backup_status");
+/** Rejects Keep outside 1..100 and a folder that can't be written, saying why. */
+export const saveBackupSettings = (settings: T.BackupSettings) => invoke<T.BackupStatus>("save_backup_settings", { settings });
+/** The snapshots in a folder, newest first; null: the folder in Settings. */
+export const listBackups = (folder: string | null) => invoke<T.BackupEntry[]>("list_backups", { folder });
+/** Starts one in the background; rejected without a folder or while one runs. */
+export const backUpNow = () => invoke<T.BackupStatus>("back_up_now");
+/** A snapshot started, took a step, ended or failed, or the settings changed. */
+export const onBackupsChanged = (cb: (s: T.BackupStatus) => void): Promise<UnlistenFn> =>
+  listen<T.BackupStatus>("backups-changed", (m) => cb(m.payload));
 
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>

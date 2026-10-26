@@ -7,6 +7,7 @@ The Team Lead is the agent you chat with: it looks after your board for you, and
 The Team Lead manages clients, projects, cards and agents with GizAi's own tools. In a chat it can:
 
 - make and change clients, projects, cards and docs, and comment on and move cards;
+- split bigger work into cards that build on each other, so they start in order by themselves ([below](#cards-that-build-on-others));
 - start and continue agents' runs, and add or change agents and columns;
 - attach a file you gave it to a card, project or client;
 - read the files on a client, project or card, in a copy of each in its own folder: text, PDFs and images, not Word or Excel files, and not a file over 100 MB;
@@ -44,6 +45,16 @@ After an answer used a tool from outside GizAi (an MCP server, the web, the brow
 Approve runs exactly that call once, with every other rule in force; Discard runs nothing. The chat notes what happened and the Team Lead hears it in its next answer. Approving doesn't start a new answer: once nothing waits and the Team Lead isn't answering, a last note says its answer is done, so send a message to go on. Until you decide, the chat waits for you at the top of [the Inbox](inbox.md), also after a restart.
 
 The rules behind it: [docs/agent-tools.md](../agent-tools.md#safety-rules).
+
+## Cards that build on others
+
+The Team Lead splits bigger work into cards that build on each other: a backend before its screens, a base before its follow-ups. A card waits until the cards it builds on are merged, then starts by itself ([Cards that build on others](board.md#cards-that-build-on-others)). Its starting instructions say: "When a card needs another card's code, set builds_on: it then starts by itself once that card is merged."
+
+- `create_task` and `update_task` take `builds_on`: the identifiers of the cards it builds on, like `["GA-226"]`. On `update_task` it is the full new list, and an empty list clears it. A card building on itself, more than 20 cards and a loop are refused with why, and nothing changes.
+- `get_task` shows `builds_on` (each card's identifier, title, column, and `merged` true or false) and `needed_by` (the cards that build on it).
+- `list_tasks` shows `waits_for` on a card that waits: the cards it builds on that aren't merged yet.
+- `start_agent_run` and `continue_agent_run` on a card that waits don't start it, and say which cards it waits for.
+- `check_board` reports a card that waits for a card on hold or cancelled: kind `waiting`, code `builds_on_blocked`, like "GA-227 waits for GA-226, which is on hold: needs_decision". A card that waits for one still in work is no finding.
 
 ## The board check
 

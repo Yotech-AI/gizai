@@ -52,3 +52,14 @@ describe("describeChange on Bitbucket", () => {
     expect(describeChange(e("tasks", "update", { pullRequest: "https://bitbucket.org/acme/shop/pull-requests", opened: true }))).toBe("opened a pull request on Bitbucket");
   });
 });
+
+// GA-228 QA: a change to the cards a card builds on notes the whole new list in its activity, by number; an empty list
+// clears it.
+describe("describeChange for Builds on (GA-228)", () => {
+  it("names the cards it builds on now, or says Builds on was cleared", () => {
+    expect(describeChange(e("tasks", "update", { buildsOn: ["GA-226"] }))).toBe("set Builds on to GA-226");
+    expect(describeChange(e("tasks", "update", { buildsOn: ["GA-1", "GA-2"] }))).toBe("set Builds on to GA-1 and GA-2");
+    expect(describeChange(e("tasks", "update", { buildsOn: ["GA-1", "GA-2", "KADE-3"] }))).toBe("set Builds on to GA-1, GA-2 and KADE-3");
+    expect(describeChange(e("tasks", "update", { buildsOn: [] }))).toBe("cleared Builds on");
+  });
+});

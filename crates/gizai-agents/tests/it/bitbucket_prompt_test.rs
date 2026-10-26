@@ -5,7 +5,7 @@ fn ctx(behind: u32) -> TaskContext {
     TaskContext { identifier: "SH-7".into(), title: "Export invoices as CSV".into(), description_md: "Use semicolons.".into(),
                   acceptance_md: "- [ ] opens in Excel NL".into(), recent_comments: vec![("Jeffrey".into(), "Sample file is attached.".into())],
                   role: "backend".into(), qa_issues: vec![], limits: None, base: Some(BaseInfo { from: "acme/master".into(), behind }),
-                  project_goal_md: String::new() }
+                  project_goal_md: String::new(), builds_on: vec![] }
 }
 
 #[test]

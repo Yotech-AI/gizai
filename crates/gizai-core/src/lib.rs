@@ -8,6 +8,7 @@ pub mod clients;
 pub mod users;
 pub mod projects;
 pub mod tasks;
+pub mod builds_on;
 pub mod comments;
 pub mod sortkey;
 pub mod team;
@@ -36,6 +37,7 @@ pub mod columns;
 pub mod labels;
 pub mod mcp_servers;
 pub mod housekeeping;
+pub mod backups;
 mod util;
 
 #[derive(Debug, thiserror::Error)]

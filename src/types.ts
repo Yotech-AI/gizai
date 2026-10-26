@@ -75,7 +75,17 @@ export type Task = {
   byHand: boolean;         // pinned to a person: agents leave it alone
   /** Screenshots before Review (GA-182, contract CP; the card's Properties). */
   screenshots: boolean | null;        // null: the project's switch       (SB1)
+  /** Builds on (GA-228): the cards it builds on that aren't merged yet, by number. It waits for them: no agent takes it,
+   *  and Run is refused, until they are in Deploy or Done. Empty: it waits for none. */
+  waitsFor?: string[];
 };
+/** A card a card builds on, or one that builds on it (GA-228). `merged`: in a Deploy or Done column (archived ones too). */
+export type BuildsOnCard = {
+  id: string; identifier: string; title: string; projectId?: string | null; column: string; category: string;
+  merged: boolean; hold?: string | null; archived: boolean;
+};
+/** A card's Builds on and Needed by (the cards that build on it), each by number. */
+export type BuildsOn = { buildsOn: BuildsOnCard[]; neededBy: BuildsOnCard[] };
 export type PullState = "open" | "draft" | "merged" | "closed";
 /** A card's pull request; `note` says something worth knowing (uncommitted changes left out, what a merge cleaned up). */
 export type PullInfo = { url: string; number?: number | null; state: PullState; note?: string | null };
@@ -519,6 +529,28 @@ export type UpdateStatus = {
   job?: UpdateJob | null;
   /** Where releases come from. */
   repo: string;
+};
+
+// ---- backups (GA-216, contract BK): snapshots in a backups folder, on a schedule; docs/backup-format.md ----
+// A running snapshot's `step`: "database", "files", "compress", "manifest" or "keep". `last.bytes` is its compressed
+// database file's size (the files are shared by all snapshots). `next` is "now" (the time asked) when no snapshot is there yet.
+export type BackupSettings = { folder: string | null; every: "daily" | "weekly" | "manual"; onQuit: boolean; keep: number };
+export type BackupReason = "daily" | "weekly" | "manual" | "quit" | "before-restore";
+export type BackupEntry = {
+  name: string; reason: BackupReason; madeAt: number;
+  deviceId: string; deviceName: string; thisComputer: boolean;
+  appVersion: string; schemaVersion: number;
+  dbBytes: number; filesCount: number; filesBytes: number; filesMissing: number;
+  restorable: boolean; problem: string | null;
+};
+export type BackupStatus = {
+  settings: BackupSettings;
+  folder: string | null;           // the backups folder in use (…/Gizai backups), null when none is set
+  folderProblem: string | null;    // why it can't be used now: missing, not a folder, can't be written
+  running: { reason: BackupReason; startedAt: number; step: string } | null;
+  last: { name: string; madeAt: number; bytes: number } | null;   // this computer's newest good snapshot
+  lastError: { at: number; message: string } | null;
+  next: number | null;             // when the next scheduled snapshot is due, null when none is
 };
 export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
 

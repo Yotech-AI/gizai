@@ -41,13 +41,13 @@ fn migration_0015_adds_the_switch_off_for_every_existing_project_after_a_backup(
     let path = v14_db(dir.path());
     let db = Db::open(&path).unwrap();
     // 0015, and GA-96's 0016 (agents share a memory folder), GA-102's 0017 (pending actions), GA-180's 0018 (indexes),
-    // GA-182's 0019 (screenshots) and GA-212's 0020 (Test runs at once) after it in the same step
-    assert_eq!(db::SCHEMA_VERSION, 20);
+    // GA-182's 0019 (screenshots) and GA-212's 0020 (Test runs at once) and GA-228's 0021 (Builds on) after it in the same step
+    assert_eq!(db::SCHEMA_VERSION, 21);
     let (v, broken): (i64, i64) = db.read(|c| Ok((c.query_row("PRAGMA user_version", [], |r| r.get(0))?,
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?))).unwrap();
-    assert_eq!((v, broken), (20, 0), "schema 20, foreign keys intact");
+    assert_eq!((v, broken), (21, 0), "schema 21, foreign keys intact");
     let snaps: Vec<String> = std::fs::read_dir(dir.path().join("backups")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v20-"), "{snaps:?}");
+    assert!(snaps.len() == 1 && snaps[0].starts_with("gizai-before-v21-"), "{snaps:?}");
     // the column: NOT NULL, 0 by default, 0 for both old projects
     let (notnull, default): (i64, Option<String>) = db.read(|c| Ok(c.query_row(
         "SELECT \"notnull\", dflt_value FROM pragma_table_info('projects') WHERE name = 'lead_may_merge'", [], |r| Ok((r.get(0)?, r.get(1)?)))?)).unwrap();

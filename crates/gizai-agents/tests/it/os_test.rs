@@ -83,7 +83,7 @@ async fn drain(h: &mut RunHandle) -> Vec<RunEvent> {
 }
 
 fn caps() -> Caps {
-    Caps { max_time: Duration::from_secs(120), max_tool_calls: 80 }
+    Caps { max_time: Duration::from_secs(120), max_tool_calls: 80, after_result: gizai_agents::process::AFTER_RESULT }
 }
 
 fn exit_of(evs: &[RunEvent]) -> String {

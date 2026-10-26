@@ -7,8 +7,10 @@
 mod agents_test;
 mod archive_test;
 mod backup_test;
+mod backups_test;
 mod bitbucket_core_test;
 mod board_test;
+mod builds_on_test;
 mod by_hand_test;
 mod card_flow_test;
 mod chat_archive_test;

@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 
 use gizai_agents::cli::{self as agent_cli, Kind, RunFolder, TaskRun};
 use gizai_agents::prepare::{self as prep, Prepare};
-use gizai_agents::process::{self, Caps, StopHandle};
+use gizai_agents::process::{self, Caps, StopHandle, StreamEvent};
 use gizai_agents::prompt::{self, BaseInfo, RunLimits, TaskContext};
 use gizai_agents::stream::RunEvent;
 use gizai_agents::{outcome, worktree};
 use gizai_core::model::{Outcome, Project, Refusal, Task, TaskPatch};
-use gizai_core::{comments, housekeeping, ids, projects, runs as core_runs, settings, tasks, team, workflow};
+use gizai_core::{builds_on, comments, housekeeping, ids, projects, runs as core_runs, settings, tasks, team, workflow};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -53,6 +53,9 @@ pub enum Note {
     /// A terminal opened, was renamed or closed, its shell ended or its busy program changed (see `terminal`): the
     /// `terminals-changed` event, with every open terminal.
     TerminalsChanged(Vec<gizai_agents::terminal::TerminalSession>),
+    /// A snapshot started, took a step, ended or failed, or the backup settings changed (see `backups`): the
+    /// `backups-changed` event, with the status.
+    BackupsChanged(gizai_core::backups::BackupStatus),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,12 +97,25 @@ pub struct RunManager {
     pub(crate) memory_wait: Mutex<Option<(i64, String)>>,
     /// The runs' previews (GA-182): each run's block of ports, and its preview's tree while it runs.
     pub(crate) previews: crate::screenshots::Previews,
+    /// GA-221: how long a run's or a chat answer's CLI may stay quiet once the agent is done before Gizai ends it
+    /// (`Caps::after_result`). None: `process::AFTER_RESULT`; a test shortens it (`set_after_result`).
+    after_result: Mutex<Option<Duration>>,
 }
 
 impl RunManager {
     /// The CLIs changed: ask for model lists again.
     pub fn forget_models(&self) {
         self.models.lock().unwrap().clear();
+    }
+
+    /// GA-221: `Caps::after_result` for the runs and chat answers that start from now on.
+    pub fn after_result(&self) -> Duration {
+        self.after_result.lock().unwrap().unwrap_or(process::AFTER_RESULT)
+    }
+
+    /// Tests: another wait than `process::AFTER_RESULT` for the runs and chat answers that start from now on.
+    pub fn set_after_result(&self, wait: Duration) {
+        *self.after_result.lock().unwrap() = Some(wait);
     }
 }
 
@@ -996,8 +1012,15 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         None => Starting::take(st, task_id, Some(agent_id.as_deref().unwrap_or_default()))
             .ok_or_else(|| StartError::Wait("This card's run is already starting: Gizai is getting its worktree ready".into()))?,
     };
-    if let Ok(t) = tasks::get(&st.db, task_id) && t.archived_at.is_some() {
-        return Err(StartError::Other(format!("{} is archived: restore it first", t.identifier)));
+    if let Ok(t) = tasks::get(&st.db, task_id) {
+        if t.archived_at.is_some() {
+            return Err(StartError::Other(format!("{} is archived: restore it first", t.identifier)));
+        }
+        // GA-228: nor while it builds on a card that isn't merged yet. It only waits: the queue takes it once that card
+        // is merged (Run, Continue and the Team Lead's start_agent_run and continue_agent_run say so).
+        if !t.waits_for.is_empty() {
+            return Err(StartError::Wait(builds_on::waits_message(&t.identifier, &t.waits_for)));
+        }
     }
     let max = get_settings(st).max_concurrent_runs;
     // the other cards under way count, those still starting too: cards start side by side (GA-191)
@@ -1125,11 +1148,14 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let recent: Vec<(String, String)> = comments::list(&st.db, task_id).unwrap_or_default().into_iter().rev().take(10).rev()
         .map(|c| (c.author_name, c.body_md)).collect();
     let limits = { let s = get_settings(st); RunLimits { minutes: s.max_run_minutes, tool_calls: s.max_run_tool_calls } };
+    // GA-228: the cards it builds on, listed after its description, so the agent knows their code is on main.
+    let builds_on: Vec<prompt::BuiltOn> = builds_on::of(&st.db, task_id).map(|b| b.builds_on).unwrap_or_default().into_iter()
+        .map(|l| prompt::BuiltOn { identifier: l.identifier, title: l.title, merged: l.merged, column: l.column }).collect();
     let ctx = TaskContext {
         identifier: task.identifier.clone(), title: task.title.clone(), description_md: task.description_md.clone(),
         acceptance_md: task.acceptance_md.clone().unwrap_or_default(), recent_comments: recent, role: role.clone(),
         qa_issues: if role == "qa" { vec![] } else { core_runs::last_qa_issues(&st.db, task_id).unwrap_or_default() },
-        limits: Some(limits), base, project_goal_md: project.goal_md.clone().unwrap_or_default(),
+        limits: Some(limits), base, project_goal_md: project.goal_md.clone().unwrap_or_default(), builds_on,
     };
     let instructions = agent.instructions_md.clone().filter(|i| !i.trim().is_empty()).unwrap_or_else(|| gizai_core::seed::role_template(&role));
     // The agent's folders (agent form → Folders): one that is missing, or refused by now, is skipped and the run log
@@ -1303,7 +1329,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
     let mut parser = agent_cli::Parser::new(spec.kind);
     parser.claude_code_signs_in(claude_code_signs_in);
     let mut handle = match process::spawn_exec::<RunEvent, _>(&exec, &wt.path, &log_path,
-        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls }, parser) {
+        Caps { max_time: std::time::Duration::from_secs(limits.minutes * 60), max_tool_calls: limits.tool_calls, after_result: st.runs.after_result() },
+        parser) {
         Ok(h) => h,
         Err(e) => {
             drop_config();
@@ -1357,6 +1384,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         let mut ended_at_limit = 0u64;
         // GA-211: the processes Gizai ended at the run's end that it left running in its scope
         let mut left: Vec<gizai_agents::run_memory::Leftover> = vec![];
+        // GA-221: whether Gizai ended the CLI because it stayed quiet once the agent was done, and the agent's last text
+        // that said so (with its GIZAI_RESULT line), its result when the CLI gave none
+        let (mut after_result, mut done_text) = (false, None);
         while let Some(ev) = handle.events.recv().await {
             // What Claude Code heard of the account's limits: kept for this run's CLI (the Usage page's Subscription tab),
             // not shown in the Run panel.
@@ -1380,6 +1410,7 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             }
             match &ev {
                 RunEvent::ToolUse { .. } => tools += 1,
+                RunEvent::Text { text } if ev.is_result() => done_text = Some(text.clone()),
                 RunEvent::Refused { tool, input, reason } => refused.push(Refusal { tool: tool.clone(), input: input.clone(), reason: reason.clone() }),
                 // Codex names its session itself: Continue resumes that one.
                 RunEvent::Init { session_id, .. } if !session_id.is_empty() && *session_id != session => {
@@ -1387,7 +1418,9 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
                 }
                 RunEvent::Result { .. } => result = Some(ev.clone()),
                 RunEvent::McpServers { servers } => crate::mcp_servers::record_states(&st2, &run_agent, servers),
-                RunEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() => capped = Some(raw_type.clone()),
+                // A cap, or Gizai's end once the agent was done: whichever came first says how the run ended.
+                RunEvent::Other { raw_type } if raw_type.starts_with("cap_exceeded") && capped.is_none() && !after_result => capped = Some(raw_type.clone()),
+                RunEvent::Other { raw_type } if raw_type == process::ENDED_AFTER_RESULT && capped.is_none() => after_result = true,
                 RunEvent::Other { raw_type } if raw_type.starts_with("exit:") => exit = raw_type.clone(),
                 _ => {}
             }
@@ -1398,6 +1431,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         } else {
             format!("stopped at the limit of {} tool calls per run (Settings → Runs)", limits.tool_calls)
         });
+        // GA-221: that text is the result only when Gizai ended the CLI once the agent was done and no result came.
+        let done_text = done_text.filter(|_| after_result && result.is_none());
         if ended_at_limit > 0 {
             note_run(&st2, &rid, &crate::run_memory::ended_note(&st2, ended_at_limit));
         }
@@ -1414,7 +1449,8 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
         // A run Gizai's quitting stopped collects nothing (as `finish_run` tells such a run).
         let mut shots_note = None;
         if let Some(run_shots) = shots {
-            let finished = matches!(&result, Some(RunEvent::Result { is_error: false, .. })) && exit == "exit:0";
+            let finished = (matches!(&result, Some(RunEvent::Result { is_error: false, .. })) || done_text.is_some())
+                && (exit == "exit:0" || after_result);
             let quit = is_closing(&st2) && (st2.runs.stopped.lock().unwrap().contains(&rid) || !finished);
             let (text, preview_left) = crate::screenshots::finish(&st2, &rid, &tid, &shots_agent, &dir, run_shots, !quit).await;
             left.extend(preview_left);
@@ -1440,10 +1476,13 @@ async fn start_inner(st: &AppState, task_id: &str, agent_id: Option<String>, bin
             _ if kind != Kind::ClaudeCode => None,
             Some(RunEvent::Result { is_error: true, text, .. }) => Some(text.clone()),
             Some(_) => None,
+            // GA-221: Gizai ended it after the agent's final text: a run that finished
+            None if done_text.is_some() => None,
             None => Some(stderr_tail(&rid, &st2)),
         };
         crate::limits::after_run(&st2, &rid, kind, failed_text.as_deref()).await;
-        finish_run(&st2, &rid, &tid, &dir, Ran { result, capped, exit, tools, moved_from, queued, refused }, &cli_name).await
+        let ran = Ran { result, capped, exit, tools, moved_from, queued, refused, after_result, done_text };
+        finish_run(&st2, &rid, &tid, &dir, ran, &cli_name).await
     });
     Ok((run_id, done))
 }
@@ -1532,6 +1571,9 @@ async fn check_model(st: &AppState, cli: &gizai_core::clis::Cli, spec: &agent_cl
 /// What a run's process left behind. `capped`: why Gizai stopped the run at a limit, if it did. `tools`: how many tool
 /// calls it made. `moved_from`: the column the card was in before the start moved it on (To do → its next column).
 /// `queued`: the queue started it, not a person. `refused`: the tool calls its CLI refused (Refused in this run).
+/// `after_result`: Gizai ended its CLI because it stayed quiet once the agent was done (GA-221,
+/// `process::ENDED_AFTER_RESULT`); `done_text`: then, without a result line, the agent's last text with its GIZAI_RESULT
+/// line, which stands for the result.
 struct Ran {
     result: Option<RunEvent>,
     capped: Option<String>,
@@ -1540,6 +1582,8 @@ struct Ran {
     moved_from: Option<String>,
     queued: bool,
     refused: Vec<Refusal>,
+    after_result: bool,
+    done_text: Option<String>,
 }
 
 /// Claude Code's own words for a missing or expired login.
@@ -1550,12 +1594,14 @@ fn login_problem(error: &str) -> bool {
 
 /// `dir`: the run's worktree. `cli`: the CLI's name, for the reason a run failed.
 async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran: Ran, cli: &str) -> RunSummary {
-    let Ran { result, capped, exit, tools, moved_from, queued, refused } = ran;
+    let Ran { result, capped, exit, tools, moved_from, queued, refused, after_result, done_text } = ran;
     let exit = exit.as_str();
     let stopped = st.runs.stopped.lock().unwrap().remove(run_id);
-    let (cost, input, output, text, ok) = match &result {
-        Some(RunEvent::Result { cost_usd, input_tokens, output_tokens, text, is_error, .. }) =>
+    let (cost, input, output, text, ok) = match (&result, done_text) {
+        (Some(RunEvent::Result { cost_usd, input_tokens, output_tokens, text, is_error, .. }), _) =>
             ((cost_usd.unwrap_or(0.0) * 1_000_000.0).round() as i64, *input_tokens, *output_tokens, text.clone(), !is_error),
+        // GA-221: Gizai ended the CLI after the agent's final text and no result line came: that text is the result.
+        (_, Some(text)) if after_result => (0, 0, 0, text, true),
         _ => (0, 0, 0, String::new(), false),
     };
     let parsed = outcome::parse(&text);
@@ -1564,7 +1610,8 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
     // "Run this for me" (GA-31): the commands a `needs_decision` asks you to run, kept with its verdict below.
     let run_for_me: Vec<String> = parsed.as_ref().filter(|o| o.outcome == "needs_decision").map(|o| o.run_for_me.clone()).unwrap_or_default();
     let verdict: Option<Outcome> = parsed.map(|o| Outcome { outcome: o.outcome, summary: o.summary, issues: o.issues });
-    let finished = ok && exit == "exit:0";
+    // GA-221: a run whose CLI Gizai ended once the agent was done has finished, whatever its exit code.
+    let finished = ok && (exit == "exit:0" || after_result);
     // While Gizai quits, a run that didn't finish was stopped by the quit, also when its agent ended first: logging
     // out sends SIGTERM to the agents as well as to Gizai. It doesn't count as a failure.
     let quit = is_closing(st) && (stopped || !finished);
@@ -1584,6 +1631,9 @@ async fn finish_run(st: &AppState, run_id: &str, task_id: &str, dir: &Path, ran:
         }),
         _ => None,
     };
+    if status == "succeeded" && after_result {
+        note_run(st, run_id, &after_result_note(cli));
+    }
     record_head(&st.db, run_id, dir);
     let agent = core_runs::get(&st.db, run_id).map(|r| r.agent_id).unwrap_or_default();
     let unstarted = status == "failed" && tools == 0 && error.as_deref().is_some_and(login_problem);
@@ -1788,6 +1838,13 @@ pub async fn start_by_hand(st: &AppState, task_id: &str) -> Result<worktree::Wor
     workflow::start_by_hand(&st.db, &st.you_id, task_id, &wt.branch).map_err(|e| e.to_string())?;
     (st.notify)(Note::RowsChanged("tasks"));
     Ok(wt)
+}
+
+/// GA-221: the note on a finished run whose CLI (`cli`) Gizai ended because it hadn't exited once the agent was done.
+fn after_result_note(cli: &str) -> String {
+    let minutes = process::AFTER_RESULT.as_secs() / 60;
+    format!("{cli} hadn't exited {minutes} minutes after the agent's final message, so Gizai ended it and kept the result. \
+             Something the run started was probably still running in the background, such as a server.")
 }
 
 /// Gizai's note on a run that is ending: in its log, where Show output reads it later, and in the Run panel now.

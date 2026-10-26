@@ -144,6 +144,33 @@ pub async fn set_task_labels(app: AppHandle, st: State<'_, AppState>, id: String
     wake(&st, &id);
     Ok(())
 }
+/// GA-228: the cards the card builds on and the cards that build on it (the card page's Builds on and Needed by).
+#[tauri::command]
+pub async fn get_builds_on(st: State<'_, AppState>, id: String) -> R<gizai_core::builds_on::BuildsOn> {
+    off(&st, move |st| gizai_core::builds_on::of(&st.db, &id).map_err(e)).await
+}
+/// GA-228: the card builds on `on` (a card's identifier, like GA-226, or its id) too. A loop, more than 20 cards or the
+/// card itself is refused with why.
+#[tauri::command]
+pub async fn add_builds_on(app: AppHandle, st: State<'_, AppState>, id: String, on: String) -> R<()> {
+    let task = id.clone();
+    off(&st, move |st| {
+        let other = tasks::id_of(&st.db, &on).unwrap_or(on);
+        gizai_core::builds_on::add(&st.db, &st.you_id, &task, &other).map_err(e)
+    }).await?;
+    changed(&app, "tasks");
+    wake(&st, &id);
+    Ok(())
+}
+/// GA-228: the card no longer builds on `on`: when it waited only for that card, the queue may take it now.
+#[tauri::command]
+pub async fn remove_builds_on(app: AppHandle, st: State<'_, AppState>, id: String, on: String) -> R<()> {
+    let task = id.clone();
+    off(&st, move |st| gizai_core::builds_on::remove(&st.db, &st.you_id, &task, &on).map_err(e)).await?;
+    changed(&app, "tasks");
+    wake(&st, &id);
+    Ok(())
+}
 #[tauri::command]
 pub async fn list_archived_tasks(st: State<'_, AppState>, project_id: Option<String>) -> R<Vec<Task>> {
     off(&st, move |st| tasks::archived(&st.db, project_id.as_deref().filter(|p| !p.is_empty())).map_err(e)).await
@@ -886,8 +913,33 @@ pub async fn restart_gizai(app: AppHandle, st: State<'_, AppState>) -> R<()> {
         let mut cmd = crate::update::restart_command(st)?;
         cmd.spawn().map(|_| ()).map_err(|e| format!("Couldn't restart Gizai: {e}"))
     }).await?;
+    // the restart after an update doesn't back up on quit
+    st.backups.quit_without_backup();
     app.exit(0);
     Ok(())
+}
+
+// ---- backups (GA-216, contract BK): snapshots in a backups folder, on a schedule ----
+/// The backup settings, the backups folder in use and why it can't be used now, the snapshot that runs, this computer's
+/// newest, the last error and when the next scheduled one is due.
+#[tauri::command]
+pub async fn backup_status(st: State<'_, AppState>) -> R<gizai_core::backups::BackupStatus> {
+    off(&st, |st| Ok(crate::backups::status(st))).await
+}
+/// Saves the backup settings: refuses Keep outside 1 to 100 and a folder Gizai can't write in, saying why.
+#[tauri::command]
+pub async fn save_backup_settings(st: State<'_, AppState>, settings: gizai_core::backups::BackupSettings) -> R<gizai_core::backups::BackupStatus> {
+    off(&st, move |st| crate::backups::save_settings(st, settings)).await
+}
+/// The snapshots in a folder, newest first; null: the folder in Settings.
+#[tauri::command]
+pub async fn list_backups(st: State<'_, AppState>, folder: Option<String>) -> R<Vec<gizai_core::backups::BackupEntry>> {
+    off(&st, move |st| crate::backups::list(st, folder)).await
+}
+/// Back up now: starts a snapshot in the background; refused without a folder or while one runs.
+#[tauri::command]
+pub async fn back_up_now(st: State<'_, AppState>) -> R<gizai_core::backups::BackupStatus> {
+    off(&st, crate::backups::back_up_now).await
 }
 
 // ---- MCP servers (Settings → MCP servers, agent form → Tools) ----

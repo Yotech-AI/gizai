@@ -3,7 +3,7 @@ use gizai_agents::prompt::{build, continue_prompt, BaseInfo, RunLimits, TaskCont
 fn ctx() -> TaskContext {
     TaskContext { identifier: "KADE-41".into(), title: "Export invoices as CSV".into(), description_md: "Use semicolons.".into(),
                   acceptance_md: "- [ ] opens in Excel NL".into(), recent_comments: vec![("Jeffrey".into(), "Sample file is attached.".into())],
-                  role: "backend".into(), qa_issues: vec![], limits: None, base: None, project_goal_md: String::new() }
+                  role: "backend".into(), qa_issues: vec![], limits: None, base: None, project_goal_md: String::new(), builds_on: vec![] }
 }
 
 #[test]
@@ -62,6 +62,22 @@ fn includes_the_project_goal_the_project_page_promises() {
     let goal = p.find("## Project goal").expect("a goal section");
     assert!(p[goal..].contains("Read CLAUDE.md first.") && goal < p.find("## Description").unwrap(), "{p}");
     assert!(!build(&ctx(), "R").contains("## Project goal"));
+}
+
+// GA-228: a card that builds on others lists them after its description, one line each, so the agent knows that code is
+// on main; a card without Builds on gets no such line.
+#[test]
+fn lists_the_cards_it_builds_on_after_its_description_one_line_each() {
+    use gizai_agents::prompt::BuiltOn;
+    let on = |identifier: &str, title: &str, merged: bool, column: &str| BuiltOn {
+        identifier: identifier.into(), title: title.into(), merged, column: column.into() };
+    let p = build(&TaskContext { builds_on: vec![on("GA-225", "Team templates.", true, "Done"), on("GA-226", "Team templates (backend)", true, "Deploy")],
+                                 ..ctx() }, "R");
+    assert!(p.contains("Use semicolons.\n\nBuilds on GA-225: Team templates, merged.\nBuilds on GA-226: Team templates (backend), merged.\n\n## Acceptance criteria"),
+            "{p}");
+    assert_eq!(on("GA-226", "Team templates (backend)", true, "Deploy").line(), "Builds on GA-226: Team templates (backend), merged.");
+    assert_eq!(on("GA-9", "Base", false, "In progress").line(), "Builds on GA-9: Base, in In progress, not merged yet.");
+    assert!(!build(&ctx(), "R").contains("Builds on"), "none without Builds on");
 }
 
 // GA-48: "How this run works" at the end of every task prompt.

@@ -654,7 +654,7 @@ async fn start(tmp: &Path, mode: &str, max_time: Duration) -> (RunHandle, Pids) 
     let claude = ClaudeArgs { bin: executable(FAKE_CLAUDE), prompt: "Test the login page".into(), session_id: "S".into(), permission_mode: "acceptEdits".into(),
                               mcp_config: Some(config), env: vec![("FAKE_BROWSER_PIDS".into(), pids_dir.display().to_string()), ("FAKE_BROWSER_MODE".into(), mode.into())],
                               ..Default::default() };
-    let mut h = spawn(&claude, tmp, &tmp.join("r.jsonl"), Caps { max_time, max_tool_calls: 80 }).unwrap();
+    let mut h = spawn(&claude, tmp, &tmp.join("r.jsonl"), Caps { max_time, max_tool_calls: 80, after_result: gizai_agents::process::AFTER_RESULT }).unwrap();
     let pids = read_pids(&pids_dir).await;
     let first = tokio::time::timeout(Duration::from_secs(10), h.events.recv()).await.expect("init line");
     assert!(first.is_some_and(|e| !matches!(e, RunEvent::Other { ref raw_type } if raw_type.starts_with("exit:"))), "the fake ended at once");

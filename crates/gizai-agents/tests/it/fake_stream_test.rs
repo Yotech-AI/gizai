@@ -78,7 +78,7 @@ fn without_fake_stream_the_fake_prints_run_ok_as_before() {
 async fn a_fake_stream_run_goes_through_gizais_run_and_stop_ends_it_part_way() {
     let args = |prompt: &str| ClaudeArgs { bin: format!("{TESTS}/fake-claude.sh").into(), prompt: prompt.into(), session_id: "S".into(),
                                           permission_mode: "acceptEdits".into(), ..Default::default() };
-    let caps = Caps { max_time: Duration::from_secs(60), max_tool_calls: 2000 };
+    let caps = Caps { max_time: Duration::from_secs(60), max_tool_calls: 2000, after_result: gizai_agents::process::AFTER_RESULT };
     // the whole stream: every event and run-ok's result, then Gizai's exit marker
     let tmp = tempfile::tempdir().unwrap();
     let mut h = spawn(&args("FAKE_STREAM 60x1"), tmp.path(), &tmp.path().join("r.jsonl"), caps).unwrap();

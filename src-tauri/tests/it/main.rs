@@ -6,11 +6,14 @@
 //! run_memory_flow_test.rs stays in tests/ too: its run pushes a command past a 1 GB slice's limit, which Linux throttles
 //! for a minute or more before it ends it, and side by side with the tests here it once ran past its 120 s limit.
 
+mod after_result_flow_test;
 mod agent_runs_test;
 mod app_state_test;
 mod archive_flow_test;
 mod ask_lead_flow_test;
+mod backups_flow_test;
 mod board_flow_test;
+mod builds_on_flow_test;
 mod card_flow_test;
 mod changes_flow_test;
 mod chat_files_flow_test;
@@ -42,6 +45,7 @@ mod notifications_test;
 mod nudge_flow_test;
 mod onboarding_flow_test;
 mod own_push_test;
+mod paste_guard_test;
 mod pending_actions_test;
 mod pr_check_rounds_test;
 mod pull_flow_test;

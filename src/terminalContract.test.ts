@@ -170,11 +170,13 @@ describe("contract CT in src-tauri (GA-133)", () => {
 describe("the window's rights and its Content Security Policy (GA-141)", () => {
   const tauri = (path: string): string => fs.readFileSync(new URL(`../src-tauri/${path}`, import.meta.url), "utf8");
 
-  it("has v0.9.1's rights plus clipboard-manager:allow-read-text, in its one capability file", () => {
+  // GA-227: plus dialog:allow-save, for Team → Export template's save dialog
+  it("has v0.9.1's rights plus clipboard-manager:allow-read-text and dialog:allow-save, in its one capability file", () => {
     expect(fs.readdirSync(new URL("../src-tauri/capabilities/", import.meta.url)).sort()).toEqual(["default.json"]);
     const cap = JSON.parse(tauri("capabilities/default.json"));
     expect(cap.windows).toEqual(["main"]);
-    expect(cap.permissions).toEqual(["core:default", "dialog:allow-open", "opener:allow-open-url", "opener:allow-default-urls", "clipboard-manager:allow-read-text"]);
+    expect(cap.permissions).toEqual(["core:default", "dialog:allow-open", "dialog:allow-save", "opener:allow-open-url", "opener:allow-default-urls",
+      "clipboard-manager:allow-read-text"]);
   });
 
   it("keeps v0.9.1's Content Security Policy", () => {

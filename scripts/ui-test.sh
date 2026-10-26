@@ -133,6 +133,15 @@
 #     ("PasteGlobalSelection"); Gizai still answers after each; with nothing copied the guard's count (selftest_paste) rises
 #     and the field is unchanged, but text selected in it is replaced by nothing (WebKit's own paste of an empty clipboard,
 #     as before 2.54.1); with "GA-222 text" on the clipboard the same paste puts exactly that in the field.
+# 22. team templates (GA-227), on the demo data, with the file dialogs answered inside the app (no window opens): the top
+#     bar's Export template before New team; New team with Empty as before (focus, subtitle, seven columns, no agents, opened);
+#     Export without warnings goes straight to the save dialog with "<team name>.gizai-team.json", writes the file and says
+#     "Saved …"; Software team's check (seven columns, five agents, no extra commands), renamed, made and opened; a template
+#     file (JSON only) and its check against preview_team_template: columns, agents, CLIs, modes, the extra commands under
+#     their heading in the error banner's colours, missing servers, labels, every note and the paused line above the agents,
+#     made with its agents paused; Export with warnings lists each, Cancel and Escape save nothing, Export anyway saves; a
+#     bad file shows the refusal and Create team stays off; the Software team exported and made again from its file has the
+#     same columns and agents, names aside.
 # Makes .devdata/demo when it is missing, and builds the app when it is missing or stale (scripts/app-ready.sh).
 # usage: scripts/ui-test.sh
 set -uo pipefail
@@ -256,4 +265,32 @@ DATA=$PWD/.devdata/uitest ROUTE="task/${SHOTS%% *}/screenshots" MODE="screenshot
 fresh
 # GA-222: a fresh cage has an empty clipboard and primary selection (Linux only: the guard is WebKitGTK's)
 DATA=$PWD/.devdata/uitest ROUTE=projects MODE=paste scripts/smoke-cage.sh || fail=1
+fresh
+# GA-227: a template file with what the check shows (extra commands, an MCP server that isn't set up, a Codex agent, an agent
+# name the Software team takes, new labels, settings out of range, text that looks private) and one in format 2, refused
+rm -rf .devdata/uitest-templates && mkdir -p .devdata/uitest-templates
+cat > ".devdata/uitest-templates/Mobile team.gizai-team.json" <<'JSON'
+{
+  "format": "gizai-team", "format_version": 1, "app_version": "0.14.0",
+  "name": "Mobile team", "description_md": "Our notes are in /home/someone/mobile-notes.",
+  "labels": [{ "name": "mobile", "color": "#ff8800" }, { "name": "ios", "color": null }],
+  "columns": [
+    { "name": "Backlog", "kind": "backlog", "auto": false, "next": null, "agents": [] },
+    { "name": "Build", "kind": "in_progress", "auto": true, "next": "Check", "agents": ["Backend Agent", "App Agent"] },
+    { "name": "Check", "kind": "testing", "auto": false, "next": "Shipped", "agents": ["Codex Agent"] },
+    { "name": "Shipped", "kind": "done", "auto": false, "next": null, "agents": [] }
+  ],
+  "agents": [
+    { "name": "Backend Agent", "role": "backend", "cli": "claude_code", "model": "opus", "effort": "high", "permission_mode": "acceptEdits",
+      "instructions_md": "Mail jef@example.com when the build breaks.", "allowed_tools": ["Bash(git status:*)", "Bash(rm -rf build:*)"],
+      "mcp_servers": [{ "name": "probe-figma", "tools_off": [] }] },
+    { "name": "App Agent", "role": "frontend", "cli": "claude_code", "permission_mode": "bypassPermissions", "instructions_md": "Build the app.",
+      "cards_at_once": 40 },
+    { "name": "Codex Agent", "role": "qa", "cli": "codex", "model": "gpt-5", "effort": "medium", "permission_mode": "workspace-write",
+      "instructions_md": "Test the app." }
+  ]
+}
+JSON
+printf '{ "format": "gizai-team", "format_version": 2, "name": "Too new", "columns": [], "agents": [] }\n' > .devdata/uitest-templates/bad.json
+DATA=$PWD/.devdata/uitest ROUTE=team MODE="templates:$PWD/.devdata/uitest-templates" TIMEOUT=120 scripts/smoke-cage.sh || fail=1
 exit $fail

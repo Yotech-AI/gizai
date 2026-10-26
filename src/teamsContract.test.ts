@@ -39,7 +39,10 @@ describe("a project's team", () => {
 });
 
 describe("the New team drawer", () => {
+  // GA-227: the subtitle follows Start from; with Empty (the default) it is GA-225's, word for word (UI test 22 reads it in the app)
   it("says what a new team gets, word for word", () => {
-    expect(teamPage).toContain('subtitle="A new team gets the seven usual columns and no agents. Move a project to it in the project\'s form."');
+    expect(teamPage).toContain('const subtitle = start.kind === "empty" ? "A new team gets the seven usual columns and no agents. Move a project to it in the project\'s form."');
+    expect(teamPage).toContain('<Drawer title="New team" subtitle={subtitle}');
+    expect(teamPage).toContain('useState<Start>({ kind: "empty" })');
   });
 });

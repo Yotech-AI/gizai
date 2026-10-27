@@ -573,7 +573,18 @@ export type BackupStatus = {
   lastError: { at: number; message: string } | null;
   next: number | null;             // when the next scheduled snapshot is due, null when none is
 };
-export type DayStat = { dayStart: number; succeeded: number; failed: number; other: number };
+
+// ---- restore (GA-218, contract BR): check a snapshot, save today's data, stage it, swap it in at the next start ----
+// docs/backup-format.md → Restore. `result` is how the last restore went at the start, kept until it is dismissed.
+export type RestoreStatus = {
+  state: "none" | "checking" | "saving" | "staging" | "ready" | "failed";
+  folder: string | null; snapshot: BackupEntry | null;
+  step: string | null;            // "Checking the database", "Saving today's data", "Copying files (120 of 300)"
+  error: string | null;           // why it failed (state failed)
+  savedToday: string | null;      // the before-restore snapshot's name, once it is made
+  result: { ok: boolean; at: number; snapshot: string; fromComputer: string; message: string } | null;   // after the restart
+};
+export type DayStat ={ dayStart: number; succeeded: number; failed: number; other: number };
 
 // ---- the Usage page (gizai-core usage.rs) ----
 export type UsagePeriod = "today" | "7d" | "30d" | "month";

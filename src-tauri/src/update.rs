@@ -504,12 +504,51 @@ pub fn restart_command(st: &AppState) -> Result<std::process::Command, String> {
     if !ready {
         return Err("No newer Gizai is installed yet: update first".into());
     }
+    Ok(start_after_quit(&installed_program(&inner)?))
+}
+
+/// The restart after a restore (GA-218): the update's restart, widened to a Gizai without an update. The same small
+/// shell (on Windows the same hidden PowerShell) waits until this Gizai has quit, then starts the same Gizai again: the
+/// installed one with its launcher, as after an update, or else the program that runs now (`std::env::current_exe`, a
+/// dev build too). Its environment goes with it, so it starts on the same data. The caller quits Gizai the usual way
+/// next, which stops agents at work first.
+pub fn start_again_command(st: &AppState) -> Result<std::process::Command, String> {
+    let inner = st.updates.lock();
+    let program = match install_prefix(&inner) {
+        Ok(_) => installed_program(&inner)?,
+        Err(_) => inner.exe.clone().filter(|p| gizai_agents::os::executable(p)).ok_or_else(|| {
+            "Gizai can't tell where it runs from, so it can't start itself again: quit Gizai and start it yourself".to_string()
+        })?,
+    };
+    Ok(start_after_quit(&program))
+}
+
+/// The installed Gizai a restart starts: its launcher (`<prefix>/lib/gizai/gizai-launch`, else `<prefix>/lib/gizai/gizai`),
+/// on Windows `<prefix>\gizai.exe`.
+fn installed_program(inner: &Inner) -> Result<PathBuf, String> {
+    #[cfg(unix)]
+    {
+        let lib = install_prefix(inner)?.join("lib/gizai");
+        [lib.join("gizai-launch"), lib.join("gizai")].into_iter().find(|p| gizai_agents::os::executable(p))
+            .ok_or_else(|| format!("No Gizai is installed in {}", lib.display()))
+    }
+    #[cfg(windows)]
+    {
+        let prefix = install_prefix(inner)?;
+        let exe = prefix.join("gizai.exe");
+        if !gizai_agents::os::executable(&exe) {
+            return Err(format!("No Gizai is installed in {}", prefix.display()));
+        }
+        Ok(exe)
+    }
+}
+
+/// A small shell in a session of its own that waits until this Gizai has quit (at most ten minutes), then starts
+/// `program`. On Windows a hidden PowerShell, detached from Gizai, does the same.
+fn start_after_quit(program: &Path) -> std::process::Command {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let lib = install_prefix(&inner)?.join("lib/gizai");
-        let launcher = [lib.join("gizai-launch"), lib.join("gizai")].into_iter().find(|p| gizai_agents::os::executable(p))
-            .ok_or_else(|| format!("No Gizai is installed in {}", lib.display()))?;
         // gone: no /proc entry, or a zombie its parent hasn't collected yet
         #[cfg(not(target_os = "macos"))]
         const WAIT_THEN_START: &str = r#"i=0
@@ -528,7 +567,7 @@ while [ "$i" -lt 3000 ] && kill -0 "$1" 2>/dev/null; do
 done
 [ "$i" -lt 3000 ] && exec "$2""#;
         let mut cmd = std::process::Command::new("sh");
-        cmd.args(["-c", WAIT_THEN_START, "gizai-restart"]).arg(std::process::id().to_string()).arg(&launcher)
+        cmd.args(["-c", WAIT_THEN_START, "gizai-restart"]).arg(std::process::id().to_string()).arg(program)
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         // SAFETY: setsid(2) is a plain syscall, safe to make between fork and exec.
         unsafe {
@@ -537,25 +576,20 @@ done
                 Ok(())
             });
         }
-        Ok(cmd)
+        cmd
     }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS};
-        let prefix = install_prefix(&inner)?;
-        let exe = prefix.join("gizai.exe");
-        if !gizai_agents::os::executable(&exe) {
-            return Err(format!("No Gizai is installed in {}", prefix.display()));
-        }
         // Windows' own PowerShell 5.1, by its full path when Windows says where it is
         let powershell = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
             .filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("powershell.exe"));
         let mut cmd = std::process::Command::new(powershell);
-        cmd.args(["-NoProfile", "-NonInteractive", "-Command"]).arg(windows_restart_script(std::process::id(), &exe))
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command"]).arg(windows_restart_script(std::process::id(), program))
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
             .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-        Ok(cmd)
+        cmd
     }
 }
 

@@ -38,6 +38,8 @@ pub mod labels;
 pub mod mcp_servers;
 pub mod housekeeping;
 pub mod backups;
+pub mod restore;
+pub mod scope;
 pub mod templates;
 mod util;
 

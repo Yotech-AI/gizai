@@ -989,6 +989,40 @@ pub async fn back_up_now(st: State<'_, AppState>) -> R<gizai_core::backups::Back
     off(&st, crate::backups::back_up_now).await
 }
 
+// ---- restore (GA-218, contract BR): check a snapshot, save today's data, stage it, swap it in at the next start ----
+/// Starts restoring snapshot `name` from `folder` in the background; refused while a backup or another restore runs.
+#[tauri::command]
+pub async fn start_restore(st: State<'_, AppState>, folder: String, name: String) -> R<gizai_core::restore::RestoreStatus> {
+    off(&st, move |st| crate::restore::start(st, &folder, &name)).await
+}
+/// What a restore is doing, and how the last one went at the start until it is dismissed.
+#[tauri::command]
+pub async fn restore_status(st: State<'_, AppState>) -> R<gizai_core::restore::RestoreStatus> {
+    off(&st, |st| Ok(crate::restore::status(st))).await
+}
+/// Removes the staged restore (a running one stops); the before-restore snapshot stays.
+#[tauri::command]
+pub async fn cancel_restore(st: State<'_, AppState>) -> R<gizai_core::restore::RestoreStatus> {
+    off(&st, crate::restore::cancel).await
+}
+/// Quits and starts the same Gizai again, which swaps the staged restore in: agents at work are stopped first, as when
+/// you quit. Refused while no restore is ready.
+#[tauri::command]
+pub async fn restart_to_restore(app: AppHandle, st: State<'_, AppState>) -> R<()> {
+    off(&st, |st| {
+        let mut cmd = crate::restore::restart_command(st)?;
+        cmd.spawn().map(|_| ()).map_err(|e| format!("Couldn't restart Gizai: {e}"))
+    }).await?;
+    // the restart to restore doesn't back up on quit: today's data was saved before it was staged
+    st.backups.quit_without_backup();
+    app.exit(0);
+    Ok(())
+}
+#[tauri::command]
+pub async fn dismiss_restore_result(st: State<'_, AppState>) -> R<gizai_core::restore::RestoreStatus> {
+    off(&st, crate::restore::dismiss_result).await
+}
+
 // ---- MCP servers (Settings → MCP servers, agent form → Tools) ----
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> R<T> + Send + 'static) -> R<T> {

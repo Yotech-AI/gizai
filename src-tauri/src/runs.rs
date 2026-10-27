@@ -56,6 +56,9 @@ pub enum Note {
     /// A snapshot started, took a step, ended or failed, or the backup settings changed (see `backups`): the
     /// `backups-changed` event, with the status.
     BackupsChanged(gizai_core::backups::BackupStatus),
+    /// A restore started, took a step, was ready, failed or was cancelled, or its result was dismissed (see `restore`):
+    /// the `restore-changed` event, with the status.
+    RestoreChanged(gizai_core::restore::RestoreStatus),
 }
 
 #[derive(Debug, Clone, Serialize)]

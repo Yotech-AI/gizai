@@ -515,7 +515,7 @@ fn write_new(path: &Path, bytes: &[u8], tag: &str) -> Result<()> {
 
 /// Renames a finished file into place. On Windows a few times over a second: a sync program or a virus scanner often
 /// holds a file that was just written for a moment.
-fn rename(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(windows)]
     for _ in 0..5 {
         if fs::rename(from, to).is_ok() {
@@ -526,7 +526,7 @@ fn rename(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
 }
 
-fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut f = fs::File::create(path)?;
     f.write_all(bytes)?;
     f.sync_all()
@@ -777,19 +777,19 @@ fn copy_blob(src: &Path, dest: &Path, sha: &str, tag: &str, undo: &mut Unfinishe
 }
 
 /// Reads or writes through to `inner`, hashing (sha256) and counting what passes.
-struct Hashing<T> {
-    inner: T,
+pub(crate) struct Hashing<T> {
+    pub(crate) inner: T,
     hash: Sha256,
     bytes: u64,
 }
 
 impl<T> Hashing<T> {
-    fn new(inner: T) -> Self {
+    pub(crate) fn new(inner: T) -> Self {
         Hashing { inner, hash: Sha256::new(), bytes: 0 }
     }
 
     /// The sha256 of what passed (64 lowercase hex), and its size.
-    fn sum(self) -> (String, u64) {
+    pub(crate) fn sum(self) -> (String, u64) {
         (format!("{:x}", self.hash.finalize()), self.bytes)
     }
 }
@@ -817,7 +817,7 @@ impl<T: Write> Write for Hashing<T> {
 }
 
 /// `s` is `len` lowercase hex digits (a blob's name, its folder's).
-fn is_hex(s: &str, len: usize) -> bool {
+pub(crate) fn is_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
@@ -827,7 +827,7 @@ fn age_ms(t: SystemTime, now_ms: i64) -> i64 {
 }
 
 /// The entries of folder `dir`: their names and paths (none when it can't be read).
-fn entries(dir: &Path) -> Vec<(String, PathBuf)> {
+pub(crate) fn entries(dir: &Path) -> Vec<(String, PathBuf)> {
     fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|e| (e.file_name().to_string_lossy().into_owned(), e.path())).collect())
         .unwrap_or_default()

@@ -383,6 +383,21 @@ export const backUpNow = () => invoke<T.BackupStatus>("back_up_now");
 export const onBackupsChanged = (cb: (s: T.BackupStatus) => void): Promise<UnlistenFn> =>
   listen<T.BackupStatus>("backups-changed", (m) => cb(m.payload));
 
+// ---- restore (GA-218, contract BR): check a snapshot, save today's data, stage it, swap it in at the next start ----
+/** Starts restoring snapshot `name` from `folder` in the background; rejected while a backup or another restore runs. */
+export const startRestore = (folder: string, name: string) => invoke<T.RestoreStatus>("start_restore", { folder, name });
+/** What a restore is doing, and how the last one went at the start until it is dismissed. */
+export const restoreStatus = () => invoke<T.RestoreStatus>("restore_status");
+/** Removes the staged restore (a running one stops); the before-restore snapshot stays. */
+export const cancelRestore = () => invoke<T.RestoreStatus>("cancel_restore");
+/** Quits and starts the same Gizai again, which swaps the staged restore in (agents at work are stopped first); rejected
+ *  while no restore is ready. */
+export const restartToRestore = () => invoke<void>("restart_to_restore");
+export const dismissRestoreResult = () => invoke<T.RestoreStatus>("dismiss_restore_result");
+/** A restore started, took a step, was ready, failed or was cancelled, or its result was dismissed. */
+export const onRestoreChanged = (cb: (s: T.RestoreStatus) => void): Promise<UnlistenFn> =>
+  listen<T.RestoreStatus>("restore-changed", (m) => cb(m.payload));
+
 /** Fires after any write; screens refetch what they show. */
 export const onRowsChanged = (cb: (table: string) => void): Promise<UnlistenFn> =>
   listen<{ table: string }>("rows-changed", (e) => cb(e.payload.table));

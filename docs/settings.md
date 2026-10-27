@@ -1,19 +1,39 @@
 # Settings
 
-Where each setting lives, how GizAi looks, what the screenshot settings do, and what happens when you close its window.
+Where each setting lives, what a backup holds, how GizAi looks, what the screenshot settings do, and what happens when you close its window.
 
 ## The tabs
 
 | Tab | What it holds |
 |---|---|
-| General | Quit, Updates, the Editor's folders, and Data: where GizAi keeps your data, and the worktrees of finished cards |
+| General | Quit, Updates, the Editor's folders, Data: where GizAi keeps your data, and the worktrees of finished cards; and Backups: a folder for copies of your data, how often, how many to keep, Back up now and the backups there |
 | Appearance | The font, text sizes, theme, density and the mountains |
 | Notifications | A switch for each kind of notification |
 | Agents and runs | Coding CLIs; Runs: limits, runs at once, memory for agent runs, Pause all agents, memory and Ask the Team Lead first; and Screenshots: what GizAi keeps of agents' screenshots, and the previews' ports |
 | MCP servers | The outside services agents can use, and the built-in browser |
 | GitHub and Bitbucket | gh and how pushes go, Check connection, and your Bitbucket login |
 
-Each feature's doc says which settings it uses: [Updates](install.md#updates), [the Editor's folders](features/editor-and-terminal.md#open-a-folder), [Data](features/board.md#a-worktree-for-every-card), [Notifications](features/inbox.md#notifications), [Coding CLIs](features/cli.md), [Runs](features/board.md#when-agents-start) and [their limits](features/board.md#runs), [Screenshots](features/screenshots.md), [MCP servers](features/tools.md#mcp-servers) and [GitHub and Bitbucket](features/testing.md#review-on-github).
+Each feature's doc says which settings it uses: [Updates](install.md#updates), [Backups](#backups), [the Editor's folders](features/editor-and-terminal.md#open-a-folder), [Data](features/board.md#a-worktree-for-every-card), [Notifications](features/inbox.md#notifications), [Coding CLIs](features/cli.md), [Runs](features/board.md#when-agents-start) and [their limits](features/board.md#runs), [Screenshots](features/screenshots.md), [MCP servers](features/tools.md#mcp-servers) and [GitHub and Bitbucket](features/testing.md#review-on-github).
+
+## Backups
+
+Settings → General → Backups copies your data to a folder you choose: a USB disk, or a folder that Dropbox or Syncthing keeps. Inside it GizAi makes a folder named `Gizai backups` and backs up there, unless the folder you chose is such a folder already (it holds `gizai-backups.json`). Each change saves at once; a value that can't be saved, like Keep 0, shows why under its field and nothing is saved.
+
+- **What a backup holds:** the database and the files GizAi stores (attachments and screenshots).
+- **What it never holds:** keys, passwords and sign-ins, which stay in your system's keychain; nor worktrees, run and chat logs, or the source of an update.
+- **What it never does:** change your data, or remove another computer's backups or one made before a restore. This version makes and lists backups; it can't restore one yet.
+- **Not encrypted:** whoever can open the folder can read the data in it. A folder that Dropbox, Syncthing or another service keeps gets your data unencrypted, on every device it syncs to (and on Dropbox's servers). Choose such a folder only if you trust it with your data.
+- **Several computers can share one folder.** Each adds and removes only its own backups, and the stored files are shared by all of them. The list shows another computer's backups with "from" and its name ("from another computer" when it has none).
+- **The format**, file by file, is in [docs/backup-format.md](backup-format.md).
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| Folder | not set: no backups | a full path to a folder GizAi can write in | Browse… picks it with your system's folder picker, Turn off clears it. A folder that can't be used now (a USB disk that isn't plugged in) shows why under it, and backups wait for it. |
+| When | Daily | Daily, Weekly or Only when I ask | Daily and Weekly back up when this computer's newest backup in the folder is a day or a week old. GizAi looks 2 minutes after it starts, then every hour. |
+| Also when I quit completely | off | on or off | Quit GizAi completely backs up first and waits for it, usually a few seconds and at most 5 minutes. Closing the window, logging out and shutting down don't back up. |
+| Keep | 10 | 1 to 100 | How many of this computer's backups stay in the folder: after each backup, older ones are removed. One made before a restore is never removed, and neither are other computers' backups. |
+
+Back up now makes one at once, in the background, and shows its step while it runs. It can't be pressed without a folder or while a backup runs. Above it the section shows the last backup with its size (its database file, compressed), when the next one is due, and a backup that failed, in red with its time and why. The list shows each backup in the folder, newest first: its time, why it was made (Daily, Weekly, By hand, On quit or Before a restore), its size (the database and its files), the computer it came from when it is another one, and why one can't be restored.
 
 ## Appearance
 

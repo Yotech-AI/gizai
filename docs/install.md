@@ -165,6 +165,7 @@ It cleans up after itself when it starts and once a day while it runs:
 - **Screenshots** of what agents built (`files/`): a card keeps its newest 3 sets, and all of them go 30 days after it reached Done or Cancelled (0 days keeps them). What you attached to a card is never removed.
 - **Stored files nothing uses any more** (`files/`): a file no attachment, screenshot or chat message names any more is removed, a day after it was last stored.
 - **Backups** (`backups/`): one before every update, install and database upgrade, and `gizai --backup` makes one when you ask. The newest 20 are kept. Their names use your local time, like `gizai-before-update-20261009-143502-123.db`.
+- **Backups in a folder you choose** (Settings → General → Backups): copies of the database and your stored files in a folder of your own, like a USB disk or a folder that Dropbox or Syncthing keeps, daily, weekly or when you ask. After each one, this computer's backups past Keep (10 by default) are removed; one made before a restore, and other computers' backups, never are. Keys and passwords are never in them, and they are not encrypted: a synced folder gets your data as it is ([Backups](settings.md#backups)).
 
 ## No telemetry
 

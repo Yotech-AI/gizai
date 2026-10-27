@@ -13,13 +13,14 @@ let commands: Record<string, unknown> = {};
 
 const isKeyed = (f: unknown): f is Keyed => !!f && typeof f === "object" && "$by" in f && "$answers" in f;
 
-/** Moves every time (a field whose name ends in "At", and `at`) by `delta`, so "2 h ago" in the fixtures stays 2 h ago. */
+/** Moves every time (a field whose name ends in "At", `at`, and a backup status's `next`) by `delta`, so "2 h ago" in the fixtures
+ *  stays 2 h ago. */
 function shiftTimes(v: unknown, delta: number): void {
   if (Array.isArray(v)) { v.forEach((x) => shiftTimes(x, delta)); return; }
   if (!v || typeof v !== "object") return;
   const o = v as Record<string, unknown>;
   for (const [k, x] of Object.entries(o)) {
-    if (typeof x === "number" && (k === "at" || k.endsWith("At")) && x > 0) o[k] = x + delta;
+    if (typeof x === "number" && (k === "at" || k === "next" || k.endsWith("At")) && x > 0) o[k] = x + delta;
     else shiftTimes(x, delta);
   }
 }
@@ -118,13 +119,77 @@ const WRITES: Record<string, (args: Row) => unknown> = {
     return view.found ? structuredClone(view.value) : empty("agent_mcp", view.why);
   },
   open_file: ({ id }) => { console.info(`Gizai in a browser: Open would show file ${id} in the system's image viewer.`); return null; },
+  // Settings → General → Backups (GA-217): the backend's refusals, the status with what changed, and backups-changed. There
+  // is no folder picker in a browser, so Browse… does nothing; Turn off does.
+  save_backup_settings: ({ settings }) => {
+    const st = backups();
+    const s = settings as Row;
+    if (!st) return empty("save_backup_settings", "save_backup_settings");
+    if (!(Number.isInteger(s.keep) && Number(s.keep) >= 1 && Number(s.keep) <= 100)) return Promise.reject(`Keep must be 1 to 100 snapshots, not ${s.keep}`);
+    const folder = typeof s.folder === "string" && s.folder.trim() ? s.folder.trim() : null;
+    Object.assign(st, { settings: { ...s, folder }, folder: folder && `${folder}/Gizai backups`, folderProblem: null });
+    if (!folder) Object.assign(st, { last: null, lastError: null });
+    st.next = nextBackup(st);
+    return backupsChanged();
+  },
+  // a snapshot by hand: its steps a moment each, then it is the newest in the list
+  back_up_now: () => {
+    const st = backups();
+    if (!st) return empty("back_up_now", "back_up_now");
+    if (!st.folder) return Promise.reject("Choose a folder for backups first");
+    if (st.running) return Promise.reject("A backup is running already");
+    const steps = ["database", "files", "compress", "manifest", "keep"];
+    st.running = { reason: "manual", startedAt: Date.now(), step: steps[0] };
+    steps.slice(1).forEach((step, i) => setTimeout(() => { st.running = { ...(st.running as Row), step }; backupsChanged(); }, (i + 1) * BACKUP_STEP_MS));
+    setTimeout(() => {
+      const list = (commands.list_backups as Row[] | undefined) ?? [];
+      const mine = list.find((e) => e.thisComputer);
+      const madeAt = Date.now();
+      const name = String(mine?.name ?? "gizai-manual-00000000-000000-000-device").replace(/^gizai-[a-z-]+-\d{8}-\d{6}-\d{3}-/, `gizai-manual-${stamp(madeAt)}-`);
+      if (mine) list.unshift({ ...mine, name, reason: "manual", madeAt });
+      Object.assign(st, { running: null, lastError: null, last: { name, madeAt, bytes: Math.round(Number(mine?.dbBytes ?? 4_000_000) / 4) } });
+      st.next = nextBackup(st);
+      backupsChanged();
+    }, steps.length * BACKUP_STEP_MS);
+    return backupsChanged();
+  },
 };
+
+/** How long each step of a browser-mode backup takes. */
+const BACKUP_STEP_MS = 900;
+
+/** backup_status's fixture, to change it in place. */
+const backups = () => commands.backup_status as Row | undefined;
+
+/** Says the backups' status changed, and answers it. */
+function backupsChanged() {
+  const st = structuredClone(backups());
+  void emit("backups-changed", st);
+  return st;
+}
+
+/** When the next scheduled backup is due, as gizai-core's `next_due`: a day or a week after the last, now without one. */
+function nextBackup(st: Row): number | null {
+  const s = st.settings as Row;
+  const every = s.every === "daily" ? 86_400_000 : s.every === "weekly" ? 7 * 86_400_000 : null;
+  if (!st.folder || every === null) return null;
+  const last = st.last as Row | null;
+  return last ? Number(last.madeAt) + every : Date.now();
+}
+
+/** A snapshot name's time, local: "20261027-141506-330". */
+function stamp(ms: number): string {
+  const d = new Date(ms), p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${p(d.getMilliseconds(), 3)}`;
+}
 
 /** The answer to one command: a fixture, a write, a screenshot's picture, or empty. */
 export async function answer(cmd: string, args: Row): Promise<unknown> {
   if (cmd in WRITES) return WRITES[cmd](args);
   if (cmd === "screenshot_bytes") return picture(String(args.fileId));
   if (cmd === "list_tasks") return tasks(args.filter as Row | undefined);
+  // the folder in Settings: none once Backups is turned off
+  if (cmd === "list_backups" && args.folder == null && backups() && !backups()!.folder) return [];
   const f = fixture(cmd, args);
   return f.found ? structuredClone(f.value) : empty(cmd, f.why);
 }

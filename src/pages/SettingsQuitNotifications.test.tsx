@@ -42,6 +42,8 @@ vi.mock("../lib/useLiveRuns", () => ({ useLiveRuns: () => liveRuns }));
 vi.mock("../components/chat/useChat", () => ({ useChatLive: () => liveChats }));
 vi.mock("../components/UpdateSettings", () => ({ UpdateSettings: () => <section className="form-section"><h3>Updates</h3></section> }));
 vi.mock("../components/EditorFoldersSetting", () => ({ EditorFoldersSetting: () => null }));
+// GA-217: Backups keeps its own state (BackupSettings.test.tsx)
+vi.mock("../components/BackupSettings", () => ({ BackupSettings: () => null }));
 vi.mock("../components/CliSettings", () => ({ CliSettings: () => null }));
 vi.mock("../components/GithubSettings", () => ({ GithubSettings: () => null }));
 vi.mock("../components/BitbucketSettings", () => ({ BitbucketSettings: () => null }));

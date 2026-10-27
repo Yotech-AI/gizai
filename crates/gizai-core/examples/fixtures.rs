@@ -8,7 +8,8 @@
 //!   preview that didn't start, files left out, QA's failure and pass, a picture unchanged between two runs, one not
 //!   taken again), assigned to you after QA's pass, so the Inbox has it;
 //! - KADE-2 in Testing with one set; KADE-3 in Review with a pull request and no screenshots; the empty tab's cases: KADE-1
-//!   (no preview), GFW-1 (the Backend Agent's: no browser), GFW-3 (its own switch off), GFW-5 (no run yet).
+//!   (no preview), GFW-1 (the Backend Agent's: no browser), GFW-3 (its own switch off), GFW-5 (no run yet);
+//! - Settings → General → Backups: a folder, daily, Keep 10, and three snapshots, one from another computer.
 //!
 //! Times are set back as they would read in use: the demo data 5 days ago, the runs from 2 days to 2 hours ago. Each
 //! command's answer has the shape the app's own command returns: gizai-core's types, and for the commands that live in
@@ -22,8 +23,8 @@ use gizai_core::db::Db;
 use gizai_core::files::{self, Evidence};
 use gizai_core::mcp_servers::{self, AgentServer, AgentTools};
 use gizai_core::model::*;
-use gizai_core::{clients, clis, comments, docs, editor, ids, labels, memory, onboarding, projects, pulls, questions, runs, screenshots,
-    seed, settings, tasks, team, tokens, users, workflow};
+use gizai_core::{backups, clients, clis, comments, db, docs, editor, ids, labels, memory, onboarding, projects, pulls, questions, runs,
+    screenshots, seed, settings, tasks, team, tokens, users, workflow};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
@@ -572,6 +573,37 @@ fn main() {
                    "url": format!("https://github.com/Yotech-AI/gizai/releases/tag/v{}", env!("CARGO_PKG_VERSION")), "publishedAt": null, "notes": null},
         "problem": null, "available": null, "installed": null, "installTo": "/home/you/.local", "cannotInstall": null, "job": null,
         "repo": "https://github.com/Yotech-AI/gizai.git"}));
+    // Settings → General → Backups (contract BK, gizai-core's backups types): a folder in Dropbox, daily, Keep 10, and three
+    // snapshots there, newest first: this computer's daily one and Back up now's, and another computer's, made by a newer
+    // Gizai, so it can't be restored here.
+    let chosen = "/home/you/Dropbox";
+    let me = db.device_id().to_string();
+    let laptop = "0199f3a2-7c41-7d2e-9b1a-4e5f6a7b8c9d";
+    let newer = {
+        let v: Vec<i64> = env!("CARGO_PKG_VERSION").split('.').map(|p| p.parse().unwrap_or(0)).collect();
+        format!("{}.{}.0", v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0) + 1)
+    };
+    let snap = |reason: backups::Reason, made_at: i64, device: &str, name: &str, db_bytes: i64, problem: Option<String>| backups::BackupEntry {
+        name: backups::snapshot_name(reason, made_at, &backups::device_tag(device)), reason: reason.as_str().into(), made_at,
+        device_id: device.into(), device_name: name.into(), this_computer: device == me,
+        app_version: if problem.is_some() { newer.clone() } else { env!("CARGO_PKG_VERSION").into() },
+        schema_version: db::SCHEMA_VERSION + i64::from(problem.is_some()),
+        db_bytes, files_count: 14, files_bytes: 3_276_800, files_missing: 0, restorable: problem.is_none(), problem,
+    };
+    let daily_at = now - 3 * HOUR;
+    c.insert("list_backups".into(), val(vec![
+        snap(backups::Reason::Daily, daily_at, &me, "this machine", 4_456_448, None),
+        snap(backups::Reason::Manual, now - DAY - 5 * HOUR, &me, "this machine", 4_390_912, None),
+        snap(backups::Reason::Daily, now - 2 * DAY - 2 * HOUR, laptop, "work-laptop", 4_128_768,
+             Some(format!("A newer Gizai made it ({newer}): update Gizai to restore it"))),
+    ]));
+    let every = backups::Every::Daily;
+    c.insert("backup_status".into(), val(backups::BackupStatus {
+        settings: backups::BackupSettings { folder: Some(chosen.into()), every, on_quit: false, keep: backups::KEEP_DEFAULT },
+        folder: Some(format!("{chosen}/{}", backups::FOLDER_NAME)), folder_problem: None, running: None,
+        last: Some(backups::Last { name: backups::snapshot_name(backups::Reason::Daily, daily_at, &backups::device_tag(&me)), made_at: daily_at, bytes: 1_153_434 }),
+        last_error: None, next: backups::next_due(every, Some(daily_at), now),
+    }));
     // Settings → GitHub and Bitbucket (src-tauri's github::Status and bitbucket::BitbucketStatus): gh logged in, no Bitbucket login.
     c.insert("github_status".into(), json!({"ghPath": "/usr/bin/gh", "ghVersion": "2.62.0", "ghProblem": null, "account": "jefsev",
         "accountProblem": null, "pushOver": "ssh", "login": null, "loginCommand": "gh auth login --hostname github.com --web"}));

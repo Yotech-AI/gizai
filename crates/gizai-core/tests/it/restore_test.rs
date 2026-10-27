@@ -645,6 +645,37 @@ fn a_restored_database_that_cant_take_this_computers_settings_leaves_todays_data
 }
 
 #[test]
+fn a_start_after_a_swap_that_was_interrupted_carries_on_from_where_it_was() {
+    let d = data();
+    let a = d.attach("a.txt", b"in the snapshot");
+    let usb = chosen(&d, "usb");
+    let m = d.snapshot(&usb, Reason::Manual);
+    let today = d.attach("b.txt", b"only today");
+    let (staged, _) = stage(&d, &usb, &m.name, &usb);
+    let Data { _tmp, root, dir, db, org } = d;
+    drop(db);
+    // the computer went off just after restore.json noted the name and today's database moved to backups/
+    let before = "gizai-before-restore-20261027-120000-000.db";
+    fs::create_dir_all(dir.join("backups")).unwrap();
+    fs::rename(dir.join("gizai.db"), dir.join("backups").join(before)).unwrap();
+    let s = Staged { swapping: Some(before.into()), ..staged };
+    replace(&restore::dir(&dir).join(restore::STAGED), &serde_json::to_vec(&s).unwrap());
+    let (db, result) = restore::open(&dir).unwrap();
+    let d = Data { _tmp, root, dir, db, org };
+    let result = result.unwrap();
+    assert!(result.ok, "{result:?}");
+    assert_eq!(d.files_rows(), vec![a.clone()]);
+    assert!(files::blob_path(&d.dir, &a).is_file());
+    assert_eq!(backups_named(&d, "gizai-before-restore-"), vec![before.to_string()]);
+    let old = Connection::open(d.dir.join("backups").join(before)).unwrap();
+    assert_eq!(old.query_row("SELECT count(*) FROM files WHERE sha256 = ?1", [&today], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    assert!(!restore::dir(&d.dir).exists());
+    // and it is applied once
+    let (_, again) = d.restart();
+    assert_eq!(again, None);
+}
+
+#[test]
 fn after_cancel_nothing_is_staged_the_before_restore_snapshot_stays_and_the_next_start_is_a_normal_one() {
     let d = data();
     let usb = chosen(&d, "usb");

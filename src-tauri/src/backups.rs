@@ -154,11 +154,17 @@ pub fn back_up_now(st: &AppState) -> Result<BackupStatus, String> {
 /// while another runs. Its start, steps and end go out in `backups-changed`, and a failure is kept as the last error.
 /// GA-218 makes its `before-restore` snapshot with it, in a folder of its own.
 pub fn back_up(st: &AppState, folder: Option<&Path>, reason: Reason) -> Result<Made, String> {
+    back_up_within(st, folder, reason, None)
+}
+
+/// `back_up`, waiting for a snapshot that runs already until `until` (None: refused at once, as `back_up` is). GA-218's
+/// restore waits: a scheduled snapshot may start while it checks the snapshot it restores.
+pub fn back_up_within(st: &AppState, folder: Option<&Path>, reason: Reason, until: Option<Instant>) -> Result<Made, String> {
     let chosen = match folder {
         Some(f) => f.to_path_buf(),
         None => settings_folder(st)?,
     };
-    let slot = claim(st, reason, None)?;
+    let slot = claim(st, reason, until)?;
     run(slot, &chosen, reason)
 }
 

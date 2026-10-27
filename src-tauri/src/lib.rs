@@ -24,6 +24,7 @@ pub mod paste_guard;
 pub mod pending;
 pub mod pulls;
 mod quit;
+pub mod restore;
 pub mod run_memory;
 pub mod runs;
 pub mod screenshots;
@@ -91,6 +92,8 @@ pub struct AppState {
     pub terminals: Arc<gizai_agents::terminal::Terminals>,
     /// The snapshot that runs now, and the quit's (see `backups`).
     pub backups: Arc<backups::Backups>,
+    /// The restore that runs now, or the last one since Gizai started (see `restore`).
+    pub restores: Arc<restore::Restores>,
 }
 
 #[derive(Serialize)]
@@ -267,7 +270,12 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let lock = lock_data_dir(&dir)?;
     timed.part("the lock");
-    let db = Db::open(&dir.join("gizai.db")).map_err(|e| e.to_string())?;
+    // GA-218: a restore that is ready (`restore`) is swapped in first, keeping this computer's device and settings; with
+    // none staged this is `Db::open`. Its result waits for the window as `restore_result`.
+    let (db, restored) = gizai_core::restore::open(&dir).map_err(|e| e.to_string())?;
+    if let Some(r) = &restored {
+        eprintln!("gizai: {}", r.message);
+    }
     timed.part("the database");
     let seed = if default_agents {
         gizai_core::seed::ensure_seed_with_agents(&db, &display_name(), clis::codex_at_first_start)
@@ -334,7 +342,7 @@ fn open_data(dir: PathBuf, notify: Arc<dyn Fn(runs::Note) + Send + Sync>, defaul
                   github: Arc::new(github::Logins::default()), updates: Arc::new(update::Updates::default()), _lock: Arc::new(lock), notify,
                   desktop: notifications::Desktop::silent(), inbox: Arc::new(notifications::Watch::default()),
                   terminals: Arc::new(gizai_agents::terminal::Terminals::default()), streams: Arc::new(stream::Streams::default()),
-                  backups: Arc::new(backups::Backups::default()) };
+                  backups: Arc::new(backups::Backups::default()), restores: Arc::new(restore::Restores::default()) };
     // GA-102: the Team Lead's calls that wait for your approval stay waiting; one approved while Gizai closed counts as
     // failed, so it never runs twice, and its chat says so.
     pending::at_start(&st);
@@ -397,6 +405,7 @@ fn ui_notifier(app: AppHandle) -> Arc<dyn Fn(runs::Note) + Send + Sync> {
             runs::Note::EditorUpdated(ended) => app.emit("editor-updated", ended),
             runs::Note::TerminalsChanged(list) => app.emit("terminals-changed", list),
             runs::Note::BackupsChanged(status) => app.emit("backups-changed", status),
+            runs::Note::RestoreChanged(status) => app.emit("restore-changed", status),
         };
     })
 }
@@ -762,6 +771,8 @@ pub fn run() {
             commands::update_status, commands::check_for_updates, commands::set_update_auto_check, commands::start_update,
             commands::stop_update, commands::restart_gizai,
             commands::backup_status, commands::save_backup_settings, commands::list_backups, commands::back_up_now,
+            commands::start_restore, commands::restore_status, commands::cancel_restore, commands::restart_to_restore,
+            commands::dismiss_restore_result,
             editor::editor_folders, editor::editor_list, editor::editor_read, editor::editor_write, editor::editor_create,
             editor::editor_rename, editor::editor_delete, editor::editor_files, editor::editor_search, editor::editor_git,
             editor::editor_versions, editor::editor_apps, editor::open_in_app, editor::editor_main, editor::editor_fetch,

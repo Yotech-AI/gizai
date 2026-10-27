@@ -45,6 +45,7 @@ mod pulls_test;
 mod questions_test;
 mod release_030_upgrade_test;
 mod repo_url_test;
+mod restore_test;
 mod role_template_test;
 mod run_for_me_test;
 mod run_support_test;

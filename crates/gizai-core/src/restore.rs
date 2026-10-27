@@ -467,12 +467,17 @@ pub fn open(data_dir: &Path) -> Result<(Db, Option<RestoreResult>)> {
     let before = match swap(data_dir, &staged, now) {
         Ok(before) => before,
         Err(why) => {
+            eprintln!("gizai: restoring {} failed: {why}", m.name);
             let aside = set_aside(&rdir, &rdir.join(STAGED_DB), &m.name);
             let _ = cancel(data_dir);
             let kept = aside.map(|p| format!(" The snapshot's database is in {}.", p.display())).unwrap_or_default();
-            return opened_with(&path, failed(format!("Gizai couldn't restore {}, so it started with today's data: {why}.{kept}", m.name)));
+            return opened_with(&path, failed(format!("Gizai couldn't restore {}, so it started with today's data: {}.{kept}", m.name, short(&why))));
         }
     };
+    // swapped: from now on nothing is staged, so a restore is applied once, whatever happens next
+    if let Err(e) = remove_file_if_there(&rdir.join(STAGED)) {
+        eprintln!("gizai: removing {} failed: {e}", rdir.join(STAGED).display());
+    }
     match Db::open(&path) {
         Ok(db) => {
             let _ = cancel(data_dir);
@@ -488,6 +493,7 @@ pub fn open(data_dir: &Path) -> Result<(Db, Option<RestoreResult>)> {
             Ok((db, Some(result)))
         }
         Err(e) => {
+            eprintln!("gizai: the restored data of {} couldn't be opened: {e}", m.name);
             // the restored database (and what its open left beside it) goes aside, then today's comes back
             let aside = set_aside(&rdir, &path, &m.name);
             for end in ["-wal", "-shm", "-journal"] {
@@ -499,13 +505,21 @@ pub fn open(data_dir: &Path) -> Result<(Db, Option<RestoreResult>)> {
             }
             let _ = cancel(data_dir);
             let kept = aside.map(|p| format!(" The snapshot's database is in {}.", p.display())).unwrap_or_default();
-            opened_with(&path, failed(format!("Gizai couldn't open the restored data of {}, so it started with today's data: {e}.{kept}", m.name)))
+            opened_with(&path, failed(format!("Gizai couldn't open the restored data of {}, so it started with today's data: {}.{kept}",
+                                              m.name, short(&e.to_string()))))
         }
     }
 }
 
 fn computer(name: &str) -> &str {
     if name.trim().is_empty() { "another computer" } else { name }
+}
+
+/// Why, for the window: its first line, at most 300 characters (a failed migration's error holds its whole SQL; the
+/// log has all of it).
+fn short(why: &str) -> String {
+    let line = why.lines().next().unwrap_or_default().trim_end_matches(['.', ':', ' ']);
+    if line.chars().count() <= 300 { line.to_string() } else { format!("{}…", line.chars().take(300).collect::<String>()) }
 }
 
 /// Opens today's database after a restore that didn't happen, with its result.

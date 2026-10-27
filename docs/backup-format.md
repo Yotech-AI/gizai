@@ -1,6 +1,6 @@
 # Backups: format 1
 
-GizAi backs up your data as snapshots in a backups folder (GA-216). This page describes that folder as format 1: its layout, a snapshot's name, the manifest field by field, and how a snapshot is made and removed. GizAi Cloud will write its backups in the same format (see [For GizAi Cloud](#for-gizai-cloud)), so one restore reads both. The restore itself comes with GA-218. The code is `gizai_core::backups`, and the app's side is `src-tauri/src/backups.rs`.
+GizAi backs up your data as snapshots in a backups folder (GA-216). This page describes that folder as format 1: its layout, a snapshot's name, the manifest field by field, and how a snapshot is made and removed. GizAi Cloud will write its backups in the same format (see [For GizAi Cloud](#for-gizai-cloud)), so one restore reads both. The restore is GA-218's (see [Restore](#restore)). The code is `gizai_core::backups` and `gizai_core::restore`, and the app's side is `src-tauri/src/backups.rs` and `src-tauri/src/restore.rs`.
 
 A snapshot holds only the database and the stored files it names (attachments and screenshots). Nothing from the OS keychain, a worktree, the logs (`runs/`, `chat/`), the Team Lead's code copies or `update/` goes into it. Snapshots are not encrypted: whoever can open the folder can read them, and a synced folder gets the data as it is.
 
@@ -98,7 +98,7 @@ A failure removes this snapshot's `.part` files, its compressed database and the
 - **Back up now**, with reason `manual`.
 - **Daily or weekly** (Every in Settings; daily by default): due when this computer's newest good snapshot in the folder is 24 hours or 7 days old. A good snapshot is one whose manifest reads and whose database file is there, of any reason but `before-restore`, and not dated after now (made while the clock was ahead); with none, the first one is due at once. GizAi checks 2 minutes after it starts and then every hour by the wall clock, which it looks at every 5 minutes, so the hours a computer slept count too. A check up to 5 minutes early counts, so the snapshot doesn't move an hour later each day. A folder that can't be reached now (a USB disk that isn't plugged in) is passed over quietly, and Settings shows why.
 - **On quit** (off by default): Quit GizAi completely (the tray's or Settings' Quit, Cmd+Q on macOS) makes a snapshot with reason `quit` once agents at work have stopped, before GizAi exits, waiting at most 5 minutes. A signal, logging out, shutting down, and the restart after an update or a restore don't back up.
-- **Before a restore** (GA-218), with reason `before-restore`, in a folder of the restore's own: `gizai_lib::backups::back_up`.
+- **Before a restore** (GA-218), with reason `before-restore`: in the backups folder set in Settings, or in the folder restored from (see [Restore](#restore)). `gizai_lib::backups::back_up_within` makes it.
 
 ## Keep: how snapshots and files are removed
 
@@ -123,8 +123,83 @@ This computer's, kept in its database; a restore keeps them. Saving checks Keep 
 | `backup_keep` | 1 to 100 (10 by default) |
 | `backup_last_error` | the last snapshot that failed, `{ "at", "message" }`; `null` once one has been made since |
 
+## Restore
+
+A restore (GA-218) brings a snapshot back as this computer's data. It never makes two computers share one device id, this computer's own settings stay this computer's, and GizAi notes which snapshot it came back from, so a sync knows where this computer's data starts. The same rules hold for sync across devices. Nothing in the OS keychain is restored or removed: the restored data asks for the keys this computer doesn't have, as a new install does.
+
+`start_restore(folder, name)` runs in the background, one restore at a time, and is refused while a backup or another restore runs. `folder` is read as for listing (the folder itself when it holds `gizai-backups.json`, else its `Gizai backups`). Each step goes out in `restore-changed` with the status (contract BR's `RestoreStatus`). A restore that is ready already gives way to a new one.
+
+### 1. The checks
+
+Each failure stops the restore with its reason, and nothing is staged:
+
+- the manifest is a snapshot's (`format` is `gizai-backup`) and reads as format 1's;
+- its `format_version` is 1 or lower, and its `schema_version` is at most this GizAi's (`db::SCHEMA_VERSION`). A newer one is refused with `Made by a newer Gizai (database version N). Update Gizai first.` (for the format: `backup format N`);
+- the database file is there and decompresses, its SHA-256 and size match `db.sha256` and `db.db_bytes`, it passes `PRAGMA integrity_check`, and its `user_version` is the manifest's `schema_version`;
+- every blob in `files` is in the folder's `files/`, with its size and its SHA-256. A snapshot with `files_missing` is refused too: those blobs aren't there.
+
+The database is decompressed into `<data folder>/restore/gizai.db.part` for the checks.
+
+### 2. Today's data is saved
+
+A snapshot of today's data with reason `before-restore`, made as any snapshot is: in the backups folder set in Settings, or, when none is set (or it can't be written now), in the folder restored from. It waits at most 5 minutes for a snapshot that runs already. When neither can be written, the restore stops: `Gizai can't save today's data first: <why>. Choose a backups folder in Settings → General → Backups.`
+
+### 3. Staging
+
+```
+<data folder>/restore/
+  gizai.db                    the snapshot's database, decompressed and checked
+  files/<sha256[..2]>/<sha256>  the blobs the data folder's files/ lacks, copied and hashed again
+  restore.json                the manifest, the folder, the before-restore snapshot's name and when: written last
+  failed/                     a restored database that couldn't be opened (see below)
+```
+
+Once `restore.json` is there, the restore is ready: it waits for a restart, and today's data keeps working until then. The blobs the data folder has already get their modified time set to now, so the housekeeping (which leaves blobs changed in the last day alone) keeps them until the restart. `restart_to_restore()` quits GizAi the usual way (agents at work are stopped first, and it doesn't back up on quit) and starts the same GizAi again: the installed launcher, as after an update, or else the program that runs now. `cancel_restore()` removes what is staged (`restore/`, apart from `restore/failed/`); the before-restore snapshot stays in its folder, and the next start is a normal one.
+
+### 4. The swap at the next start
+
+Before the database opens, when `restore/restore.json` says ready, in this order, so that whatever fails today's data stays whole:
+
+1. This computer's device (its `devices` row with `is_self = 1`: `id`, `name`, `created_at`) and today's values of this computer's settings are read from today's `gizai.db`, and its WAL is folded back into it (`PRAGMA wal_checkpoint(TRUNCATE)`).
+2. The staged database gets them, on a plain connection in one transaction (see the device rule and this computer's settings below), with `agents_paused` set to true and `last_restore`.
+3. `restore.json` notes the name today's database gets, then today's database moves to `backups/gizai-before-restore-<stamp>.db`, and the staged one takes its place as `gizai.db`. A start after a swap that was interrupted there carries on from where it was.
+4. The staged blobs move into `files/`; a blob that is there already stays. `restore.json` goes: a restore is applied once.
+5. The database opens as usual: an older schema is upgraded, with its copy in `backups/gizai-before-v<N>-<stamp>.db`.
+6. When the restored database can't be opened (or step 2 fails), it moves to `restore/failed/<snapshot>.db`, today's database comes back, and GizAi starts with it.
+7. `restore/` goes, apart from `restore/failed/`. The result (`{ ok, at, snapshot, fromComputer, message }`) is kept as this computer's setting `restore_result`, for the window (`restore_status().result`), until `dismiss_restore_result`.
+
+### The device rule
+
+When the restored database's `is_self` device isn't this computer's, every row gets `is_self = 0`, and this computer's row is added (or updated, when the snapshot knew it) with `is_self = 1` and today's `name` and `created_at`. The snapshot's computer stays in `devices` as another computer, so its `changes` rows keep their device, and new `changes` rows carry this computer's id. This computer's own snapshot leaves `devices` as it was.
+
+### This computer's settings
+
+`gizai_core::scope` lists the app-wide settings (`org_id` '') that belong to this computer; `scope::this_computer(key)` says whether one does. Today's values of these go over the restored ones; a restored value stays only where today had none. Every other app-wide setting, and every org's setting, is shared: it comes from the snapshot.
+
+| Group | Keys |
+|---|---|
+| programs and paths | `claude_bin`, `gh_bin`, `clis`, `mcp_servers`, `mcp_tools`, `mcp_last_run`, `mcp_browser`, `cli_tools_seen`, `cli_tools_asked`, `editor_roots`, `github_push_over`, `claude_memory_imports` |
+| capacity and state | `runs_memory_gb`, `max_concurrent_runs`, `agents_paused`, `subscription_limits`, `onboarding`, `update_auto_check`, `update_last_check`, `preview_port_from`, `preview_port_to` (the ports this computer's previews take, checked against `max_concurrent_runs`) |
+| desktop notifications | every `notify_*` key: `notify_hold`, `notify_waiting`, `notify_lead_asks`, `notify_lead_answered` |
+| backups | `backup_folder`, `backup_every`, `backup_on_quit`, `backup_keep`, `backup_last_error` (the last error belongs to this computer's folder) |
+| restores | `last_restore`, `restore_result` |
+
+Sync will send the shared settings only. A new setting must go on one side: one that is only true on one computer (a path, a program, a port) goes in `scope`'s list.
+
+### `last_restore`
+
+```json
+{ "snapshot": "<name>", "made_by": "<device id>", "made_at": 0, "last_change": { "seq": 0, "id": "<changes.id>", "hlc": "<changes.hlc>" }, "restored_at": 0, "saved_today": "<the before-restore snapshot's name>" }
+```
+
+`made_by` and `made_at` are the snapshot's computer and when it was made, `last_change` is its manifest's (`null` when it had none), and `saved_today` is the before-restore snapshot of the data it replaced. It is one of this computer's settings, so a later restore keeps it until it writes its own.
+
 ## For GizAi Cloud
 
 - A cloud snapshot is the daily snapshot of the hosted copy, plus the files. It is written in this format, so the same restore reads it.
 - `last_change` is where a sync continues: the device that restores a snapshot has every change up to it, and asks for the ones after it.
 - `files` is what a sync uploads, by hash: a file the cloud has already isn't sent again, as a backups folder stores each file once.
+- A device that restores keeps its own id (see [the device rule](#the-device-rule)), and `last_restore` says which snapshot its data starts from: a sync asks for the changes after that snapshot's `last_change`.
+- Sync sends the shared settings only, never this computer's (see [this computer's settings](#this-computers-settings)).
+- Beyond settings, parts of the database are this computer's too, and a restore brings them back as the snapshot has them: projects' linked folders (`repos.local_path`), agents' folders (`agent_configs.folders_json`), and the worktree paths and process ids in `runs` (`cwd`, `worktree_path`, `pid`). Sync must not send them as they are, nor apply another device's.
+- A change's `hlc` is `<unix_ms>-<counter>-<device>`, and its device part is the first 8 characters of the device id. Those are the id's creation time (ids are UUIDv7), so two devices made in the same moment can share them: sync should order changes by the time, the counter and the whole device id (`changes.device_id`), never by the hlc's device part alone.

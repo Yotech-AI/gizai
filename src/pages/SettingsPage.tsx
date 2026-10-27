@@ -7,6 +7,7 @@ import { Field, FormSection } from "../components/Form";
 import { Tabs, type TabDef } from "../components/Tabs";
 import { AppearanceSettings } from "../components/AppearanceSettings";
 import { AskLeadSetting } from "../components/AskLeadSetting";
+import { BackupSettings } from "../components/BackupSettings";
 import { BitbucketSettings } from "../components/BitbucketSettings";
 import { CliSettings } from "../components/CliSettings";
 import { EditorFoldersSetting } from "../components/EditorFoldersSetting";
@@ -89,6 +90,7 @@ export function SettingsPage({ tab }: { tab?: string } = {}) {
             <Field label="Worktrees of finished cards" wide hint="Done and Cancelled cards keep their worktree, so a new card of the same project can take it over with a warm build. Remove the ones you no longer need.">
               <OldWorktrees /></Field>
           </FormSection>
+          <BackupSettings />
         </div>
         <div {...panel("appearance")}>
           <AppearanceSettings />

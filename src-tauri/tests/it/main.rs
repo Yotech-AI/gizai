@@ -51,6 +51,7 @@ mod pr_check_rounds_test;
 mod pull_flow_test;
 mod push_after_run_test;
 mod repo_check_test;
+mod restore_flow_test;
 mod run_commits_test;
 mod run_flow_test;
 mod run_leftovers_flow_test;

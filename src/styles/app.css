@@ -118,7 +118,8 @@ select.chip { appearance: none; padding-right: 26px; background-image: url("data
 .bk-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 .bk-step { align-items: center; color: var(--text-2); }
 .bk-step .icon { margin-top: 0; }
-.bk-error { overflow-wrap: anywhere; }
+.bk-error { color: var(--danger); overflow-wrap: anywhere; }
+.input.bk-keep { width: 96px; flex: none; }
 .backup-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
 .backup-list > li { display: grid; gap: 2px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .backup-list .bk-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; }

@@ -148,7 +148,7 @@ export function BackupSettings() {
       </Field>
       <Field label="Keep" htmlFor="bk-keep" error={errs.keep} hint="Your newest backups from this computer. Older ones are removed. A backup made before a restore is never removed.">
         <div className="input-group">
-          <input id="bk-keep" className="input" type="number" min={KEEP_MIN} max={KEEP_MAX} step={1} value={keepText ?? String(s.settings.keep)}
+          <input id="bk-keep" className="input bk-keep" type="number" min={KEEP_MIN} max={KEEP_MAX} step={1} value={keepText ?? String(s.settings.keep)}
             onChange={(e) => setKeepText(e.target.value)} onBlur={() => saveKeep(keepText, true)}
             onKeyDown={(e) => { if (e.key === "Enter") saveKeep(keepText); }} />
           <span className="faint">backups</span>

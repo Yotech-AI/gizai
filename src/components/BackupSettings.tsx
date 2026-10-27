@@ -44,16 +44,18 @@ export function BackupSettings() {
 
   useEffect(() => {
     alive.current = true;
+    let live = true;
     let un: (() => void) | undefined;
     onBackupsChanged((x) => {
+      if (!live) return;
       events.current++;
-      if (!alive.current || !x) return;
+      if (!x) return;
       cur.current = x;
       setS(x);
-    }).then((f) => (alive.current ? (un = f) : f())).catch(() => {});
+    }).then((f) => (live ? (un = f) : f())).catch(() => {});
     const before = events.current;
-    backupStatus().then((x) => { take(x, before); setLoadErr(null); }).catch((e) => { if (alive.current) setLoadErr(String(e)); });
-    return () => { alive.current = false; un?.(); };
+    backupStatus().then((x) => { if (!live) return; take(x, before); setLoadErr(null); }).catch((e) => { if (live) setLoadErr(String(e)); });
+    return () => { live = false; alive.current = false; un?.(); };
   }, []);
 
   // The snapshots, read again when the folder changes, a snapshot starts or ends, or one fails.

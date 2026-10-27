@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use gizai_core::backups::{self as backups_core, BackupEntry, Reason};
-use gizai_core::restore::{self as core, RestoreStatus, Saved, Step};
+use gizai_core::restore::{self as core, RestoreResult, RestoreStatus, Saved, Step};
 
 use crate::AppState;
 use crate::runs::Note;
@@ -61,15 +61,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// restore staged on disk that this Gizai didn't stage reads as ready.
 pub fn status(st: &AppState) -> RestoreStatus {
     let now = lock(&st.restores.now).clone();
-    let mut out = RestoreStatus {
-        state: if now.state.is_empty() { "none" } else { now.state }.into(),
-        folder: now.folder,
-        snapshot: now.snapshot,
-        step: now.step,
-        error: now.error,
-        saved_today: now.saved_today,
-        result: core::result(&st.db),
-    };
+    let mut out = to_status(now, core::result(&st.db));
     if out.state == "none"
         && let Some(staged) = core::staged(&st.data_dir)
     {
@@ -79,6 +71,18 @@ pub fn status(st: &AppState) -> RestoreStatus {
         out.saved_today = Some(staged.saved_today.name);
     }
     out
+}
+
+fn to_status(now: Now, result: Option<RestoreResult>) -> RestoreStatus {
+    RestoreStatus {
+        state: if now.state.is_empty() { "none" } else { now.state }.into(),
+        folder: now.folder,
+        snapshot: now.snapshot,
+        step: now.step,
+        error: now.error,
+        saved_today: now.saved_today,
+        result,
+    }
 }
 
 /// Sends `restore-changed` with the status.
@@ -122,43 +126,47 @@ pub fn start(st: &AppState, folder: &str, name: &str) -> Result<RestoreStatus, S
     (st.notify)(Note::RestoreChanged(out.clone()));
     let st2 = st.clone();
     let name = name.to_string();
-    let spawned = std::thread::Builder::new().name("gizai-restore".into()).spawn(move || run(&st2, &chosen, &name));
+    let spawned = std::thread::Builder::new().name("gizai-restore".into()).spawn(move || run(st2, &chosen, &name));
     if let Err(e) = spawned {
-        end(st, Err(format!("Couldn't start the restore: {e}")));
-        return Err(format!("Couldn't start the restore: {e}"));
+        let why = format!("Couldn't start the restore: {e}");
+        (st.notify)(Note::RestoreChanged(end(&st.restores, &st.data_dir, Err(why.clone()), core::result(&st.db))));
+        return Err(why);
     }
     Ok(out)
 }
 
-/// The restore, on its own thread: its three steps, then how it ended.
-fn run(st: &AppState, chosen: &Path, name: &str) {
-    let out = restore(st, chosen, name);
-    end(st, out);
+/// The restore, on its own thread: its three steps, then how it ended. The end goes out once this thread's AppState is
+/// gone, so a Gizai started again on the same data as soon as the restore is ready (a test's) finds its data folder
+/// free.
+fn run(st: AppState, chosen: &Path, name: &str) {
+    let out = restore(&st, chosen, name);
+    let (restores, notify, data_dir, result) = (st.restores.clone(), st.notify.clone(), st.data_dir.clone(), core::result(&st.db));
+    drop(st);
+    notify(Note::RestoreChanged(end(&restores, &data_dir, out, result)));
 }
 
-/// Ends the restore that runs: ready, failed with why, or, when it was cancelled, none (and nothing staged). Says so.
-fn end(st: &AppState, out: Result<(), String>) {
-    {
-        let mut now = lock(&st.restores.now);
-        let cancelled = st.restores.cancel.swap(false, Ordering::SeqCst);
-        if cancelled || out.is_err() {
-            let _ = core::cancel(&st.data_dir);
+/// Ends the restore that runs: ready, failed with why, or, when it was cancelled, none (and nothing staged). Returns the
+/// status to send.
+fn end(restores: &Restores, data_dir: &Path, out: Result<(), String>, result: Option<RestoreResult>) -> RestoreStatus {
+    let mut now = lock(&restores.now);
+    let cancelled = restores.cancel.swap(false, Ordering::SeqCst);
+    if cancelled || out.is_err() {
+        let _ = core::cancel(data_dir);
+    }
+    match out {
+        _ if cancelled => *now = Now::default(),
+        Ok(()) => {
+            now.state = "ready";
+            now.step = None;
         }
-        match out {
-            _ if cancelled => *now = Now::default(),
-            Ok(()) => {
-                now.state = "ready";
-                now.step = None;
-            }
-            Err(why) => {
-                eprintln!("gizai: restoring failed: {why}");
-                now.state = "failed";
-                now.step = None;
-                now.error = Some(why);
-            }
+        Err(why) => {
+            eprintln!("gizai: restoring failed: {why}");
+            now.state = "failed";
+            now.step = None;
+            now.error = Some(why);
         }
     }
-    changed(st);
+    to_status(now.clone(), result)
 }
 
 fn restore(st: &AppState, chosen: &Path, name: &str) -> Result<(), String> {

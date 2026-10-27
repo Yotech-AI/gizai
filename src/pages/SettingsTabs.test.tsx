@@ -43,6 +43,8 @@ const stub = (title: string) => () => <section className="form-section"><header>
 vi.mock("../components/UpdateSettings", () => ({ UpdateSettings: stub("Updates") }));
 // GA-113: Settings → General → Editor folders keeps its own state; EditorFoldersSetting.test.tsx tests it
 vi.mock("../components/EditorFoldersSetting", () => ({ EditorFoldersSetting: stub("Editor folders") }));
+// GA-217: Settings → General → Backups keeps its own state too; BackupSettings.test.tsx tests it
+vi.mock("../components/BackupSettings", () => ({ BackupSettings: stub("Backups") }));
 vi.mock("../components/GithubSettings", () => ({ GithubSettings: stub("GitHub") }));
 vi.mock("../components/BitbucketSettings", () => ({ BitbucketSettings: stub("Bitbucket") }));
 vi.mock("../components/CliSettings", () => ({ CliSettings: () => <i>the CLI list</i> }));
@@ -146,8 +148,8 @@ describe("Settings' tabs", () => {
 describe("what each tab has", () => {
   const html = render();
   const of = (label: string) => panels(html).find((p) => p.label === label)?.html ?? "";
-  it("General: Quit Gizai completely at the top, Updates, Editor folders (GA-113), then Data with the folders and the old worktrees", () => {
-    expect(sections(of("General"))).toEqual(["Quit", "Updates", "Editor folders", "Data"]);
+  it("General: Quit Gizai completely at the top, Updates, Editor folders (GA-113), Data with the folders and the old worktrees, then Backups (GA-217)", () => {
+    expect(sections(of("General"))).toEqual(["Quit", "Updates", "Editor folders", "Data", "Backups"]);
     const t = text(of("General"));
     for (const s of ["Data folder", "/home/you/.local/share/gizai/worktrees", "Run logs", "Worktrees of finished cards", "the old worktrees"]) expect(t).toContain(s);
   });
@@ -179,7 +181,7 @@ describe("what each tab has", () => {
   });
   it("every section is on exactly one tab", () => {
     const all = sections(html);
-    expect(all).toEqual(["Quit", "Updates", "Editor folders", "Data", "Font", "Text size", "Theme and density", "Background", "Notifications", "Coding CLIs", "Runs", "MCP servers", "GitHub", "Bitbucket"]);
+    expect(all).toEqual(["Quit", "Updates", "Editor folders", "Data", "Backups", "Font", "Text size", "Theme and density", "Background", "Notifications", "Coding CLIs", "Runs", "MCP servers", "GitHub", "Bitbucket"]);
   });
 });
 
